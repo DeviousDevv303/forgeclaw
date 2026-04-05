@@ -214,11 +214,15 @@ function App() {
 
         {/* API Key Input */}
         <div style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
-          <input
+            <input
             type="password"
             placeholder="Claude API Key (for fallback)"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
             style={{
               width: '100%',
               background: 'transparent',
@@ -227,7 +231,10 @@ function App() {
               outline: 'none',
               fontSize: '13px',
               fontFamily: 'monospace',
-              padding: '0',
+              padding: '12px 0',
+              margin: '-12px 0',
+              cursor: 'text',
+              WebkitAppearance: 'none',
             }}
           />
         </div>
