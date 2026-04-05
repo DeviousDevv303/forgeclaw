@@ -66,23 +66,19 @@ function App() {
     let source: 'local' | 'cloud' = 'cloud'
 
     try {
-      // Try Ollama first (Localhost:11434 or Localhost:3001)
       let ollamaSuccess = false;
+      
+      // Attempt Local Ollama (only if not on a secure mobile browser that blocks it)
       try {
-        // First, check if we are on a secure context and trying to hit localhost
-        // Mixed content policy usually blocks this, so we wrap it in a try-catch
         const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: 'qwen2.5:1.8b',
             prompt: input,
             stream: false,
           }),
-          // Short timeout to detect unreachability quickly
-          signal: AbortSignal.timeout(2000) 
+          signal: AbortSignal.timeout(1500) 
         })
 
         if (ollamaResponse.ok) {
@@ -94,45 +90,45 @@ function App() {
           ollamaSuccess = true;
         }
       } catch (ollamaErr) {
-        console.warn('Local Ollama unreachable or blocked by mixed content policy. Falling back to direct Anthropic API call.', ollamaErr);
+        console.warn('Local engine unreachable, switching to Cloud...', ollamaErr);
       }
 
       if (!ollamaSuccess) {
-        // Fallback to Direct Claude API Call (Bypassing Localhost)
-        if (!apiKey.trim()) {
-          throw new Error('Local engine unreachable and no Claude API key provided')
+        // Direct Anthropic API Fallback
+        // Note: 'anthropic-dangerous-direct-browser-access' header is REQUIRED for CORS to work
+        try {
+          const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-dangerous-direct-browser-access': 'true'
+            },
+            body: JSON.stringify({
+              model: 'claude-3-5-haiku-20241022',
+              max_tokens: 1024,
+              messages: [{ role: 'user', content: input }],
+            }),
+          })
+
+          if (!claudeResponse.ok) {
+            const errorData = await claudeResponse.json().catch(() => ({}));
+            throw new Error(errorData.error?.message || `Claude API returned ${claudeResponse.status}: ${claudeResponse.statusText}`);
+          }
+
+          const claudeData = await claudeResponse.json()
+          responseText = claudeData.content[0]?.text || 'No response received'
+          source = 'cloud'
+          setLastSource('cloud')
+          logToCorpus(input, responseText, 'claude-haiku')
+        } catch (fetchErr) {
+          // Provide more helpful error message for NetworkError
+          if (fetchErr instanceof Error && fetchErr.name === 'TypeError' && fetchErr.message.includes('fetch')) {
+             throw new Error("Cloud Network Error: The browser blocked the request. Ensure your API key is correct and you have an active internet connection. If you're on mobile, this fallback uses direct browser access.");
+          }
+          throw fetchErr;
         }
-
-        const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-dangerous-direct-browser-access': 'true'
-          },
-          body: JSON.stringify({
-            model: 'claude-3-5-haiku-20241022',
-            max_tokens: 1024,
-            messages: [
-              {
-                role: 'user',
-                content: input,
-              },
-            ],
-          }),
-        })
-
-        if (!claudeResponse.ok) {
-          const errorData = await claudeResponse.json()
-          throw new Error(`Claude API error: ${errorData.error?.message || claudeResponse.statusText}`)
-        }
-
-        const claudeData = await claudeResponse.json()
-        responseText = claudeData.content[0]?.text || 'No response received'
-        source = 'cloud'
-        setLastSource('cloud')
-        logToCorpus(input, responseText, 'claude-haiku')
       }
 
       const assistantMessage: Message = {
@@ -146,8 +142,8 @@ function App() {
       setMessages((prev) => [...prev, assistantMessage])
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      setError(`Error: ${errorMessage}`)
-      console.error('Error:', err)
+      setError(`System Alert: ${errorMessage}`)
+      console.error('ForgeMind Error:', err)
     } finally {
       setLoading(false)
     }
