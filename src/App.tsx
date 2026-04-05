@@ -5,6 +5,14 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   timestamp: number
+  source?: 'local' | 'cloud'
+}
+
+interface CorpusEntry {
+  prompt: string
+  response: string
+  source: 'claude-haiku' | 'ollama'
+  timestamp: string
 }
 
 function App() {
@@ -12,6 +20,9 @@ function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [apiKey, setApiKey] = useState('')
+  const [corpus, setCorpus] = useState<CorpusEntry[]>([])
+  const [lastSource, setLastSource] = useState<'local' | 'cloud' | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -22,8 +33,22 @@ function App() {
     scrollToBottom()
   }, [messages])
 
+  const logToCorpus = (prompt: string, response: string, source: 'claude-haiku' | 'ollama') => {
+    const entry: CorpusEntry = {
+      prompt,
+      response,
+      source,
+      timestamp: new Date().toISOString(),
+    }
+    setCorpus((prev) => [...prev, entry])
+  }
+
   const handleSendMessage = async () => {
     if (input.trim() === '') return
+    if (!apiKey.trim()) {
+      setError('Claude API key required for fallback. Please enter your API key.')
+      return
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -37,36 +62,82 @@ function App() {
     setLoading(true)
     setError(null)
 
+    let responseText = ''
+    let source: 'local' | 'cloud' = 'cloud'
+
     try {
-      const response = await fetch('http://localhost:11434/api/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'qwen2.5:1.8b',
-          prompt: input,
-          stream: false,
-        }),
-      })
+      // Try Ollama first
+      try {
+        const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'qwen2.5:1.8b',
+            prompt: input,
+            stream: false,
+          }),
+        })
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        if (ollamaResponse.ok) {
+          const data = await ollamaResponse.json()
+          responseText = data.response || 'No response received'
+          source = 'local'
+          setLastSource('local')
+          logToCorpus(input, responseText, 'ollama')
+        } else {
+          throw new Error('Ollama unavailable, falling back to Claude')
+        }
+      } catch (ollamaErr) {
+        // Fallback to Claude API
+        if (!apiKey.trim()) {
+          throw new Error('Ollama failed and no Claude API key provided')
+        }
+
+        const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 1024,
+            messages: [
+              {
+                role: 'user',
+                content: input,
+              },
+            ],
+          }),
+        })
+
+        if (!claudeResponse.ok) {
+          const errorData = await claudeResponse.json()
+          throw new Error(`Claude API error: ${errorData.error?.message || claudeResponse.statusText}`)
+        }
+
+        const claudeData = await claudeResponse.json()
+        responseText = claudeData.content[0]?.text || 'No response received'
+        source = 'cloud'
+        setLastSource('cloud')
+        logToCorpus(input, responseText, 'claude-haiku')
       }
-
-      const data = await response.json()
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.response || 'No response received',
+        content: responseText,
         timestamp: Date.now(),
+        source,
       }
 
       setMessages((prev) => [...prev, assistantMessage])
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-      setError(`Failed to connect to Ollama: ${errorMessage}`)
+      setError(`Error: ${errorMessage}`)
       console.error('Error:', err)
     } finally {
       setLoading(false)
@@ -79,6 +150,33 @@ function App() {
     }
   }
 
+  const handleExportCorpus = () => {
+    if (corpus.length === 0) {
+      setError('No interactions to export yet.')
+      return
+    }
+
+    const jsonlContent = corpus.map((entry) => JSON.stringify(entry)).join('\n')
+    const blob = new Blob([jsonlContent], { type: 'application/jsonl' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'forge-mind-corpus.jsonl'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  const getStatusIndicator = () => {
+    if (lastSource === 'local') {
+      return <span style={{ color: '#10b981', fontWeight: 'bold' }}>● Local</span>
+    } else if (lastSource === 'cloud') {
+      return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>● Cloud</span>
+    }
+    return <span style={{ color: '#6b6b6b' }}>● Idle</span>
+  }
+
   return (
     <div style={{ minHeight: '100vh', background: '#0f0f0f', color: '#e5e5e5', fontFamily: 'monospace', display: 'flex', flexDirection: 'column' }}>
       <header style={{ borderBottom: '1px solid #2a2a2a', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -87,12 +185,51 @@ function App() {
           <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '18px', letterSpacing: '2px' }}>FORGECLAW</span>
           <span style={{ color: '#6b6b6b', fontSize: '12px' }}>forgemind local ai</span>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{ fontSize: '12px' }}>{getStatusIndicator()}</div>
+          <button
+            onClick={handleExportCorpus}
+            style={{
+              background: '#2a2a2a',
+              color: '#f97316',
+              padding: '6px 12px',
+              borderRadius: '4px',
+              border: '1px solid #f97316',
+              fontWeight: '600',
+              cursor: 'pointer',
+              fontSize: '11px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Export Corpus
+          </button>
+        </div>
       </header>
 
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '24px' }}>
-        <div style={{ marginBottom: '24px' }}>
+        <div style={{ marginBottom: '16px' }}>
           <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '8px' }}>ForgeMind Chat</h1>
-          <p style={{ color: '#6b6b6b', fontSize: '14px' }}>Local AI powered by Ollama</p>
+          <p style={{ color: '#6b6b6b', fontSize: '14px' }}>Local AI powered by Ollama (with Claude fallback)</p>
+        </div>
+
+        {/* API Key Input */}
+        <div style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
+          <input
+            type="password"
+            placeholder="Claude API Key (for fallback)"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            style={{
+              width: '100%',
+              background: 'transparent',
+              color: '#e5e5e5',
+              border: 'none',
+              outline: 'none',
+              fontSize: '13px',
+              fontFamily: 'monospace',
+              padding: '0',
+            }}
+          />
         </div>
 
         <div style={{ flex: 1, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '16px', marginBottom: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', minHeight: '400px' }}>
@@ -109,8 +246,15 @@ function App() {
                     display: 'flex',
                     justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
                     marginBottom: '8px',
+                    alignItems: 'flex-end',
+                    gap: '8px',
                   }}
                 >
+                  {msg.role === 'assistant' && msg.source && (
+                    <span style={{ fontSize: '10px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', marginBottom: '4px' }}>
+                      {msg.source === 'local' ? 'LOCAL' : 'CLOUD'}
+                    </span>
+                  )}
                   <div
                     style={{
                       maxWidth: '70%',
