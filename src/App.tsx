@@ -66,8 +66,11 @@ function App() {
     let source: 'local' | 'cloud' = 'cloud'
 
     try {
-      // Try Ollama first
+      // Try Ollama first (Localhost:11434 or Localhost:3001)
+      let ollamaSuccess = false;
       try {
+        // First, check if we are on a secure context and trying to hit localhost
+        // Mixed content policy usually blocks this, so we wrap it in a try-catch
         const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
           method: 'POST',
           headers: {
@@ -78,6 +81,8 @@ function App() {
             prompt: input,
             stream: false,
           }),
+          // Short timeout to detect unreachability quickly
+          signal: AbortSignal.timeout(2000) 
         })
 
         if (ollamaResponse.ok) {
@@ -86,13 +91,16 @@ function App() {
           source = 'local'
           setLastSource('local')
           logToCorpus(input, responseText, 'ollama')
-        } else {
-          throw new Error('Ollama unavailable, falling back to Claude')
+          ollamaSuccess = true;
         }
       } catch (ollamaErr) {
-        // Fallback to Claude API
+        console.warn('Local Ollama unreachable or blocked by mixed content policy. Falling back to direct Anthropic API call.', ollamaErr);
+      }
+
+      if (!ollamaSuccess) {
+        // Fallback to Direct Claude API Call (Bypassing Localhost)
         if (!apiKey.trim()) {
-          throw new Error('Ollama failed and no Claude API key provided')
+          throw new Error('Local engine unreachable and no Claude API key provided')
         }
 
         const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
@@ -101,9 +109,10 @@ function App() {
             'Content-Type': 'application/json',
             'x-api-key': apiKey,
             'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true'
           },
           body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
+            model: 'claude-3-5-haiku-20241022',
             max_tokens: 1024,
             messages: [
               {
@@ -209,14 +218,14 @@ function App() {
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '24px' }}>
         <div style={{ marginBottom: '16px' }}>
           <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '8px' }}>ForgeMind Chat</h1>
-          <p style={{ color: '#6b6b6b', fontSize: '14px' }}>Local AI powered by Ollama (with Claude fallback)</p>
+          <p style={{ color: '#6b6b6b', fontSize: '14px' }}>Local AI powered by Ollama (with direct Claude fallback for mobile)</p>
         </div>
 
         {/* API Key Input */}
         <div style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
             <input
             type="password"
-            placeholder="Claude API Key (for fallback)"
+            placeholder="Claude API Key (required for mobile/fallback)"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             autoComplete="off"
