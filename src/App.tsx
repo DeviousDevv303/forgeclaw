@@ -64,6 +64,9 @@ function App() {
   const [lastSource, setLastSource] = useState<'local' | 'cloud' | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
+  const [selectedVoice, setSelectedVoice] = useState<string>('')
+  const [rate, setRate] = useState<number>(1.0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -73,6 +76,18 @@ function App() {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  useEffect(() => {
+    const loadVoices = () => {
+      const availableVoices = window.speechSynthesis.getVoices()
+      setVoices(availableVoices)
+      if (availableVoices.length > 0 && !selectedVoice) {
+        setSelectedVoice(availableVoices[0].name)
+      }
+    }
+    loadVoices()
+    window.speechSynthesis.onvoiceschanged = loadVoices
+  }, [selectedVoice])
 
   const logToCorpus = (prompt: string, response: string, source: 'claude-haiku' | 'ollama') => {
     const entry: CorpusEntry = {
@@ -240,7 +255,6 @@ function App() {
   }
 
   const handleCopy = (id: string, text: string) => {
-    // Remove markdown asterisks
     const cleanText = text.replace(/\*\*/g, '').replace(/\*/g, '')
     navigator.clipboard.writeText(cleanText)
     setCopiedId(id)
@@ -257,6 +271,10 @@ function App() {
     window.speechSynthesis.cancel()
     const cleanText = text.replace(/\*\*/g, '').replace(/\*/g, '')
     const utterance = new SpeechSynthesisUtterance(cleanText)
+    
+    const voice = voices.find(v => v.name === selectedVoice)
+    if (voice) utterance.voice = voice
+    utterance.rate = rate
     
     utterance.onend = () => {
       setSpeakingId(null)
@@ -334,30 +352,45 @@ function App() {
           <p style={{ color: '#6b6b6b', fontSize: '14px' }}>5-Phase Cognitive Scaffold Enabled</p>
         </div>
 
-        <div style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
-            <input
-            type="password"
-            placeholder="Claude API Key (required for mobile/fallback)"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            autoComplete="off"
-            autoCorrect="off"
-            autoCapitalize="off"
-            spellCheck="false"
-            style={{
-              width: '100%',
-              background: 'transparent',
-              color: '#e5e5e5',
-              border: 'none',
-              outline: 'none',
-              fontSize: '13px',
-              fontFamily: 'monospace',
-              padding: '12px 0',
-              margin: '-12px 0',
-              cursor: 'text',
-              WebkitAppearance: 'none',
-            }}
-          />
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+          <div style={{ flex: 1, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '12px 16px' }}>
+              <input
+              type="password"
+              placeholder="Claude API Key"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck="false"
+              style={{
+                width: '100%',
+                background: 'transparent',
+                color: '#e5e5e5',
+                border: 'none',
+                outline: 'none',
+                fontSize: '13px',
+                fontFamily: 'monospace',
+              }}
+            />
+          </div>
+          <div style={{ flex: 1, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '8px 12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <select 
+              value={selectedVoice} 
+              onChange={(e) => setSelectedVoice(e.target.value)}
+              style={{ background: 'transparent', color: '#f97316', border: 'none', outline: 'none', fontSize: '11px', flex: 1, fontFamily: 'monospace' }}
+            >
+              {voices.map(v => <option key={v.name} value={v.name} style={{ background: '#1a1a1a' }}>{v.name}</option>)}
+            </select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ fontSize: '10px', color: '#6b6b6b' }}>RATE</span>
+              <input 
+                type="range" min="0.5" max="2" step="0.1" value={rate} 
+                onChange={(e) => setRate(parseFloat(e.target.value))}
+                style={{ width: '60px', accentColor: '#f97316' }}
+              />
+            </div>
+          </div>
         </div>
 
         <div style={{ flex: 1, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '16px', marginBottom: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', minHeight: '400px' }}>
@@ -370,12 +403,14 @@ function App() {
               {messages.map((msg) => (
                 <div
                   key={msg.id}
+                  className="message-container"
                   style={{
                     display: 'flex',
                     flexDirection: 'column',
                     alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
                     marginBottom: '8px',
                     gap: '4px',
+                    position: 'relative'
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -387,6 +422,7 @@ function App() {
                   </div>
                   
                   <div
+                    className="message-bubble"
                     style={{
                       maxWidth: '85%',
                       padding: '12px 16px',
@@ -460,20 +496,29 @@ function App() {
                     )}
 
                     {msg.role === 'assistant' && (
-                      <div style={{ marginTop: '12px', display: 'flex', gap: '8px', borderTop: '1px solid #333', paddingTop: '8px' }}>
+                      <div className="message-actions" style={{ 
+                        position: 'absolute', 
+                        bottom: '-28px', 
+                        left: '0', 
+                        display: 'flex', 
+                        gap: '8px', 
+                        opacity: 0, 
+                        transition: 'opacity 0.2s',
+                        pointerEvents: 'none'
+                      }}>
                         <button
                           onClick={() => handleCopy(msg.id, msg.content)}
                           style={{
-                            background: 'transparent',
+                            background: '#000',
                             border: '1px solid #f97316',
                             color: '#f97316',
-                            fontSize: '10px',
+                            fontSize: '9px',
                             padding: '2px 8px',
                             cursor: 'pointer',
                             borderRadius: '2px',
                             fontWeight: 'bold',
                             letterSpacing: '1px',
-                            transition: 'all 0.2s'
+                            pointerEvents: 'auto'
                           }}
                         >
                           {copiedId === msg.id ? 'COPIED ✓' : 'COPY'}
@@ -481,16 +526,16 @@ function App() {
                         <button
                           onClick={() => handleSpeak(msg.id, msg.content)}
                           style={{
-                            background: 'transparent',
+                            background: '#000',
                             border: '1px solid #f97316',
                             color: '#f97316',
-                            fontSize: '10px',
+                            fontSize: '9px',
                             padding: '2px 8px',
                             cursor: 'pointer',
                             borderRadius: '2px',
                             fontWeight: 'bold',
                             letterSpacing: '1px',
-                            transition: 'all 0.2s'
+                            pointerEvents: 'auto'
                           }}
                         >
                           {speakingId === msg.id ? 'STOP' : 'SPEAK'}
@@ -620,6 +665,10 @@ function App() {
           0% { transform: translateX(-100%); }
           50% { transform: translateX(0); }
           100% { transform: translateX(100%); }
+        }
+        .message-container:hover .message-actions,
+        .message-container:focus-within .message-actions {
+          opacity: 1;
         }
       `}</style>
     </div>
