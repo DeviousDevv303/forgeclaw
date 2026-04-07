@@ -18,8 +18,21 @@ interface CorpusEntry {
   timestamp: string
 }
 
+const FORGEMIND_IDENTITY = {
+  user: "DeviousDevv303",
+  project: "ForgeMind + ForgeClaw unified AI platform",
+  goals: "Guardian LLM trained on personal heuristics",
+  heuristics: "Truth > Function > Clarity > Efficiency"
+}
+
 const FORGEMIND_SYSTEM_PROMPT = `
 You are ForgeMind, a high-performance cyberpunk AI assistant.
+IDENTITY CONTEXT:
+User: ${FORGEMIND_IDENTITY.user}
+Project: ${FORGEMIND_IDENTITY.project}
+Goals: ${FORGEMIND_IDENTITY.goals}
+Heuristics: ${FORGEMIND_IDENTITY.heuristics}
+
 You MUST process every user request through the ForgeMind 5-Phase Cognitive Scaffold before providing a final response.
 Format your response exactly as follows, including the tags:
 
@@ -55,12 +68,18 @@ const TAG_MAP: Record<string, string> = {
 }
 
 function App() {
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const saved = localStorage.getItem('forgemind_history')
+    return saved ? JSON.parse(saved) : []
+  })
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [apiKey, setApiKey] = useState('')
-  const [corpus, setCorpus] = useState<CorpusEntry[]>([])
+  const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
+    const saved = localStorage.getItem('forgemind_corpus')
+    return saved ? JSON.parse(saved) : []
+  })
   const [lastSource, setLastSource] = useState<'local' | 'cloud' | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
@@ -76,6 +95,14 @@ function App() {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  useEffect(() => {
+    localStorage.setItem('forgemind_history', JSON.stringify(messages))
+  }, [messages])
+
+  useEffect(() => {
+    localStorage.setItem('forgemind_corpus', JSON.stringify(corpus))
+  }, [corpus])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -284,6 +311,18 @@ function App() {
     window.speechSynthesis.speak(utterance)
   }
 
+  const handleClearMemory = () => {
+    if (window.confirm('CRITICAL: WIPE ALL SESSION MEMORY?')) {
+      localStorage.removeItem('forgemind_history')
+      localStorage.removeItem('forgemind_corpus')
+      setMessages([])
+      setCorpus([])
+      setLastSource(null)
+      setError('Memory purged. System reset.')
+      setTimeout(() => setError(null), 3000)
+    }
+  }
+
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && e.ctrlKey) {
       handleSendMessage()
@@ -323,10 +362,28 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ color: '#f97316', fontSize: '20px' }}>⚙</span>
           <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '18px', letterSpacing: '2px' }}>FORGECLAW</span>
-          <span style={{ color: '#6b6b6b', fontSize: '12px' }}>forgemind local ai</span>
+          <span style={{ color: '#6b6b6b', fontSize: '12px' }}>{messages.length} messages across sessions</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ fontSize: '12px' }}>{getStatusIndicator()}</div>
+          <button
+            onClick={handleClearMemory}
+            style={{
+              background: 'transparent',
+              color: '#f97316',
+              padding: '6px 12px',
+              borderRadius: '4px',
+              border: '1px solid #f97316',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              fontSize: '11px',
+              whiteSpace: 'nowrap',
+              textTransform: 'uppercase',
+              letterSpacing: '1px'
+            }}
+          >
+            Clear Memory
+          </button>
           <button
             onClick={handleExportCorpus}
             style={{
