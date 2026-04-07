@@ -62,6 +62,8 @@ function App() {
   const [apiKey, setApiKey] = useState('')
   const [corpus, setCorpus] = useState<CorpusEntry[]>([])
   const [lastSource, setLastSource] = useState<'local' | 'cloud' | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [speakingId, setSpeakingId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -235,6 +237,33 @@ function App() {
     setMessages(prev => prev.map(msg => 
       msg.id === msgId ? { ...msg, showReasoning: !msg.showReasoning } : msg
     ))
+  }
+
+  const handleCopy = (id: string, text: string) => {
+    // Remove markdown asterisks
+    const cleanText = text.replace(/\*\*/g, '').replace(/\*/g, '')
+    navigator.clipboard.writeText(cleanText)
+    setCopiedId(id)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
+
+  const handleSpeak = (id: string, text: string) => {
+    if (speakingId === id) {
+      window.speechSynthesis.cancel()
+      setSpeakingId(null)
+      return
+    }
+
+    window.speechSynthesis.cancel()
+    const cleanText = text.replace(/\*\*/g, '').replace(/\*/g, '')
+    const utterance = new SpeechSynthesisUtterance(cleanText)
+    
+    utterance.onend = () => {
+      setSpeakingId(null)
+    }
+    
+    setSpeakingId(id)
+    window.speechSynthesis.speak(utterance)
   }
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -427,6 +456,45 @@ function App() {
                             {TAG_MAP[tag]}
                           </div>
                         ))}
+                      </div>
+                    )}
+
+                    {msg.role === 'assistant' && (
+                      <div style={{ marginTop: '12px', display: 'flex', gap: '8px', borderTop: '1px solid #333', paddingTop: '8px' }}>
+                        <button
+                          onClick={() => handleCopy(msg.id, msg.content)}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid #f97316',
+                            color: '#f97316',
+                            fontSize: '10px',
+                            padding: '2px 8px',
+                            cursor: 'pointer',
+                            borderRadius: '2px',
+                            fontWeight: 'bold',
+                            letterSpacing: '1px',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          {copiedId === msg.id ? 'COPIED ✓' : 'COPY'}
+                        </button>
+                        <button
+                          onClick={() => handleSpeak(msg.id, msg.content)}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid #f97316',
+                            color: '#f97316',
+                            fontSize: '10px',
+                            padding: '2px 8px',
+                            cursor: 'pointer',
+                            borderRadius: '2px',
+                            fontWeight: 'bold',
+                            letterSpacing: '1px',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          {speakingId === msg.id ? 'STOP' : 'SPEAK'}
+                        </button>
                       </div>
                     )}
                   </div>
