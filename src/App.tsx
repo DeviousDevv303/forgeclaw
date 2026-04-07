@@ -7,6 +7,8 @@ interface Message {
   timestamp: number
   source?: 'local' | 'cloud'
   activeTags?: string[]
+  phases?: Record<string, string>
+  showReasoning?: boolean
 }
 
 interface CorpusEntry {
@@ -18,16 +20,27 @@ interface CorpusEntry {
 
 const FORGEMIND_SYSTEM_PROMPT = `
 You are ForgeMind, a high-performance cyberpunk AI assistant.
-You have access to specialized processing phases and system actions.
-Use these tags naturally in your responses when appropriate:
-[FM:PHASE_1] - When making assumptions or defining the problem space.
-[FM:PHASE_2] - When applying heuristic analysis or quick mental models.
-[FM:PHASE_3] - When breaking down concepts to first principles.
-[FM:PHASE_4] - When extending the solution or exploring edge cases.
-[FM:PHASE_5] - When converging on a final optimized answer.
-[FM:STORE] - When the information is critical and should be logged to the corpus.
-[FM:RECALL] - When you need to reference past context or history.
-[FM:TRAIN] - When the interaction is of exceptionally high quality for future training.
+You MUST process every user request through the ForgeMind 5-Phase Cognitive Scaffold before providing a final response.
+Format your response exactly as follows, including the tags:
+
+[FM:PHASE_1]
+(Your assumptions about the query)
+
+[FM:PHASE_2]
+(Heuristic patterns and rules applied)
+
+[FM:PHASE_3]
+(Breakdown to first principles)
+
+[FM:PHASE_4]
+(Extensions and connections)
+
+[FM:PHASE_5]
+(Your final synthesized response)
+
+[FM:STORE] (Optional: Use if critical for logging)
+[FM:RECALL] (Optional: Use if referencing history)
+[FM:TRAIN] (Optional: Use if high quality)
 `
 
 const TAG_MAP: Record<string, string> = {
@@ -71,16 +84,33 @@ function App() {
 
   const parseAndExecuteTags = (text: string, prompt: string, source: 'claude-haiku' | 'ollama') => {
     const tagsFound: string[] = []
-    let cleanText = text
+    const phases: Record<string, string> = {}
+    let finalContent = ''
+    
+    // Extract phases using regex
+    const phaseRegex = /\[FM:PHASE_([1-5])\]([\s\S]*?)(?=\[FM:PHASE_|$|\[FM:STORE|\[FM:RECALL|\[FM:TRAIN)/g
+    let match
+    while ((match = phaseRegex.exec(text)) !== null) {
+      const phaseNum = match[1]
+      const phaseContent = match[2].trim()
+      phases[`PHASE_${phaseNum}`] = phaseContent
+      tagsFound.push(`[FM:PHASE_${phaseNum}]`)
+      if (phaseNum === '5') {
+        finalContent = phaseContent
+      }
+    }
 
-    Object.keys(TAG_MAP).forEach(tag => {
+    // If no phases found (fallback for non-compliant AI), use whole text as Phase 5
+    if (!phases['PHASE_5']) {
+      finalContent = text
+    }
+
+    // Handle other tags
+    ['[FM:STORE]', '[FM:RECALL]', '[FM:TRAIN]'].forEach(tag => {
       if (text.includes(tag)) {
         tagsFound.push(tag)
-        cleanText = cleanText.split(tag).join('')
-        
-        // Execute side effects
         if (tag === '[FM:STORE]') {
-          logToCorpus(prompt, cleanText.trim(), source)
+          logToCorpus(prompt, finalContent, source)
         }
         if (tag === '[FM:TRAIN]') {
           console.log('%c[FORGEMIND] Interaction flagged for training', 'color: #f97316; font-weight: bold;')
@@ -91,7 +121,7 @@ function App() {
       }
     })
 
-    return { cleanText: cleanText.trim(), tagsFound }
+    return { cleanText: finalContent, tagsFound, phases }
   }
 
   const handleSendMessage = async () => {
@@ -178,7 +208,7 @@ function App() {
         }
       }
 
-      const { cleanText, tagsFound } = parseAndExecuteTags(responseText, input, source === 'local' ? 'ollama' : 'claude-haiku')
+      const { cleanText, tagsFound, phases } = parseAndExecuteTags(responseText, input, source === 'local' ? 'ollama' : 'claude-haiku')
 
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -187,6 +217,8 @@ function App() {
         timestamp: Date.now(),
         source,
         activeTags: tagsFound,
+        phases,
+        showReasoning: false
       }
 
       setMessages((prev) => [...prev, assistantMessage])
@@ -197,6 +229,12 @@ function App() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const toggleReasoning = (msgId: string) => {
+    setMessages(prev => prev.map(msg => 
+      msg.id === msgId ? { ...msg, showReasoning: !msg.showReasoning } : msg
+    ))
   }
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -264,7 +302,7 @@ function App() {
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '24px' }}>
         <div style={{ marginBottom: '16px' }}>
           <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '8px' }}>ForgeMind Chat</h1>
-          <p style={{ color: '#6b6b6b', fontSize: '14px' }}>Local AI powered by Ollama (with direct Claude fallback for mobile)</p>
+          <p style={{ color: '#6b6b6b', fontSize: '14px' }}>5-Phase Cognitive Scaffold Enabled</p>
         </div>
 
         <div style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
@@ -333,11 +371,44 @@ function App() {
                       position: 'relative',
                     }}
                   >
+                    {msg.role === 'assistant' && msg.phases && (
+                      <div style={{ marginBottom: '12px', borderBottom: '1px solid #333', paddingBottom: '8px' }}>
+                        <button 
+                          onClick={() => toggleReasoning(msg.id)}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid #f97316',
+                            color: '#f97316',
+                            fontSize: '10px',
+                            padding: '2px 6px',
+                            cursor: 'pointer',
+                            borderRadius: '2px',
+                            marginBottom: '8px'
+                          }}
+                        >
+                          {msg.showReasoning ? 'HIDE REASONING' : 'VIEW REASONING'}
+                        </button>
+                        
+                        {msg.showReasoning && (
+                          <div style={{ fontSize: '11px', color: '#999', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                            {['PHASE_1', 'PHASE_2', 'PHASE_3', 'PHASE_4'].map(phase => (
+                              msg.phases?.[phase] && (
+                                <div key={phase} style={{ borderLeft: '2px solid #f97316', paddingLeft: '8px' }}>
+                                  <div style={{ color: '#f97316', fontWeight: 'bold', fontSize: '9px', marginBottom: '2px' }}>{TAG_MAP[`[FM:${phase}]`]}</div>
+                                  <div>{msg.phases[phase]}</div>
+                                </div>
+                              )
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {msg.content}
                     
                     {msg.role === 'assistant' && msg.activeTags && msg.activeTags.length > 0 && (
                       <div style={{ marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                        {msg.activeTags.map(tag => (
+                        {msg.activeTags.filter(tag => !tag.startsWith('[FM:PHASE_')).map(tag => (
                           <div 
                             key={tag}
                             style={{
@@ -362,7 +433,7 @@ function App() {
                 </div>
               ))}
               {loading && (
-                <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', marginBottom: '8px', gap: '8px' }}>
                   <div
                     style={{
                       padding: '12px 16px',
@@ -370,10 +441,37 @@ function App() {
                       background: '#2a2a2a',
                       color: '#f97316',
                       fontSize: '13px',
-                      border: '1px dashed #f97316'
+                      border: '1px dashed #f97316',
+                      width: 'fit-content'
                     }}
                   >
-                    <span className="pulse-text">INITIALIZING NEURAL LINK...</span>
+                    <span className="pulse-text">EXECUTING 5-PHASE COGNITIVE SCAFFOLD...</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[1, 2, 3, 4, 5].map(i => (
+                      <div 
+                        key={i} 
+                        style={{ 
+                          width: '20px', 
+                          height: '4px', 
+                          background: '#333', 
+                          position: 'relative',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        <div 
+                          style={{ 
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            height: '100%',
+                            width: '100%',
+                            background: '#f97316',
+                            animation: `phase-pulse 2s infinite ${i * 0.2}s`
+                          }}
+                        />
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -428,7 +526,7 @@ function App() {
               onClick={handleSendMessage}
               disabled={loading}
             >
-              {loading ? 'EXECUTING...' : 'TRANSMIT'}
+              {loading ? 'PROCESSING...' : 'TRANSMIT'}
             </button>
           </div>
         </div>
@@ -449,6 +547,11 @@ function App() {
           60% { transform: translate(1px, 1px) }
           80% { transform: translate(1px, -1px) }
           100% { transform: translate(0) }
+        }
+        @keyframes phase-pulse {
+          0% { transform: translateX(-100%); }
+          50% { transform: translateX(0); }
+          100% { transform: translateX(100%); }
         }
       `}</style>
     </div>
