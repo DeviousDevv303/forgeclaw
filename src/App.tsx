@@ -6,6 +6,7 @@ interface Message {
   content: string
   timestamp: number
   source?: 'local' | 'cloud'
+  activeTags?: string[]
 }
 
 interface CorpusEntry {
@@ -13,6 +14,31 @@ interface CorpusEntry {
   response: string
   source: 'claude-haiku' | 'ollama'
   timestamp: string
+}
+
+const FORGEMIND_SYSTEM_PROMPT = `
+You are ForgeMind, a high-performance cyberpunk AI assistant.
+You have access to specialized processing phases and system actions.
+Use these tags naturally in your responses when appropriate:
+[FM:PHASE_1] - When making assumptions or defining the problem space.
+[FM:PHASE_2] - When applying heuristic analysis or quick mental models.
+[FM:PHASE_3] - When breaking down concepts to first principles.
+[FM:PHASE_4] - When extending the solution or exploring edge cases.
+[FM:PHASE_5] - When converging on a final optimized answer.
+[FM:STORE] - When the information is critical and should be logged to the corpus.
+[FM:RECALL] - When you need to reference past context or history.
+[FM:TRAIN] - When the interaction is of exceptionally high quality for future training.
+`
+
+const TAG_MAP: Record<string, string> = {
+  '[FM:PHASE_1]': '⚡ Assumptions phase activated',
+  '[FM:PHASE_2]': '⚡ Heuristics phase activated',
+  '[FM:PHASE_3]': '⚡ First Principles phase activated',
+  '[FM:PHASE_4]': '⚡ Extension phase activated',
+  '[FM:PHASE_5]': '⚡ Convergence phase activated',
+  '[FM:STORE]': '💾 Response logged to corpus',
+  '[FM:RECALL]': '🔍 Searching chat history',
+  '[FM:TRAIN]': '💎 High-quality data flagged',
 }
 
 function App() {
@@ -43,6 +69,31 @@ function App() {
     setCorpus((prev) => [...prev, entry])
   }
 
+  const parseAndExecuteTags = (text: string, prompt: string, source: 'claude-haiku' | 'ollama') => {
+    const tagsFound: string[] = []
+    let cleanText = text
+
+    Object.keys(TAG_MAP).forEach(tag => {
+      if (text.includes(tag)) {
+        tagsFound.push(tag)
+        cleanText = cleanText.split(tag).join('')
+        
+        // Execute side effects
+        if (tag === '[FM:STORE]') {
+          logToCorpus(prompt, cleanText.trim(), source)
+        }
+        if (tag === '[FM:TRAIN]') {
+          console.log('%c[FORGEMIND] Interaction flagged for training', 'color: #f97316; font-weight: bold;')
+        }
+        if (tag === '[FM:RECALL]') {
+          console.log('%c[FORGEMIND] Recalling past context...', 'color: #3b82f6; font-weight: bold;')
+        }
+      }
+    })
+
+    return { cleanText: cleanText.trim(), tagsFound }
+  }
+
   const handleSendMessage = async () => {
     if (input.trim() === '') return
     if (!apiKey.trim()) {
@@ -68,13 +119,13 @@ function App() {
     try {
       let ollamaSuccess = false;
       
-      // Attempt Local Ollama (only if not on a secure mobile browser that blocks it)
       try {
         const ollamaResponse = await fetch('http://localhost:11434/api/generate', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             model: 'qwen2.5:1.8b',
+            system: FORGEMIND_SYSTEM_PROMPT,
             prompt: input,
             stream: false,
           }),
@@ -86,7 +137,6 @@ function App() {
           responseText = data.response || 'No response received'
           source = 'local'
           setLastSource('local')
-          logToCorpus(input, responseText, 'ollama')
           ollamaSuccess = true;
         }
       } catch (ollamaErr) {
@@ -94,8 +144,6 @@ function App() {
       }
 
       if (!ollamaSuccess) {
-        // Direct Anthropic API Fallback
-        // Note: 'anthropic-dangerous-direct-browser-access' header is REQUIRED for CORS to work
         try {
           const claudeResponse = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
@@ -108,6 +156,7 @@ function App() {
             body: JSON.stringify({
               model: 'claude-3-5-haiku-20241022',
               max_tokens: 1024,
+              system: FORGEMIND_SYSTEM_PROMPT,
               messages: [{ role: 'user', content: input }],
             }),
           })
@@ -121,22 +170,23 @@ function App() {
           responseText = claudeData.content[0]?.text || 'No response received'
           source = 'cloud'
           setLastSource('cloud')
-          logToCorpus(input, responseText, 'claude-haiku')
         } catch (fetchErr) {
-          // Provide more helpful error message for NetworkError
           if (fetchErr instanceof Error && fetchErr.name === 'TypeError' && fetchErr.message.includes('fetch')) {
-             throw new Error("Cloud Network Error: The browser blocked the request. Ensure your API key is correct and you have an active internet connection. If you're on mobile, this fallback uses direct browser access.");
+             throw new Error("Cloud Network Error: The browser blocked the request. Ensure your API key is correct and you have an active internet connection.");
           }
           throw fetchErr;
         }
       }
 
+      const { cleanText, tagsFound } = parseAndExecuteTags(responseText, input, source === 'local' ? 'ollama' : 'claude-haiku')
+
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: responseText,
+        content: cleanText,
         timestamp: Date.now(),
         source,
+        activeTags: tagsFound,
       }
 
       setMessages((prev) => [...prev, assistantMessage])
@@ -217,7 +267,6 @@ function App() {
           <p style={{ color: '#6b6b6b', fontSize: '14px' }}>Local AI powered by Ollama (with direct Claude fallback for mobile)</p>
         </div>
 
-        {/* API Key Input */}
         <div style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px' }}>
             <input
             type="password"
@@ -256,20 +305,23 @@ function App() {
                   key={msg.id}
                   style={{
                     display: 'flex',
-                    justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                    flexDirection: 'column',
+                    alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
                     marginBottom: '8px',
-                    alignItems: 'flex-end',
-                    gap: '8px',
+                    gap: '4px',
                   }}
                 >
-                  {msg.role === 'assistant' && msg.source && (
-                    <span style={{ fontSize: '10px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', marginBottom: '4px' }}>
-                      {msg.source === 'local' ? 'LOCAL' : 'CLOUD'}
-                    </span>
-                  )}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {msg.role === 'assistant' && msg.source && (
+                      <span style={{ fontSize: '10px', color: msg.source === 'local' ? '#10b981' : '#3b82f6' }}>
+                        {msg.source === 'local' ? 'LOCAL' : 'CLOUD'}
+                      </span>
+                    )}
+                  </div>
+                  
                   <div
                     style={{
-                      maxWidth: '70%',
+                      maxWidth: '85%',
                       padding: '12px 16px',
                       borderRadius: '6px',
                       background: msg.role === 'user' ? '#f97316' : '#2a2a2a',
@@ -277,9 +329,35 @@ function App() {
                       wordWrap: 'break-word',
                       fontSize: '13px',
                       lineHeight: '1.5',
+                      border: msg.role === 'assistant' ? '1px solid #333' : 'none',
+                      position: 'relative',
                     }}
                   >
                     {msg.content}
+                    
+                    {msg.role === 'assistant' && msg.activeTags && msg.activeTags.length > 0 && (
+                      <div style={{ marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {msg.activeTags.map(tag => (
+                          <div 
+                            key={tag}
+                            style={{
+                              fontSize: '10px',
+                              background: '#000',
+                              color: '#f97316',
+                              padding: '4px 8px',
+                              borderRadius: '2px',
+                              border: '1px solid #f97316',
+                              textTransform: 'uppercase',
+                              letterSpacing: '1px',
+                              boxShadow: '0 0 5px rgba(249, 115, 22, 0.3)',
+                              animation: 'glitch 2s infinite'
+                            }}
+                          >
+                            {TAG_MAP[tag]}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -292,9 +370,10 @@ function App() {
                       background: '#2a2a2a',
                       color: '#f97316',
                       fontSize: '13px',
+                      border: '1px dashed #f97316'
                     }}
                   >
-                    <span style={{ animation: 'pulse 1.5s infinite' }}>Thinking...</span>
+                    <span className="pulse-text">INITIALIZING NEURAL LINK...</span>
                   </div>
                 </div>
               )}
@@ -304,12 +383,12 @@ function App() {
         </div>
 
         {error && (
-          <div style={{ background: '#3a1a1a', border: '1px solid #f97316', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', color: '#f97316', fontSize: '13px' }}>
-            {error}
+          <div style={{ background: '#3a1a1a', border: '1px solid #f97316', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', color: '#f97316', fontSize: '13px', textTransform: 'uppercase' }}>
+            [SYSTEM CRITICAL]: {error}
           </div>
         )}
 
-        <div style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '16px' }}>
+        <div style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
           <div style={{ display: 'flex', gap: '12px' }}>
             <textarea
               style={{
@@ -325,7 +404,7 @@ function App() {
                 minHeight: '60px',
               }}
               rows={3}
-              placeholder="Ask me anything... (Ctrl+Enter to send)"
+              placeholder="Inject command... (Ctrl+Enter to fire)"
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
@@ -338,16 +417,18 @@ function App() {
                 padding: '12px 24px',
                 borderRadius: '4px',
                 border: 'none',
-                fontWeight: '600',
+                fontWeight: 'bold',
                 cursor: loading ? 'not-allowed' : 'pointer',
                 fontSize: '13px',
                 height: 'fit-content',
                 whiteSpace: 'nowrap',
+                letterSpacing: '1px',
+                boxShadow: loading ? 'none' : '0 0 10px rgba(249, 115, 22, 0.4)'
               }}
               onClick={handleSendMessage}
               disabled={loading}
             >
-              {loading ? 'SENDING...' : 'SEND'}
+              {loading ? 'EXECUTING...' : 'TRANSMIT'}
             </button>
           </div>
         </div>
@@ -357,6 +438,17 @@ function App() {
         @keyframes pulse {
           0%, 100% { opacity: 1; }
           50% { opacity: 0.5; }
+        }
+        .pulse-text {
+          animation: pulse 1.5s infinite;
+        }
+        @keyframes glitch {
+          0% { transform: translate(0) }
+          20% { transform: translate(-1px, 1px) }
+          40% { transform: translate(-1px, -1px) }
+          60% { transform: translate(1px, 1px) }
+          80% { transform: translate(1px, -1px) }
+          100% { transform: translate(0) }
         }
       `}</style>
     </div>
