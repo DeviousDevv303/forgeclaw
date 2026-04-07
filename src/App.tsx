@@ -126,7 +126,7 @@ function App() {
 
   const handleSendMessage = async () => {
     if (input.trim() === '') return
-    if (!apiKey.trim()) {
+    if (!apiKey) {
       setError('Claude API key required for fallback. Please enter your API key.')
       return
     }
@@ -184,7 +184,7 @@ function App() {
               'anthropic-dangerous-direct-browser-access': 'true'
             },
             body: JSON.stringify({
-              model: 'claude-3-5-haiku-20241022',
+              model: 'claude-haiku-4-5-20251001',
               max_tokens: 1024,
               system: FORGEMIND_SYSTEM_PROMPT,
               messages: [{ role: 'user', content: input }],
