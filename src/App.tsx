@@ -75,7 +75,9 @@ function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [apiKey, setApiKey] = useState('')
+  const [apiKey, setApiKey] = useState(() => {
+    return localStorage.getItem('fm_api_key') || ''
+  })
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = localStorage.getItem('forgemind_corpus')
     return saved ? JSON.parse(saved) : []
@@ -103,6 +105,10 @@ function App() {
   useEffect(() => {
     localStorage.setItem('forgemind_corpus', JSON.stringify(corpus))
   }, [corpus])
+
+  useEffect(() => {
+    localStorage.setItem('fm_api_key', apiKey)
+  }, [apiKey])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -312,11 +318,13 @@ function App() {
   }
 
   const handleClearMemory = () => {
-    if (window.confirm('CRITICAL: WIPE ALL SESSION MEMORY?')) {
+    if (window.confirm('CRITICAL: WIPE ALL SESSION MEMORY AND API KEY?')) {
       localStorage.removeItem('forgemind_history')
       localStorage.removeItem('forgemind_corpus')
+      localStorage.removeItem('fm_api_key')
       setMessages([])
       setCorpus([])
+      setApiKey('')
       setLastSource(null)
       setError('Memory purged. System reset.')
       setTimeout(() => setError(null), 3000)
