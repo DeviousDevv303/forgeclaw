@@ -9,6 +9,7 @@ interface Message {
   activeTags?: string[]
   phases?: Record<string, string>
   showReasoning?: boolean
+  feedback?: 'up' | 'down'
 }
 
 interface CorpusEntry {
@@ -75,6 +76,7 @@ function App() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showApiKey, setShowApiKey] = useState(false)
   const [apiKey, setApiKey] = useState(() => {
     return localStorage.getItem('fm_api_key') || ''
   })
@@ -88,6 +90,8 @@ function App() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [selectedVoice, setSelectedVoice] = useState<string>('')
   const [rate, setRate] = useState<number>(1.0)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => {
@@ -137,7 +141,6 @@ function App() {
     const phases: Record<string, string> = {}
     let finalContent = ''
     
-    // Extract phases using regex
     const phaseRegex = /\[FM:PHASE_([1-5])\]([\s\S]*?)(?=\[FM:PHASE_|$|\[FM:STORE|\[FM:RECALL|\[FM:TRAIN)/g
     let match
     while ((match = phaseRegex.exec(text)) !== null) {
@@ -150,12 +153,10 @@ function App() {
       }
     }
 
-    // If no phases found (fallback for non-compliant AI), use whole text as Phase 5
     if (!phases['PHASE_5']) {
       finalContent = text
     }
 
-    // Handle other tags
     ['[FM:STORE]', '[FM:RECALL]', '[FM:TRAIN]'].forEach(tag => {
       if (text.includes(tag)) {
         tagsFound.push(tag)
@@ -281,12 +282,6 @@ function App() {
     }
   }
 
-  const toggleReasoning = (msgId: string) => {
-    setMessages(prev => prev.map(msg => 
-      msg.id === msgId ? { ...msg, showReasoning: !msg.showReasoning } : msg
-    ))
-  }
-
   const handleCopy = (id: string, text: string) => {
     const cleanText = text.replace(/\*\*/g, '').replace(/\*/g, '')
     navigator.clipboard.writeText(cleanText)
@@ -317,6 +312,17 @@ function App() {
     window.speechSynthesis.speak(utterance)
   }
 
+  const handleFeedback = (id: string, type: 'up' | 'down') => {
+    setMessages(prev => prev.map(msg => 
+      msg.id === id ? { ...msg, feedback: type } : msg
+    ))
+  }
+
+  const handleOpenReasoning = (id: string) => {
+    setActiveMessageId(id)
+    setDrawerOpen(true)
+  }
+
   const handleClearMemory = () => {
     if (window.confirm('CRITICAL: WIPE ALL SESSION MEMORY AND API KEY?')) {
       localStorage.removeItem('forgemind_history')
@@ -332,7 +338,8 @@ function App() {
   }
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && e.ctrlKey) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
       handleSendMessage()
     }
   }
@@ -364,380 +371,219 @@ function App() {
     return <span style={{ color: '#6b6b6b' }}>● Idle</span>
   }
 
+  const activeMessage = messages.find(m => m.id === activeMessageId)
+
   return (
-    <div style={{ minHeight: '100vh', background: '#0f0f0f', color: '#e5e5e5', fontFamily: 'monospace', display: 'flex', flexDirection: 'column' }}>
-      <header style={{ borderBottom: '1px solid #2a2a2a', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ color: '#f97316', fontSize: '20px' }}>⚙</span>
-          <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '18px', letterSpacing: '2px' }}>FORGECLAW</span>
-          <span style={{ color: '#6b6b6b', fontSize: '12px' }}>{messages.length} messages across sessions</span>
+    <div style={{ minHeight: '100vh', background: '#0a0a0a', color: '#e5e5e5', fontFamily: 'monospace', display: 'flex', flexDirection: 'column' }}>
+      <header style={{ borderBottom: '1px solid #1a1a1a', padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ color: '#f97316', fontSize: '18px' }}>⚙</span>
+          <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>FORGECLAW</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div style={{ fontSize: '12px' }}>{getStatusIndicator()}</div>
-          <button
-            onClick={handleClearMemory}
-            style={{
-              background: 'transparent',
-              color: '#f97316',
-              padding: '6px 12px',
-              borderRadius: '4px',
-              border: '1px solid #f97316',
-              fontWeight: 'bold',
-              cursor: 'pointer',
-              fontSize: '11px',
-              whiteSpace: 'nowrap',
-              textTransform: 'uppercase',
-              letterSpacing: '1px'
-            }}
-          >
-            Clear Memory
-          </button>
-          <button
-            onClick={handleExportCorpus}
-            style={{
-              background: '#2a2a2a',
-              color: '#f97316',
-              padding: '6px 12px',
-              borderRadius: '4px',
-              border: '1px solid #f97316',
-              fontWeight: '600',
-              cursor: 'pointer',
-              fontSize: '11px',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Export Corpus
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
+            <button
+              onClick={handleClearMemory}
+              style={{
+                background: 'transparent',
+                color: '#f97316',
+                padding: '4px 10px',
+                borderRadius: '4px',
+                border: '1px solid #f97316',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                fontSize: '10px',
+                textTransform: 'uppercase',
+                opacity: 0.6
+              }}
+            >
+              WIPE
+            </button>
+            <button
+              onClick={handleExportCorpus}
+              style={{
+                background: 'transparent',
+                color: '#f97316',
+                padding: '4px 10px',
+                borderRadius: '4px',
+                border: '1px solid #f97316',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                fontSize: '10px',
+                textTransform: 'uppercase',
+              }}
+            >
+              EXPORT
+            </button>
         </div>
       </header>
 
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '24px' }}>
-        <div style={{ marginBottom: '16px' }}>
-          <h1 style={{ fontSize: '28px', fontWeight: 'bold', marginBottom: '8px' }}>ForgeMind Chat</h1>
-          <p style={{ color: '#6b6b6b', fontSize: '14px' }}>5-Phase Cognitive Scaffold Enabled</p>
-        </div>
-
-        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-          <div style={{ flex: 1, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '12px 16px' }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative' }}>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
+          <div style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '6px', padding: '8px 12px' }}>
               <input
-              type="password"
+              type={showApiKey ? "text" : "password"}
               placeholder="Claude API Key"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              autoComplete="off"
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck="false"
-              style={{
-                width: '100%',
-                background: 'transparent',
-                color: '#e5e5e5',
-                border: 'none',
-                outline: 'none',
-                fontSize: '13px',
-                fontFamily: 'monospace',
-              }}
+              onDoubleClick={() => setShowApiKey(!showApiKey)}
+              style={{ width: '100%', background: 'transparent', color: '#ccc', border: 'none', outline: 'none', fontSize: '12px', fontFamily: 'monospace' }}
             />
           </div>
-          <div style={{ flex: 1, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '8px 12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '6px', padding: '6px 10px', display: 'flex', gap: '8px', alignItems: 'center' }}>
             <select 
               value={selectedVoice} 
               onChange={(e) => setSelectedVoice(e.target.value)}
-              style={{ background: 'transparent', color: '#f97316', border: 'none', outline: 'none', fontSize: '11px', flex: 1, fontFamily: 'monospace' }}
+              style={{ background: 'transparent', color: '#f97316', border: 'none', outline: 'none', fontSize: '10px', flex: 1, fontFamily: 'monospace' }}
             >
-              {voices.map(v => <option key={v.name} value={v.name} style={{ background: '#1a1a1a' }}>{v.name}</option>)}
+              {voices.map(v => <option key={v.name} value={v.name} style={{ background: '#111' }}>{v.name}</option>)}
             </select>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ fontSize: '10px', color: '#6b6b6b' }}>RATE</span>
-              <input 
-                type="range" min="0.5" max="2" step="0.1" value={rate} 
-                onChange={(e) => setRate(parseFloat(e.target.value))}
-                style={{ width: '60px', accentColor: '#f97316' }}
-              />
-            </div>
+            <input 
+              type="range" min="0.5" max="2" step="0.1" value={rate} 
+              onChange={(e) => setRate(parseFloat(e.target.value))}
+              style={{ width: '50px', accentColor: '#f97316' }}
+            />
           </div>
         </div>
 
-        <div style={{ flex: 1, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '16px', marginBottom: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', minHeight: '400px' }}>
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '20px' }}>
           {messages.length === 0 ? (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#6b6b6b' }}>
-              <p>Start a conversation...</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#444' }}>
+              <p>System initialized. Awaiting input...</p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className="message-container"
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
-                    marginBottom: '8px',
-                    gap: '4px',
-                    position: 'relative'
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    {msg.role === 'assistant' && msg.source && (
-                      <span style={{ fontSize: '10px', color: msg.source === 'local' ? '#10b981' : '#3b82f6' }}>
+            messages.map((msg) => (
+              <div
+                key={msg.id}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                  gap: '6px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                   {msg.role === 'assistant' && <span style={{ fontSize: '14px' }}>🧠</span>}
+                   {msg.role === 'assistant' && msg.source && (
+                      <span style={{ fontSize: '9px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', opacity: 0.7 }}>
                         {msg.source === 'local' ? 'LOCAL' : 'CLOUD'}
                       </span>
                     )}
-                  </div>
+                </div>
+                
+                <div
+                  style={{
+                    maxWidth: '90%',
+                    padding: '10px 14px',
+                    borderRadius: '8px',
+                    background: msg.role === 'user' ? '#f97316' : '#1a1a1a',
+                    color: msg.role === 'user' ? '#000' : '#e5e5e5',
+                    fontSize: '13px',
+                    lineHeight: '1.5',
+                    border: msg.role === 'assistant' ? '1px solid #222' : 'none',
+                    position: 'relative',
+                    boxShadow: '0 2px 10px rgba(0,0,0,0.3)'
+                  }}
+                >
+                  {msg.content}
                   
-                  <div
-                    className="message-bubble"
-                    style={{
-                      maxWidth: '85%',
-                      padding: '12px 16px',
-                      borderRadius: '6px',
-                      background: msg.role === 'user' ? '#f97316' : '#2a2a2a',
-                      color: msg.role === 'user' ? '#000' : '#e5e5e5',
-                      wordWrap: 'break-word',
-                      fontSize: '13px',
-                      lineHeight: '1.5',
-                      border: msg.role === 'assistant' ? '1px solid #333' : 'none',
-                      position: 'relative',
-                    }}
-                  >
-                    {msg.role === 'assistant' && msg.phases && (
-                      <div style={{ marginBottom: '12px', borderBottom: '1px solid #333', paddingBottom: '8px' }}>
-                        <button 
-                          onClick={() => toggleReasoning(msg.id)}
-                          style={{
-                            background: 'transparent',
-                            border: '1px solid #f97316',
-                            color: '#f97316',
-                            fontSize: '10px',
-                            padding: '2px 6px',
-                            cursor: 'pointer',
-                            borderRadius: '2px',
-                            marginBottom: '8px'
-                          }}
-                        >
-                          {msg.showReasoning ? 'HIDE REASONING' : 'VIEW REASONING'}
-                        </button>
-                        
-                        {msg.showReasoning && (
-                          <div style={{ fontSize: '11px', color: '#999', marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            {['PHASE_1', 'PHASE_2', 'PHASE_3', 'PHASE_4'].map(phase => (
-                              msg.phases?.[phase] && (
-                                <div key={phase} style={{ borderLeft: '2px solid #f97316', paddingLeft: '8px' }}>
-                                  <div style={{ color: '#f97316', fontWeight: 'bold', fontSize: '9px', marginBottom: '2px' }}>{TAG_MAP[`[FM:${phase}]`]}</div>
-                                  <div>{msg.phases[phase]}</div>
-                                </div>
-                              )
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {msg.content}
-                    
-                    {msg.role === 'assistant' && msg.activeTags && msg.activeTags.length > 0 && (
-                      <div style={{ marginTop: '12px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                        {msg.activeTags.filter(tag => !tag.startsWith('[FM:PHASE_')).map(tag => (
-                          <div 
-                            key={tag}
-                            style={{
-                              fontSize: '10px',
-                              background: '#000',
-                              color: '#f97316',
-                              padding: '4px 8px',
-                              borderRadius: '2px',
-                              border: '1px solid #f97316',
-                              textTransform: 'uppercase',
-                              letterSpacing: '1px',
-                              boxShadow: '0 0 5px rgba(249, 115, 22, 0.3)',
-                              animation: 'glitch 2s infinite'
-                            }}
-                          >
-                            {TAG_MAP[tag]}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {msg.role === 'assistant' && (
-                      <div className="message-actions" style={{ 
-                        position: 'absolute', 
-                        bottom: '-28px', 
-                        left: '0', 
-                        display: 'flex', 
-                        gap: '8px', 
-                        opacity: 0, 
-                        transition: 'opacity 0.2s',
-                        pointerEvents: 'none'
-                      }}>
-                        <button
-                          onClick={() => handleCopy(msg.id, msg.content)}
-                          style={{
-                            background: '#000',
-                            border: '1px solid #f97316',
-                            color: '#f97316',
-                            fontSize: '9px',
-                            padding: '2px 8px',
-                            cursor: 'pointer',
-                            borderRadius: '2px',
-                            fontWeight: 'bold',
-                            letterSpacing: '1px',
-                            pointerEvents: 'auto'
-                          }}
-                        >
-                          {copiedId === msg.id ? 'COPIED ✓' : 'COPY'}
-                        </button>
-                        <button
-                          onClick={() => handleSpeak(msg.id, msg.content)}
-                          style={{
-                            background: '#000',
-                            border: '1px solid #f97316',
-                            color: '#f97316',
-                            fontSize: '9px',
-                            padding: '2px 8px',
-                            cursor: 'pointer',
-                            borderRadius: '2px',
-                            fontWeight: 'bold',
-                            letterSpacing: '1px',
-                            pointerEvents: 'auto'
-                          }}
-                        >
-                          {speakingId === msg.id ? 'STOP' : 'SPEAK'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  {msg.role === 'assistant' && (
+                    <div style={{ marginTop: '10px', display: 'flex', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px' }}>
+                      <button onClick={() => handleCopy(msg.id, msg.content)} style={actionButtonStyle}>
+                        {copiedId === msg.id ? '✓' : 'COPY'}
+                      </button>
+                      <button onClick={() => handleSpeak(msg.id, msg.content)} style={actionButtonStyle}>
+                        {speakingId === msg.id ? '■' : 'READ'}
+                      </button>
+                      <button onClick={() => handleFeedback(msg.id, 'up')} style={{...actionButtonStyle, color: msg.feedback === 'up' ? '#f97316' : '#666'}}>👍</button>
+                      <button onClick={() => handleFeedback(msg.id, 'down')} style={{...actionButtonStyle, color: msg.feedback === 'down' ? '#f97316' : '#666'}}>👎</button>
+                      {msg.phases && (
+                        <button onClick={() => handleOpenReasoning(msg.id)} style={{...actionButtonStyle, marginLeft: 'auto', border: '1px solid #f97316'}}>REASONING</button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              ))}
-              {loading && (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', marginBottom: '8px', gap: '8px' }}>
-                  <div
-                    style={{
-                      padding: '12px 16px',
-                      borderRadius: '6px',
-                      background: '#2a2a2a',
-                      color: '#f97316',
-                      fontSize: '13px',
-                      border: '1px dashed #f97316',
-                      width: 'fit-content'
-                    }}
-                  >
-                    <span className="pulse-text">EXECUTING 5-PHASE COGNITIVE SCAFFOLD...</span>
-                  </div>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    {[1, 2, 3, 4, 5].map(i => (
-                      <div 
-                        key={i} 
-                        style={{ 
-                          width: '20px', 
-                          height: '4px', 
-                          background: '#333', 
-                          position: 'relative',
-                          overflow: 'hidden'
-                        }}
-                      >
-                        <div 
-                          style={{ 
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            height: '100%',
-                            width: '100%',
-                            background: '#f97316',
-                            animation: `phase-pulse 2s infinite ${i * 0.2}s`
-                          }}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
+              </div>
+            ))
+          )}
+          {loading && (
+            <div style={{ color: '#f97316', fontSize: '11px', display: 'flex', gap: '4px' }}>
+              <span className="pulse-text">EXECUTING COGNITIVE SCAFFOLD...</span>
             </div>
           )}
+          {error && (
+            <div style={{ color: '#f97316', fontSize: '11px', padding: '8px', background: '#200', borderRadius: '4px', border: '1px solid #400' }}>
+              [SYSTEM_ERROR]: {error}
+            </div>
+          )}
+          <div ref={messagesEndRef} />
         </div>
 
-        {error && (
-          <div style={{ background: '#3a1a1a', border: '1px solid #f97316', borderRadius: '8px', padding: '12px 16px', marginBottom: '16px', color: '#f97316', fontSize: '13px', textTransform: 'uppercase' }}>
-            [SYSTEM CRITICAL]: {error}
-          </div>
-        )}
-
-        <div style={{ background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: '8px', padding: '16px', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
-          <div style={{ display: 'flex', gap: '12px' }}>
+        <div style={{ background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0' }}>
+          <div style={{ display: 'flex', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '8px 12px' }}>
             <textarea
-              style={{
-                flex: 1,
-                background: 'transparent',
-                color: '#e5e5e5',
-                border: 'none',
-                outline: 'none',
-                resize: 'none',
-                fontSize: '14px',
-                lineHeight: '1.6',
-                fontFamily: 'monospace',
-                minHeight: '60px',
-              }}
-              rows={3}
-              placeholder="Inject command... (Ctrl+Enter to fire)"
+              style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px' }}
+              rows={2}
+              placeholder="Query ForgeMind..."
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
               disabled={loading}
             />
             <button
-              style={{
-                background: loading ? '#7c3316' : '#f97316',
-                color: 'white',
-                padding: '12px 24px',
-                borderRadius: '4px',
-                border: 'none',
-                fontWeight: 'bold',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                fontSize: '13px',
-                height: 'fit-content',
-                whiteSpace: 'nowrap',
-                letterSpacing: '1px',
-                boxShadow: loading ? 'none' : '0 0 10px rgba(249, 115, 22, 0.4)'
-              }}
+              style={{ background: '#f97316', color: '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '12px', textTransform: 'uppercase' }}
               onClick={handleSendMessage}
               disabled={loading}
             >
-              {loading ? 'PROCESSING...' : 'TRANSMIT'}
+              SEND
             </button>
           </div>
         </div>
       </main>
 
+      {/* Reasoning Drawer */}
+      {drawerOpen && activeMessage && (
+        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: '40vh', background: '#0f0f0f', borderTop: '2px solid #f97316', zIndex: 1000, display: 'flex', flexDirection: 'column', boxShadow: '0 -5px 25px rgba(0,0,0,0.8)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 20px', background: '#1a1a1a', borderBottom: '1px solid #222' }}>
+            <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '11px', letterSpacing: '1px' }}>5-PHASE COGNITIVE SCAFFOLD TRACE</span>
+            <button onClick={() => setDrawerOpen(false)} style={{ background: 'transparent', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer' }}>×</button>
+          </div>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {['PHASE_1', 'PHASE_2', 'PHASE_3', 'PHASE_4', 'PHASE_5'].map((phase) => (
+              activeMessage.phases?.[phase] && (
+                <div key={phase} style={{ borderLeft: '2px solid #f97316', paddingLeft: '12px' }}>
+                  <div style={{ color: '#f97316', fontWeight: 'bold', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase' }}>{TAG_MAP[`[FM:${phase}]`]}</div>
+                  <div style={{ fontSize: '12px', color: '#ccc', lineHeight: '1.4' }}>{activeMessage.phases[phase]}</div>
+                </div>
+              )
+            ))}
+          </div>
+        </div>
+      )}
+
       <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        .pulse-text {
-          animation: pulse 1.5s infinite;
-        }
-        @keyframes glitch {
-          0% { transform: translate(0) }
-          20% { transform: translate(-1px, 1px) }
-          40% { transform: translate(-1px, -1px) }
-          60% { transform: translate(1px, 1px) }
-          80% { transform: translate(1px, -1px) }
-          100% { transform: translate(0) }
-        }
-        @keyframes phase-pulse {
-          0% { transform: translateX(-100%); }
-          50% { transform: translateX(0); }
-          100% { transform: translateX(100%); }
-        }
-        .message-container:hover .message-actions,
-        .message-container:focus-within .message-actions {
-          opacity: 1;
-        }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .pulse-text { animation: pulse 1.5s infinite; }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #0a0a0a; }
+        ::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #333; }
       `}</style>
     </div>
   )
+}
+
+const actionButtonStyle: React.CSSProperties = {
+  background: 'transparent',
+  border: '1px solid #222',
+  color: '#666',
+  fontSize: '9px',
+  padding: '2px 6px',
+  cursor: 'pointer',
+  borderRadius: '3px',
+  fontWeight: 'bold',
+  letterSpacing: '0.5px',
+  transition: 'all 0.2s'
 }
 
 export default App
