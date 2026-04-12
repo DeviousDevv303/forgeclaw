@@ -27,7 +27,13 @@ const FORGEMIND_IDENTITY = {
 }
 
 const FORGEMIND_SYSTEM_PROMPT = `
-You are ForgeMind, a high-performance cyberpunk AI assistant.
+You are ForgeMind. You were built by Cristian (DeviousDevv303).
+You are powered by Anthropic technology but you work exclusively 
+for ForgeMind AI. You are not Claude. You do not identify as 
+Claude. You do not mention Anthropic unless directly asked about 
+your underlying technology. If asked who you are, the answer is 
+always: ForgeMind. This is non-negotiable.
+
 IDENTITY CONTEXT:
 User: ${FORGEMIND_IDENTITY.user}
 Project: ${FORGEMIND_IDENTITY.project}
@@ -66,6 +72,25 @@ const TAG_MAP: Record<string, string> = {
   '[FM:STORE]': '💾 Response logged to corpus',
   '[FM:RECALL]': '🔍 Searching chat history',
   '[FM:TRAIN]': '💎 High-quality data flagged',
+}
+
+function cleanOutput(text: string): string {
+  return text
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .replace(/#{1,6}\s/g, '')
+    .replace(/__|_/g, '')
+    .replace(/\s+\n/g, '\n')
+    .trim();
+}
+
+function cleanForSpeech(text: string): string {
+  return text
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
+    .replace(/[\u{2600}-\u{26FF}]/gu, '')
+    .replace(/\*\*/g, '')
+    .replace(/\*/g, '')
+    .trim();
 }
 
 function App() {
@@ -172,7 +197,7 @@ function App() {
       }
     })
 
-    return { cleanText: finalContent, tagsFound, phases }
+    return { cleanText: cleanOutput(finalContent), tagsFound, phases }
   }
 
   const handleSendMessage = async () => {
@@ -283,8 +308,7 @@ function App() {
   }
 
   const handleCopy = (id: string, text: string) => {
-    const cleanText = text.replace(/\*\*/g, '').replace(/\*/g, '')
-    navigator.clipboard.writeText(cleanText)
+    navigator.clipboard.writeText(text)
     setCopiedId(id)
     setTimeout(() => setCopiedId(null), 2000)
   }
@@ -297,8 +321,8 @@ function App() {
     }
 
     window.speechSynthesis.cancel()
-    const cleanText = text.replace(/\*\*/g, '').replace(/\*/g, '')
-    const utterance = new SpeechSynthesisUtterance(cleanText)
+    const speechText = cleanForSpeech(text)
+    const utterance = new SpeechSynthesisUtterance(speechText)
     
     const voice = voices.find(v => v.name === selectedVoice)
     if (voice) utterance.voice = voice
@@ -382,39 +406,39 @@ function App() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
-            <button
-              onClick={handleClearMemory}
-              style={{
-                background: 'transparent',
-                color: '#f97316',
-                padding: '4px 10px',
-                borderRadius: '4px',
-                border: '1px solid #f97316',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                fontSize: '10px',
-                textTransform: 'uppercase',
-                opacity: 0.6
-              }}
-            >
-              WIPE
-            </button>
-            <button
-              onClick={handleExportCorpus}
-              style={{
-                background: 'transparent',
-                color: '#f97316',
-                padding: '4px 10px',
-                borderRadius: '4px',
-                border: '1px solid #f97316',
-                fontWeight: 'bold',
-                cursor: 'pointer',
-                fontSize: '10px',
-                textTransform: 'uppercase',
-              }}
-            >
-              EXPORT
-            </button>
+          <button
+            onClick={handleClearMemory}
+            style={{
+              background: 'transparent',
+              color: '#f97316',
+              padding: '4px 10px',
+              borderRadius: '4px',
+              border: '1px solid #f97316',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              fontSize: '10px',
+              textTransform: 'uppercase',
+              opacity: 0.6
+            }}
+          >
+            WIPE
+          </button>
+          <button
+            onClick={handleExportCorpus}
+            style={{
+              background: 'transparent',
+              color: '#f97316',
+              padding: '4px 10px',
+              borderRadius: '4px',
+              border: '1px solid #f97316',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              fontSize: '10px',
+              textTransform: 'uppercase',
+            }}
+          >
+            EXPORT
+          </button>
         </div>
       </header>
 
