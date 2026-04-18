@@ -6,7 +6,9 @@ export type FailureSeverity = 'info' | 'warning' | 'error' | 'critical'
 // warning: performance degradation, heuristic anomalies, partial success
 // info: contextual logging, state transitions, audit trails
 
-export type FailureSource = 'forgemind' | 'repoagent' | 'ollama' | 'claude' | 'github'
+export type FailureSource =
+  | 'forgemind' | 'repoagent' | 'ollama' | 'claude' | 'github'
+  | 'orchestrator'  // authority layer telemetry
 
 export interface FailureEvent {
   id: string

@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useErrorBus } from './hooks/useErrorBus'
+import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
+import { OrchestratorPanel } from './components/OrchestratorPanel'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -334,10 +336,11 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyze
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'repoagent' | 'failures'
+type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
+  const { taskQueue, events: orchEvents, admitTask, resolveTask, contracts } = useOrchestrator({ emitFailure })
 
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -411,6 +414,17 @@ function App() {
       return
     }
 
+    // Orchestrator: admit forgemind chat task
+    const taskId = `fm-${Date.now()}`
+    admitTask({
+      taskId,
+      agentId: 'forgemind',
+      intent: 'chat',
+      payload: { promptLength: promptText.length },
+      timeout: 30000,
+      requestedScopes: ['corpus:write', 'errorBus:emit', 'localStorage:write'],
+    })
+
     const userMessage: Message = { id: Date.now().toString(), role: 'user', content: promptText, timestamp: Date.now() }
     setMessages(prev => [...prev, userMessage])
     setLoading(true)
@@ -444,6 +458,7 @@ function App() {
 
       const { cleanText, tagsFound, phases } = parseAndExecuteTags(responseText, promptText, source === 'local' ? 'ollama' : 'claude-haiku')
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, activeTags: tagsFound, phases, showReasoning: false }])
+      resolveTask(taskId)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
       emitFailure({
@@ -453,7 +468,7 @@ function App() {
         context: { promptLength: promptText.length },
       })
     } finally { setLoading(false) }
-  }, [apiKey, emitFailure]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiKey, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => { await sendPrompt(input); setInput('') }
 
@@ -503,9 +518,10 @@ function App() {
   }
 
   const TABS: { id: Tab; label: string }[] = [
-    { id: 'forgemind', label: '🧠 ForgeMind' },
-    { id: 'repoagent', label: '🐙 RepoAgent' },
-    { id: 'failures',  label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
+    { id: 'forgemind',    label: '🧠 ForgeMind' },
+    { id: 'repoagent',   label: '🐙 RepoAgent' },
+    { id: 'orchestrator',label: `🎛️ Orchestrator${taskQueue.length > 0 ? ` (${taskQueue.length})` : ''}` },
+    { id: 'failures',    label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
   ]
 
   return (
@@ -643,6 +659,18 @@ function App() {
                 emitFailure={emitFailure}
               />
             </div>
+          </div>
+        )}
+
+        {/* ── Orchestrator Tab ── */}
+        {activeTab === 'orchestrator' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <OrchestratorPanel
+              taskQueue={taskQueue}
+              events={orchEvents}
+              contracts={contracts}
+              onResolveTask={resolveTask}
+            />
           </div>
         )}
 
