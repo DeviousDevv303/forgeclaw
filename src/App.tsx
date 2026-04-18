@@ -1,4 +1,7 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { useErrorBus } from './hooks/useErrorBus'
+import { FailureDashboard } from './components/FailureDashboard'
+import type { EmitFailureOptions } from './hooks/useErrorBus'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -142,9 +145,10 @@ interface RepoAnalyzerProps {
   apiKey: string
   onAnalyze: (prompt: string) => void
   analyzing: boolean
+  emitFailure: (opts: EmitFailureOptions) => string
 }
 
-function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
+function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyzerProps) {
   const [repoUrl, setRepoUrl] = useState('')
   const [ghToken, setGhToken] = useState(() => localStorage.getItem('gh_token') || '')
   const [tree, setTree] = useState<RepoTreeItem[]>([])
@@ -177,7 +181,9 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
       const items = await fetchRepoTree(parsed.owner, parsed.repo, ghToken)
       setTree(items)
     } catch (e) {
-      setTreeError(e instanceof Error ? e.message : 'Failed to load tree')
+      const msg = e instanceof Error ? e.message : 'Failed to load tree'
+      setTreeError(msg)
+      emitFailure({ source: 'github', severity: 'error', message: `Tree load failed: ${msg}`, context: { repo: repoUrl } })
     } finally { setLoadingTree(false) }
   }
 
@@ -188,10 +194,13 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
       const { content, sha } = await fetchFileContent(parsed.owner, parsed.repo, path, ghToken)
       setFileContent(content); setFileSha(sha); setEditContent(content)
     } catch (e) {
-      setFileContent(e instanceof Error ? e.message : 'Error loading file')
+      const msg = e instanceof Error ? e.message : 'Error loading file'
+      setFileContent(msg)
+      emitFailure({ source: 'github', severity: 'error', message: `File fetch failed: ${msg}`, context: { path } })
     } finally { setLoadingFile(false) }
   }
 
+  // STANDING RULE: Do not touch push/dispatch logic below
   const handlePush = async () => {
     if (!parsed || !selectedFile || !commitMsg) return
     setPushing(true); setPushStatus(null)
@@ -200,7 +209,9 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
       setPushStatus('✓ Pushed successfully')
       setFileContent(editContent); setEditMode(false)
     } catch (e) {
-      setPushStatus(e instanceof Error ? `✗ ${e.message}` : '✗ Push failed')
+      const msg = e instanceof Error ? e.message : 'Push failed'
+      setPushStatus(`✗ ${msg}`)
+      emitFailure({ source: 'github', severity: 'error', message: `Push failed: ${msg}`, context: { path: selectedFile } })
     } finally { setPushing(false) }
   }
 
@@ -211,7 +222,9 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
       await triggerWorkflow(parsed.owner, parsed.repo, workflowId, workflowRef, ghToken)
       setDispatchStatus('✓ Workflow dispatched')
     } catch (e) {
-      setDispatchStatus(e instanceof Error ? `✗ ${e.message}` : '✗ Dispatch failed')
+      const msg = e instanceof Error ? e.message : 'Dispatch failed'
+      setDispatchStatus(`✗ ${msg}`)
+      emitFailure({ source: 'github', severity: 'error', message: `Workflow dispatch failed: ${msg}`, context: { workflowId, ref: workflowRef } })
     } finally { setDispatching(false) }
   }
 
@@ -221,7 +234,6 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
     onAnalyze(prompt)
   }
 
-  // Build nested tree display
   const toggleDir = (dir: string) => {
     setExpandedDirs(prev => {
       const next = new Set(prev)
@@ -234,12 +246,10 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
     ? tree.filter(i => i.path.toLowerCase().includes(filter.toLowerCase()))
     : tree
 
-  // Top-level items only (no slash in path, or parent dir is expanded)
   const visibleItems = filteredTree.filter(item => {
     if (filter) return true
     const parts = item.path.split('/')
     if (parts.length === 1) return true
-    // show if all parent dirs are expanded
     for (let i = 1; i < parts.length; i++) {
       const parent = parts.slice(0, i).join('/')
       if (!expandedDirs.has(parent)) return false
@@ -249,43 +259,18 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', height: '100%' }}>
-
-      {/* Repo URL + Token */}
       <div style={{ display: 'flex', gap: '8px' }}>
-        <input
-          value={repoUrl}
-          onChange={e => setRepoUrl(e.target.value)}
-          placeholder="https://github.com/owner/repo"
-          style={inputStyle}
-          onKeyDown={e => e.key === 'Enter' && loadTree()}
-        />
-        <input
-          value={ghToken}
-          onChange={e => setGhToken(e.target.value)}
-          placeholder="GitHub token (optional for public)"
-          type="password"
-          style={{ ...inputStyle, maxWidth: '200px' }}
-        />
-        <button onClick={loadTree} disabled={loadingTree || !repoUrl} style={repoBtn}>
-          {loadingTree ? '...' : 'LOAD'}
-        </button>
+        <input value={repoUrl} onChange={e => setRepoUrl(e.target.value)} placeholder="https://github.com/owner/repo" style={inputStyle} onKeyDown={e => e.key === 'Enter' && loadTree()} />
+        <input value={ghToken} onChange={e => setGhToken(e.target.value)} placeholder="GitHub token (optional for public)" type="password" style={{ ...inputStyle, maxWidth: '200px' }} />
+        <button onClick={loadTree} disabled={loadingTree || !repoUrl} style={repoBtn}>{loadingTree ? '...' : 'LOAD'}</button>
       </div>
-
       {treeError && <div style={{ color: '#f97316', fontSize: '11px' }}>[ERROR]: {treeError}</div>}
-
       {tree.length > 0 && (
         <div style={{ display: 'flex', gap: '10px', flex: 1, minHeight: 0 }}>
-
-          {/* File tree */}
           <div style={{ width: '240px', flexShrink: 0, background: '#0f0f0f', border: '1px solid #222', borderRadius: '6px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div style={{ padding: '6px 8px', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <span style={{ color: '#f97316', fontSize: '9px', letterSpacing: '1px' }}>FILE TREE</span>
-              <input
-                value={filter}
-                onChange={e => setFilter(e.target.value)}
-                placeholder="filter..."
-                style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: '#ccc', fontSize: '10px', fontFamily: 'monospace' }}
-              />
+              <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="filter..." style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: '#ccc', fontSize: '10px', fontFamily: 'monospace' }} />
             </div>
             <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
               {visibleItems.map(item => {
@@ -295,90 +280,48 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
                 const isOpen = expandedDirs.has(item.path)
                 const isSelected = selectedFile === item.path
                 return (
-                  <div
-                    key={item.path}
-                    onClick={() => isDir ? toggleDir(item.path) : loadFile(item.path)}
-                    style={{
-                      padding: `3px 8px 3px ${8 + depth * 12}px`,
-                      cursor: 'pointer',
-                      fontSize: '11px',
-                      color: isSelected ? '#f97316' : isDir ? '#888' : '#ccc',
-                      background: isSelected ? '#1a1a1a' : 'transparent',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      userSelect: 'none',
-                    }}
-                  >
-                    <span style={{ fontSize: '9px', opacity: 0.6 }}>
-                      {isDir ? (isOpen ? '▾' : '▸') : '·'}
-                    </span>
+                  <div key={item.path} onClick={() => isDir ? toggleDir(item.path) : loadFile(item.path)} style={{ padding: `3px 8px 3px ${8 + depth * 12}px`, cursor: 'pointer', fontSize: '11px', color: isSelected ? '#f97316' : isDir ? '#888' : '#ccc', background: isSelected ? '#1a1a1a' : 'transparent', display: 'flex', alignItems: 'center', gap: '5px', userSelect: 'none' }}>
+                    <span style={{ fontSize: '9px', opacity: 0.6 }}>{isDir ? (isOpen ? '▾' : '▸') : '·'}</span>
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
                   </div>
                 )
               })}
             </div>
           </div>
-
-          {/* File viewer / editor */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0 }}>
             {selectedFile ? (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '0.5px' }}>{selectedFile}</span>
                   <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    <button onClick={handleAnalyze} disabled={!fileContent || analyzing || !apiKey} style={{ ...repoBtn, background: '#f97316', color: '#000' }}>
-                      {analyzing ? 'ANALYZING...' : '⚡ ANALYZE'}
-                    </button>
-                    <button onClick={() => setEditMode(!editMode)} style={repoBtn}>
-                      {editMode ? 'VIEW' : 'EDIT'}
-                    </button>
+                    <button onClick={handleAnalyze} disabled={!fileContent || analyzing || !apiKey} style={{ ...repoBtn, background: '#f97316', color: '#000' }}>{analyzing ? 'ANALYZING...' : '⚡ ANALYZE'}</button>
+                    <button onClick={() => setEditMode(!editMode)} style={repoBtn}>{editMode ? 'VIEW' : 'EDIT'}</button>
                   </div>
                 </div>
-
                 {loadingFile ? (
                   <div style={{ color: '#f97316', fontSize: '11px' }}>Loading...</div>
                 ) : editMode ? (
                   <>
-                    <textarea
-                      value={editContent}
-                      onChange={e => setEditContent(e.target.value)}
-                      style={{ flex: 1, background: '#0f0f0f', color: '#e5e5e5', border: '1px solid #333', borderRadius: '4px', padding: '10px', fontSize: '12px', fontFamily: 'monospace', resize: 'none', minHeight: '200px' }}
-                    />
+                    <textarea value={editContent} onChange={e => setEditContent(e.target.value)} style={{ flex: 1, background: '#0f0f0f', color: '#e5e5e5', border: '1px solid #333', borderRadius: '4px', padding: '10px', fontSize: '12px', fontFamily: 'monospace', resize: 'none', minHeight: '200px' }} />
                     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <input
-                        value={commitMsg}
-                        onChange={e => setCommitMsg(e.target.value)}
-                        placeholder="Commit message..."
-                        style={{ ...inputStyle, flex: 1 }}
-                      />
-                      <button onClick={handlePush} disabled={pushing || !commitMsg || !ghToken} style={{ ...repoBtn, background: '#22c55e', color: '#000' }}>
-                        {pushing ? 'PUSHING...' : 'PUSH'}
-                      </button>
+                      <input value={commitMsg} onChange={e => setCommitMsg(e.target.value)} placeholder="Commit message..." style={{ ...inputStyle, flex: 1 }} />
+                      <button onClick={handlePush} disabled={pushing || !commitMsg || !ghToken} style={{ ...repoBtn, background: '#22c55e', color: '#000' }}>{pushing ? 'PUSHING...' : 'PUSH'}</button>
                     </div>
                     {pushStatus && <div style={{ fontSize: '11px', color: pushStatus.startsWith('✓') ? '#22c55e' : '#f97316' }}>{pushStatus}</div>}
                   </>
                 ) : (
-                  <pre style={{ flex: 1, background: '#0f0f0f', color: '#ccc', border: '1px solid #1a1a1a', borderRadius: '4px', padding: '10px', fontSize: '11px', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, minHeight: '200px' }}>
-                    {fileContent || '(empty file)'}
-                  </pre>
+                  <pre style={{ flex: 1, background: '#0f0f0f', color: '#ccc', border: '1px solid #1a1a1a', borderRadius: '4px', padding: '10px', fontSize: '11px', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, minHeight: '200px' }}>{fileContent || '(empty file)'}</pre>
                 )}
               </>
             ) : (
-              <div style={{ color: '#444', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>
-                Select a file from the tree
-              </div>
+              <div style={{ color: '#444', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>Select a file from the tree</div>
             )}
-
-            {/* Actions Dispatch */}
             <div style={{ background: '#0f0f0f', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <span style={{ color: '#f97316', fontSize: '9px', letterSpacing: '1px' }}>ACTIONS DISPATCH</span>
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <input value={workflowId} onChange={e => setWorkflowId(e.target.value)} placeholder="workflow file or ID (e.g. deploy.yml)" style={{ ...inputStyle, flex: 2 }} />
                 <input value={workflowRef} onChange={e => setWorkflowRef(e.target.value)} placeholder="ref (e.g. main)" style={{ ...inputStyle, flex: 1, maxWidth: '100px' }} />
-                <button onClick={handleDispatch} disabled={dispatching || !workflowId || !ghToken} style={repoBtn}>
-                  {dispatching ? '...' : 'DISPATCH'}
-                </button>
+                <button onClick={handleDispatch} disabled={dispatching || !workflowId || !ghToken} style={repoBtn}>{dispatching ? '...' : 'DISPATCH'}</button>
               </div>
               {dispatchStatus && <div style={{ fontSize: '11px', color: dispatchStatus.startsWith('✓') ? '#22c55e' : '#f97316' }}>{dispatchStatus}</div>}
             </div>
@@ -391,9 +334,11 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing }: RepoAnalyzerProps) {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'repoagent'
+type Tab = 'forgemind' | 'repoagent' | 'failures'
 
 function App() {
+  const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
+
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = localStorage.getItem('forgemind_history')
@@ -401,7 +346,6 @@ function App() {
   })
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
   const [showApiKey, setShowApiKey] = useState(false)
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('fm_api_key') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
@@ -460,13 +404,16 @@ function App() {
     return { cleanText: cleanOutput(finalContent), tagsFound, phases }
   }
 
-  const sendPrompt = async (promptText: string) => {
+  const sendPrompt = useCallback(async (promptText: string) => {
     if (!promptText.trim()) return
-    if (!apiKey) { setError('Claude API key required.'); return }
+    if (!apiKey) {
+      emitFailure({ source: 'forgemind', severity: 'warn', message: 'Claude API key required. Enter your key to continue.' })
+      return
+    }
 
     const userMessage: Message = { id: Date.now().toString(), role: 'user', content: promptText, timestamp: Date.now() }
     setMessages(prev => [...prev, userMessage])
-    setLoading(true); setError(null)
+    setLoading(true)
 
     let responseText = ''; let source: 'local' | 'cloud' = 'cloud'
     try {
@@ -477,8 +424,10 @@ function App() {
           body: JSON.stringify({ model: 'qwen2.5:1.8b', system: FORGEMIND_SYSTEM_PROMPT, prompt: promptText, stream: false }),
           signal: AbortSignal.timeout(1500),
         })
-        if (r.ok) { const d = await r.json(); responseText = d.response || ''; source = 'local'; setLastSource('local'); ollamaOk = true }
-      } catch { /* fall through */ }
+        if (r.ok) {
+          const d = await r.json(); responseText = d.response || ''; source = 'local'; setLastSource('local'); ollamaOk = true
+        }
+      } catch { /* fall through to cloud */ }
 
       if (!ollamaOk) {
         const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -486,21 +435,27 @@ function App() {
           headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
           body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 2048, system: FORGEMIND_SYSTEM_PROMPT, messages: [{ role: 'user', content: promptText }] }),
         })
-        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error((e as {error?: {message?: string}}).error?.message || `Claude API ${r.status}`) }
+        if (!r.ok) {
+          const e = await r.json().catch(() => ({}))
+          throw new Error((e as { error?: { message?: string } }).error?.message || `Claude API ${r.status}`)
+        }
         const d = await r.json(); responseText = d.content[0]?.text || ''; source = 'cloud'; setLastSource('cloud')
       }
 
       const { cleanText, tagsFound, phases } = parseAndExecuteTags(responseText, promptText, source === 'local' ? 'ollama' : 'claude-haiku')
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, activeTags: tagsFound, phases, showReasoning: false }])
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      emitFailure({
+        source: source === 'local' ? 'ollama' : 'claude',
+        severity: 'error',
+        message: msg,
+        context: { promptLength: promptText.length },
+      })
     } finally { setLoading(false) }
-  }
+  }, [apiKey, emitFailure]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSendMessage = async () => {
-    await sendPrompt(input)
-    setInput('')
-  }
+  const handleSendMessage = async () => { await sendPrompt(input); setInput('') }
 
   const handleCopy = (id: string, text: string) => {
     navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000)
@@ -527,11 +482,11 @@ function App() {
     if (!window.confirm('CRITICAL: WIPE ALL SESSION MEMORY AND API KEY?')) return
     localStorage.removeItem('forgemind_history'); localStorage.removeItem('forgemind_corpus'); localStorage.removeItem('fm_api_key')
     setMessages([]); setCorpus([]); setApiKey(''); setLastSource(null); setOpenReasoningIds(new Set())
-    setError('Memory purged.'); setTimeout(() => setError(null), 3000)
+    emitFailure({ source: 'forgemind', severity: 'warn', message: 'Session memory wiped by user.' })
   }
 
   const handleExportCorpus = () => {
-    if (!corpus.length) { setError('No interactions to export.'); return }
+    if (!corpus.length) { emitFailure({ source: 'forgemind', severity: 'warn', message: 'No corpus entries to export.' }); return }
     const blob = new Blob([corpus.map(e => JSON.stringify(e)).join('\n')], { type: 'application/jsonl' })
     const url = URL.createObjectURL(blob); const a = document.createElement('a')
     a.href = url; a.download = 'forge-mind-corpus.jsonl'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
@@ -546,6 +501,12 @@ function App() {
     if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>● Cloud</span>
     return <span style={{ color: '#6b6b6b' }}>● Idle</span>
   }
+
+  const TABS: { id: Tab; label: string }[] = [
+    { id: 'forgemind', label: '🧠 ForgeMind' },
+    { id: 'repoagent', label: '🐙 RepoAgent' },
+    { id: 'failures',  label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
+  ]
 
   return (
     <div style={{ minHeight: '100vh', background: '#0a0a0a', color: '#e5e5e5', fontFamily: 'monospace', display: 'flex', flexDirection: 'column' }}>
@@ -565,44 +526,30 @@ function App() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', borderBottom: '1px solid #1a1a1a', background: '#0a0a0a' }}>
-        {(['forgemind', 'repoagent'] as Tab[]).map(tab => (
+        {TABS.map(tab => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
             style={{
-              background: 'transparent',
-              border: 'none',
-              borderBottom: activeTab === tab ? '2px solid #f97316' : '2px solid transparent',
-              color: activeTab === tab ? '#f97316' : '#555',
-              padding: '8px 18px',
-              cursor: 'pointer',
-              fontSize: '10px',
-              fontWeight: 'bold',
-              letterSpacing: '1px',
-              textTransform: 'uppercase',
-              fontFamily: 'monospace',
-              transition: 'color 0.15s',
+              background: 'transparent', border: 'none',
+              borderBottom: activeTab === tab.id ? '2px solid #f97316' : '2px solid transparent',
+              color: activeTab === tab.id ? '#f97316' : (tab.id === 'failures' && unresolvedCount > 0 ? '#eab308' : '#555'),
+              padding: '8px 18px', cursor: 'pointer', fontSize: '10px', fontWeight: 'bold',
+              letterSpacing: '1px', textTransform: 'uppercase', fontFamily: 'monospace', transition: 'color 0.15s',
             }}
           >
-            {tab === 'forgemind' ? '🧠 ForgeMind' : '🐙 RepoAgent'}
+            {tab.label}
           </button>
         ))}
       </div>
 
-      {/* Main content */}
+      {/* Main */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: activeTab === 'repoagent' ? '1200px' : '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0 }}>
 
-        {/* API Key + Voice (always visible) */}
+        {/* API Key + Voice */}
         <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
           <div style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '6px', padding: '8px 12px' }}>
-            <input
-              type={showApiKey ? 'text' : 'password'}
-              placeholder="Claude API Key"
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-              onDoubleClick={() => setShowApiKey(!showApiKey)}
-              style={{ width: '100%', background: 'transparent', color: '#ccc', border: 'none', outline: 'none', fontSize: '12px', fontFamily: 'monospace' }}
-            />
+            <input type={showApiKey ? 'text' : 'password'} placeholder="Claude API Key" value={apiKey} onChange={e => setApiKey(e.target.value)} onDoubleClick={() => setShowApiKey(!showApiKey)} style={{ width: '100%', background: 'transparent', color: '#ccc', border: 'none', outline: 'none', fontSize: '12px', fontFamily: 'monospace' }} />
           </div>
           <div style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '6px', padding: '6px 10px', display: 'flex', gap: '8px', alignItems: 'center' }}>
             <select value={selectedVoice} onChange={e => setSelectedVoice(e.target.value)} style={{ background: 'transparent', color: '#f97316', border: 'none', outline: 'none', fontSize: '10px', flex: 1, fontFamily: 'monospace' }}>
@@ -670,7 +617,6 @@ function App() {
                 })
               )}
               {loading && <div style={{ color: '#f97316', fontSize: '11px' }}><span className="pulse-text">EXECUTING COGNITIVE SCAFFOLD...</span></div>}
-              {error && <div style={{ color: '#f97316', fontSize: '11px', padding: '8px', background: '#200', borderRadius: '4px', border: '1px solid #400' }}>[SYSTEM_ERROR]: {error}</div>}
               <div ref={messagesEndRef} />
             </div>
             <div style={{ background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0' }}>
@@ -690,9 +636,24 @@ function App() {
               <span style={{ color: '#555', fontSize: '10px', marginLeft: '8px' }}>Browse · Analyze · Push · Deploy</span>
             </div>
             <div style={{ flex: 1, minHeight: 0 }}>
-              <RepoAnalyzer apiKey={apiKey} onAnalyze={async (prompt) => { setActiveTab('forgemind'); await sendPrompt(prompt) }} analyzing={loading} />
+              <RepoAnalyzer
+                apiKey={apiKey}
+                onAnalyze={async (prompt) => { setActiveTab('forgemind'); await sendPrompt(prompt) }}
+                analyzing={loading}
+                emitFailure={emitFailure}
+              />
             </div>
-            {error && <div style={{ color: '#f97316', fontSize: '11px', padding: '8px', background: '#200', borderRadius: '4px', border: '1px solid #400', marginTop: '8px' }}>[ERROR]: {error}</div>}
+          </div>
+        )}
+
+        {/* ── Failures Tab ── */}
+        {activeTab === 'failures' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <FailureDashboard
+              ledger={ledger}
+              onResolve={resolveFailure}
+              onClearResolved={clearResolved}
+            />
           </div>
         )}
       </main>
