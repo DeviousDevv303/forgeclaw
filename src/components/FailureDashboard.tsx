@@ -7,19 +7,22 @@ interface FailureDashboardProps {
 }
 
 const SEVERITY_COLOR: Record<string, string> = {
-  warn:     '#eab308',
+  info:     '#3b82f6',
+  warning:  '#eab308',
   error:    '#f97316',
   critical: '#ef4444',
 }
 
 const SEVERITY_BG: Record<string, string> = {
-  warn:     '#1a1500',
+  info:     '#00091a',
+  warning:  '#1a1500',
   error:    '#1a0a00',
   critical: '#1a0000',
 }
 
 const SEVERITY_BORDER: Record<string, string> = {
-  warn:     '#3a3000',
+  info:     '#001a3a',
+  warning:  '#3a3000',
   error:    '#3a1800',
   critical: '#3a0000',
 }
@@ -63,7 +66,7 @@ export function FailureDashboard({ ledger, onResolve, onClearResolved }: Failure
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {ledger.length === 0 && (
           <div style={{ color: '#333', fontSize: '12px', textAlign: 'center', marginTop: '40px' }}>
-            No failures recorded.
+            No failures logged.
           </div>
         )}
 

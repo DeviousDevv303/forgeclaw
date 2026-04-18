@@ -407,7 +407,7 @@ function App() {
   const sendPrompt = useCallback(async (promptText: string) => {
     if (!promptText.trim()) return
     if (!apiKey) {
-      emitFailure({ source: 'forgemind', severity: 'warn', message: 'Claude API key required. Enter your key to continue.' })
+      emitFailure({ source: 'forgemind', severity: 'warning', message: 'Claude API key required. Enter your key to continue.' })
       return
     }
 
@@ -482,11 +482,11 @@ function App() {
     if (!window.confirm('CRITICAL: WIPE ALL SESSION MEMORY AND API KEY?')) return
     localStorage.removeItem('forgemind_history'); localStorage.removeItem('forgemind_corpus'); localStorage.removeItem('fm_api_key')
     setMessages([]); setCorpus([]); setApiKey(''); setLastSource(null); setOpenReasoningIds(new Set())
-    emitFailure({ source: 'forgemind', severity: 'warn', message: 'Session memory wiped by user.' })
+    emitFailure({ source: 'forgemind', severity: 'info', message: 'Session memory wiped by user.' })
   }
 
   const handleExportCorpus = () => {
-    if (!corpus.length) { emitFailure({ source: 'forgemind', severity: 'warn', message: 'No corpus entries to export.' }); return }
+    if (!corpus.length) { emitFailure({ source: 'forgemind', severity: 'info', message: 'No corpus entries to export.' }); return }
     const blob = new Blob([corpus.map(e => JSON.stringify(e)).join('\n')], { type: 'application/jsonl' })
     const url = URL.createObjectURL(blob); const a = document.createElement('a')
     a.href = url; a.download = 'forge-mind-corpus.jsonl'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
