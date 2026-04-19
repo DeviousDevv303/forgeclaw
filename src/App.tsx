@@ -416,14 +416,15 @@ function App() {
 
     // Orchestrator: admit forgemind chat task
     const taskId = `fm-${Date.now()}`
-    admitTask({
+    const admitted = admitTask({
       taskId,
       agentId: 'forgemind',
       intent: 'chat',
       payload: { promptLength: promptText.length },
       timeout: 30000,
-      requestedScopes: ['corpus:write', 'errorBus:emit', 'localStorage:write'],
+      requestedScopes: ['llm:generate', 'corpus:write', 'errorBus:emit'],
     })
+    if (!admitted) return
 
     const userMessage: Message = { id: Date.now().toString(), role: 'user', content: promptText, timestamp: Date.now() }
     setMessages(prev => [...prev, userMessage])

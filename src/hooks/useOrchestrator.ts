@@ -12,7 +12,7 @@ const AGENT_CONTRACTS: Record<AgentId, AgentContract> = {
       { name: 'chat', scopes: ['corpus:read', 'corpus:write', 'errorBus:emit', 'localStorage:read', 'localStorage:write'], description: 'Send prompts and receive structured reasoning responses' },
       { name: 'corpus_export', scopes: ['corpus:read'], description: 'Export JSONL corpus of interactions' },
     ],
-    maxScopes: ['corpus:read', 'corpus:write', 'errorBus:emit', 'localStorage:read', 'localStorage:write'],
+    maxScopes: ['corpus:read', 'corpus:write', 'errorBus:emit', 'localStorage:read', 'localStorage:write', 'llm:generate'],
     maxRetries: 3,
     inputSchema: { prompt: 'string' },
     outputSchema: { content: 'string', phases: 'object' },

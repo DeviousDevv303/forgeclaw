@@ -8,6 +8,7 @@ export type AuthorityScope =
   | 'localStorage:read' | 'localStorage:write'
   | 'errorBus:emit'
   | 'agent:delegate'  // reserved for v2, not enforced
+  | 'llm:generate'
 
 export interface Capability {
   name: string
