@@ -1,6 +1,8 @@
 import { useState, useCallback } from 'react'
 import type { AgentContract, AgentId, AuthorityScope, OrchestratorEvent, TaskSpec } from '../types/orchestrator'
 import type { EmitFailureOptions } from './useErrorBus'
+import { AutonomyEngine } from '../core/autonomyEngine'
+import type { GuardianContext } from '../types/autonomy'
 
 // ─── v1 Agent Contracts (hardcoded) ──────────────────────────────────────────
 
@@ -69,11 +71,14 @@ const AGENT_CONTRACTS: Record<AgentId, AgentContract> = {
 
 export interface UseOrchestratorOptions {
   emitFailure: (opts: EmitFailureOptions) => string
+  errorLog?: Array<{ agentId: string; timestamp: string }>
 }
 
-export function useOrchestrator({ emitFailure }: UseOrchestratorOptions) {
+export function useOrchestrator({ emitFailure, errorLog = [] }: UseOrchestratorOptions) {
   const [taskQueue, setTaskQueue] = useState<TaskSpec[]>([])
   const [events, setEvents] = useState<OrchestratorEvent[]>([])
+
+  const autonomy = new AutonomyEngine()
 
   const getAgentContract = useCallback((agentId: AgentId): AgentContract | undefined => {
     return AGENT_CONTRACTS[agentId]
@@ -90,7 +95,6 @@ export function useOrchestrator({ emitFailure }: UseOrchestratorOptions) {
   }, [emitFailure])
 
   const admitTask = useCallback((taskSpec: TaskSpec): boolean => {
-    const contract = AGENT_CONTRACTS[taskSpec.agentId]
     const baseEvent = {
       eventId: `orch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       timestamp: new Date().toISOString(),
@@ -98,17 +102,44 @@ export function useOrchestrator({ emitFailure }: UseOrchestratorOptions) {
       taskSpec,
     }
 
-    if (!contract) {
+    // ── Guardian evaluation ──────────────────────────────────────────────────
+    const context: GuardianContext = {
+      errors: errorLog,
+      identityValid: true, // wire to actual identity check when available
+      contracts: AGENT_CONTRACTS,
+    }
+
+    const decision = autonomy.evaluate(taskSpec, context)
+
+    autonomy.logDecision({
+      taskId: taskSpec.taskId,
+      agentId: taskSpec.agentId,
+      decision: decision.action,
+      triggeredRule: decision.triggeredRule,
+      trace: decision.trace,
+      timestamp: new Date().toISOString(),
+    })
+
+    if (decision.action === 'BLOCK') {
+      const ruleLabels: Record<0 | 1 | 2 | 3 | 4 | 5, string> = {
+        0: 'No contract found',
+        1: 'Identity invalid',
+        2: 'Scope unauthorized',
+        3: 'Escalation threshold met',
+        4: 'High-impact scope detected',
+        5: 'Default path (should not block)',
+      }
       emitOrchestratorEvent({
         ...baseEvent,
         type: 'task_rejected',
-        severity: 'error',
-        reason: `No contract found for agent '${taskSpec.agentId}'`,
+        severity: 'warning',
+        reason: `Guardian R${decision.triggeredRule}: ${ruleLabels[decision.triggeredRule]}`,
       })
       return false
     }
 
-    // Authority check: requestedScopes ⊆ agent.maxScopes
+    // ── Orchestrator scope check (belt-and-suspenders after Guardian) ────────
+    const contract = AGENT_CONTRACTS[taskSpec.agentId]
     const unauthorizedScopes = taskSpec.requestedScopes.filter(
       (scope: AuthorityScope) => !contract.maxScopes.includes(scope)
     )
@@ -123,7 +154,7 @@ export function useOrchestrator({ emitFailure }: UseOrchestratorOptions) {
       return false
     }
 
-    // Admit
+    // ── Admit ────────────────────────────────────────────────────────────────
     setTaskQueue(prev => [...prev, taskSpec])
     emitOrchestratorEvent({
       ...baseEvent,
@@ -131,7 +162,7 @@ export function useOrchestrator({ emitFailure }: UseOrchestratorOptions) {
       severity: 'info',
     })
     return true
-  }, [emitOrchestratorEvent])
+  }, [emitOrchestratorEvent, errorLog, autonomy])
 
   const resolveTask = useCallback((taskId: string) => {
     setTaskQueue(prev => prev.filter(t => t.taskId !== taskId))
