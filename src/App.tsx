@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { useErrorBus } from './hooks/useErrorBus'
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
+import { FileUpload } from './components/FileUpload'
 import { OrchestratorPanel } from './components/OrchestratorPanel'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
 
@@ -643,6 +644,13 @@ function App() {
               </div>
             </div>
           </>
+        )}
+
+        {/* ── File Upload (ForgeMind tab) ── */}
+        {activeTab === 'forgemind' && (
+          <div style={{ padding: '0 20px 20px' }}>
+            <FileUpload />
+          </div>
         )}
 
         {/* ── RepoAgent Tab ── */}
