@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
 import { useErrorBus } from './hooks/useErrorBus'
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
@@ -561,8 +562,16 @@ function App() {
         ))}
       </div>
 
+      {/* Neural Network Background */}
+      <NeuralNetworkBackground
+        messageCount={messages.length}
+        isProcessing={loading}
+        activeTab={activeTab}
+        density="low"
+      />
+
       {/* Main */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: activeTab === 'repoagent' ? '1200px' : '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0 }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: activeTab === 'repoagent' ? '1200px' : '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 1 }}>
 
         {/* API Key + Voice */}
         <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
