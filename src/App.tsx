@@ -601,9 +601,9 @@ function App() {
         {/* ── ForgeMind Tab ── */}
         {activeTab === 'forgemind' && (
           <>
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: '200px' }}>
               {messages.length === 0 ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#444' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444' }}>
                   <p>System initialized. Awaiting input...</p>
                 </div>
               ) : (
