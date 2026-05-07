@@ -483,6 +483,7 @@ function App() {
 
   const handleSendMessage = async () => {
     console.log('[DEBUG] handleSendMessage called, input:', input, 'attachedFile:', attachedFile)
+    alert('[DEBUG] handleSendMessage called!')
     if (!input.trim() && !attachedFile) {
       console.log('[DEBUG] early return — empty input and no file')
       return
