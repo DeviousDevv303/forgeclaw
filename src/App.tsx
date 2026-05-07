@@ -411,20 +411,14 @@ function App() {
   }
 
   const sendPrompt = useCallback(async (promptText: string) => {
-    console.log('[DEBUG] sendPrompt called, promptText:', promptText.slice(0, 50))
-    if (!promptText.trim()) {
-      console.log('[DEBUG] early return — empty promptText')
-      return
-    }
+    if (!promptText.trim()) return
     if (!apiKey) {
-      console.log('[DEBUG] early return — no apiKey')
       emitFailure({ source: 'forgemind', severity: 'warning', message: 'Claude API key required. Enter your key to continue.' })
       return
     }
 
     // Orchestrator: admit forgemind chat task
     const taskId = `fm-${Date.now()}`
-    console.log('[DEBUG] admitting task:', taskId)
     const admitted = admitTask({
       taskId,
       agentId: 'forgemind',
@@ -433,7 +427,6 @@ function App() {
       timeout: 30000,
       requestedScopes: ['llm:generate', 'corpus:write', 'errorBus:emit'],
     })
-    console.log('[DEBUG] task admitted:', admitted)
     if (!admitted) return
 
     const userMessage: Message = { id: Date.now().toString(), role: 'user', content: promptText, timestamp: Date.now() }
@@ -482,21 +475,14 @@ function App() {
   }, [apiKey, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
-    console.log('[DEBUG] handleSendMessage called, input:', input, 'attachedFile:', attachedFile)
-    alert('[DEBUG] handleSendMessage called!')
-    if (!input.trim() && !attachedFile) {
-      console.log('[DEBUG] early return — empty input and no file')
-      return
-    }
+    if (!input.trim() && !attachedFile) return
     
     let promptText = input
     if (attachedFile) {
       promptText = `[File: ${attachedFile.name}]\n\n${attachedFile.content}\n\n${input || 'Analyze this file.'}`
     }
     
-    console.log('[DEBUG] calling sendPrompt with:', promptText.slice(0, 50))
     await sendPrompt(promptText)
-    console.log('[DEBUG] sendPrompt completed')
     setInput('')
     setAttachedFile(null)
   }
