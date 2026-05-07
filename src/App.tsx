@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { FileUploadButton } from './components/FileUploadButton'
 import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
 import { useErrorBus } from './hooks/useErrorBus'
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
-import { FileUpload } from './components/FileUpload'
 import { OrchestratorPanel } from './components/OrchestratorPanel'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
 
@@ -350,6 +350,7 @@ function App() {
     return saved ? JSON.parse(saved) : []
   })
   const [input, setInput] = useState('')
+  const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('fm_api_key') || '')
@@ -473,7 +474,18 @@ function App() {
     } finally { setLoading(false) }
   }, [apiKey, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSendMessage = async () => { await sendPrompt(input); setInput('') }
+  const handleSendMessage = async () => {
+    if (!input.trim() && !attachedFile) return
+    
+    let promptText = input
+    if (attachedFile) {
+      promptText = `[File: ${attachedFile.name}]\n\n${attachedFile.content}\n\n${input || 'Analyze this file.'}`
+    }
+    
+    await sendPrompt(promptText)
+    setInput('')
+    setAttachedFile(null)
+  }
 
   const handleCopy = (id: string, text: string) => {
     navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000)
@@ -589,7 +601,7 @@ function App() {
         {/* ── ForgeMind Tab ── */}
         {activeTab === 'forgemind' && (
           <>
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', paddingBottom: '20px' }}>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px' }}>
               {messages.length === 0 ? (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#444' }}>
                   <p>System initialized. Awaiting input...</p>
@@ -605,7 +617,7 @@ function App() {
                           {msg.source && <span style={{ fontSize: '9px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', opacity: 0.7 }}>{msg.source === 'local' ? 'LOCAL' : 'CLOUD'}</span>}
                         </div>
                       )}
-                      <div style={{ maxWidth: '90%', padding: '10px 14px', borderRadius: '8px', background: msg.role === 'user' ? '#f97316' : '#1a1a1a', color: msg.role === 'user' ? '#000' : '#e5e5e5', fontSize: '13px', lineHeight: '1.5', border: msg.role === 'assistant' ? '1px solid #222' : 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', width: msg.role === 'assistant' ? '100%' : undefined }}>
+                      <div style={{ maxWidth: '90%', padding: '10px 14px', borderRadius: '8px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(26, 26, 26, 0.75)', color: msg.role === 'user' ? '#000' : '#e5e5e5', fontSize: '13px', lineHeight: '1.5', border: msg.role === 'assistant' ? '1px solid rgba(34, 34, 34, 0.5)' : 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', width: msg.role === 'assistant' ? '100%' : undefined }}>
                         {msg.content}
                         {msg.role === 'assistant' && (
                           <div style={{ marginTop: '10px', display: 'flex', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px', alignItems: 'center' }}>
@@ -646,20 +658,20 @@ function App() {
               {loading && <div style={{ color: '#f97316', fontSize: '11px' }}><span className="pulse-text">EXECUTING COGNITIVE SCAFFOLD...</span></div>}
               <div ref={messagesEndRef} />
             </div>
-            <div style={{ background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0' }}>
-              <div style={{ display: 'flex', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '8px 12px' }}>
-                <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px' }} rows={2} placeholder="Query ForgeMind..." value={input} onChange={e => setInput(e.target.value)} onKeyPress={handleKeyPress} disabled={loading} />
-                <button style={{ background: '#f97316', color: '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '12px', textTransform: 'uppercase' }} onClick={handleSendMessage} disabled={loading}>SEND</button>
+              <div style={{ background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0' }}>
+                {attachedFile && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: '#f97316', fontSize: '12px' }}>
+                    <span>📎 {attachedFile.name}</span>
+                    <button onClick={() => setAttachedFile(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '14px' }}>×</button>
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '8px 12px' }}>
+                  <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={loading} />
+                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px' }} rows={2} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onKeyPress={handleKeyPress} disabled={loading} />
+                  <button style={{ background: '#f97316', color: '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '12px', textTransform: 'uppercase' }} onClick={handleSendMessage} disabled={loading}>SEND</button>
+                </div>
               </div>
-            </div>
           </>
-        )}
-
-        {/* ── File Upload (ForgeMind tab) ── */}
-        {activeTab === 'forgemind' && (
-          <div style={{ padding: '0 20px 20px' }}>
-            <FileUpload />
-          </div>
         )}
 
         {/* ── RepoAgent Tab ── */}

@@ -36,11 +36,11 @@ const DENSITY_MAP: Record<string, number[]> = {
 };
 
 const TAB_PALETTE: Record<string, { primary: string; accent: string }> = {
-  forgemind:    { primary: '#f97316', accent: '#3b82f6' }, // orange + blue
+  forgemind:    { primary: '#06b6d4', accent: '#22d3ee' }, // cyan + electric blue
   repoagent:    { primary: '#22c55e', accent: '#10b981' }, // greens
   orchestrator: { primary: '#a855f7', accent: '#c084fc' }, // purples
   failures:     { primary: '#ef4444', accent: '#f87171' }, // reds
-  default:      { primary: '#f97316', accent: '#3b82f6' }
+  default:      { primary: '#06b6d4', accent: '#22d3ee' }
 };
 
 export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = ({
@@ -278,8 +278,8 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         ctx.beginPath();
         ctx.moveTo(fromNode.x, fromNode.y);
         ctx.lineTo(toNode.x, toNode.y);
-        ctx.strokeStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.1)`;
-        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.2)`;
+        ctx.lineWidth = 0.8;
         ctx.stroke();
       });
     };
@@ -323,7 +323,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           conn.strength = Math.max(0.1, conn.strength - 0.01);
         }
         
-        const alpha = conn.strength * (0.2 + Math.sin(time * 2 + conn.pulseOffset) * 0.1);
+        const alpha = conn.strength * (0.35 + Math.sin(time * 2 + conn.pulseOffset) * 0.15);
         
         ctx.beginPath();
         ctx.moveTo(fromNode.x, fromNode.y);
@@ -387,9 +387,9 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           node.x, node.y, glowRadius
         );
         
-        const alpha = isProcessing ? 0.6 : 0.3;
+        const alpha = isProcessing ? 0.8 : 0.5;
         glowGradient.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`);
-        glowGradient.addColorStop(0.5, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha * 0.3})`);
+        glowGradient.addColorStop(0.5, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha * 0.5})`);
         glowGradient.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`);
         
         ctx.beginPath();
