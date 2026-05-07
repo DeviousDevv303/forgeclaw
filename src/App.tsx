@@ -445,7 +445,10 @@ function App() {
       timeout: 30000,
       requestedScopes: ['llm:generate', 'corpus:write', 'errorBus:emit'],
     })
-    if (!admitted) return
+    if (!admitted) {
+      emitFailure({ source: 'forgemind', severity: 'warning', message: 'Orchestrator blocked this task. Check the Orchestrator tab.', context: { taskId } })
+      return
+    }
 
     const userMessage: Message = { id: Date.now().toString(), role: 'user', content: promptText, timestamp: Date.now() }
     setMessages(prev => [...prev, userMessage])
@@ -466,10 +469,20 @@ function App() {
       } catch { /* fall through to cloud */ }
 
       if (!ollamaOk) {
+        // Build conversation history (last 10 messages to avoid token overflow)
+        const historyMessages = messages
+          .slice(-10)
+          .map(m => ({ role: m.role, content: m.content }))
+        
         const r = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-          body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 2048, system: FORGEMIND_SYSTEM_PROMPT, messages: [{ role: 'user', content: promptText }] }),
+          body: JSON.stringify({ 
+            model: 'claude-haiku-4-5-20251001', 
+            max_tokens: 2048, 
+            system: FORGEMIND_SYSTEM_PROMPT, 
+            messages: [...historyMessages, { role: 'user', content: promptText }]
+          }),
         })
         if (!r.ok) {
           const e = await r.json().catch(() => ({}))
@@ -489,6 +502,14 @@ function App() {
         message: msg,
         context: { promptLength: promptText.length },
       })
+      // Show error in chat so user sees what happened
+      setMessages(prev => [...prev, {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: `[ERROR]: ${msg}`,
+        timestamp: Date.now(),
+        source,
+      }])
     } finally { setLoading(false) }
   }, [apiKey, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -497,7 +518,12 @@ function App() {
     
     let promptText = input
     if (attachedFile) {
-      promptText = `[File: ${attachedFile.name}]\n\n${attachedFile.content}\n\n${input || 'Analyze this file.'}`
+      // Guard against oversized file content
+      const maxFileSize = 50000 // ~50KB of text
+      const fileContent = attachedFile.content.length > maxFileSize 
+        ? attachedFile.content.slice(0, maxFileSize) + '\n\n[File truncated — too large for API]'
+        : attachedFile.content
+      promptText = `[File: ${attachedFile.name}]\n\n${fileContent}\n\n${input || 'Analyze this file.'}`
     }
     
     await sendPrompt(promptText)
