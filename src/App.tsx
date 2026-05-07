@@ -362,10 +362,23 @@ function App() {
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
-  const [selectedVoice, setSelectedVoice] = useState<string>('')
-  const [rate, setRate] = useState<number>(1.0)
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('en')
+  const [rate] = useState<number>(1.0)
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const LANGUAGE_NAMES: Record<string, string> = {
+    en: 'English',
+    es: 'Español',
+    ru: 'Русский',
+    zh: '中文'
+  }
+
+  const getVoiceForLanguage = (lang: string): SpeechSynthesisVoice | null => {
+    const langVoices = voices.filter(v => v.lang.toLowerCase().startsWith(lang))
+    const defaultVoice = langVoices.find(v => v.default)
+    return defaultVoice || langVoices[0] || null
+  }
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
 
@@ -384,11 +397,10 @@ function App() {
         return allowedLangs.includes(langPrefix)
       })
       setVoices(filtered)
-      if (filtered.length > 0 && !selectedVoice) setSelectedVoice(filtered[0].name)
     }
     loadVoices()
     window.speechSynthesis.onvoiceschanged = loadVoices
-  }, [selectedVoice])
+  }, [])
 
   const logToCorpus = (prompt: string, response: string, source: 'claude-haiku' | 'ollama') => {
     setCorpus(prev => [...prev, { prompt, response, source, timestamp: new Date().toISOString() }])
@@ -501,8 +513,8 @@ function App() {
     if (speakingId === id) { window.speechSynthesis.cancel(); setSpeakingId(null); return }
     window.speechSynthesis.cancel()
     const u = new SpeechSynthesisUtterance(cleanForSpeech(text))
-    const v = voices.find(v => v.name === selectedVoice)
-    if (v) u.voice = v; u.rate = rate; u.onend = () => setSpeakingId(null)
+    const voice = getVoiceForLanguage(selectedLanguage)
+    if (voice) u.voice = voice; u.rate = rate; u.onend = () => setSpeakingId(null)
     setSpeakingId(id); window.speechSynthesis.speak(u)
   }
 
@@ -555,6 +567,10 @@ function App() {
           <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>FORGECLAW</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Language selector - moved to header */}
+          <select value={selectedLanguage} onChange={e => setSelectedLanguage(e.target.value)} style={{ background: '#111', color: '#f97316', border: '1px solid #222', borderRadius: '4px', padding: '4px 8px', fontSize: '10px', fontFamily: 'monospace', outline: 'none' }}>
+            {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
+          </select>
           <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
           <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>WIPE</button>
           <button onClick={handleExportCorpus} style={headerBtnStyle}>EXPORT</button>
@@ -591,16 +607,10 @@ function App() {
       {/* Main */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: activeTab === 'repoagent' ? '1200px' : '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 1 }}>
 
-        {/* API Key + Voice */}
+        {/* API Key only */}
         <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
           <div style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '6px', padding: '8px 12px' }}>
             <input type={showApiKey ? 'text' : 'password'} placeholder="Claude API Key" value={apiKey} onChange={e => setApiKey(e.target.value)} onDoubleClick={() => setShowApiKey(!showApiKey)} style={{ width: '100%', background: 'transparent', color: '#ccc', border: 'none', outline: 'none', fontSize: '12px', fontFamily: 'monospace' }} />
-          </div>
-          <div style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '6px', padding: '6px 10px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <select value={selectedVoice} onChange={e => setSelectedVoice(e.target.value)} style={{ background: 'transparent', color: '#f97316', border: 'none', outline: 'none', fontSize: '10px', flex: 1, fontFamily: 'monospace' }}>
-              {voices.map(v => <option key={v.name} value={v.name} style={{ background: '#111' }}>{v.name}</option>)}
-            </select>
-            <input type="range" min="0.5" max="2" step="0.1" value={rate} onChange={e => setRate(parseFloat(e.target.value))} style={{ width: '50px', accentColor: '#f97316' }} />
           </div>
         </div>
 
