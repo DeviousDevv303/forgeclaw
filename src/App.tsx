@@ -153,7 +153,7 @@ interface RepoAnalyzerProps {
 }
 
 function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyzerProps) {
-  const [repoUrl, setRepoUrl] = useState('')
+  const [repoUrl, setRepoUrl] = useState('https://github.com/DeviousDevv303/forgeclaw')
   const [ghToken, setGhToken] = useState(() => localStorage.getItem('gh_token') || '')
   const [tree, setTree] = useState<RepoTreeItem[]>([])
   const [loadingTree, setLoadingTree] = useState(false)
