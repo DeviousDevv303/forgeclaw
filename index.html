@@ -1,14 +1,18 @@
 <!doctype html>
-<html lang="en">
+<html lang="en"> <!-- lang managed dynamically via react-helmet if i18n enabled -->
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/forgeclaw/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="ForgeClaw — open-source AI-powered platform for autonomous full-stack app generation" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:;" />
+    <!-- Vite inlines SVG; add .ico fallback in public/ if legacy support needed -->
+    <link rel="icon" type="image/svg+xml" href="/forgeclaw/favicon.svg" />
     <title>forgeclaw</title>
     <script type="module" crossorigin src="/forgeclaw/assets/index-B7FhDgRt.js"></script>
     <link rel="stylesheet" crossorigin href="/forgeclaw/assets/index-BffUdv2W.css">
   </head>
   <body>
+    <noscript>This application requires JavaScript to run.</noscript>
     <div id="root"></div>
   </body>
 </html>
