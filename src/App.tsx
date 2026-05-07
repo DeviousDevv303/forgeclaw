@@ -352,6 +352,9 @@ function App() {
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
+  const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('fm_api_key') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
@@ -559,6 +562,36 @@ function App() {
     emitFailure({ source: 'forgemind', severity: 'info', message: 'Session memory wiped by user.' })
   }
 
+  const testApiKey = async () => {
+    if (!apiKey.trim()) { setApiKeyStatus('none'); return }
+    if (!apiKey.startsWith('sk-ant-')) { setApiKeyStatus('invalid'); return }
+    
+    setTestingKey(true)
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'ping' }]
+        })
+      })
+      if (r.ok) setApiKeyStatus('valid')
+      else if (r.status === 401) setApiKeyStatus('invalid')
+      else setApiKeyStatus('unverified')
+    } catch {
+      setApiKeyStatus('unverified')
+    } finally {
+      setTestingKey(false)
+    }
+  }
+
   const handleExportCorpus = () => {
     if (!corpus.length) { emitFailure({ source: 'forgemind', severity: 'info', message: 'No corpus entries to export.' }); return }
     const blob = new Blob([corpus.map(e => JSON.stringify(e)).join('\n')], { type: 'application/jsonl' })
@@ -571,6 +604,9 @@ function App() {
   }
 
   const getStatusIndicator = () => {
+    if (apiKeyStatus === 'none') return <span style={{ color: '#ef4444' }}>🔴 No API Key</span>
+    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>🔴 Invalid Key</span>
+    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>🟡 Unverified</span>
     if (lastSource === 'local') return <span style={{ color: '#10b981', fontWeight: 'bold' }}>● Local</span>
     if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>● Cloud</span>
     return <span style={{ color: '#6b6b6b' }}>● Idle</span>
@@ -589,11 +625,11 @@ function App() {
       {/* Header */}
       <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ color: '#f97316', fontSize: '18px' }}>⚙</span>
+          <button onClick={() => setShowSettings(true)} style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: 0 }}>⚙</button>
           <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>FORGECLAW</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {/* Language selector - moved to header */}
+          {/* Language selector */}
           <select value={selectedLanguage} onChange={e => setSelectedLanguage(e.target.value)} style={{ background: '#111', color: '#f97316', border: '1px solid #222', borderRadius: '4px', padding: '4px 8px', fontSize: '10px', fontFamily: 'monospace', outline: 'none' }}>
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
           </select>
@@ -633,12 +669,59 @@ function App() {
       {/* Main */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: activeTab === 'repoagent' ? '1200px' : '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 1 }}>
 
-        {/* API Key only */}
-        <div style={{ display: 'flex', gap: '10px', marginBottom: '12px' }}>
-          <div style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '6px', padding: '8px 12px' }}>
-            <input type={showApiKey ? 'text' : 'password'} placeholder="Claude API Key" value={apiKey} onChange={e => setApiKey(e.target.value)} onDoubleClick={() => setShowApiKey(!showApiKey)} style={{ width: '100%', background: 'transparent', color: '#ccc', border: 'none', outline: 'none', fontSize: '12px', fontFamily: 'monospace' }} />
+        {/* API Key - moved to settings, only show if empty */}
+        {!apiKey && (
+          <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginBottom: '12px', textAlign: 'center' }}>
+            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 No API Key configured. Click ⚙ to add your Claude key.</span>
           </div>
-        </div>
+        )}
+
+        {/* Settings Modal */}
+        {showSettings && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowSettings(false)}>
+            <div style={{ background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '20px', width: '90%', maxWidth: '400px' }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <span style={{ color: '#f97316', fontSize: '14px', fontWeight: 'bold' }}>⚙ Settings</span>
+                <button onClick={() => setShowSettings(false)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '18px' }}>×</button>
+              </div>
+              
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '11px', marginBottom: '6px', textTransform: 'uppercase' }}>Claude API Key</label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input 
+                    type={showApiKey ? 'text' : 'password'} 
+                    placeholder="sk-ant-..." 
+                    value={apiKey} 
+                    onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }} 
+                    style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} 
+                  />
+                  <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
+                    {showApiKey ? '🙈' : '👁'}
+                  </button>
+                </div>
+                {apiKeyStatus === 'invalid' && <div style={{ color: '#ef4444', fontSize: '10px', marginTop: '4px' }}>Invalid key format or API rejected it</div>}
+                {apiKey && !apiKey.startsWith('sk-ant-') && <div style={{ color: '#ef4444', fontSize: '10px', marginTop: '4px' }}>Key must start with "sk-ant-"</div>}
+              </div>
+              
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                <button 
+                  onClick={testApiKey} 
+                  disabled={testingKey || !apiKey}
+                  style={{ flex: 1, background: testingKey ? '#333' : '#f97316', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                >
+                  {testingKey ? 'Testing...' : 'TEST KEY'}
+                </button>
+              </div>
+              
+              <div style={{ textAlign: 'center', fontSize: '11px' }}>
+                {apiKeyStatus === 'none' && <span style={{ color: '#666' }}>Enter your Claude API key above</span>}
+                {apiKeyStatus === 'unverified' && <span style={{ color: '#eab308' }}>🟡 Key not tested yet</span>}
+                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 API Key Valid</span>}
+                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Invalid Key</span>}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── ForgeMind Tab ── */}
         {activeTab === 'forgemind' && (
