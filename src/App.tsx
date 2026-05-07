@@ -356,7 +356,7 @@ function App() {
   const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('fm_api_key') || '')
+  const [apiKey, setApiKey] = useState(() => import.meta.env.VITE_ANTHROPIC_API_KEY || localStorage.getItem('fm_api_key') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = localStorage.getItem('forgemind_corpus')
     return saved ? JSON.parse(saved) : []
