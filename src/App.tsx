@@ -376,9 +376,15 @@ function App() {
 
   useEffect(() => {
     const loadVoices = () => {
-      const v = window.speechSynthesis.getVoices()
-      setVoices(v)
-      if (v.length > 0 && !selectedVoice) setSelectedVoice(v[0].name)
+      const allVoices = window.speechSynthesis.getVoices()
+      // Filter to English, Spanish, Russian, Chinese only
+      const allowedLangs = ['en', 'es', 'ru', 'zh']
+      const filtered = allVoices.filter(v => {
+        const langPrefix = v.lang.split('-')[0].toLowerCase()
+        return allowedLangs.includes(langPrefix)
+      })
+      setVoices(filtered)
+      if (filtered.length > 0 && !selectedVoice) setSelectedVoice(filtered[0].name)
     }
     loadVoices()
     window.speechSynthesis.onvoiceschanged = loadVoices
