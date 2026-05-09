@@ -4,7 +4,7 @@ import type {
   VerifyUnknownResult, 
   DenialFilterContext,
   DenialFilterResult 
-} from '../../forgeclaw/orchestrator/integrity_gate'
+} from '../types/integrityGate'
 
 // ─── Denial Patterns (identical to canonical gate) ─────────────────────────
 const DENIAL_PATTERNS = [
