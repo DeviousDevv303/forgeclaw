@@ -3,6 +3,7 @@ import type { AgentContract, AgentId, AuthorityScope, OrchestratorEvent, TaskSpe
 import type { EmitFailureOptions } from './useErrorBus'
 import { AutonomyEngine } from '../core/autonomyEngine'
 import type { GuardianContext } from '../types/autonomy'
+import { useIntegrityGate } from './useIntegrityGate'
 
 // ─── v1 Agent Contracts (hardcoded) ──────────────────────────────────────────
 
@@ -168,5 +169,21 @@ export function useOrchestrator({ emitFailure, errorLog = [] }: UseOrchestratorO
     setTaskQueue(prev => prev.filter(t => t.taskId !== taskId))
   }, [])
 
-  return { taskQueue, events, admitTask, resolveTask, getAgentContract, contracts: AGENT_CONTRACTS }
+  const { validateResponse } = useIntegrityGate()
+
+  const validateAgentOutput = useCallback(async (
+    output: string,
+    userMessage: string,
+    taskSpec: TaskSpec
+  ): Promise<{ allowed: boolean; violation?: any; reason?: string }> => {
+    return validateResponse(
+      output,
+      userMessage,
+      taskSpec.taskId,
+      `${taskSpec.taskId}-turn-${Date.now()}`,
+      taskSpec.agentId
+    )
+  }, [validateResponse])
+
+  return { taskQueue, events, admitTask, resolveTask, getAgentContract, contracts: AGENT_CONTRACTS, validateAgentOutput }
 }
