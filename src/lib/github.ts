@@ -384,8 +384,69 @@ export async function mergePullRequest(
 }
 
 // =============================================================================
-// WORKFLOW OPERATIONS
+// WORKFLOW ARTIFACT FETCHING
 // =============================================================================
+
+import JSZip from 'jszip'
+
+export interface WorkflowArtifact {
+  result?: any
+  screenshot?: string // base64
+  logs?: string
+}
+
+export async function fetchWorkflowArtifact(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  runId: number
+): Promise<WorkflowArtifact> {
+  const { data } = await octokit.actions.listWorkflowRunArtifacts({
+    owner,
+    repo,
+    run_id: runId,
+  })
+
+  const artifact = data.artifacts.find((a) => a.name === 'automation-results')
+  if (!artifact) {
+    throw new Error(`No automation-results artifact found for run ${runId}`)
+  }
+
+  // Download artifact ZIP
+  const zipResponse = await octokit.request('GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}', {
+    owner,
+    repo,
+    artifact_id: artifact.id,
+    archive_format: 'zip',
+  })
+
+  const zipBuffer = Buffer.from(zipResponse.data as ArrayBuffer)
+  const zip = await JSZip.loadAsync(zipBuffer)
+
+  const result: WorkflowArtifact = {}
+
+  // Extract result.json
+  const resultFile = zip.file('result.json')
+  if (resultFile) {
+    const content = await resultFile.async('string')
+    result.result = JSON.parse(content)
+  }
+
+  // Extract screenshot.png
+  const screenshotFile = zip.file('screenshot.png')
+  if (screenshotFile) {
+    const buffer = await screenshotFile.async('nodebuffer')
+    result.screenshot = buffer.toString('base64')
+  }
+
+  // Extract logs.txt
+  const logsFile = zip.file('logs.txt')
+  if (logsFile) {
+    result.logs = await logsFile.async('string')
+  }
+
+  return result
+}
 
 export async function triggerWorkflow(
   octokit: Octokit,
