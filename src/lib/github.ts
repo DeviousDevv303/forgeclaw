@@ -7,6 +7,32 @@
 import { Octokit } from '@octokit/rest'
 
 // =============================================================================
+// GUARDIAN AUTHORITY GATE
+// =============================================================================
+
+export class GuardianAuthorityError extends Error {
+  constructor(operation: string) {
+    super(
+      `[GUARDIAN BLOCK] Operation "${operation}" requires a valid Guardian-signed token. ` +
+        `Obtain token from Guardian review before retry. ` +
+        `Token format: forge-guardian-{min 48 chars} — available from Guardian approval comment.`
+    )
+    this.name = 'GuardianAuthorityError'
+  }
+}
+
+const GUARDIAN_TOKEN_PREFIX = 'forge-guardian-'
+
+function validateGuardianToken(
+  token: string | undefined,
+  operation: string
+): asserts token is string {
+  if (!token || !token.startsWith(GUARDIAN_TOKEN_PREFIX) || token.length < 48) {
+    throw new GuardianAuthorityError(operation)
+  }
+}
+
+// =============================================================================
 // TYPES
 // =============================================================================
 
@@ -123,8 +149,10 @@ export async function createRepo(
   octokit: Octokit,
   name: string,
   description: string,
-  isPrivate = false
+  isPrivate = false,
+  guardianToken?: string // NEW
 ): Promise<RepoMeta> {
+  validateGuardianToken(guardianToken, 'createRepo')
   const { data } = await octokit.repos.createForAuthenticatedUser({
     name,
     description,
@@ -229,8 +257,10 @@ export async function deleteFile(
   path: string,
   message: string,
   sha: string,
-  branch?: string
+  branch?: string,
+  guardianToken?: string // NEW
 ): Promise<void> {
+  validateGuardianToken(guardianToken, 'deleteFile')
   await octokit.repos.deleteFile({
     owner,
     repo,
@@ -415,6 +445,7 @@ export interface DeployPayload {
   prBody?: string
   branchName?: string
   autoMerge?: boolean
+  guardianToken?: string // NEW — required if autoMerge is true
 }
 
 /**
@@ -443,6 +474,7 @@ export async function autonomousDeploy(
     prBody,
     branchName = `forgeclaw-deploy-${Date.now()}`,
     autoMerge = false,
+    guardianToken,
   } = payload
 
   // 1. Create branch
@@ -478,6 +510,7 @@ export async function autonomousDeploy(
   // 4. Auto-merge if requested
   let merged = false
   if (autoMerge && pr) {
+    validateGuardianToken(guardianToken, 'autonomousDeploy:autoMerge')
     // Poll for mergeability (GitHub sets this async)
     let attempts = 0
     while (attempts < 10) {
