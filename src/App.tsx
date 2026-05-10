@@ -5,6 +5,7 @@ import { useErrorBus } from './hooks/useErrorBus'
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { OrchestratorPanel } from './components/OrchestratorPanel'
+import { BrowserAutomationPanel } from './components/BrowserAutomationPanel'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -338,7 +339,7 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyze
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator'
+type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator' | 'browserauto' | 'browserauto'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -617,6 +618,8 @@ function App() {
     { id: 'repoagent',   label: '🐙 RepoAgent' },
     { id: 'orchestrator',label: `🎛️ Orchestrator${taskQueue.length > 0 ? ` (${taskQueue.length})` : ''}` },
     { id: 'failures',    label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
+  { id: 'browserauto', label: 'Browser' },
+  { id: 'browserauto', label: 'Browser' },
   ]
 
   return (
@@ -839,6 +842,8 @@ function App() {
             />
           </div>
         )}
+
+        {activeTab === 'browserauto' && <BrowserAutomationPanel />}
       </main>
 
       <style>{`
