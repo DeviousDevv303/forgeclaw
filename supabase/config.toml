@@ -1,0 +1,2 @@
+[functions.proxy-api]
+verify_jwt = false
