@@ -8,6 +8,11 @@ import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { OrchestratorPanel } from './components/OrchestratorPanel'
 import { BrowserAutomationPanel } from './components/BrowserAutomationPanel'
+import { ReasoningChain } from './components/reasoning/ReasoningChain'
+import { SystemMonitor } from './components/monitor/SystemMonitor'
+import { useReasoningStream } from './hooks/useReasoningStream'
+import { useSystemMonitor } from './hooks/useSystemMonitor'
+import { demoReasoningChain, demoMonitorOps, demoActivities } from './data/demo'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -346,6 +351,74 @@ type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator' | 'browseraut
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
   const { taskQueue, events: orchEvents, admitTask, resolveTask, contracts } = useOrchestrator({ emitFailure })
+  const reasoning = useReasoningStream()
+  const monitor = useSystemMonitor()
+
+  // Demo: load demo data into hooks
+  useEffect(() => {
+    // Pre-populate demo reasoning chain
+    reasoning.startChain('Analyzing mobile black screen issue')
+    reasoning.addStep(reasoning.getActiveChain()?.id || '', {
+      icon: '🔍',
+      label: 'Investigating canvas rendering',
+      status: 'done',
+      body: 'Canvas z-index: 0, opacity: 0.6\nPosition: fixed with pointer-events-none',
+    })
+    reasoning.addStep(reasoning.getActiveChain()?.id || '', {
+      icon: '⚙️',
+      label: 'Checking Supabase initialization',
+      status: 'done',
+      body: 'Found module-level createClient() call\nSwitched to lazy getSupabase() getter',
+      children: [
+        {
+          id: 'step-2a',
+          icon: '📝',
+          label: 'Wrapping localStorage access',
+          status: 'done',
+          timestamp: new Date(Date.now() - 19000).toISOString(),
+          durationMs: 400,
+        },
+      ],
+    })
+    reasoning.addStep(reasoning.getActiveChain()?.id || '', {
+      icon: '⚙️',
+      label: 'Adding API key validation',
+      status: 'active',
+      body: 'Checking startsWith("sk-ant-") before requests',
+    })
+    reasoning.addStep(reasoning.getActiveChain()?.id || '', {
+      icon: '🔍',
+      label: 'Verifying mobile viewport',
+      status: 'pending',
+    })
+
+    // Pre-populate demo monitor operations
+    monitor.startOperation('grep', 'src/App.tsx', 'read')
+    monitor.finishOperation(monitor.operations[0]?.id || '', 'done')
+    monitor.startOperation('edit', 'src/lib/supabase.ts', 'write')
+    monitor.finishOperation(monitor.operations[1]?.id || '', 'done')
+    monitor.startOperation('npm run build', 'dist/', 'execute')
+
+    // Pre-populate demo activities
+    monitor.logActivity({
+      category: 'file',
+      action: 'read',
+      path: 'src/App.tsx',
+      result: 'success',
+    })
+    monitor.logActivity({
+      category: 'reasoning',
+      action: 'phase_transition',
+      result: 'success',
+      meta: { from: 'assumptions', to: 'heuristics' },
+    })
+    monitor.logActivity({
+      category: 'guardian',
+      action: 'scope_check',
+      path: 'src/lib/supabase.ts',
+      result: 'success',
+    })
+  }, [])
 
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -747,8 +820,22 @@ function App() {
           <>
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
               {messages.length === 0 ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444', gap: '16px' }}>
                   <p>System initialized. Awaiting input...</p>
+                  {/* Demo: Live Reasoning Stream */}
+                  <ReasoningChain chain={demoReasoningChain} />
+                  {/* Demo: System Monitor */}
+                  <SystemMonitor
+                    state={{
+                      operations: demoMonitorOps,
+                      currentTool: 'npm run build',
+                      currentPhase: 'execution',
+                      isActive: true,
+                      lastUpdate: new Date().toISOString(),
+                    }}
+                    operations={demoMonitorOps}
+                    activities={demoActivities}
+                  />
                 </div>
               ) : (
                 messages.map(msg => {
