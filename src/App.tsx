@@ -3,7 +3,7 @@ import { FileUploadButton } from './components/FileUploadButton'
 import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
 // import { SupabaseProvider } from './components/SupabaseProvider'
 import { useErrorBus } from './hooks/useErrorBus'
-import { safeGetItem, safeSetItem, safeRemoveItem } from './lib/storage'
+import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { OrchestratorPanel } from './components/OrchestratorPanel'
@@ -350,7 +350,7 @@ function App() {
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = safeGetItem('forgemind_history')
-    return saved ? JSON.parse(saved) : []
+    return safeJsonParse(saved, [])
   })
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
@@ -362,7 +362,7 @@ function App() {
   const [apiKey, setApiKey] = useState(() => import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
-    return saved ? JSON.parse(saved) : []
+    return safeJsonParse(saved, [])
   })
   const [lastSource, setLastSource] = useState<'local' | 'cloud' | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
