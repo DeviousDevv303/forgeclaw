@@ -177,10 +177,14 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
   }, [messageCount]);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    try {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        console.warn('[ForgeClaw] Canvas 2D context unavailable — skipping neural background');
+        return;
+      }
 
     const handleMouseMove = (e: MouseEvent) => {
       const rect = canvas.getBoundingClientRect();
@@ -302,8 +306,8 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         width / 2, height / 2, 0,
         width / 2, height / 2, Math.max(width, height) / 2
       );
-      gradient.addColorStop(0, 'rgba(15, 15, 15, 0.3)');
-      gradient.addColorStop(1, 'rgba(10, 10, 10, 0.8)');
+      gradient.addColorStop(0, 'rgba(15, 15, 15, 0.0)');
+      gradient.addColorStop(1, 'rgba(10, 10, 10, 0.4)');
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, width, height);
       
@@ -323,7 +327,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           conn.strength = Math.max(0.1, conn.strength - 0.01);
         }
         
-        const alpha = conn.strength * (0.35 + Math.sin(time * 2 + conn.pulseOffset) * 0.15);
+        const alpha = conn.strength * (0.6 + Math.sin(time * 2 + conn.pulseOffset) * 0.15);
         
         ctx.beginPath();
         ctx.moveTo(fromNode.x, fromNode.y);
@@ -387,7 +391,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           node.x, node.y, glowRadius
         );
         
-        const alpha = isProcessing ? 0.8 : 0.5;
+        const alpha = isProcessing ? 0.9 : 0.9;
         glowGradient.addColorStop(0, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`);
         glowGradient.addColorStop(0.5, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha * 0.5})`);
         glowGradient.addColorStop(1, `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0)`);
@@ -473,20 +477,16 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       timeoutsRef.current.forEach(t => clearTimeout(t));
       timeoutsRef.current.clear();
     };
+  } catch (err) {
+    console.warn('[ForgeClaw] NeuralNetworkBackground init failed:', err);
+  }
   }, [isProcessing, activeTab, primaryColor, palette.accent]);
 
   return (
     <canvas
       ref={canvasRef}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        zIndex: 0,
-        pointerEvents: 'none',
-      }}
+      className="fixed inset-0 w-full h-full pointer-events-none"
+      style={{ zIndex: 0 }}
     />
   );
 };
