@@ -672,7 +672,7 @@ function App() {
       />
 
       {/* Main */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: activeTab === 'repoagent' ? '1200px' : '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 1 }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: activeTab === 'repoagent' ? '1200px' : '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 2, isolation: 'isolate' }}>
 
         {/* API Key - moved to settings, only show if empty */}
         {!apiKey && (
