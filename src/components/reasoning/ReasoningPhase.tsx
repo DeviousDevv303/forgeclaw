@@ -1,50 +1,61 @@
-import React, { memo, useState } from 'react'
-import type { ReasoningPhase as ReasoningPhaseType } from './types'
-import { PHASE_ICONS } from './types'
-import { ReasoningStep } from './ReasoningStep'
+import { useState, memo } from 'react'
+import type { ReasoningStep } from '../../types/reasoning'
 
-interface Props {
-  phase: ReasoningPhaseType
-  defaultOpen?: boolean
+interface ReasoningPhaseProps {
+  step: ReasoningStep
+  depth?: number
 }
 
-export const ReasoningPhase = memo(function ReasoningPhase({ phase, defaultOpen = false }: Props) {
-  const [open, setOpen] = useState(defaultOpen || phase.status === 'streaming')
-  const isStreaming = phase.status === 'streaming'
-  const isPending = phase.status === 'pending'
-  const statusColor = isStreaming ? '#f97316' : phase.status === 'complete' ? '#10b981' : '#333'
+export const ReasoningPhase = memo(function ReasoningPhase({ step, depth = 0 }: ReasoningPhaseProps) {
+  const [expanded, setExpanded] = useState(step.status === 'active' || step.status === 'error')
+
+  const statusClasses = {
+    active: 'border-l-2 border-orange-500 bg-orange-500/5',
+    done: 'border-l-2 border-slate-700 bg-slate-800/30',
+    error: 'border-l-2 border-red-500 bg-red-500/5',
+    pending: 'border-l-2 border-slate-800 bg-slate-900/20',
+  }
+
+  const iconAnimation = step.status === 'active' ? 'animate-pulse' : ''
 
   return (
-    <div style={{
-      borderLeft: `2px solid ${statusColor}40`,
-      paddingLeft: '12px',
-      marginBottom: '10px',
-      opacity: isPending ? 0.35 : 1,
-      transition: 'opacity 0.3s',
-    }}>
-      <button
-        onClick={() => !isPending && setOpen(o => !o)}
-        style={{
-          background: 'none', border: 'none', padding: 0, width: '100%',
-          cursor: isPending ? 'default' : 'pointer',
-          display: 'flex', alignItems: 'center', gap: '8px',
-        }}
-      >
-        <span style={{ color: statusColor, fontSize: '10px' }}>{PHASE_ICONS[phase.index]}</span>
-        <span style={{ color: statusColor, fontSize: '10px', fontWeight: 'bold', letterSpacing: '1px', textTransform: 'uppercase', fontFamily: 'monospace' }}>
-          {phase.name}
-        </span>
-        {isStreaming && <span style={{ color: '#f97316', fontSize: '8px' }} className="pulse-text">LIVE</span>}
-        {phase.status === 'complete' && <span style={{ color: '#10b981', fontSize: '8px' }}>✓</span>}
-        {!isPending && (
-          <span style={{ color: '#444', fontSize: '8px', marginLeft: 'auto' }}>{open ? '▲' : '▼'}</span>
+    <div className={`ml-${Math.min(depth * 4, 12)}`}>
+      <div className={`rounded-lg p-3 mb-1 ${statusClasses[step.status]}`}>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-2 w-full text-left"
+        >
+          <span className={`text-base ${iconAnimation}`}>{step.icon}</span>
+          <span className={`text-sm font-medium ${
+            step.status === 'error' ? 'text-red-400' :
+            step.status === 'active' ? 'text-orange-400' :
+            'text-slate-300'
+          }`}>
+            {step.label}
+          </span>
+          <span className="text-xs text-slate-600 ml-auto">
+            {new Date(step.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            {step.durationMs && ` +${step.durationMs}ms`}
+          </span>
+          {step.children && step.children.length > 0 && (
+            <span className="text-slate-600 text-xs">{expanded ? '▼' : '▶'}</span>
+          )}
+        </button>
+
+        {expanded && step.body && (
+          <div className="mt-2 text-xs text-slate-400 font-mono whitespace-pre-wrap leading-relaxed">
+            {step.body}
+          </div>
         )}
-      </button>
-      {open && !isPending && (
-        <div style={{ marginTop: '8px' }}>
-          {phase.steps.map(step => <ReasoningStep key={step.id} step={step} />)}
-        </div>
-      )}
+
+        {expanded && step.children && step.children.length > 0 && (
+          <div className="mt-2 space-y-1">
+            {step.children.map(child => (
+              <ReasoningPhase key={child.id} step={child} depth={depth + 1} />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 })

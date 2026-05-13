@@ -1,60 +1,66 @@
-import React, { memo, useState } from 'react'
-import type { ReasoningData } from './types'
+import { useState, memo } from 'react'
+import type { ReasoningChain as ReasoningChainType } from '../../types/reasoning'
 import { ReasoningPhase } from './ReasoningPhase'
 
-interface Props {
-  messageId: string
-  reasoning: ReasoningData
+interface ReasoningChainProps {
+  chain: ReasoningChainType
 }
 
-function propsAreEqual(prev: Props, next: Props): boolean {
-  return prev.messageId === next.messageId && prev.reasoning.version === next.reasoning.version
-}
-
-export const ReasoningChain = memo(function ReasoningChain({ messageId: _messageId, reasoning }: Props) {
-  const isComplete = reasoning.status === 'complete'
-  const isStreaming = reasoning.status === 'streaming'
-  const [collapsed, setCollapsed] = useState(isComplete)
-  const doneCount = reasoning.phases.filter(p => p.status === 'complete').length
+export const ReasoningChainComponent = memo(function ReasoningChainComponent({ chain }: ReasoningChainProps) {
+  const [collapsed, setCollapsed] = useState(false)
+  const isComplete = !!chain.completedAt
+  const activeSteps = chain.steps.filter(s => s.status === 'active').length
 
   return (
-    <div style={{
-      marginBottom: '6px',
-      background: 'rgba(10,10,10,0.6)',
-      border: '1px solid rgba(249,115,22,0.15)',
-      borderRadius: '6px',
-      overflow: 'hidden',
-    }}>
+    <div className="rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden mb-4"
+    >
+      {/* Header */}
       <button
-        onClick={() => setCollapsed(c => !c)}
-        style={{
-          background: 'none', border: 'none', width: '100%', cursor: 'pointer',
-          padding: '7px 12px', display: 'flex', alignItems: 'center', gap: '8px',
-        }}
+        onClick={() => setCollapsed(!collapsed)}
+        className="flex items-center gap-3 w-full px-4 py-3 bg-slate-900/80 hover:bg-slate-800/50 transition-colors"
       >
-        <span style={{ fontSize: '9px', color: '#f97316' }}>⬡</span>
-        <span style={{ color: '#f97316', fontSize: '9px', fontWeight: 'bold', letterSpacing: '2px', textTransform: 'uppercase', fontFamily: 'monospace' }}>
-          {isStreaming ? 'Reasoning…' : '5-Phase Scaffold'}
+        <span className={`text-lg ${isComplete ? '' : 'animate-pulse'}`}
+        >
+          {isComplete ? '✅' : activeSteps > 0 ? '⚙️' : '🔍'}
         </span>
-        {isComplete && (
-          <span style={{ color: '#555', fontSize: '8px' }}>{doneCount}/5 phases</span>
-        )}
-        {isStreaming && (
-          <span style={{ color: '#f97316', fontSize: '8px' }} className="pulse-text">●</span>
-        )}
-        <span style={{ marginLeft: 'auto', color: '#444', fontSize: '8px' }}>{collapsed ? '▼' : '▲'}</span>
+        <span className="text-sm font-semibold text-slate-200"
+        >{chain.rootLabel}</span>
+        <span className="text-xs text-slate-600 ml-auto"
+        >
+          {chain.steps.length} steps
+          {isComplete && ' · done'}
+        </span>
+        <span className="text-slate-600 text-xs"
+        >{collapsed ? '▶' : '▼'}</span>
       </button>
+
+      {/* Steps */}
       {!collapsed && (
-        <div style={{ padding: '0 12px 12px' }}>
-          {reasoning.phases.map(phase => (
-            <ReasoningPhase
-              key={phase.id}
-              phase={phase}
-              defaultOpen={phase.status === 'streaming'}
-            />
-          ))}
+        <div className="px-4 py-3 space-y-1"
+        >
+          {chain.steps.length === 0 ? (
+            <div className="text-xs text-slate-600 italic"
+            >Waiting for steps...</div>
+          ) : (
+            chain.steps.map(step => (
+              <ReasoningPhase key={step.id} step={step} />
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Progress bar */}
+      {activeSteps > 0 && !isComplete && (
+        <div className="h-0.5 bg-slate-800"
+        >
+          <div
+            className="h-full bg-orange-500 transition-all duration-500"
+            style={{
+              width: `${(chain.steps.filter(s => s.status === 'done').length / Math.max(chain.steps.length, 1)) * 100}%`,
+            }}
+          />
         </div>
       )}
     </div>
   )
-}, propsAreEqual)
+})

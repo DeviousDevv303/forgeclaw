@@ -1,44 +1,56 @@
-import React, { memo, useMemo, useState } from 'react'
-import type { OrchestratorEvent } from '../../types/orchestrator'
+import { useState, useMemo } from 'react'
+import type { AgentActivityEvent } from '../../types/reasoning'
 import { MonitorEventRow } from './MonitorEventRow'
 
-interface Props {
-  events: OrchestratorEvent[]
+interface SystemMonitorProps {
+  events: AgentActivityEvent[]
+  isActive?: boolean
 }
 
-export const SystemMonitor = memo(function SystemMonitor({ events }: Props) {
-  const [collapsed, setCollapsed] = useState(false)
-  const now = Date.now()
-  const windowed = useMemo(() => events.slice(0, 20), [events])
+export const SystemMonitor = ({ events, isActive = false }: SystemMonitorProps) => {
+  const [expanded, setExpanded] = useState(false)
 
-  if (events.length === 0 && collapsed) return null
+  // Auto-expand on activity, collapse after idle
+  const displayEvents = useMemo(() => {
+    return events.slice(-5)
+  }, [events])
+
+  const hasErrors = useMemo(() => events.some(e => e.type === 'error'), [events])
 
   return (
-    <div style={{ borderBottom: '1px solid #1a1a1a', marginBottom: '6px', paddingBottom: collapsed ? 0 : '4px' }}>
+    <div
+      className={`border-t border-slate-700 bg-slate-900/50 backdrop-blur-sm transition-all duration-200 ${
+        expanded ? 'max-h-48' : 'max-h-8'
+      } overflow-hidden`}
+    >
+      {/* Collapsed strip */}
       <button
-        onClick={() => setCollapsed(c => !c)}
-        style={{
-          background: 'none', border: 'none', width: '100%', cursor: 'pointer',
-          padding: '4px 0', display: 'flex', alignItems: 'center', gap: '8px',
-        }}
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-2 w-full px-3 py-1.5 text-xs"
       >
-        <span style={{ color: '#333', fontSize: '9px', letterSpacing: '2px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
-          🖥 System Monitor
+        <span className={`${isActive ? 'animate-pulse text-yellow-400' : 'text-slate-500'}`}>
+          {isActive ? '⚡' : '💤'}
         </span>
-        <span style={{ color: '#444', fontSize: '8px' }}>
-          {events.length} event{events.length !== 1 ? 's' : ''}
+        <span className="text-slate-400 font-mono">
+          Cristian's Computer
         </span>
-        <span style={{ marginLeft: 'auto', color: '#444', fontSize: '8px' }}>{collapsed ? '▲' : '▼'}</span>
+        <span className="text-xs text-slate-600 ml-auto">
+          {displayEvents.length > 0
+            ? `${displayEvents.length} events`
+            : 'System idle'}
+        </span>
+        {hasErrors && <span className="text-red-400 ml-auto">● Error</span>}
+        <span className="text-slate-600 ml-auto">{expanded ? '▼' : '▶'}</span>
       </button>
-      {!collapsed && (
-        <div style={{ maxHeight: '72px', overflowY: 'auto', paddingBottom: '2px' }}>
-          {windowed.length === 0 ? (
-            <span style={{ color: '#333', fontSize: '9px', fontFamily: 'monospace' }}>no events yet</span>
-          ) : (
-            windowed.map(e => <MonitorEventRow key={e.eventId} event={e} now={now} />)
-          )}
+
+      {/* Expanded content */}
+      {expanded && (
+        <div className="px-3 pb-2 space-y-1">
+          {displayEvents.map((event, i) => (
+            <MonitorEventRow key={`${event.timestamp}-${i}`} event={event} />
+          ))}
         </div>
       )}
     </div>
   )
-})
+}

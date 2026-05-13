@@ -1,128 +1,111 @@
-import type { ReasoningData, ReasoningPhase, ReasoningStep, ToolCall } from '../components/reasoning/types'
+import type { AgentActivityEvent } from '../types/reasoning'
 
-type ToolCallInput = Omit<ToolCall, 'id'>
+/**
+ * Simulates a full 5-phase reasoning stream with nested sub-steps and tool calls.
+ * DEV-ONLY: Only use in development or behind explicit debug flag.
+ */
+export function* simulateReasoningStream(agentId: string = 'forgemind'): Generator<AgentActivityEvent, void, unknown> {
+  const now = Date.now()
 
-const PHASE_SCRIPTS: Array<{
-  name: string
-  index: 1 | 2 | 3 | 4 | 5
-  steps: Array<{ content: string; toolCalls?: ToolCallInput[] }>
-}> = [
-  {
-    name: 'Assumptions',
-    index: 1,
-    steps: [
-      { content: 'The user query implies a need for structured output. Assuming context is fresh with no prior state bleed.' },
-      {
-        content: 'No ambiguity in intent detected; direct mapping to available capability set.',
-        toolCalls: [{
-          name: 'context.resolve',
-          args: { query: 'user intent', depth: 1 },
-          status: 'success',
-          result: '{"intent":"structured_output","confidence":0.94}',
-          startedAt: 0,
-          completedAt: 100,
-        }],
-      },
-    ],
-  },
-  {
-    name: 'Heuristics',
-    index: 2,
-    steps: [
-      { content: 'Pattern match: similar queries resolve via decomposition into sub-tasks rather than a monolithic response.' },
-      { content: 'Historical signal: step-by-step output preferred over summary. Bayesian weight: 0.87.' },
-    ],
-  },
-  {
-    name: 'First Principles',
-    index: 3,
-    steps: [
-      { content: 'From base axioms: all agent output must be verifiable, scoped, and non-destructive by default.' },
-      {
-        content: 'Trust budget: local inference deferred to cloud for tasks exceeding complexity threshold θ=0.7.',
-        toolCalls: [
-          {
-            name: 'autonomy.evaluate',
-            args: { taskComplexity: 0.82, threshold: 0.7 },
-            status: 'success',
-            result: '{"action":"ALLOW","rule":"R0","trace":["contract found","identity valid","scope authorized"]}',
-            startedAt: 0,
-            completedAt: 80,
-          },
-          {
-            name: 'corpus.recall',
-            args: { k: 3, query: 'first principles reasoning' },
-            status: 'success',
-            result: '["entry-4821","entry-3301","entry-0192"]',
-            startedAt: 0,
-            completedAt: 150,
-          },
-        ],
-      },
-    ],
-  },
-  {
-    name: 'Extension',
-    index: 4,
-    steps: [
-      { content: 'Extend baseline solution: add streaming status per phase to enable progressive disclosure.' },
-      { content: 'Edge case: empty phases array must render gracefully — guard added at ReasoningChain boundary.' },
-    ],
-  },
-  {
-    name: 'Convergence',
-    index: 5,
-    steps: [
-      { content: 'All five phases synthesised. Confidence: 0.91. Output routed to response formatter.' },
-    ],
-  },
-]
+  // Phase 1: Assumptions
+  yield {
+    type: 'agent_status',
+    agentId,
+    status: 'working',
+    timestamp: now,
+  }
 
-function makeStep(
-  content: string,
-  toolCallInputs: ToolCallInput[] | undefined,
-  baseTime: number,
-): ReasoningStep {
-  return {
-    id: `step-${Math.random().toString(36).slice(2, 10)}`,
-    content,
-    status: 'complete',
-    startedAt: baseTime,
-    completedAt: baseTime + 120,
-    toolCalls: toolCallInputs?.map(tc => ({
-      ...tc,
-      id: `tc-${Math.random().toString(36).slice(2, 10)}`,
-      startedAt: baseTime + tc.startedAt,
-      completedAt: tc.completedAt != null ? baseTime + tc.completedAt : undefined,
-    })),
+  yield {
+    type: 'reasoning_phase',
+    agentId,
+    phase: 'assumptions',
+    body: 'Assuming mobile black screen is caused by:\n1. Canvas rendering above content\n2. Supabase module-level init\n3. Missing API key guard',
+    timestamp: now + 100,
+  }
+
+  yield {
+    type: 'tool_call',
+    agentId,
+    tool: 'grep',
+    args: { pattern: 'createClient', path: 'src/lib/supabase.ts' },
+    timestamp: now + 200,
+    durationMs: 150,
+  }
+
+  // Phase 2: Heuristics
+  yield {
+    type: 'reasoning_phase',
+    agentId,
+    phase: 'heuristics',
+    body: 'Heuristic: module-level side effects are the #1 cause of pre-mount crashes.\nHeuristic: @import in CSS blocks parsing on mobile.',
+    timestamp: now + 500,
+  }
+
+  yield {
+    type: 'file_read',
+    agentId,
+    path: 'src/App.tsx',
+    timestamp: now + 600,
+  }
+
+  // Phase 3: First Principles
+  yield {
+    type: 'reasoning_phase',
+    agentId,
+    phase: 'first_principles',
+    body: 'First principle: React cannot mount if an error throws before createRoot().\nFirst principle: CSS @import is render-blocking.',
+    timestamp: now + 1000,
+  }
+
+  yield {
+    type: 'tool_call',
+    agentId,
+    tool: 'edit',
+    args: { file: 'src/lib/supabase.ts', action: 'lazy-init' },
+    timestamp: now + 1200,
+    durationMs: 300,
+  }
+
+  // Phase 4: Extension
+  yield {
+    type: 'reasoning_phase',
+    agentId,
+    phase: 'extension',
+    body: 'Extending fix to all localStorage access points.\nExtending canvas positioning to use absolute inside fixed wrapper.',
+    timestamp: now + 1500,
+  }
+
+  yield {
+    type: 'file_write',
+    agentId,
+    path: 'src/lib/storage.ts',
+    timestamp: now + 1600,
+  }
+
+  // Phase 5: Convergence
+  yield {
+    type: 'reasoning_phase',
+    agentId,
+    phase: 'convergence',
+    body: 'All fixes applied. Build passes. Mobile renders correctly.',
+    timestamp: now + 2000,
+  }
+
+  yield {
+    type: 'agent_status',
+    agentId,
+    status: 'idle',
+    timestamp: now + 2100,
   }
 }
 
-export function buildMockReasoning(): ReasoningData {
-  if (!import.meta.env.DEV) {
-    throw new Error('buildMockReasoning is a development utility and must not be called in production.')
+/**
+ * Collect all events from the generator into an array.
+ */
+export function collectMockEvents(agentId?: string): AgentActivityEvent[] {
+  const events: AgentActivityEvent[] = []
+  for (const event of simulateReasoningStream(agentId)) {
+    events.push(event)
   }
-
-  const now = Date.now()
-  const phases: ReasoningPhase[] = PHASE_SCRIPTS.map((script, i) => {
-    const phaseStart = now + i * 250
-    return {
-      id: `phase-${script.index}`,
-      index: script.index,
-      name: script.name,
-      status: 'complete',
-      startedAt: phaseStart,
-      completedAt: phaseStart + 200,
-      steps: script.steps.map(s => makeStep(s.content, s.toolCalls, phaseStart)),
-    }
-  })
-
-  return {
-    id: `reasoning-mock-${now}`,
-    version: 1,
-    phases,
-    status: 'complete',
-    startedAt: now,
-    completedAt: now + 1250,
-  }
+  return events
 }

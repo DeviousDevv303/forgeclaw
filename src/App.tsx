@@ -2,23 +2,26 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { FileUploadButton } from './components/FileUploadButton'
 import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
 // import { SupabaseProvider } from './components/SupabaseProvider'
-import { ReasoningChain } from './components/reasoning/ReasoningChain'
-import { SystemMonitor } from './components/monitor/SystemMonitor'
-import type { ReasoningData } from './components/reasoning/types'
-import { buildMockReasoning } from './lib/reasoningMock'
 import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { OrchestratorPanel } from './components/OrchestratorPanel'
 import { BrowserAutomationPanel } from './components/BrowserAutomationPanel'
+import { ReasoningChainComponent } from './components/reasoning/ReasoningChain'
+import { SystemMonitor } from './components/monitor/SystemMonitor'
+import { useReasoningStream } from './hooks/useReasoningStream'
+import { useSystemMonitor } from './hooks/useSystemMonitor'
+import { useAgentActivityStream } from './hooks/useAgentActivityStream'
+import { collectMockEvents } from './lib/reasoningMock'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
+import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Message {
   id: string
-  role: 'user' | 'assistant'
+  role: MessageRole
   content: string
   timestamp: number
   source?: 'local' | 'cloud'
@@ -26,7 +29,7 @@ interface Message {
   phases?: Record<string, string>
   showReasoning?: boolean
   feedback?: 'up' | 'down'
-  reasoning?: ReasoningData
+  reasoning?: ReasoningChainType
 }
 
 interface CorpusEntry {
@@ -346,11 +349,26 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyze
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator' | 'browserauto'
+type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator' | 'browserauto' | 'browserauto'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
   const { taskQueue, events: orchEvents, admitTask, resolveTask, contracts } = useOrchestrator({ emitFailure })
+  
+  // Activity stream is single source of truth
+  const activityStream = useAgentActivityStream()
+  const reasoning = useReasoningStream({ activityEvents: activityStream.events })
+  const monitor = useSystemMonitor()
+
+  // DEV-ONLY: Load mock events on mount
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      const mockEvents = collectMockEvents('forgemind')
+      for (const event of mockEvents) {
+        activityStream.addEvent(event)
+      }
+    }
+  }, [])
 
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -577,20 +595,6 @@ function App() {
     setOpenReasoningIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
 
-  const handleDemoReasoning = () => {
-    if (!import.meta.env.DEV) return
-    const reasoning = buildMockReasoning()
-    const demoMsg: Message = {
-      id: `demo-${Date.now()}`,
-      role: 'assistant',
-      content: 'Demo: this is a mock assistant message with a live 5-phase reasoning scaffold attached. Expand the block above to inspect phases, steps, and tool calls.',
-      timestamp: Date.now(),
-      source: 'cloud',
-      reasoning,
-    }
-    setMessages(prev => [...prev, demoMsg])
-  }
-
   const handleClearMemory = () => {
     if (!window.confirm('CRITICAL: WIPE ALL SESSION MEMORY AND API KEY?')) return
     safeRemoveItem('forgemind_history'); safeRemoveItem('forgemind_corpus'); safeRemoveItem('fm_api_key')
@@ -653,6 +657,7 @@ function App() {
     { id: 'orchestrator',label: `🎛️ Orchestrator${taskQueue.length > 0 ? ` (${taskQueue.length})` : ''}` },
     { id: 'failures',    label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
   { id: 'browserauto', label: 'Browser' },
+  { id: 'browserauto', label: 'Browser' },
   ]
 
   return (
@@ -672,9 +677,6 @@ function App() {
           <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
           <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>WIPE</button>
           <button onClick={handleExportCorpus} style={headerBtnStyle}>EXPORT</button>
-          {import.meta.env.DEV && (
-            <button onClick={handleDemoReasoning} style={{ ...headerBtnStyle, borderColor: '#7c3aed', color: '#7c3aed' }}>DEMO</button>
-          )}
         </div>
       </header>
 
@@ -768,8 +770,12 @@ function App() {
           <>
             <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
               {messages.length === 0 ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444', gap: '16px' }}>
                   <p>System initialized. Awaiting input...</p>
+                  {/* Reasoning Stream from activity events */}
+                  {reasoning.chains.map(chain => (
+                    <ReasoningChainComponent key={chain.id} chain={chain} />
+                  ))}
                 </div>
               ) : (
                 messages.map(msg => {
@@ -781,9 +787,6 @@ function App() {
                           <span style={{ fontSize: '14px' }}>🧠</span>
                           {msg.source && <span style={{ fontSize: '9px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', opacity: 0.7 }}>{msg.source === 'local' ? 'LOCAL' : 'CLOUD'}</span>}
                         </div>
-                      )}
-                      {msg.role === 'assistant' && msg.reasoning && (
-                        <ReasoningChain messageId={msg.id} reasoning={msg.reasoning} />
                       )}
                       <div style={{ maxWidth: '90%', padding: '10px 14px', borderRadius: '8px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(26, 26, 26, 0.75)', color: msg.role === 'user' ? '#000' : '#e5e5e5', fontSize: '13px', lineHeight: '1.5', border: msg.role === 'assistant' ? '1px solid rgba(34, 34, 34, 0.5)' : 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', width: msg.role === 'assistant' ? '100%' : undefined }}>
                         {msg.content}
@@ -826,8 +829,14 @@ function App() {
               {loading && <div style={{ color: '#f97316', fontSize: '11px' }}><span className="pulse-text">EXECUTING COGNITIVE SCAFFOLD...</span></div>}
               <div ref={messagesEndRef} />
             </div>
+            
+            {/* System Monitor — pinned above input */}
+            <SystemMonitor
+              events={activityStream.events}
+              isActive={monitor.state.isActive}
+            />
+            
               <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0', zIndex: 20 }}>
-                <SystemMonitor events={orchEvents} />
                 {attachedFile && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: '#f97316', fontSize: '12px' }}>
                     <span>📎 {attachedFile.name}</span>

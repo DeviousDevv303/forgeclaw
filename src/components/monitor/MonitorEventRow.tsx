@@ -1,42 +1,58 @@
-import React, { memo } from 'react'
-import type { OrchestratorEvent } from '../../types/orchestrator'
+import { memo } from 'react'
+import type { AgentActivityEvent } from '../../types/reasoning'
 
-const EVENT_COLORS: Record<OrchestratorEvent['type'], string> = {
-  task_admitted: '#10b981',
-  task_rejected: '#ef4444',
-  authority_violation: '#ef4444',
-  recovery_triggered: '#eab308',
+interface MonitorEventRowProps {
+  event: AgentActivityEvent
 }
 
-const EVENT_ICONS: Record<OrchestratorEvent['type'], string> = {
-  task_admitted: '▶',
-  task_rejected: '✗',
-  authority_violation: '⚠',
-  recovery_triggered: '↺',
-}
+export const MonitorEventRow = memo(function MonitorEventRow({ event }: MonitorEventRowProps) {
+  const typeColors: Record<string, string> = {
+    tool_call: 'text-yellow-400',
+    file_read: 'text-blue-400',
+    file_write: 'text-green-400',
+    reasoning_phase: 'text-orange-400',
+    agent_status: 'text-slate-400',
+    error: 'text-red-400',
+  }
 
-interface Props {
-  event: OrchestratorEvent
-  now: number
-}
+  const typeLabels: Record<string, string> = {
+    tool_call: 'TOOL',
+    file_read: 'READ',
+    file_write: 'WRITE',
+    reasoning_phase: 'REASON',
+    agent_status: 'STATUS',
+    error: 'ERROR',
+  }
 
-export const MonitorEventRow = memo(function MonitorEventRow({ event, now }: Props) {
-  const delta = Math.round((now - Date.parse(event.timestamp)) / 1000)
-  const ageStr = delta < 60 ? `${delta}s` : `${Math.round(delta / 60)}m`
-  const color = EVENT_COLORS[event.type]
-  const icon = EVENT_ICONS[event.type]
+  // Type-safe detail extraction
+  let detail = ''
+  switch (event.type) {
+    case 'tool_call':
+      detail = event.tool
+      break
+    case 'file_read':
+    case 'file_write':
+      detail = event.path
+      break
+    case 'reasoning_phase':
+      detail = event.phase
+      break
+    case 'agent_status':
+      detail = event.status
+      break
+    case 'error':
+      detail = event.message.slice(0, 40)
+      break
+  }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '2px 0', fontSize: '9px', fontFamily: 'monospace' }}>
-      <span style={{ color, width: '10px', textAlign: 'center', flexShrink: 0 }}>{icon}</span>
-      <span style={{ color: '#555', flexShrink: 0, minWidth: '22px' }}>{ageStr}</span>
-      <span style={{ color: '#777', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        {event.type.replace(/_/g, ' ')}
-        {' · '}
-        <span style={{ color: '#555' }}>{event.agentId}</span>
-        {event.taskSpec?.taskId && (
-          <span style={{ color: '#444' }}>{' · '}{event.taskSpec.taskId.slice(0, 8)}</span>
-        )}
+    <div className="flex items-center gap-2 text-xs font-mono">
+      <span className={typeColors[event.type] || 'text-slate-400'}>
+        {typeLabels[event.type] || event.type.toUpperCase()}
+      </span>
+      <span className="text-slate-500">{detail}</span>
+      <span className="text-slate-700 ml-auto">
+        {new Date(event.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
       </span>
     </div>
   )
