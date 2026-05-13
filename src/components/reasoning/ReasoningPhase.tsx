@@ -1,7 +1,7 @@
-import { memo, useState } from 'react'
+import { useState, memo } from 'react'
 import type { ReasoningStep } from '../../types/reasoning'
 
-const DEPTH_MARGINS = ['ml-0', 'ml-4', 'ml-8', 'ml-12'] as const
+const DEPTH_MARGINS = ['ml-0', 'ml-4', 'ml-8', 'ml-12']
 
 interface ReasoningPhaseProps {
   step: ReasoningStep
@@ -19,7 +19,7 @@ export const ReasoningPhase = memo(function ReasoningPhase({ step, depth = 0 }: 
   }
 
   const iconAnimation = step.status === 'active' ? 'animate-pulse' : ''
-  const marginClass = DEPTH_MARGINS[Math.min(depth, DEPTH_MARGINS.length - 1)]
+  const marginClass = DEPTH_MARGINS[Math.min(depth, DEPTH_MARGINS.length - 1)] || 'ml-0'
 
   return (
     <div className={marginClass}>

@@ -154,10 +154,10 @@ export function useReasoningStream(options: UseReasoningStreamOptions = {}) {
 
 function phaseToIcon(phase: ReasoningPhase): ReasoningStep['icon'] {
   switch (phase) {
-    case 'assumptions': return '🔍'
-    case 'heuristics': return '⚙️'
-    case 'first_principles': return '🔍'
-    case 'extension': return '⚙️'
+    case 'assumptions': return '💡'
+    case 'heuristics': return '🔧'
+    case 'first_principles': return '🧪'
+    case 'extension': return '📝'
     case 'convergence': return '✅'
     default: return '🔍'
   }

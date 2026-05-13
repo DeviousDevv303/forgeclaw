@@ -361,13 +361,11 @@ function App() {
   const monitor = useSystemMonitor()
 
   // DEV-ONLY: Load mock events on mount
-  const addEventRef = useRef(activityStream.addEvent)
-  addEventRef.current = activityStream.addEvent
   useEffect(() => {
     if (import.meta.env.DEV) {
       const mockEvents = collectMockEvents('forgemind')
       for (const event of mockEvents) {
-        addEventRef.current(event)
+        activityStream.addEvent(event)
       }
     }
   }, [])
@@ -658,7 +656,7 @@ function App() {
     { id: 'repoagent',   label: '🐙 RepoAgent' },
     { id: 'orchestrator',label: `🎛️ Orchestrator${taskQueue.length > 0 ? ` (${taskQueue.length})` : ''}` },
     { id: 'failures',    label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
-  { id: 'browserauto', label: 'Browser' },
+    { id: 'browserauto', label: 'Browser' },
   ]
 
   return (
