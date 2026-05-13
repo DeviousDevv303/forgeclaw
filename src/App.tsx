@@ -460,6 +460,13 @@ function App() {
     setMessages(prev => [...prev, userMessage])
     setLoading(true)
 
+    if (!apiKey || apiKey.trim() === '') {
+      const systemMessage: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: '🔑 API key required. Open Settings (⚙) → enter your Anthropic API key.', timestamp: Date.now(), source: 'local' }
+      setMessages(prev => [...prev, systemMessage])
+      setLoading(false)
+      return
+    }
+
     let responseText = ''; let source: 'local' | 'cloud' = 'cloud'
     try {
       let ollamaOk = false
