@@ -1,18 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { FailureEvent, FailureSeverity, FailureSource } from '../types/errorBus'
-import { safeGetItem, safeSetItem } from '../lib/storage'
+import { safeSetItem } from '../lib/storage'
 
 const STORAGE_KEY = 'forgeclaw_failure_ledger'
-
-function loadLedger(): FailureEvent[] {
-  const raw = safeGetItem(STORAGE_KEY)
-  if (!raw) return []
-  try {
-    return JSON.parse(raw) as FailureEvent[]
-  } catch {
-    return []
-  }
-}
 
 function saveLedger(ledger: FailureEvent[]): void {
   safeSetItem(STORAGE_KEY, JSON.stringify(ledger))
@@ -27,12 +17,8 @@ export interface EmitFailureOptions {
 
 export function useErrorBus() {
   const [ledger, setLedger] = useState<FailureEvent[]>(() => {
-    // Clear old errors on fresh mount to prevent stale error display
-    const fresh = loadLedger()
-    return fresh.filter(e => {
-      const age = Date.now() - new Date(e.timestamp).getTime()
-      return age < 300000 // Keep only errors from last 5 minutes
-    })
+    // Clear ALL old errors on fresh mount — prevent stale error display
+    return []
   })
 
   useEffect(() => {
