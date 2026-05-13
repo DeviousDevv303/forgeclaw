@@ -4,12 +4,16 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: '/forgeclaw/',
+  build: {
+    outDir: 'dist',
+    sourcemap: true,
+  },
   server: {
+    port: 5173,
     proxy: {
-      '/api/anthropic': {
-        target: 'https://api.anthropic.com',
+      '/api': {
+        target: 'http://localhost:3001',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/anthropic/, ''),
       },
     },
   },
