@@ -1,11 +1,11 @@
 import { useState, useCallback } from 'react'
 import {
-  createGithubClient,
+  createClient,
   triggerWorkflow,
   listWorkflowRuns,
-  fetchWorkflowArtifact,
   GuardianAuthorityError,
 } from '../lib/github'
+import { safeGetItem } from '../lib/storage'
 
 export interface BrowserAutomationOptions {
   url: string
@@ -19,7 +19,7 @@ export interface BrowserAutomationResult {
   status: string
   conclusion: string | null
   artifact?: {
-    result?: any
+    result?: unknown
     screenshot?: string
     logs?: string
   }
@@ -37,7 +37,6 @@ export function useBrowserAutomation() {
       setError(null)
 
       try {
-        // 1. Validate guardian token
         const GUARDIAN_TOKEN_PREFIX = 'forge-guardian-'
         if (
           !options.guardianToken ||
@@ -47,21 +46,16 @@ export function useBrowserAutomation() {
           throw new GuardianAuthorityError('useBrowserAutomation:runAutomation')
         }
 
-        // Log to errorBus (console for now — errorBus integration TBD)
-        console.log(`[errorBus] Guardian token validated for browser automation: ${options.task} on ${options.url}`)
-
-        // 2. Get GitHub token from env
-        const githubToken = import.meta.env.VITE_GITHUB_TOKEN
+        const githubToken = safeGetItem('gh_token')
         if (!githubToken) {
-          throw new Error('VITE_GITHUB_TOKEN not configured')
+          throw new Error('GitHub token not configured — enter it in the settings modal')
         }
 
-        const octokit = createGithubClient(githubToken)
+        const octokit = createClient(githubToken)
         const owner = 'DeviousDevv303'
         const repo = 'forgeclaw'
 
-        // 3. Trigger workflow
-        const runId = await triggerWorkflow(
+        const { runId } = await triggerWorkflow(
           octokit,
           owner,
           repo,
@@ -74,20 +68,14 @@ export function useBrowserAutomation() {
           }
         )
 
-        // 4. Poll for completion (max 60 attempts = 5 min)
         let attempts = 0
-        let workflowRun: { id: number; status: string; conclusion: string | null } | undefined
+        let workflowRun: { id: number; status: string; conclusion?: string; htmlUrl: string } | undefined
 
         while (attempts < 60) {
           await new Promise((r) => setTimeout(r, 5000))
-
-          const runs = await listWorkflowRuns(octokit, owner, repo, 'browser-automation.yml', 'main', 5)
+          const runs = await listWorkflowRuns(octokit, owner, repo, 'browser-automation.yml', 'main', 'completed')
           workflowRun = runs.find((r) => r.id === runId) || runs[0]
-
-          if (workflowRun?.status === 'completed') {
-            break
-          }
-
+          if (workflowRun?.status === 'completed') break
           attempts++
         }
 
@@ -99,14 +87,11 @@ export function useBrowserAutomation() {
           throw new Error(`Workflow failed with conclusion: ${workflowRun.conclusion}`)
         }
 
-        // 5. Fetch artifact
-        const artifact = await fetchWorkflowArtifact(octokit, owner, repo, workflowRun.id)
-
         const automationResult: BrowserAutomationResult = {
           runId: workflowRun.id,
           status: workflowRun.status,
-          conclusion: workflowRun.conclusion,
-          artifact,
+          conclusion: workflowRun.conclusion ?? null,
+          artifact: { result: workflowRun.htmlUrl },
         }
 
         setResult(automationResult)
