@@ -3,6 +3,7 @@ import { FileUploadButton } from './components/FileUploadButton'
 import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
 // import { SupabaseProvider } from './components/SupabaseProvider'
 import { useErrorBus } from './hooks/useErrorBus'
+import { safeGetItem, safeSetItem, safeRemoveItem } from './lib/storage'
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { OrchestratorPanel } from './components/OrchestratorPanel'
@@ -156,7 +157,7 @@ interface RepoAnalyzerProps {
 
 function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyzerProps) {
   const [repoUrl, setRepoUrl] = useState('https://github.com/DeviousDevv303/forgeclaw')
-  const [ghToken, setGhToken] = useState(() => localStorage.getItem('gh_token') || '')
+  const [ghToken, setGhToken] = useState(() => safeGetItem('gh_token') || '')
   const [tree, setTree] = useState<RepoTreeItem[]>([])
   const [loadingTree, setLoadingTree] = useState(false)
   const [treeError, setTreeError] = useState<string | null>(null)
@@ -176,7 +177,7 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyze
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
   const [filter, setFilter] = useState('')
 
-  useEffect(() => { localStorage.setItem('gh_token', ghToken) }, [ghToken])
+  useEffect(() => { safeSetItem('gh_token', ghToken) }, [ghToken])
 
   const parsed = parseRepoUrl(repoUrl)
 
@@ -348,7 +349,7 @@ function App() {
 
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
   const [messages, setMessages] = useState<Message[]>(() => {
-    const saved = localStorage.getItem('forgemind_history')
+    const saved = safeGetItem('forgemind_history')
     return saved ? JSON.parse(saved) : []
   })
   const [input, setInput] = useState('')
@@ -358,9 +359,9 @@ function App() {
   const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
-  const [apiKey, setApiKey] = useState(() => import.meta.env.VITE_ANTHROPIC_API_KEY || localStorage.getItem('fm_api_key') || '')
+  const [apiKey, setApiKey] = useState(() => import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
-    const saved = localStorage.getItem('forgemind_corpus')
+    const saved = safeGetItem('forgemind_corpus')
     return saved ? JSON.parse(saved) : []
   })
   const [lastSource, setLastSource] = useState<'local' | 'cloud' | null>(null)
@@ -388,9 +389,9 @@ function App() {
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
 
   useEffect(() => { scrollToBottom() }, [messages])
-  useEffect(() => { localStorage.setItem('forgemind_history', JSON.stringify(messages)) }, [messages])
-  useEffect(() => { localStorage.setItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
-  useEffect(() => { localStorage.setItem('fm_api_key', apiKey) }, [apiKey])
+  useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
+  useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
+  useEffect(() => { safeSetItem('fm_api_key', apiKey) }, [apiKey])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -559,7 +560,7 @@ function App() {
 
   const handleClearMemory = () => {
     if (!window.confirm('CRITICAL: WIPE ALL SESSION MEMORY AND API KEY?')) return
-    localStorage.removeItem('forgemind_history'); localStorage.removeItem('forgemind_corpus'); localStorage.removeItem('fm_api_key')
+    safeRemoveItem('forgemind_history'); safeRemoveItem('forgemind_corpus'); safeRemoveItem('fm_api_key')
     setMessages([]); setCorpus([]); setApiKey(''); setLastSource(null); setOpenReasoningIds(new Set())
     emitFailure({ source: 'forgemind', severity: 'info', message: 'Session memory wiped by user.' })
   }
