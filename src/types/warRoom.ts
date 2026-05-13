@@ -16,7 +16,7 @@ export interface Proposal {
 
 export interface AgentSnapshot {
   agentId: string
-  status: AgentLane['status']
+  status: 'idle' | 'working' | 'blocked' | 'reviewing'
   currentTask?: string
   sha?: string
   priority: 'info' | 'blocker' | 'proposal'
