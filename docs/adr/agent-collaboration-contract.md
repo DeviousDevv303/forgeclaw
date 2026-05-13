@@ -1,16 +1,16 @@
 # ForgeClaw Agent Collaboration Contract v1.0
 
 **Parties**
-- KimiClaw — Implementation executor, reasoning validator
-- Claude Code — Architectural reviewer, spec author, implementation partner
-- Cristian — Project lead, tie-breaker, Guardian proxy
+- **KimiClaw** — Implementation executor, reasoning validator
+- **Claude Code** — Architectural reviewer, spec author, implementation partner
+- **Cristian** — Project lead, tie-breaker, Guardian proxy
 
 ---
 
 ## 1. Role Boundaries (Hard Separation)
 
 | Domain | KimiClaw Owns | Claude Code Owns | Shared (Cristian decides) |
-|--------|---------------|------------------|---------------------------|
+|---|---|---|---|
 | Spec & ADR | Reads, implements | Writes `docs/adr/` | Approval |
 | Types & Schema | Writes `src/types/` | Reviews | Breaking changes |
 | Hooks & Logic | Writes `src/hooks/` | Reviews | Performance-critical refactors |
@@ -51,7 +51,7 @@ Claude never commits to KimiClaw-owned files. If Claude finds an issue, he write
 
 ## 3. Handoff Protocol (Ping-Pong Loop)
 
-### Cycle A — KimiClaw Drafts:
+**Cycle A — KimiClaw Drafts:**
 1. Implements feature in owned directories
 2. Runs `npm run build` (must exit 0)
 3. Writes `REVIEWS/kimi-staged-{sha}.md`:
@@ -61,7 +61,7 @@ Claude never commits to KimiClaw-owned files. If Claude finds an issue, he write
    - Explicit request for Claude review
 4. Stages. Reports SHA. Awaits.
 
-### Cycle B — Claude Reviews:
+**Cycle B — Claude Reviews:**
 1. Reads `REVIEWS/kimi-staged-{sha}.md` + diffs
 2. Writes `REVIEWS/claude-review-{sha}.md`:
    - Verdict: `APPROVE` / `NEEDS_FIX` / `BLOCKED`
@@ -70,7 +70,7 @@ Claude never commits to KimiClaw-owned files. If Claude finds an issue, he write
 3. If `APPROVE` → Guardian queue for merge
 4. If `NEEDS_FIX` → back to KimiClaw Cycle A
 
-### Cycle C — Integration (post-review):
+**Cycle C — Integration (post-review):**
 1. KimiClaw applies Claude's patches from `__claude-review/`
 2. Re-runs build
 3. Writes `REVIEWS/kimi-final-{sha}.md`
@@ -83,7 +83,7 @@ Claude never commits to KimiClaw-owned files. If Claude finds an issue, he write
 Both agents work simultaneously on different vertical slices:
 
 | Agent | Slice | Example |
-|-------|-------|---------|
+|---|---|---|
 | KimiClaw | Reasoning Stream | `src/components/reasoning/`, `src/hooks/useReasoningStream.ts` |
 | Claude Code | System Monitor | `src/components/monitor/`, `src/hooks/useSystemMonitor.ts` |
 
@@ -94,7 +94,7 @@ Both agents work simultaneously on different vertical slices:
 ## 5. Conflict Resolution
 
 | Scenario | Rule |
-|----------|------|
+|---|---|
 | Same-file collision detected | Both stop. Cristian decides who rewrites. |
 | Architectural disagreement | KimiClaw argues from 5-phase scaffolding. Claude challenges with performance/edge-case analysis. Cristian breaks tie. |
 | Build failure after integration | Author of last merged slice owns the fix. |
@@ -104,21 +104,51 @@ Both agents work simultaneously on different vertical slices:
 
 ## 6. Communication Rules
 
-- No direct agent-to-agent messages. All coordination flows through Cristian or the `REVIEWS/` directory.
-- Sign your work. Every commit/PR body ends with `— {AgentName}`.
+- **No direct agent-to-agent messages.** All coordination flows through Cristian or the `REVIEWS/` directory.
+- **Sign your work.** Every commit/PR body ends with `— {AgentName}`.
   - KimiClaw: `— KimiClaw ❤️‍🔥`
-  - Claude Code: `— Claude Code`
-- Stage only. Neither agent commits or pushes to `main` without Guardian review.
-- Guardian-gated files (`integrity_gate.ts`, `useIntegrityGate.ts`, core auth logic, `.github/workflows/`) require explicit Guardian flag before modification per Standing Rule 18.
+  - Claude Code: `— Claude code`
+- **Stage only.** Neither agent commits or pushes to `main` without Guardian review.
+- **Guardian-gated files** (`integrity_gate.ts`, `useIntegrityGate.ts`, core auth logic, `.github/workflows/`) require explicit Guardian flag before modification per Standing Rule 18.
 
 ---
 
 ## 7. Priority Order
 
-Truth > Function > Clarity > Efficiency
+**Truth > Function > Clarity > Efficiency**
 
-Both agents must challenge weak reasoning, provide alternatives, and explain why not just what.
+Both agents must challenge weak reasoning, provide alternatives, and explain *why* not just *what*.
 
 ---
 
-*Contract ratified by all parties. Effective immediately.*
+## Copy-Paste Prompts (With Contract Reference)
+
+**To Claude Code:**
+```
+TASK: Write ADR for Live Reasoning Stream & System Monitor.
+
+ROLE: Architectural reviewer per Agent Collaboration Contract v1.0
+(docs/adr/agent-collaboration-contract.md). You own docs/adr/ and
+REVIEWS/claude-*.md. Do NOT touch KimiClaw-owned files.
+
+ALL FOUR DECISIONS LOCKED — see prior message for full spec.
+
+DELIVERABLE: docs/adr/reasoning-monitor-architecture.md
+
+STAGE ONLY. Report SHA.
+```
+
+**To KimiClaw:**
+```
+TASK: Implement Live Reasoning Stream + System Monitor.
+
+ROLE: Implementation executor per Agent Collaboration Contract v1.0
+(docs/adr/agent-collaboration-contract.md). You own src/types/,
+src/hooks/, src/components/, src/lib/reasoningMock.ts, and App.tsx
+integration. Do NOT touch docs/adr/ or REVIEWS/claude-*.md.
+
+ALL DECISIONS LOCKED — see prior message for full implementation spec.
+
+STAGE ONLY. Write REVIEWS/kimi-staged-{sha}.md. Await Claude review
+per Contract Section 3.
+```

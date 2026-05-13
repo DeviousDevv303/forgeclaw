@@ -3,12 +3,12 @@ export interface AgentLane {
   status: 'idle' | 'working' | 'blocked' | 'reviewing'
   currentTask?: string
   lastActivity: number // unix ms
-  sha?: string // last staged/reviewed commit
+  sha?: string         // last staged/reviewed commit
 }
 
 export interface Proposal {
   id: string
-  from: string
+  from: string         // agentId
   proposal: string
   status: 'pending' | 'acknowledged' | 'rejected'
   timestamp: number
@@ -16,16 +16,16 @@ export interface Proposal {
 
 export interface AgentSnapshot {
   agentId: string
+  timestamp: number
   status: 'idle' | 'working' | 'blocked' | 'reviewing'
   currentTask?: string
   sha?: string
-  priority: 'info' | 'blocker' | 'proposal'
   message?: string
-  timestamp: number
+  priority: 'info' | 'blocker' | 'proposal'
 }
 
 export interface CristianDecision {
-  targetId: string
+  targetId: string     // baseName (filename without .json) of the snapshot being responded to
   decision: 'acknowledged' | 'rejected' | 'deferred'
   note?: string
   timestamp: number
