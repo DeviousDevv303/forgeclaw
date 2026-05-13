@@ -429,16 +429,14 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
     const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     let isRunning = !motionQuery.matches;
 
-    const handleMotionChange = (e: MediaQueryListEvent) => {
-      if (e.matches) {
-        // User turned ON reduced motion — stop loop
+    const handleMotionChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      const matches = 'matches' in e ? e.matches : (e as MediaQueryList).matches;
+      if (matches) {
         cancelAnimationFrame(animationRef.current);
         rafPendingRef.current = false;
         isRunning = false;
-        // Static render with current palette
         drawStatic();
       } else {
-        // User turned OFF reduced motion — start loop
         if (!rafPendingRef.current) {
           rafPendingRef.current = true;
           isRunning = true;
@@ -447,7 +445,12 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       }
     };
 
-    motionQuery.addEventListener('change', handleMotionChange);
+    // Modern API + fallback for older Safari
+    if (motionQuery.addEventListener) {
+      motionQuery.addEventListener('change', handleMotionChange);
+    } else if ((motionQuery as any).addListener) {
+      (motionQuery as any).addListener(handleMotionChange);
+    }
 
     // Initial state
     if (isRunning) {
@@ -461,7 +464,11 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       window.removeEventListener('mousemove', handleMouseMove);
       canvas.removeEventListener('mouseleave', handleMouseLeave);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      motionQuery.removeEventListener('change', handleMotionChange);
+      if (motionQuery.removeEventListener) {
+        motionQuery.removeEventListener('change', handleMotionChange);
+      } else if ((motionQuery as any).removeListener) {
+        (motionQuery as any).removeListener(handleMotionChange);
+      }
       cancelAnimationFrame(animationRef.current);
       timeoutsRef.current.forEach(t => clearTimeout(t));
       timeoutsRef.current.clear();
