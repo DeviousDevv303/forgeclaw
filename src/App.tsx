@@ -625,7 +625,7 @@ function App() {
   ]
 
   return (
-    <div style={{ minHeight: '100dvh', background: '#0a0a0a', color: '#e5e5e5', fontFamily: 'monospace', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ position: 'relative', zIndex: 10, minHeight: '100dvh', display: 'flex', flexDirection: 'column', color: '#e5e5e5' }}>
 
       {/* Header */}
       <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a' }}>

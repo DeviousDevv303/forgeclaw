@@ -8,6 +8,12 @@ body {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
 ::-webkit-scrollbar {
   width: 4px;
 }
