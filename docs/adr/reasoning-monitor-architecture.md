@@ -159,6 +159,13 @@ type AgentActivityEvent =
       message: string
       timestamp: number
     }
+  | {
+      type: 'agent_message'
+      agentId: string              // NOT a union literal — roster grows, type stays stable
+      message: string
+      priority: 'info' | 'blocker' | 'proposal'
+      timestamp: number
+    }
 ```
 
 ### `ReasoningStep`
@@ -168,10 +175,10 @@ Recursive tree node. Replaces the flat `ReasoningStep` in `src/components/reason
 ```ts
 type ReasoningStep = {
   id: string
-  icon: '🔍' | '⚙️' | '✅' | '❌'
+  icon: '🔍' | '⚙️' | '✅' | '❌' | '📝' | '🧪' | '🚀' | '💡' | '🔧'
   label: string
-  status: 'active' | 'done' | 'error'
-  timestamp: number
+  status: 'active' | 'done' | 'error' | 'pending'
+  timestamp: string   // ISO8601
   durationMs?: number
   children?: ReasoningStep[]
   body?: string
@@ -185,6 +192,11 @@ Icon semantics:
 | ⚙️ | Tool call / computation |
 | ✅ | Step complete |
 | ❌ | Step failed / error |
+| 📝 | Write / document |
+| 🧪 | Test / validate |
+| 🚀 | Deploy / ship |
+| 💡 | Insight / decision |
+| 🔧 | Fix / patch |
 
 ---
 
