@@ -47,7 +47,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
   messageCount,
   isProcessing,
   activeTab,
-  density = 'medium',
+  density = 'low',
   baseColor
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
