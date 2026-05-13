@@ -48,15 +48,6 @@ export interface RepoMeta {
   repo: string
   defaultBranch: string
   htmlUrl: string
-  cloneUrl: string
-  private: boolean
-}
-
-export interface FileContent {
-  path: string
-  content: string // decoded UTF-8
-  sha: string
-  size: number
 }
 
 export interface TreeItem {
@@ -66,52 +57,31 @@ export interface TreeItem {
   size?: number
 }
 
-export interface BranchRef {
-  name: string
-  sha: string
-}
-
 export interface PullRequestMeta {
   number: number
   title: string
-  state: 'open' | 'closed'
-  head: string // branch name
-  base: string // branch name
+  body?: string
+  head: string
+  base: string
   htmlUrl: string
-  mergeable?: boolean
+  state: string
 }
 
-export interface WorkflowRun {
-  id: number
-  name: string
-  status: string
-  conclusion: string | null
-  htmlUrl: string
-  createdAt: string
+export interface BranchRef {
+  ref: string
+  sha: string
 }
 
 // =============================================================================
 // CLIENT FACTORY
 // =============================================================================
 
-export const createGithubClient = (token: string): Octokit => {
-  return new Octokit({
-    auth: token,
-    throttle: {
-      onRateLimit: (retryAfter: number) => {
-        console.warn(`[GitHub] Rate limit hit. Retry after ${retryAfter}s.`)
-        return retryAfter <= 60 // auto-retry if within 60s
-      },
-      onSecondaryRateLimit: (retryAfter: number) => {
-        console.warn(`[GitHub] Secondary rate limit. Retry after ${retryAfter}s.`)
-        return false
-      },
-    },
-  })
+export function createClient(token: string): Octokit {
+  return new Octokit({ auth: token })
 }
 
 // =============================================================================
-// REPO OPERATIONS
+// REPO METADATA
 // =============================================================================
 
 export async function getRepo(
@@ -125,47 +95,6 @@ export async function getRepo(
     repo: data.name,
     defaultBranch: data.default_branch,
     htmlUrl: data.html_url,
-    cloneUrl: data.clone_url,
-    private: data.private,
-  }
-}
-
-export async function listRepos(
-  octokit: Octokit,
-  perPage = 30
-): Promise<RepoMeta[]> {
-  const { data } = await octokit.repos.listForAuthenticatedUser({ per_page: perPage })
-  return data.map((r) => ({
-    owner: r.owner.login,
-    repo: r.name,
-    defaultBranch: r.default_branch,
-    htmlUrl: r.html_url,
-    cloneUrl: r.clone_url,
-    private: r.private,
-  }))
-}
-
-export async function createRepo(
-  octokit: Octokit,
-  name: string,
-  description: string,
-  isPrivate = false,
-  guardianToken?: string // NEW
-): Promise<RepoMeta> {
-  validateGuardianToken(guardianToken, 'createRepo')
-  const { data } = await octokit.repos.createForAuthenticatedUser({
-    name,
-    description,
-    auto_init: true,
-    private: isPrivate,
-  })
-  return {
-    owner: data.owner.login,
-    repo: data.name,
-    defaultBranch: data.default_branch,
-    htmlUrl: data.html_url,
-    cloneUrl: data.clone_url,
-    private: data.private,
   }
 }
 
@@ -173,13 +102,13 @@ export async function createRepo(
 // FILE OPERATIONS
 // =============================================================================
 
-export async function getFile(
+export async function getFileContent(
   octokit: Octokit,
   owner: string,
   repo: string,
   path: string,
   ref?: string
-): Promise<FileContent> {
+): Promise<{ content: string; sha: string }> {
   const { data } = await octokit.repos.getContent({
     owner,
     repo,
@@ -188,13 +117,8 @@ export async function getFile(
   })
 
   if ('content' in data && !Array.isArray(data)) {
-    const decoded = atob(data.content.replace(/\s/g, ''))
-    return {
-      path: data.path,
-      content: decoded,
-      sha: data.sha,
-      size: data.size,
-    }
+    const decoded = decodeURIComponent(escape(atob(data.content)))
+    return { content: decoded, sha: data.sha }
   }
   throw new Error(`Path ${path} is a directory, not a file`)
 }
@@ -250,6 +174,23 @@ export async function createOrUpdateFile(
   }
 }
 
+// Simple pushFile helper — creates/updates file with auto-encoded content
+export async function pushFile(
+  owner: string,
+  repo: string,
+  path: string,
+  content: string,
+  message: string,
+  branch?: string,
+  token?: string
+): Promise<{ sha: string; commitSha: string }> {
+  if (!token) {
+    throw new Error('GitHub token required for pushFile')
+  }
+  const octokit = createClient(token)
+  return createOrUpdateFile(octokit, owner, repo, path, content, message, branch)
+}
+
 export async function deleteFile(
   octokit: Octokit,
   owner: string,
@@ -301,21 +242,11 @@ export async function createBranch(
     ref: `refs/heads/${newBranch}`,
     sha: baseSha,
   })
-
-  return { name: newBranch, sha: data.object.sha }
-}
-
-export async function listBranches(
-  octokit: Octokit,
-  owner: string,
-  repo: string
-): Promise<BranchRef[]> {
-  const { data } = await octokit.repos.listBranches({ owner, repo })
-  return data.map((b) => ({ name: b.name, sha: b.commit.sha }))
+  return { ref: data.ref, sha: data.object.sha }
 }
 
 // =============================================================================
-// PULL REQUEST OPERATIONS
+// PULL REQUESTS
 // =============================================================================
 
 export async function createPullRequest(
@@ -338,30 +269,12 @@ export async function createPullRequest(
   return {
     number: data.number,
     title: data.title,
-    state: data.state as 'open' | 'closed',
+    body: data.body || undefined,
     head: data.head.ref,
     base: data.base.ref,
     htmlUrl: data.html_url,
-    mergeable: data.mergeable ?? undefined,
+    state: data.state,
   }
-}
-
-export async function listPullRequests(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  state: 'open' | 'closed' | 'all' = 'open'
-): Promise<PullRequestMeta[]> {
-  const { data } = await octokit.pulls.list({ owner, repo, state })
-  return data.map((pr) => ({
-    number: pr.number,
-    title: pr.title,
-    state: pr.state as 'open' | 'closed',
-    head: pr.head.ref,
-    base: pr.base.ref,
-    htmlUrl: pr.html_url,
-    mergeable: undefined,
-  }))
 }
 
 export async function mergePullRequest(
@@ -369,102 +282,49 @@ export async function mergePullRequest(
   owner: string,
   repo: string,
   pullNumber: number,
-  commitTitle?: string,
-  commitMessage?: string
-): Promise<{ sha: string; merged: boolean }> {
-  const { data } = await octokit.pulls.merge({
-    owner,
-    repo,
-    pull_number: pullNumber,
-    commit_title: commitTitle,
-    commit_message: commitMessage,
-    merge_method: 'squash',
-  })
-  return { sha: data.sha, merged: data.merged }
+  commitTitle?: string
+): Promise<{ merged: boolean; message: string }> {
+  try {
+    const { data } = await octokit.pulls.merge({
+      owner,
+      repo,
+      pull_number: pullNumber,
+      commit_title: commitTitle,
+    })
+    return { merged: data.merged, message: data.message }
+  } catch (err: any) {
+    return { merged: false, message: err.message || 'Merge failed' }
+  }
 }
 
 // =============================================================================
-// WORKFLOW ARTIFACT FETCHING
+// WORKFLOWS
 // =============================================================================
-
-import JSZip from 'jszip'
-
-export interface WorkflowArtifact {
-  result?: any
-  screenshot?: string // base64
-  logs?: string
-}
-
-export async function fetchWorkflowArtifact(
-  octokit: Octokit,
-  owner: string,
-  repo: string,
-  runId: number
-): Promise<WorkflowArtifact> {
-  const { data } = await octokit.actions.listWorkflowRunArtifacts({
-    owner,
-    repo,
-    run_id: runId,
-  })
-
-  const artifact = data.artifacts.find((a) => a.name === 'automation-results')
-  if (!artifact) {
-    throw new Error(`No automation-results artifact found for run ${runId}`)
-  }
-
-  // Download artifact ZIP
-  const zipResponse = await octokit.request('GET /repos/{owner}/{repo}/actions/artifacts/{artifact_id}/{archive_format}', {
-    owner,
-    repo,
-    artifact_id: artifact.id,
-    archive_format: 'zip',
-  })
-
-  const zipBuffer = Buffer.from(zipResponse.data as ArrayBuffer)
-  const zip = await JSZip.loadAsync(zipBuffer)
-
-  const result: WorkflowArtifact = {}
-
-  // Extract result.json
-  const resultFile = zip.file('result.json')
-  if (resultFile) {
-    const content = await resultFile.async('string')
-    result.result = JSON.parse(content)
-  }
-
-  // Extract screenshot.png
-  const screenshotFile = zip.file('screenshot.png')
-  if (screenshotFile) {
-    const buffer = await screenshotFile.async('nodebuffer')
-    result.screenshot = buffer.toString('base64')
-  }
-
-  // Extract logs.txt
-  const logsFile = zip.file('logs.txt')
-  if (logsFile) {
-    result.logs = await logsFile.async('string')
-  }
-
-  return result
-}
 
 export async function triggerWorkflow(
   octokit: Octokit,
   owner: string,
   repo: string,
   workflowId: string,
-  branch: string,
+  branch?: string,
   inputs?: Record<string, string>
-): Promise<number> {
+): Promise<{ runId: number; htmlUrl: string }> {
   await octokit.actions.createWorkflowDispatch({
     owner,
     repo,
     workflow_id: workflowId,
-    ref: branch,
+    ref: branch || 'main',
     inputs,
   })
-  // GitHub returns 204 No Content on success; data is empty
-  return Date.now() // return a run identifier for tracking
+  // GitHub returns 204 No Content; fetch latest run manually
+  const runs = await octokit.actions.listWorkflowRuns({
+    owner,
+    repo,
+    workflow_id: workflowId,
+    per_page: 1,
+  })
+  const run = runs.data.workflow_runs[0]
+  return { runId: run.id, htmlUrl: run.html_url }
 }
 
 export async function listWorkflowRuns(
@@ -473,28 +333,26 @@ export async function listWorkflowRuns(
   repo: string,
   workflowId: string,
   branch?: string,
-  perPage = 10
-): Promise<WorkflowRun[]> {
-  const { data } = await octokit.actions.listWorkflowRunsForRepo({
+  status?: string
+): Promise<Array<{ id: number; status: string; conclusion?: string; htmlUrl: string }>> {
+  const { data } = await octokit.actions.listWorkflowRuns({
     owner,
     repo,
     workflow_id: workflowId,
     branch,
-    per_page: perPage,
+    status: status as any,
+    per_page: 10,
   })
-
   return data.workflow_runs.map((run) => ({
     id: run.id,
-    name: run.name || workflowId,
     status: run.status || '',
-    conclusion: run.conclusion,
+    conclusion: run.conclusion || undefined,
     htmlUrl: run.html_url,
-    createdAt: run.created_at,
   }))
 }
 
 // =============================================================================
-// AUTONOMOUS DEPLOYMENT PIPELINE
+// AUTONOMOUS DEPLOY
 // =============================================================================
 
 export interface DeployPayload {
@@ -599,5 +457,26 @@ export async function autonomousDeploy(
     prNumber: pr?.number,
     prUrl: pr?.htmlUrl,
     merged,
+    commitSha: pr ? await getLatestCommit(octokit, owner, repo, branchName) : undefined,
   }
+}
+
+// =============================================================================
+// ERROR HELPERS
+// =============================================================================
+
+export function isRateLimitError(err: unknown): err is GithubError {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'status' in err &&
+    (err as GithubError).status === 403
+  )
+}
+
+export function extractRetryAfter(err: unknown): number | undefined {
+  if (typeof err === 'object' && err !== null && 'retryAfter' in err) {
+    return (err as GithubError).retryAfter
+  }
+  return undefined
 }

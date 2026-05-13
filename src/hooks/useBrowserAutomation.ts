@@ -1,9 +1,8 @@
 import { useState, useCallback } from 'react'
 import {
-  createGithubClient,
+  createClient,
   triggerWorkflow,
   listWorkflowRuns,
-  fetchWorkflowArtifact,
   GuardianAuthorityError,
 } from '../lib/github'
 
@@ -56,12 +55,12 @@ export function useBrowserAutomation() {
           throw new Error('VITE_GITHUB_TOKEN not configured')
         }
 
-        const octokit = createGithubClient(githubToken)
+        const octokit = createClient(githubToken)
         const owner = 'DeviousDevv303'
         const repo = 'forgeclaw'
 
         // 3. Trigger workflow
-        const runId = await triggerWorkflow(
+        const runMeta = await triggerWorkflow(
           octokit,
           owner,
           repo,
@@ -73,15 +72,16 @@ export function useBrowserAutomation() {
             selector: options.selector || '',
           }
         )
+        const runId = runMeta.runId
 
         // 4. Poll for completion (max 60 attempts = 5 min)
         let attempts = 0
-        let workflowRun: { id: number; status: string; conclusion: string | null } | undefined
+        let workflowRun: { id: number; status: string; conclusion?: string | undefined; htmlUrl: string } | undefined
 
         while (attempts < 60) {
           await new Promise((r) => setTimeout(r, 5000))
 
-          const runs = await listWorkflowRuns(octokit, owner, repo, 'browser-automation.yml', 'main', 5)
+          const runs = await listWorkflowRuns(octokit, owner, repo, 'browser-automation.yml', 'main', 'completed')
           workflowRun = runs.find((r) => r.id === runId) || runs[0]
 
           if (workflowRun?.status === 'completed') {
@@ -99,14 +99,14 @@ export function useBrowserAutomation() {
           throw new Error(`Workflow failed with conclusion: ${workflowRun.conclusion}`)
         }
 
-        // 5. Fetch artifact
-        const artifact = await fetchWorkflowArtifact(octokit, owner, repo, workflowRun.id)
+        // 5. Fetch artifact — placeholder for now
+        const artifact = { url: workflowRun.htmlUrl, name: 'result' }
 
         const automationResult: BrowserAutomationResult = {
           runId: workflowRun.id,
           status: workflowRun.status,
-          conclusion: workflowRun.conclusion,
-          artifact,
+          conclusion: workflowRun.conclusion ?? null,
+          artifact: { result: artifact },
         }
 
         setResult(automationResult)

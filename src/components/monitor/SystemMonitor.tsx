@@ -12,6 +12,8 @@ interface SystemMonitorProps {
   expanded?: boolean  // Cycle 2: War Room expanded view
   lanes?: AgentLaneType[]  // Cycle 2: Agent lanes from useWarRoom
   proposals?: ProposalType[]  // Cycle 2: Proposals from useWarRoom
+  onAcknowledge?: (targetId: string) => void  // Cycle 3: Proposal write-back
+  onReject?: (targetId: string) => void  // Cycle 3: Proposal write-back
 }
 
 export const SystemMonitor = memo(function SystemMonitor({ 
@@ -20,6 +22,8 @@ export const SystemMonitor = memo(function SystemMonitor({
   expanded: expandedProp,
   lanes = [],
   proposals = [],
+  onAcknowledge,
+  onReject,
 }: SystemMonitorProps) {
   const [expanded, setExpanded] = useState(expandedProp ?? false)
 
@@ -88,7 +92,12 @@ export const SystemMonitor = memo(function SystemMonitor({
               {/* Proposals */}
               <div className="space-y-2">
                 {proposals.map(proposal => (
-                  <ProposalCard key={proposal.id} proposal={proposal} />
+                  <ProposalCard 
+                    key={proposal.id} 
+                    proposal={proposal} 
+                    onAcknowledge={onAcknowledge}
+                    onReject={onReject}
+                  />
                 ))}
               </div>
             </div>

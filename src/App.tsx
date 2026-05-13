@@ -13,7 +13,10 @@ import { SystemMonitor } from './components/monitor/SystemMonitor'
 import { useReasoningStream } from './hooks/useReasoningStream'
 import { useSystemMonitor } from './hooks/useSystemMonitor'
 import { useAgentActivityStream } from './hooks/useAgentActivityStream'
+import { useWarRoom } from './hooks/useWarRoom'
+import type { CristianDecision } from './types/warRoom'
 import { collectMockEvents } from './lib/reasoningMock'
+import { pushFile as githubPushFile } from './lib/github'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 
@@ -359,6 +362,31 @@ function App() {
   const activityStream = useAgentActivityStream()
   const reasoning = useReasoningStream({ activityEvents: activityStream.events })
   const monitor = useSystemMonitor()
+
+  // War Room: read gh_token from localStorage (prototype scope — Phase 2 lifts to proper context)
+  const warRoomToken = safeGetItem('gh_token') || ''
+  const { lanes, proposals } = useWarRoom({
+    owner: 'DeviousDevv303',
+    repo: 'forgeclaw',
+    token: warRoomToken,
+    addEvent: activityStream.addEvent,
+  })
+
+  const handleAcknowledge = useCallback(async (targetId: string) => {
+    const ts = Date.now()
+    const dec: CristianDecision = { targetId, decision: 'acknowledged', timestamp: ts }
+    await githubPushFile('DeviousDevv303', 'forgeclaw',
+      `war-room/cristian-decision-${ts}.json`,
+      JSON.stringify(dec, null, 2), `ack: ${targetId}`, undefined, warRoomToken)
+  }, [warRoomToken])
+
+  const handleReject = useCallback(async (targetId: string) => {
+    const ts = Date.now()
+    const dec: CristianDecision = { targetId, decision: 'rejected', timestamp: ts }
+    await githubPushFile('DeviousDevv303', 'forgeclaw',
+      `war-room/cristian-decision-${ts}.json`,
+      JSON.stringify(dec, null, 2), `reject: ${targetId}`, undefined, warRoomToken)
+  }, [warRoomToken])
 
   // DEV-ONLY: Load mock events on mount
   useEffect(() => {
@@ -833,6 +861,10 @@ function App() {
             <SystemMonitor
               events={activityStream.events}
               isActive={monitor.state.isActive}
+              lanes={lanes}
+              proposals={proposals}
+              onAcknowledge={handleAcknowledge}
+              onReject={handleReject}
             />
             
               <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0', zIndex: 20 }}>
