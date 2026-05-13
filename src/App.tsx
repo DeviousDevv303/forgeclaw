@@ -2,6 +2,10 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { FileUploadButton } from './components/FileUploadButton'
 import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
 // import { SupabaseProvider } from './components/SupabaseProvider'
+import { ReasoningChain } from './components/reasoning/ReasoningChain'
+import { SystemMonitor } from './components/monitor/SystemMonitor'
+import type { ReasoningData } from './components/reasoning/types'
+import { buildMockReasoning } from './lib/reasoningMock'
 import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
 import { useOrchestrator } from './hooks/useOrchestrator'
@@ -22,6 +26,7 @@ interface Message {
   phases?: Record<string, string>
   showReasoning?: boolean
   feedback?: 'up' | 'down'
+  reasoning?: ReasoningData
 }
 
 interface CorpusEntry {
@@ -572,6 +577,20 @@ function App() {
     setOpenReasoningIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
 
+  const handleDemoReasoning = () => {
+    if (!import.meta.env.DEV) return
+    const reasoning = buildMockReasoning()
+    const demoMsg: Message = {
+      id: `demo-${Date.now()}`,
+      role: 'assistant',
+      content: 'Demo: this is a mock assistant message with a live 5-phase reasoning scaffold attached. Expand the block above to inspect phases, steps, and tool calls.',
+      timestamp: Date.now(),
+      source: 'cloud',
+      reasoning,
+    }
+    setMessages(prev => [...prev, demoMsg])
+  }
+
   const handleClearMemory = () => {
     if (!window.confirm('CRITICAL: WIPE ALL SESSION MEMORY AND API KEY?')) return
     safeRemoveItem('forgemind_history'); safeRemoveItem('forgemind_corpus'); safeRemoveItem('fm_api_key')
@@ -653,6 +672,9 @@ function App() {
           <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
           <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>WIPE</button>
           <button onClick={handleExportCorpus} style={headerBtnStyle}>EXPORT</button>
+          {import.meta.env.DEV && (
+            <button onClick={handleDemoReasoning} style={{ ...headerBtnStyle, borderColor: '#7c3aed', color: '#7c3aed' }}>DEMO</button>
+          )}
         </div>
       </header>
 
@@ -760,6 +782,9 @@ function App() {
                           {msg.source && <span style={{ fontSize: '9px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', opacity: 0.7 }}>{msg.source === 'local' ? 'LOCAL' : 'CLOUD'}</span>}
                         </div>
                       )}
+                      {msg.role === 'assistant' && msg.reasoning && (
+                        <ReasoningChain messageId={msg.id} reasoning={msg.reasoning} />
+                      )}
                       <div style={{ maxWidth: '90%', padding: '10px 14px', borderRadius: '8px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(26, 26, 26, 0.75)', color: msg.role === 'user' ? '#000' : '#e5e5e5', fontSize: '13px', lineHeight: '1.5', border: msg.role === 'assistant' ? '1px solid rgba(34, 34, 34, 0.5)' : 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', width: msg.role === 'assistant' ? '100%' : undefined }}>
                         {msg.content}
                         {msg.role === 'assistant' && (
@@ -802,6 +827,7 @@ function App() {
               <div ref={messagesEndRef} />
             </div>
               <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0', zIndex: 20 }}>
+                <SystemMonitor events={orchEvents} />
                 {attachedFile && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: '#f97316', fontSize: '12px' }}>
                     <span>📎 {attachedFile.name}</span>
