@@ -4,15 +4,15 @@ import { ReasoningPhase } from '../ReasoningPhase'
 import type { ReasoningStep } from '../../../types/reasoning'
 
 function makeStep(overrides: Partial<ReasoningStep> = {}): ReasoningStep {
-  return {
+  const defaults: ReasoningStep = {
     id: 'step-1',
     icon: '🔍',
     label: 'Assumptions',
     status: 'done',
     timestamp: new Date().toISOString(),
     body: 'Step body content',
-    ...overrides,
   }
+  return { ...defaults, ...overrides } as ReasoningStep
 }
 
 describe('ReasoningPhase', () => {

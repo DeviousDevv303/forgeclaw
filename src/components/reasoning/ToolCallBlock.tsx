@@ -1,4 +1,4 @@
-import React, { memo, useState } from 'react'
+import { memo, useState } from 'react'
 import type { ToolCall } from './types'
 
 const STATUS_COLOR: Record<ToolCall['status'], string> = {
