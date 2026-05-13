@@ -19,14 +19,14 @@ export interface AgentSnapshot {
   status: AgentLane['status']
   currentTask?: string
   sha?: string
-  priority?: 'info' | 'blocker' | 'proposal'
+  priority: 'info' | 'blocker' | 'proposal'
   message?: string
   timestamp: number
 }
 
 export interface CristianDecision {
-  proposalId: string
+  targetId: string
   decision: 'acknowledged' | 'rejected' | 'deferred'
-  reason?: string
+  note?: string
   timestamp: number
 }
