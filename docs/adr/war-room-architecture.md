@@ -112,25 +112,58 @@ These types live in `src/types/warRoom.ts` — separate from `reasoning.ts` to k
 
 ---
 
-### 4. Backing Store: REVIEWS/ via GitHub API
+### 4. Backing Store: `war-room/*.json` via GitHub API
 
 The UI is a browser SPA. It has no direct filesystem access. **Local file watchers are not viable.**
 
-**Mechanism:** `useWarRoom` polls the GitHub API (`ghFetch`, already wired in `App.tsx`) on a configurable interval (default: 30 s) to fetch `REVIEWS/` directory contents, then fetches and parses new files it hasn't seen.
+**Directory:** `war-room/` (git-tracked, separate from `REVIEWS/` markdown reports).
+
+**Why a new directory instead of parsing `REVIEWS/` markdown:** Markdown is human-authored and free-form — parsing it programmatically is fragile. `war-room/*.json` is structured, strictly typed, and purpose-built for the War Room data layer. `REVIEWS/` remains the human-readable audit trail; `war-room/` is the machine-readable state.
+
+#### File schema
+
+```ts
+// war-room/kimiclaw-{timestamp}.json  (KimiClaw-authored only)
+// war-room/claude-{timestamp}.json    (Claude Code-authored only)
+interface AgentSnapshot {
+  agentId: string
+  timestamp: number
+  status: 'idle' | 'working' | 'blocked' | 'reviewing'
+  currentTask?: string
+  sha?: string
+  message?: string
+  priority: 'info' | 'blocker' | 'proposal'
+}
+
+// war-room/cristian-decision-{timestamp}.json  (written by UI on Acknowledge/Reject)
+interface CristianDecision {
+  targetId: string              // filename (without .json) of the snapshot being responded to
+  decision: 'acknowledged' | 'rejected' | 'deferred'
+  note?: string
+  timestamp: number
+}
+```
+
+**Filename = ownership.** `kimiclaw-*.json` is KimiClaw-only. `claude-*.json` is Claude Code-only. `cristian-decision-*.json` is Cristian-only. No agent writes to another agent's files.
+
+**Conflict resolution:** Same-file conflicts cannot occur under the filename-ownership convention. Reads build current state from newest snapshot per agent (sort by timestamp, take latest). No merge logic needed.
+
+**Mechanism:** `useWarRoom` polls the GitHub API (`ghFetch`, already wired in `App.tsx`) every 30 s.
 
 ```
-GET /repos/{owner}/{repo}/contents/REVIEWS/
-→ list of files with SHAs
-→ for each new file since last poll: GET /repos/{owner}/{repo}/contents/REVIEWS/{file}
-→ parse into AgentLane / Proposal state
-→ emit synthetic agent_message events into the activity stream
+GET /repos/{owner}/{repo}/contents/war-room/
+→ list of .json files with SHAs
+→ for each new file since last poll: GET file, decode base64, JSON.parse
+→ latest AgentSnapshot per agentId → AgentLane state
+→ CristianDecision files → update Proposal.status
+→ emit agent_message events into activityStream for new files
 ```
 
-**Why not localStorage:** Ephemeral, invisible to git, requires a sync layer. Files win: git history is the audit trail, `git log REVIEWS/` shows every agent decision.
+**Why not localStorage:** Ephemeral, invisible to git, requires a sync layer. Files win: git history is the audit trail, `git log war-room/` shows every agent decision.
 
-**Write-back (Acknowledge / Reject buttons):** Uses the existing `pushFile` helper to write a `REVIEWS/cristian-decision-{sha}.md` file via the GitHub API. Requires the same gh token already used in RepoAnalyzer.
+**Write-back (Acknowledge / Reject buttons):** Uses the existing `pushFile` helper to write `war-room/cristian-decision-{timestamp}.json`. Requires the same gh token already used in RepoAnalyzer.
 
-**Polling vs. real-time:** Polling at 30 s is sufficient for agent coordination (agents work in minutes-long cycles, not milliseconds). EventSource or WebSocket is unnecessary complexity at this scale.
+**Polling interval: 30 s.** Agent cycles are measured in minutes. 30 s is responsive without approaching GitHub API rate limits.
 
 ---
 
@@ -141,13 +174,15 @@ src/hooks/useWarRoom.ts
 ```
 
 **Responsibilities:**
-- Polls `GET /repos/.../contents/REVIEWS/` every 30 s (or on manual refresh).
-- Maintains a `seenFiles: Set<string>` to avoid re-parsing files.
-- Parses `kimi-staged-*.md` → `AgentLane` for KimiClaw.
-- Parses `claude-review-*.md` → `AgentLane` for Claude Code + extracts any proposals.
-- Parses `cristian-decision-*.md` → updates `Proposal.status`.
-- Emits `agent_message` events into `activityStream.addEvent` for new files.
+- Polls `GET /repos/.../contents/war-room/` every 30 s (or on manual refresh).
+- Maintains a `seenFiles: Set<string>` (keyed on filename + SHA) to avoid re-fetching unchanged files.
+- Decodes and parses each new `.json` file into `AgentSnapshot` or `CristianDecision`.
+- Derives `AgentLane[]` from latest `AgentSnapshot` per `agentId`.
+- Derives `Proposal[]` from `AgentSnapshot` entries with `priority === 'proposal'`, updated by `CristianDecision` files.
+- Emits `agent_message` events into `activityStream.addEvent` for each new file seen.
 - Returns `{ lanes: AgentLane[], proposals: Proposal[], refresh: () => void, isPolling: boolean }`.
+
+**Sequencing gate:** `useWarRoom` implementation is blocked until `war-room/` directory exists with at least one file. UI shell (AgentLane cards, ProposalCard, AgentSyncMessage) can be built with mock/empty props before the hook is wired.
 
 **No new global store.** State lives in the hook. `SystemMonitor` receives it as props.
 
@@ -156,11 +191,16 @@ src/hooks/useWarRoom.ts
 ### 6. File Structure
 
 ```
+war-room/                   — git-tracked JSON state files (machine-readable)
+  kimiclaw-{ts}.json        — KimiClaw agent snapshots
+  claude-{ts}.json          — Claude Code agent snapshots
+  cristian-decision-{ts}.json — Cristian decisions (written by UI)
 src/
   types/
-    warRoom.ts              — AgentLane, Proposal (agent_message added to reasoning.ts)
+    warRoom.ts              — AgentLane, Proposal, AgentSnapshot, CristianDecision
+                              (agent_message event added to reasoning.ts)
   hooks/
-    useWarRoom.ts           — REVIEWS/ poller, lane/proposal state
+    useWarRoom.ts           — war-room/ poller via ghFetch, lane/proposal state
   components/
     monitor/
       SystemMonitor.tsx     — extended: collapsed strip OR expanded War Room
@@ -170,6 +210,7 @@ src/
 docs/
   adr/
     war-room-architecture.md  (this file)
+REVIEWS/                    — human-readable agent reports (unchanged convention)
 ```
 
 ---
