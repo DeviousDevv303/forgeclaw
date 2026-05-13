@@ -116,7 +116,11 @@ async function proxyOllama(
   }
 
   try {
-    const upstream = await fetch("http://host.docker.internal:11434/api/generate", {
+    // ── Ollama URL config ───────────────────────────────────────────────
+    // Production: set OLLAMA_API_URL env var (e.g. https://your-ollama-server.com/api/generate)
+    // Local dev: falls back to host.docker.internal:11434 for Docker Desktop
+    const OLLAMA_API_URL = Deno.env.get("OLLAMA_API_URL") ?? "http://host.docker.internal:11434/api/generate";
+    const upstream = await fetch(OLLAMA_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

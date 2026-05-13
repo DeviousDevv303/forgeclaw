@@ -1,2 +1,4 @@
 [functions.proxy-api]
+# Manual JWT validation is performed via getUser(jwt) in the proxy-api function.
+# verify_jwt is disabled here to allow the function to handle auth directly.
 verify_jwt = false
