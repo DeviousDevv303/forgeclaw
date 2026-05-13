@@ -849,7 +849,6 @@ function App() {
       </main>
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@1,400;1,500;1,600&display=swap');
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         @keyframes fadeSlideDown { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
         .pulse-text { animation: pulse 1.5s infinite; }
