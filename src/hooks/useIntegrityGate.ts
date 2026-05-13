@@ -5,6 +5,7 @@ import type {
   DenialFilterContext,
   DenialFilterResult 
 } from '../types/integrityGate'
+import { safeGetItem, safeSetItem } from '../lib/storage'
 
 // ─── Denial Patterns (identical to canonical gate) ─────────────────────────
 const DENIAL_PATTERNS = [
@@ -31,7 +32,7 @@ async function verify_unknown_browser(
 
   // 1. Session history
   const sessionKey = `forgeclaw_session_${sessionId}`
-  const sessionData = localStorage.getItem(sessionKey)
+  const sessionData = safeGetItem(sessionKey)
   if (sessionData) {
     const lines = sessionData.split('\n').filter((l) => l.trim())
     for (const line of lines) {
@@ -42,7 +43,7 @@ async function verify_unknown_browser(
   }
 
   // 2. Neutral corpus
-  const corpus = localStorage.getItem('forgeclaw_neutral_corpus')
+  const corpus = safeGetItem('forgeclaw_neutral_corpus')
   if (corpus) {
     const lines = corpus.split('\n').filter((l) => l.trim())
     for (const line of lines) {
@@ -58,9 +59,9 @@ async function verify_unknown_browser(
 // ─── Browser ledger_append (localStorage-backed, append-only) ────────────────
 async function ledger_append_browser(event: FailureEvent): Promise<void> {
   const key = 'forgeclaw_integrity_ledger'
-  const existing = localStorage.getItem(key) || ''
+  const existing = safeGetItem(key) || ''
   const record = JSON.stringify(event) + '\n'
-  localStorage.setItem(key, existing + record)
+  safeSetItem(key, existing + record)
 }
 
 // ─── Browser denial_filter (dual-block, identical logic to canonical) ───────
@@ -175,12 +176,12 @@ export function useIntegrityGate() {
 
   const appendSession = useCallback((sessionId: string, entry: string) => {
     const key = `forgeclaw_session_${sessionId}`
-    const existing = localStorage.getItem(key) || ''
-    localStorage.setItem(key, existing + entry + '\n')
+    const existing = safeGetItem(key) || ''
+    safeSetItem(key, existing + entry + '\n')
   }, [])
 
   const getLedger = useCallback((): FailureEvent[] => {
-    const raw = localStorage.getItem('forgeclaw_integrity_ledger') || ''
+    const raw = safeGetItem('forgeclaw_integrity_ledger') || ''
     return raw
       .split('\n')
       .filter((l) => l.trim())

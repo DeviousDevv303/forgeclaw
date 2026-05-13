@@ -1,19 +1,21 @@
 import { useState, useCallback, useEffect } from 'react'
 import type { FailureEvent, FailureSeverity, FailureSource } from '../types/errorBus'
+import { safeGetItem, safeSetItem } from '../lib/storage'
 
 const STORAGE_KEY = 'forgeclaw_failure_ledger'
 
 function loadLedger(): FailureEvent[] {
+  const raw = safeGetItem(STORAGE_KEY)
+  if (!raw) return []
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as FailureEvent[]) : []
+    return JSON.parse(raw) as FailureEvent[]
   } catch {
     return []
   }
 }
 
 function saveLedger(ledger: FailureEvent[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(ledger))
+  safeSetItem(STORAGE_KEY, JSON.stringify(ledger))
 }
 
 export interface EmitFailureOptions {
