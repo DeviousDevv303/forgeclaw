@@ -460,8 +460,8 @@ function App() {
     setMessages(prev => [...prev, userMessage])
     setLoading(true)
 
-    if (!apiKey || apiKey.trim() === '') {
-      const systemMessage: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: '🔑 API key required. Open Settings (⚙) → enter your Anthropic API key.', timestamp: Date.now(), source: 'local' }
+    if (!apiKey || !apiKey.startsWith('sk-ant-')) {
+      const systemMessage: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: '🔑 API key required or invalid. Open Settings (⚙) → enter your Anthropic API key.', timestamp: Date.now(), source: 'local' }
       setMessages(prev => [...prev, systemMessage])
       setLoading(false)
       return
@@ -499,7 +499,14 @@ function App() {
         })
         if (!r.ok) {
           const e = await r.json().catch(() => ({}))
-          throw new Error((e as { error?: { message?: string } }).error?.message || `Claude API ${r.status}`)
+          const errMsg = (e as { error?: { message?: string } }).error?.message || `Claude API ${r.status}`
+          if (r.status === 401 || errMsg.toLowerCase().includes('invalid x-api-key')) {
+            const systemMessage: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: '🔑 API key invalid. Open Settings (⚙) → update your Anthropic API key.', timestamp: Date.now(), source: 'local' }
+            setMessages(prev => [...prev, systemMessage])
+            setLoading(false)
+            return
+          }
+          throw new Error(errMsg)
         }
         const d = await r.json(); responseText = d.content[0]?.text || ''; source = 'cloud'; setLastSource('cloud')
       }
@@ -573,8 +580,7 @@ function App() {
   }
 
   const testApiKey = async () => {
-    if (!apiKey.trim()) { setApiKeyStatus('none'); return }
-    if (!apiKey.startsWith('sk-ant-')) { setApiKeyStatus('invalid'); return }
+    if (!apiKey.trim() || !apiKey.startsWith('sk-ant-')) { setApiKeyStatus('invalid'); return }
     
     setTestingKey(true)
     try {
