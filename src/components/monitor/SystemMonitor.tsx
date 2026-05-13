@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { memo, useState, useMemo } from 'react'
 import type { AgentActivityEvent } from '../../types/reasoning'
 import { MonitorEventRow } from './MonitorEventRow'
 
@@ -7,13 +7,10 @@ interface SystemMonitorProps {
   isActive?: boolean
 }
 
-export const SystemMonitor = ({ events, isActive = false }: SystemMonitorProps) => {
+export const SystemMonitor = memo(function SystemMonitor({ events, isActive = false }: SystemMonitorProps) {
   const [expanded, setExpanded] = useState(false)
 
-  // Auto-expand on activity, collapse after idle
-  const displayEvents = useMemo(() => {
-    return events.slice(-5)
-  }, [events])
+  const displayEvents = useMemo(() => events.slice(-20), [events])
 
   const hasErrors = useMemo(() => events.some(e => e.type === 'error'), [events])
 
@@ -46,11 +43,14 @@ export const SystemMonitor = ({ events, isActive = false }: SystemMonitorProps) 
       {/* Expanded content */}
       {expanded && (
         <div className="px-3 pb-2 space-y-1">
-          {displayEvents.map((event, i) => (
-            <MonitorEventRow key={`${event.timestamp}-${i}`} event={event} />
+          {displayEvents.map((event) => (
+            <MonitorEventRow
+              key={`${event.agentId}-${event.type}-${event.timestamp}`}
+              event={event}
+            />
           ))}
         </div>
       )}
     </div>
   )
-}
+})

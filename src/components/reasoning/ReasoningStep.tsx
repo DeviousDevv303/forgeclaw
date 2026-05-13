@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { ReasoningStep } from '../../types/reasoning'
+
+const DEPTH_MARGINS = ['ml-0', 'ml-4', 'ml-8', 'ml-12'] as const
 
 interface ReasoningStepProps {
   step: ReasoningStep
   depth?: number
 }
 
-export function ReasoningStepComponent({ step, depth = 0 }: ReasoningStepProps) {
+export const ReasoningStepComponent = memo(function ReasoningStepComponent({ step, depth = 0 }: ReasoningStepProps) {
   const [expanded, setExpanded] = useState(step.status === 'active' || step.status === 'error')
   const isActive = step.status === 'active'
   const isError = step.status === 'error'
@@ -19,9 +21,10 @@ export function ReasoningStepComponent({ step, depth = 0 }: ReasoningStepProps) 
   }
 
   const iconAnimation = isActive ? 'animate-pulse' : ''
+  const marginClass = DEPTH_MARGINS[Math.min(depth, DEPTH_MARGINS.length - 1)]
 
   return (
-    <div className={`ml-${depth * 4}`}>
+    <div className={marginClass}>
       <div
         className={`rounded-lg border-l-2 p-3 mb-2 transition-all duration-300 ${statusColors[step.status]}`}
       >
@@ -58,4 +61,4 @@ export function ReasoningStepComponent({ step, depth = 0 }: ReasoningStepProps) 
       </div>
     </div>
   )
-}
+})

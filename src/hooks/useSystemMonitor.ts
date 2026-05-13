@@ -36,17 +36,20 @@ export function useSystemMonitor() {
   }, [])
 
   const finishOperation = useCallback((id: string, status: 'done' | 'failed' = 'done', detail?: string) => {
-    setOperations(prev =>
-      prev.map(op =>
+    let stillActive = false
+    setOperations(prev => {
+      const updated = prev.map(op =>
         op.id === id
           ? { ...op, status, detail, durationMs: Date.now() - new Date(op.timestamp).getTime() }
           : op
       )
-    )
+      stillActive = updated.some(o => o.id !== id && o.status === 'running')
+      return updated
+    })
     setState(prev => ({
       ...prev,
       currentTool: null,
-      isActive: prev.operations.some(o => o.id !== id && o.status === 'running'),
+      isActive: stillActive,
       lastUpdate: new Date().toISOString(),
     }))
   }, [])

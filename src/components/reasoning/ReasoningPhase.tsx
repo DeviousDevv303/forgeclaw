@@ -1,5 +1,7 @@
-import { useState, memo } from 'react'
+import { memo, useState } from 'react'
 import type { ReasoningStep } from '../../types/reasoning'
+
+const DEPTH_MARGINS = ['ml-0', 'ml-4', 'ml-8', 'ml-12'] as const
 
 interface ReasoningPhaseProps {
   step: ReasoningStep
@@ -17,9 +19,10 @@ export const ReasoningPhase = memo(function ReasoningPhase({ step, depth = 0 }: 
   }
 
   const iconAnimation = step.status === 'active' ? 'animate-pulse' : ''
+  const marginClass = DEPTH_MARGINS[Math.min(depth, DEPTH_MARGINS.length - 1)]
 
   return (
-    <div className={`ml-${Math.min(depth * 4, 12)}`}>
+    <div className={marginClass}>
       <div className={`rounded-lg p-3 mb-1 ${statusClasses[step.status]}`}>
         <button
           onClick={() => setExpanded(!expanded)}
