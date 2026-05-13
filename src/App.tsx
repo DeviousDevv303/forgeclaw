@@ -373,19 +373,27 @@ function App() {
   })
 
   const handleAcknowledge = useCallback(async (targetId: string) => {
-    const ts = Date.now()
-    const dec: CristianDecision = { targetId, decision: 'acknowledged', timestamp: ts }
-    await githubPushFile('DeviousDevv303', 'forgeclaw',
-      `war-room/cristian-decision-${ts}.json`,
-      JSON.stringify(dec, null, 2), `ack: ${targetId}`, undefined, warRoomToken)
+    try {
+      const ts = Date.now()
+      const dec: CristianDecision = { targetId, decision: 'acknowledged', timestamp: ts }
+      await githubPushFile('DeviousDevv303', 'forgeclaw',
+        `war-room/cristian-decision-${ts}.json`,
+        JSON.stringify(dec, null, 2), `ack: ${targetId}`, undefined, warRoomToken)
+    } catch (err) {
+      console.error('Failed to acknowledge proposal:', err)
+    }
   }, [warRoomToken])
 
   const handleReject = useCallback(async (targetId: string) => {
-    const ts = Date.now()
-    const dec: CristianDecision = { targetId, decision: 'rejected', timestamp: ts }
-    await githubPushFile('DeviousDevv303', 'forgeclaw',
-      `war-room/cristian-decision-${ts}.json`,
-      JSON.stringify(dec, null, 2), `reject: ${targetId}`, undefined, warRoomToken)
+    try {
+      const ts = Date.now()
+      const dec: CristianDecision = { targetId, decision: 'rejected', timestamp: ts }
+      await githubPushFile('DeviousDevv303', 'forgeclaw',
+        `war-room/cristian-decision-${ts}.json`,
+        JSON.stringify(dec, null, 2), `reject: ${targetId}`, undefined, warRoomToken)
+    } catch (err) {
+      console.error('Failed to reject proposal:', err)
+    }
   }, [warRoomToken])
 
   // DEV-ONLY: Load mock events on mount

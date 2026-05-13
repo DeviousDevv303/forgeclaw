@@ -110,7 +110,7 @@ This project operates under a **multi-agent ratified contract** (v1.1):
 - **ChatGPT** — Sentinel Consultant, Guardian oversight
 - **Cristian (DeviousDevv303)** — Operator, principal, override authority
 
-All commits to `main` require build pass (`pnpm run build` exit 0). SSH-signed commits enforced.
+All commits to `main` require build pass (`npm run build` exit 0).
 
 ## License
 
