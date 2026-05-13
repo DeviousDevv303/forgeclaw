@@ -16,6 +16,7 @@ import { useAgentActivityStream } from './hooks/useAgentActivityStream'
 import { useWarRoom } from './hooks/useWarRoom'
 import type { CristianDecision } from './types/warRoom'
 import { collectMockEvents } from './lib/reasoningMock'
+import { parseRepoUrl, fetchRepoTree, fetchFileContent, pushFile, triggerWorkflow } from './shared/api/githubClient'
 import { pushFile as githubPushFile } from './lib/github'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
@@ -100,61 +101,6 @@ function cleanForSpeech(text: string): string {
     .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
     .replace(/[\u{2600}-\u{26FF}]/gu, '')
     .replace(/\*\*/g, '').replace(/\*/g, '').trim()
-}
-
-// ─── GitHub API helpers ───────────────────────────────────────────────────────
-
-function parseRepoUrl(url: string): { owner: string; repo: string } | null {
-  try {
-    const u = new URL(url.trim())
-    const parts = u.pathname.replace(/^\//, '').split('/')
-    if (parts.length < 2) return null
-    return { owner: parts[0], repo: parts[1].replace(/\.git$/, '') }
-  } catch { return null }
-}
-
-async function ghFetch(path: string, token: string, opts: RequestInit = {}) {
-  const headers: Record<string, string> = {
-    Accept: 'application/vnd.github.v3+json',
-    ...(opts.headers as Record<string, string> || {}),
-  }
-  if (token) headers['Authorization'] = `token ${token}`
-  const res = await fetch(`https://api.github.com${path}`, { ...opts, headers })
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error((err as { message?: string }).message || `GitHub ${res.status}`)
-  }
-  return res.json()
-}
-
-async function fetchRepoTree(owner: string, repo: string, token: string): Promise<RepoTreeItem[]> {
-  const data = await ghFetch(`/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`, token)
-  return (data.tree || []) as RepoTreeItem[]
-}
-
-async function fetchFileContent(owner: string, repo: string, path: string, token: string): Promise<{ content: string; sha: string }> {
-  const data = await ghFetch(`/repos/${owner}/${repo}/contents/${path}`, token)
-  const decoded = atob((data.content as string).replace(/\n/g, ''))
-  return { content: decoded, sha: data.sha as string }
-}
-
-async function pushFile(owner: string, repo: string, path: string, content: string, message: string, sha: string | undefined, token: string): Promise<void> {
-  const encoded = btoa(unescape(encodeURIComponent(content)))
-  const body: Record<string, string> = { message, content: encoded }
-  if (sha) body.sha = sha
-  await ghFetch(`/repos/${owner}/${repo}/contents/${path}`, token, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-}
-
-async function triggerWorkflow(owner: string, repo: string, workflowId: string, ref: string, token: string): Promise<void> {
-  await ghFetch(`/repos/${owner}/${repo}/actions/workflows/${workflowId}/dispatches`, token, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ref }),
-  })
 }
 
 // ─── RepoAnalyzer Component ───────────────────────────────────────────────────
