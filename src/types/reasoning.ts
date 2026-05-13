@@ -39,6 +39,7 @@ export type AgentActivityEvent =
   | { type: 'reasoning_phase'; agentId: string; phase: ReasoningPhase; body: string; timestamp: number }
   | { type: 'agent_status'; agentId: string; status: 'idle' | 'working' | 'error'; timestamp: number }
   | { type: 'error'; agentId: string; message: string; timestamp: number }
+  | { type: 'agent_message'; agentId: string; message: string; priority: 'info' | 'blocker' | 'proposal'; timestamp: number }
 
 // ─── Message Role Extension ─────────────────────────────────────────────────
 
