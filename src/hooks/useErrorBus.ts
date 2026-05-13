@@ -26,7 +26,14 @@ export interface EmitFailureOptions {
 }
 
 export function useErrorBus() {
-  const [ledger, setLedger] = useState<FailureEvent[]>(loadLedger)
+  const [ledger, setLedger] = useState<FailureEvent[]>(() => {
+    // Clear old errors on fresh mount to prevent stale error display
+    const fresh = loadLedger()
+    return fresh.filter(e => {
+      const age = Date.now() - new Date(e.timestamp).getTime()
+      return age < 300000 // Keep only errors from last 5 minutes
+    })
+  })
 
   useEffect(() => {
     saveLedger(ledger)
