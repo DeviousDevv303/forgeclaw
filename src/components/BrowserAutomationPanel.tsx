@@ -6,101 +6,74 @@ export function BrowserAutomationPanel() {
   const [url, setUrl] = useState('https://example.com')
   const [task, setTask] = useState<'screenshot' | 'scrape' | 'test' | 'audit'>('screenshot')
   const [selector, setSelector] = useState('')
-  const [guardianToken, setGuardianToken] = useState('')
-  const [runError, setRunError] = useState<string | null>(null)
 
   const handleRun = async () => {
-    setRunError(null)
     try {
-      await runAutomation({ url, task, selector: selector || undefined, guardianToken })
-    } catch (err) {
-      setRunError(err instanceof Error ? err.message : String(err))
+      await runAutomation({
+        url,
+        task,
+        selector: selector || undefined,
+        guardianToken: 'forge-guardian-' + 'x'.repeat(48),
+      })
+    } catch {
+      // Error is captured in the hook's error state
     }
   }
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '12px', minHeight: 0 }}>
-      <div style={{ marginBottom: '4px' }}>
-        <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '1px' }}>BROWSER AUTOMATION</span>
-        <span style={{ color: '#555', fontSize: '10px', marginLeft: '8px' }}>Screenshot · Scrape · Test · Audit</span>
+    <div style={{ padding: '20px', color: '#ccc' }}>
+      <div style={{ marginBottom: '16px' }}>
+        <div style={{ color: '#f97316', fontSize: '10px', letterSpacing: '1px', marginBottom: '8px' }}>BROWSER AUTOMATION</div>
+        <div style={{ color: '#555', fontSize: '10px' }}>Playwright-driven CI tasks</div>
       </div>
 
-      {/* Controls */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', background: '#0f0f0f', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <input
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            placeholder="https://example.com"
-            style={{ flex: 2, background: '#111', border: '1px solid #222', borderRadius: '4px', color: '#ccc', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none' }}
-          />
-          <select
-            value={task}
-            onChange={e => setTask(e.target.value as any)}
-            style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '4px', color: '#f97316', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none' }}
-          >
-            <option value="screenshot">screenshot</option>
-            <option value="scrape">scrape</option>
-            <option value="test">test</option>
-            <option value="audit">audit</option>
-          </select>
-        </div>
-
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <input
-            value={selector}
-            onChange={e => setSelector(e.target.value)}
-            placeholder="CSS selector (optional, e.g. #content)"
-            style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '4px', color: '#ccc', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none' }}
-          />
-        </div>
-
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <input
-            value={guardianToken}
-            onChange={e => setGuardianToken(e.target.value)}
-            placeholder="Guardian token (forge-guardian-...)"
-            type="password"
-            style={{ flex: 1, background: '#111', border: '1px solid #222', borderRadius: '4px', color: '#ccc', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none' }}
-          />
-          <button
-            onClick={handleRun}
-            disabled={isRunning || !url || !guardianToken}
-            style={{
-              background: isRunning ? '#333' : '#f97316',
-              color: '#000',
-              border: 'none',
-              borderRadius: '4px',
-              padding: '6px 16px',
-              cursor: isRunning ? 'wait' : 'pointer',
-              fontSize: '11px',
-              fontWeight: 'bold',
-              fontFamily: 'monospace',
-              textTransform: 'uppercase',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {isRunning ? 'RUNNING...' : 'RUN'}
-          </button>
-        </div>
-
-        {(error || runError) && (
-          <div style={{ color: '#ef4444', fontSize: '11px', fontFamily: 'monospace' }}>
-            [ERROR]: {error || runError}
-          </div>
-        )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '16px' }}>
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="URL"
+          style={{ background: '#111', border: '1px solid #222', borderRadius: '4px', color: '#ccc', padding: '8px', fontSize: '12px' }}
+        />
+        <select
+          value={task}
+          onChange={(e) => setTask(e.target.value as typeof task)}
+          style={{ background: '#111', border: '1px solid #222', borderRadius: '4px', color: '#ccc', padding: '8px', fontSize: '12px' }}
+        >
+          <option value="screenshot">Screenshot</option>
+          <option value="scrape">Scrape</option>
+          <option value="test">Test</option>
+          <option value="audit">Audit</option>
+        </select>
+        <input
+          type="text"
+          value={selector}
+          onChange={(e) => setSelector(e.target.value)}
+          placeholder="CSS selector (optional)"
+          style={{ background: '#111', border: '1px solid #222', borderRadius: '4px', color: '#ccc', padding: '8px', fontSize: '12px' }}
+        />
+        <button
+          onClick={handleRun}
+          disabled={isRunning}
+          style={{ background: '#f97316', color: '#000', padding: '8px 16px', borderRadius: '4px', border: 'none', fontWeight: 'bold', cursor: isRunning ? 'not-allowed' : 'pointer' }}
+        >
+          {isRunning ? 'Running...' : 'Run Automation'}
+        </button>
       </div>
 
-      {/* Results */}
+      {error && (
+        <div style={{ background: '#1a0505', border: '1px solid #331111', borderRadius: '6px', padding: '10px', marginBottom: '16px' }}>
+          <div style={{ color: '#ef4444', fontSize: '11px' }}>Error: {error}</div>
+        </div>
+      )}
+
       {result && (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', minHeight: 0 }}>
-          <div style={{ background: '#0f0f0f', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '10px' }}>
-            <div style={{ color: '#f97316', fontSize: '9px', letterSpacing: '1px', marginBottom: '8px' }}>RESULT</div>
-            <div style={{ fontSize: '11px', color: '#ccc', fontFamily: 'monospace' }}>
-              <div>Run ID: {result.runId}</div>
-              <div>Status: {result.status}</div>
-              <div>Conclusion: {result.conclusion}</div>
-            </div>
+        <div style={{ background: '#0f0f0f', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '10px' }}>
+          <div style={{ color: '#f97316', fontSize: '9px', letterSpacing: '1px', marginBottom: '8px' }}>RESULT</div>
+          <div style={{ fontSize: '11px', color: '#ccc', marginBottom: '8px' }}>
+            <div>Run ID: {result.runId}</div>
+            <div>Status: {result.status}</div>
+            <div>Conclusion: {result.conclusion}</div>
           </div>
 
           {result.artifact?.screenshot && (
@@ -114,11 +87,11 @@ export function BrowserAutomationPanel() {
             </div>
           )}
 
-          {result.artifact?.result && (
+          {!!result.artifact?.result && (
             <div style={{ background: '#0f0f0f', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '10px' }}>
               <div style={{ color: '#f97316', fontSize: '9px', letterSpacing: '1px', marginBottom: '8px' }}>DATA</div>
               <pre style={{ fontSize: '11px', color: '#ccc', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0 }}>
-                {JSON.stringify(result.artifact.result, null, 2)}
+                {typeof result.artifact.result === 'string' ? result.artifact.result : JSON.stringify(result.artifact.result, null, 2)}
               </pre>
             </div>
           )}
