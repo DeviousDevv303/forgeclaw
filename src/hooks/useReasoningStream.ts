@@ -1,13 +1,64 @@
-import { useState, useCallback, useRef } from 'react'
-import type { ReasoningStep, ReasoningChain, ReasoningPhase, PhaseTransition } from '../types/reasoning'
+import { useState, useCallback, useRef, useMemo } from 'react'
+import type { ReasoningStep, ReasoningChain, ReasoningPhase, PhaseTransition, AgentActivityEvent } from '../types/reasoning'
 
-export function useReasoningStream() {
-  const [chains, setChains] = useState<ReasoningChain[]>([])
+interface UseReasoningStreamOptions {
+  activityEvents?: AgentActivityEvent[]
+}
+
+export function useReasoningStream(options: UseReasoningStreamOptions = {}) {
+  const [localChains, setLocalChains] = useState<ReasoningChain[]>([])
   const [activePhase, setActivePhase] = useState<ReasoningPhase | null>(null)
   const [phaseHistory, setPhaseHistory] = useState<PhaseTransition[]>([])
   const chainCounter = useRef(0)
   const stepCounter = useRef(0)
 
+  // Derive chains from activity events if provided, else use local state
+  const chains = useMemo<ReasoningChain[]>(() => {
+    if (!options.activityEvents || options.activityEvents.length === 0) {
+      return localChains
+    }
+
+    // Map activity events to reasoning chains
+    const eventChains: ReasoningChain[] = []
+    let currentChain: ReasoningChain | null = null
+
+    for (const event of options.activityEvents) {
+      if (event.type === 'reasoning_phase') {
+        if (!currentChain) {
+          chainCounter.current += 1
+          currentChain = {
+            id: `chain-${event.timestamp}-${chainCounter.current}`,
+            rootLabel: `${event.agentId} reasoning`,
+            steps: [],
+            startedAt: new Date(event.timestamp).toISOString(),
+          }
+          eventChains.push(currentChain)
+        }
+
+        stepCounter.current += 1
+        const step: ReasoningStep = {
+          id: `step-${event.timestamp}-${stepCounter.current}`,
+          icon: phaseToIcon(event.phase),
+          label: event.phase.replace(/_/g, ' '),
+          status: 'done',
+          timestamp: new Date(event.timestamp).toISOString(),
+          body: event.body,
+        }
+        currentChain.steps.push(step)
+      }
+
+      if (event.type === 'agent_status') {
+        if (event.status === 'error' && currentChain) {
+          currentChain.completedAt = new Date(event.timestamp).toISOString()
+          currentChain = null
+        }
+      }
+    }
+
+    return eventChains.length > 0 ? eventChains : localChains
+  }, [options.activityEvents, localChains])
+
+  // Local state API (kept for compatibility)
   const startChain = useCallback((rootLabel: string): string => {
     chainCounter.current += 1
     const id = `chain-${Date.now()}-${chainCounter.current}`
@@ -17,7 +68,7 @@ export function useReasoningStream() {
       steps: [],
       startedAt: new Date().toISOString(),
     }
-    setChains(prev => [...prev, newChain])
+    setLocalChains(prev => [...prev, newChain])
     return id
   }, [])
 
@@ -29,7 +80,7 @@ export function useReasoningStream() {
       id: stepId,
       timestamp: new Date().toISOString(),
     }
-    setChains(prev =>
+    setLocalChains(prev =>
       prev.map(chain =>
         chain.id === chainId
           ? { ...chain, steps: [...chain.steps, fullStep] }
@@ -40,7 +91,7 @@ export function useReasoningStream() {
   }, [])
 
   const updateStep = useCallback((chainId: string, stepId: string, updates: Partial<ReasoningStep>) => {
-    setChains(prev =>
+    setLocalChains(prev =>
       prev.map(chain =>
         chain.id === chainId
           ? {
@@ -55,7 +106,7 @@ export function useReasoningStream() {
   }, [])
 
   const completeChain = useCallback((chainId: string) => {
-    setChains(prev =>
+    setLocalChains(prev =>
       prev.map(chain =>
         chain.id === chainId
           ? { ...chain, completedAt: new Date().toISOString() }
@@ -82,7 +133,7 @@ export function useReasoningStream() {
   }, [chains])
 
   const clearChains = useCallback(() => {
-    setChains([])
+    setLocalChains([])
     setPhaseHistory([])
     setActivePhase(null)
   }, [])
@@ -98,5 +149,16 @@ export function useReasoningStream() {
     transitionPhase,
     getActiveChain,
     clearChains,
+  }
+}
+
+function phaseToIcon(phase: ReasoningPhase): ReasoningStep['icon'] {
+  switch (phase) {
+    case 'assumptions': return '🔍'
+    case 'heuristics': return '⚙️'
+    case 'first_principles': return '🧪'
+    case 'extension': return '📝'
+    case 'convergence': return '✅'
+    default: return '🔍'
   }
 }

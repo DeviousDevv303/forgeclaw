@@ -1,6 +1,6 @@
 # KimiClaw Staged Review — Reasoning Stream + System Monitor
 
-**Commit:** TBD (staged, not committed)
+**Commit:** STAGED (not committed — awaiting Claude review per Contract v1.0)
 **Build:** ✅ PASS (exit 0, 0 errors, 0 warnings)
 **Bundle:** 359KB JS, 9.5KB CSS
 

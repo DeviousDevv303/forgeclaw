@@ -8,18 +8,20 @@ import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { OrchestratorPanel } from './components/OrchestratorPanel'
 import { BrowserAutomationPanel } from './components/BrowserAutomationPanel'
-import { ReasoningChain } from './components/reasoning/ReasoningChain'
+import { ReasoningChainComponent } from './components/reasoning/ReasoningChain'
 import { SystemMonitor } from './components/monitor/SystemMonitor'
 import { useReasoningStream } from './hooks/useReasoningStream'
 import { useSystemMonitor } from './hooks/useSystemMonitor'
-import { demoReasoningChain, demoMonitorOps, demoActivities } from './data/demo'
+import { useAgentActivityStream } from './hooks/useAgentActivityStream'
+import { collectMockEvents } from './lib/reasoningMock'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
+import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface Message {
   id: string
-  role: 'user' | 'assistant'
+  role: MessageRole
   content: string
   timestamp: number
   source?: 'local' | 'cloud'
@@ -27,6 +29,7 @@ interface Message {
   phases?: Record<string, string>
   showReasoning?: boolean
   feedback?: 'up' | 'down'
+  reasoning?: ReasoningChainType
 }
 
 interface CorpusEntry {
@@ -351,73 +354,20 @@ type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator' | 'browseraut
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
   const { taskQueue, events: orchEvents, admitTask, resolveTask, contracts } = useOrchestrator({ emitFailure })
-  const reasoning = useReasoningStream()
+  
+  // Activity stream is single source of truth
+  const activityStream = useAgentActivityStream()
+  const reasoning = useReasoningStream({ activityEvents: activityStream.events })
   const monitor = useSystemMonitor()
 
-  // Demo: load demo data into hooks
+  // DEV-ONLY: Load mock events on mount
   useEffect(() => {
-    // Pre-populate demo reasoning chain
-    reasoning.startChain('Analyzing mobile black screen issue')
-    reasoning.addStep(reasoning.getActiveChain()?.id || '', {
-      icon: '🔍',
-      label: 'Investigating canvas rendering',
-      status: 'done',
-      body: 'Canvas z-index: 0, opacity: 0.6\nPosition: fixed with pointer-events-none',
-    })
-    reasoning.addStep(reasoning.getActiveChain()?.id || '', {
-      icon: '⚙️',
-      label: 'Checking Supabase initialization',
-      status: 'done',
-      body: 'Found module-level createClient() call\nSwitched to lazy getSupabase() getter',
-      children: [
-        {
-          id: 'step-2a',
-          icon: '📝',
-          label: 'Wrapping localStorage access',
-          status: 'done',
-          timestamp: new Date(Date.now() - 19000).toISOString(),
-          durationMs: 400,
-        },
-      ],
-    })
-    reasoning.addStep(reasoning.getActiveChain()?.id || '', {
-      icon: '⚙️',
-      label: 'Adding API key validation',
-      status: 'active',
-      body: 'Checking startsWith("sk-ant-") before requests',
-    })
-    reasoning.addStep(reasoning.getActiveChain()?.id || '', {
-      icon: '🔍',
-      label: 'Verifying mobile viewport',
-      status: 'pending',
-    })
-
-    // Pre-populate demo monitor operations
-    monitor.startOperation('grep', 'src/App.tsx', 'read')
-    monitor.finishOperation(monitor.operations[0]?.id || '', 'done')
-    monitor.startOperation('edit', 'src/lib/supabase.ts', 'write')
-    monitor.finishOperation(monitor.operations[1]?.id || '', 'done')
-    monitor.startOperation('npm run build', 'dist/', 'execute')
-
-    // Pre-populate demo activities
-    monitor.logActivity({
-      category: 'file',
-      action: 'read',
-      path: 'src/App.tsx',
-      result: 'success',
-    })
-    monitor.logActivity({
-      category: 'reasoning',
-      action: 'phase_transition',
-      result: 'success',
-      meta: { from: 'assumptions', to: 'heuristics' },
-    })
-    monitor.logActivity({
-      category: 'guardian',
-      action: 'scope_check',
-      path: 'src/lib/supabase.ts',
-      result: 'success',
-    })
+    if (import.meta.env.DEV) {
+      const mockEvents = collectMockEvents('forgemind')
+      for (const event of mockEvents) {
+        activityStream.addEvent(event)
+      }
+    }
   }, [])
 
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
@@ -822,20 +772,10 @@ function App() {
               {messages.length === 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444', gap: '16px' }}>
                   <p>System initialized. Awaiting input...</p>
-                  {/* Demo: Live Reasoning Stream */}
-                  <ReasoningChain chain={demoReasoningChain} />
-                  {/* Demo: System Monitor */}
-                  <SystemMonitor
-                    state={{
-                      operations: demoMonitorOps,
-                      currentTool: 'npm run build',
-                      currentPhase: 'execution',
-                      isActive: true,
-                      lastUpdate: new Date().toISOString(),
-                    }}
-                    operations={demoMonitorOps}
-                    activities={demoActivities}
-                  />
+                  {/* Reasoning Stream from activity events */}
+                  {reasoning.chains.map(chain => (
+                    <ReasoningChainComponent key={chain.id} chain={chain} />
+                  ))}
                 </div>
               ) : (
                 messages.map(msg => {
@@ -889,6 +829,13 @@ function App() {
               {loading && <div style={{ color: '#f97316', fontSize: '11px' }}><span className="pulse-text">EXECUTING COGNITIVE SCAFFOLD...</span></div>}
               <div ref={messagesEndRef} />
             </div>
+            
+            {/* System Monitor — pinned above input */}
+            <SystemMonitor
+              events={activityStream.events}
+              isActive={monitor.state.isActive}
+            />
+            
               <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0', zIndex: 20 }}>
                 {attachedFile && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: '#f97316', fontSize: '12px' }}>
