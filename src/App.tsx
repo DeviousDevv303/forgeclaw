@@ -349,7 +349,7 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyze
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator' | 'browserauto' | 'browserauto'
+type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator' | 'browserauto'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -656,8 +656,7 @@ function App() {
     { id: 'repoagent',   label: '🐙 RepoAgent' },
     { id: 'orchestrator',label: `🎛️ Orchestrator${taskQueue.length > 0 ? ` (${taskQueue.length})` : ''}` },
     { id: 'failures',    label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
-  { id: 'browserauto', label: 'Browser' },
-  { id: 'browserauto', label: 'Browser' },
+    { id: 'browserauto', label: 'Browser' },
   ]
 
   return (

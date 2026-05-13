@@ -43,12 +43,15 @@ export function useSystemMonitor() {
           : op
       )
     )
-    setState(prev => ({
-      ...prev,
-      currentTool: null,
-      isActive: prev.operations.some(o => o.id !== id && o.status === 'running'),
-      lastUpdate: new Date().toISOString(),
-    }))
+    setState(prev => {
+      const stillRunning = prev.operations.some(o => o.id !== id && o.status === 'running')
+      return {
+        ...prev,
+        currentTool: stillRunning ? prev.currentTool : null,
+        isActive: stillRunning,
+        lastUpdate: new Date().toISOString(),
+      }
+    })
   }, [])
 
   const logActivity = useCallback((activity: Omit<SystemActivity, 'id' | 'timestamp'>): string => {

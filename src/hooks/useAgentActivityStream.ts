@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import type { AgentActivityEvent } from '../types/reasoning'
 
 interface UseAgentActivityStreamOptions {
@@ -8,6 +8,7 @@ interface UseAgentActivityStreamOptions {
 export function useAgentActivityStream(options: UseAgentActivityStreamOptions = {}) {
   const [events, setEvents] = useState<AgentActivityEvent[]>([])
   const [isConnected, setIsConnected] = useState(false)
+  const addEventRef = useRef<(event: AgentActivityEvent) => void>(() => {})
 
   // Window to last 20 events, memoized
   const windowedEvents = useMemo(() => events.slice(-20), [events])
@@ -19,6 +20,9 @@ export function useAgentActivityStream(options: UseAgentActivityStreamOptions = 
       return next.length > 100 ? next.slice(-100) : next
     })
   }, [])
+
+  // Stable ref for DEV useEffect
+  addEventRef.current = addEvent
 
   const clearEvents = useCallback(() => {
     setEvents([])

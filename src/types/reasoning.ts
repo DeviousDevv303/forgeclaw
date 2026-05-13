@@ -1,6 +1,6 @@
 export interface ReasoningStep {
   id: string
-  icon: '🔍' | '⚙️' | '✅' | '❌' | '📝' | '🧪' | '🚀'
+  icon: '🔍' | '⚙️' | '✅' | '❌' | '📝' | '🧪' | '🚀' | '💡' | '🔧'
   label: string
   status: 'active' | 'done' | 'error' | 'pending'
   timestamp: string // ISO8601
