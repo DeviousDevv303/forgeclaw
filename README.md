@@ -70,11 +70,35 @@ pnpm run build    # TypeScript + Vite build
 pnpm run lint     # ESLint
 ```
 
-## Environment Variables
+## API Key Setup
 
-```bash
-VITE_ANTHROPIC_API_KEY=sk-ant-...     # Anthropic API (proxied via Vite)
-VITE_GITHUB_TOKEN=ghp_...             # GitHub PAT for repo operations
+ForgeClaw uses a **settings modal** for API key entry (no env vars required):
+
+1. Click the ⚙ gear icon in the header
+2. Enter your Claude API key (`sk-ant-...`) in the settings panel
+3. Click **TEST KEY** to verify
+4. Key is stored in `localStorage` — persists across sessions
+
+### GitHub Token (Optional)
+
+For repo operations (RepoAgent tab, War Room):
+1. Generate a GitHub Personal Access Token with `repo` scope
+2. Enter it in the settings modal under "GitHub Token"
+3. Used for: file push, workflow trigger, War Room polling
+
+### Vite Proxy (Development)
+
+The dev server proxies `/api` to the ForgeMind engine:
+```typescript
+// vite.config.ts
+server: {
+  proxy: {
+    '/api': {
+      target: 'http://localhost:3001',
+      changeOrigin: true,
+    },
+  },
+}
 ```
 
 ## Governance
