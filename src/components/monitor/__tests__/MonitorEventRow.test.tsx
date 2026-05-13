@@ -1,73 +1,65 @@
-import React from 'react'
 import { render, screen } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { MonitorEventRow } from '../MonitorEventRow'
-import type { OrchestratorEvent } from '../../../types/orchestrator'
-
-const base: OrchestratorEvent = {
-  eventId: 'evt-001',
-  timestamp: new Date(Date.now() - 5000).toISOString(), // 5s ago
-  type: 'task_admitted',
-  severity: 'info',
-  agentId: 'forgemind',
-}
+import type { AgentActivityEvent } from '../../../types/reasoning'
 
 describe('MonitorEventRow', () => {
-  it('renders agent id', () => {
-    render(<MonitorEventRow event={base} now={Date.now()} />)
-    expect(screen.getByText(/forgemind/)).toBeInTheDocument()
+  it('renders TOOL label for tool_call events', () => {
+    const event: AgentActivityEvent = { type: 'tool_call', agentId: 'forgemind', tool: 'grep', args: {}, timestamp: Date.now() }
+    render(<MonitorEventRow event={event} />)
+    expect(screen.getByText('TOOL')).toBeInTheDocument()
+    expect(screen.getByText('grep')).toBeInTheDocument()
   })
 
-  it('renders human-readable event type', () => {
-    render(<MonitorEventRow event={base} now={Date.now()} />)
-    expect(screen.getByText(/task admitted/)).toBeInTheDocument()
+  it('renders READ label for file_read events', () => {
+    const event: AgentActivityEvent = { type: 'file_read', agentId: 'forgemind', path: 'src/App.tsx', timestamp: Date.now() }
+    render(<MonitorEventRow event={event} />)
+    expect(screen.getByText('READ')).toBeInTheDocument()
+    expect(screen.getByText('src/App.tsx')).toBeInTheDocument()
   })
 
-  it('shows age in seconds for recent events', () => {
-    const now = Date.now()
-    const event: OrchestratorEvent = { ...base, timestamp: new Date(now - 10000).toISOString() }
-    render(<MonitorEventRow event={event} now={now} />)
-    expect(screen.getByText('10s')).toBeInTheDocument()
+  it('renders WRITE label for file_write events', () => {
+    const event: AgentActivityEvent = { type: 'file_write', agentId: 'forgemind', path: 'src/output.ts', timestamp: Date.now() }
+    render(<MonitorEventRow event={event} />)
+    expect(screen.getByText('WRITE')).toBeInTheDocument()
+    expect(screen.getByText('src/output.ts')).toBeInTheDocument()
   })
 
-  it('shows age in minutes for older events', () => {
-    const now = Date.now()
-    const event: OrchestratorEvent = { ...base, timestamp: new Date(now - 120000).toISOString() }
-    render(<MonitorEventRow event={event} now={now} />)
-    expect(screen.getByText('2m')).toBeInTheDocument()
+  it('renders REASON label for reasoning_phase events', () => {
+    const event: AgentActivityEvent = { type: 'reasoning_phase', agentId: 'forgemind', phase: 'assumptions', body: 'body', timestamp: Date.now() }
+    render(<MonitorEventRow event={event} />)
+    expect(screen.getByText('REASON')).toBeInTheDocument()
+    expect(screen.getByText('assumptions')).toBeInTheDocument()
   })
 
-  it('shows task id slice when taskSpec is present', () => {
-    const event: OrchestratorEvent = {
-      ...base,
-      taskSpec: {
-        taskId: 'abcdef1234567890',
-        agentId: 'forgemind',
-        intent: 'test',
-        payload: {},
-        timeout: 5000,
-        requestedScopes: [],
-      },
-    }
-    render(<MonitorEventRow event={event} now={Date.now()} />)
-    expect(screen.getByText(/abcdef12/)).toBeInTheDocument()
+  it('renders STATUS label for agent_status events', () => {
+    const event: AgentActivityEvent = { type: 'agent_status', agentId: 'forgemind', status: 'working', timestamp: Date.now() }
+    render(<MonitorEventRow event={event} />)
+    expect(screen.getByText('STATUS')).toBeInTheDocument()
+    expect(screen.getByText('working')).toBeInTheDocument()
   })
 
-  it('renders correct icon for task_rejected', () => {
-    const event: OrchestratorEvent = { ...base, type: 'task_rejected', severity: 'warning' }
-    const { container } = render(<MonitorEventRow event={event} now={Date.now()} />)
-    expect(container.textContent).toContain('✗')
+  it('renders ERROR label for error events', () => {
+    const event: AgentActivityEvent = { type: 'error', agentId: 'forgemind', message: 'Something went wrong', timestamp: Date.now() }
+    render(<MonitorEventRow event={event} />)
+    expect(screen.getByText('ERROR')).toBeInTheDocument()
+    expect(screen.getByText('Something went wrong')).toBeInTheDocument()
   })
 
-  it('renders correct icon for authority_violation', () => {
-    const event: OrchestratorEvent = { ...base, type: 'authority_violation', severity: 'warning' }
-    const { container } = render(<MonitorEventRow event={event} now={Date.now()} />)
-    expect(container.textContent).toContain('⚠')
+  it('truncates long error messages to 40 chars', () => {
+    const longMsg = 'A'.repeat(60)
+    const event: AgentActivityEvent = { type: 'error', agentId: 'forgemind', message: longMsg, timestamp: Date.now() }
+    render(<MonitorEventRow event={event} />)
+    expect(screen.getByText('A'.repeat(40))).toBeInTheDocument()
+    expect(screen.queryByText(longMsg)).not.toBeInTheDocument()
   })
 
-  it('renders correct icon for recovery_triggered', () => {
-    const event: OrchestratorEvent = { ...base, type: 'recovery_triggered', severity: 'warning' }
-    const { container } = render(<MonitorEventRow event={event} now={Date.now()} />)
-    expect(container.textContent).toContain('↺')
+  it('renders a timestamp', () => {
+    const ts = new Date('2026-01-01T12:30:45Z').getTime()
+    const event: AgentActivityEvent = { type: 'agent_status', agentId: 'forgemind', status: 'idle', timestamp: ts }
+    render(<MonitorEventRow event={event} />)
+    // timestamp is rendered as localeTimeString — just verify something time-like is in the DOM
+    const { container } = render(<MonitorEventRow event={event} />)
+    expect(container.textContent).toMatch(/\d{2}:\d{2}:\d{2}/)
   })
 })

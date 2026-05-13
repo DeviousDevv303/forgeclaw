@@ -1,73 +1,70 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
+import { simulateReasoningStream, collectMockEvents } from '../reasoningMock'
 
-describe('buildMockReasoning', () => {
-  const originalEnv = import.meta.env.DEV
-
-  afterEach(() => {
-    vi.unstubAllEnvs()
+describe('simulateReasoningStream', () => {
+  it('is a generator that yields AgentActivityEvents', () => {
+    const gen = simulateReasoningStream('test-agent')
+    const first = gen.next()
+    expect(first.done).toBe(false)
+    expect(first.value).toHaveProperty('type')
+    expect(first.value).toHaveProperty('agentId', 'test-agent')
+    expect(first.value).toHaveProperty('timestamp')
   })
 
-  it('throws when called outside DEV mode', async () => {
-    vi.stubEnv('DEV', false)
-    const { buildMockReasoning } = await import('../reasoningMock')
-    expect(() => buildMockReasoning()).toThrow('development utility')
+  it('yields all 5 reasoning phases', () => {
+    const events = [...simulateReasoningStream()]
+    const phases = events
+      .filter(e => e.type === 'reasoning_phase')
+      .map(e => e.type === 'reasoning_phase' ? e.phase : null)
+    expect(phases).toContain('assumptions')
+    expect(phases).toContain('heuristics')
+    expect(phases).toContain('first_principles')
+    expect(phases).toContain('extension')
+    expect(phases).toContain('convergence')
   })
 
-  it('returns a complete ReasoningData with 5 phases in DEV mode', async () => {
-    vi.stubEnv('DEV', true)
-    const { buildMockReasoning } = await import('../reasoningMock')
-    const result = buildMockReasoning()
-
-    expect(result.status).toBe('complete')
-    expect(result.phases).toHaveLength(5)
-    expect(result.version).toBe(1)
-    expect(result.id).toMatch(/^reasoning-mock-/)
+  it('starts with agent_status working and ends with agent_status idle', () => {
+    const events = [...simulateReasoningStream()]
+    const first = events[0]
+    const last = events[events.length - 1]
+    expect(first.type).toBe('agent_status')
+    if (first.type === 'agent_status') expect(first.status).toBe('working')
+    expect(last.type).toBe('agent_status')
+    if (last.type === 'agent_status') expect(last.status).toBe('idle')
   })
 
-  it('phases have correct names in order', async () => {
-    vi.stubEnv('DEV', true)
-    const { buildMockReasoning } = await import('../reasoningMock')
-    const { phases } = buildMockReasoning()
-
-    const names = phases.map(p => p.name)
-    expect(names).toEqual(['Assumptions', 'Heuristics', 'First Principles', 'Extension', 'Convergence'])
+  it('includes tool_call events', () => {
+    const events = [...simulateReasoningStream()]
+    expect(events.some(e => e.type === 'tool_call')).toBe(true)
   })
 
-  it('every phase has at least one step', async () => {
-    vi.stubEnv('DEV', true)
-    const { buildMockReasoning } = await import('../reasoningMock')
-    const { phases } = buildMockReasoning()
-
-    for (const phase of phases) {
-      expect(phase.steps.length).toBeGreaterThan(0)
-      expect(phase.status).toBe('complete')
-    }
+  it('includes file_read or file_write events', () => {
+    const events = [...simulateReasoningStream()]
+    expect(events.some(e => e.type === 'file_read' || e.type === 'file_write')).toBe(true)
   })
 
-  it('tool calls have unique ids', async () => {
-    vi.stubEnv('DEV', true)
-    const { buildMockReasoning } = await import('../reasoningMock')
-    const { phases } = buildMockReasoning()
+  it('uses "forgemind" as default agentId', () => {
+    const events = [...simulateReasoningStream()]
+    expect(events.every(e => e.agentId === 'forgemind')).toBe(true)
+  })
+})
 
-    const allToolCallIds = phases
-      .flatMap(p => p.steps)
-      .flatMap(s => s.toolCalls ?? [])
-      .map(tc => tc.id)
-
-    const unique = new Set(allToolCallIds)
-    expect(unique.size).toBe(allToolCallIds.length)
+describe('collectMockEvents', () => {
+  it('returns an array of events', () => {
+    const events = collectMockEvents()
+    expect(Array.isArray(events)).toBe(true)
+    expect(events.length).toBeGreaterThan(0)
   })
 
-  // Suppress unused-variable warning — originalEnv documents intent
-  it('has a stable type shape (ReasoningData)', async () => {
-    void originalEnv
-    vi.stubEnv('DEV', true)
-    const { buildMockReasoning } = await import('../reasoningMock')
-    const result = buildMockReasoning()
+  it('returns same events as spreading the generator', () => {
+    const fromGenerator = [...simulateReasoningStream('agent-x')]
+    const fromCollect = collectMockEvents('agent-x')
+    expect(fromCollect.length).toBe(fromGenerator.length)
+    expect(fromCollect[0].type).toBe(fromGenerator[0].type)
+  })
 
-    expect(typeof result.id).toBe('string')
-    expect(typeof result.version).toBe('number')
-    expect(typeof result.startedAt).toBe('number')
-    expect(result.completedAt).toBeDefined()
+  it('accepts a custom agentId', () => {
+    const events = collectMockEvents('my-agent')
+    expect(events.every(e => e.agentId === 'my-agent')).toBe(true)
   })
 })

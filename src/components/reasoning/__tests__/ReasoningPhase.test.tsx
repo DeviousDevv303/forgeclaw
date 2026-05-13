@@ -1,71 +1,80 @@
-import React from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
 import { ReasoningPhase } from '../ReasoningPhase'
-import type { ReasoningPhase as ReasoningPhaseType } from '../types'
+import type { ReasoningStep } from '../../../types/reasoning'
 
-const basePhase: ReasoningPhaseType = {
-  id: 'phase-1',
-  index: 1,
-  name: 'Assumptions',
-  status: 'complete',
-  steps: [
-    { id: 'step-1', content: 'Step one content', status: 'complete', startedAt: 0, completedAt: 100 },
-  ],
-  startedAt: 0,
-  completedAt: 500,
+function makeStep(overrides: Partial<ReasoningStep> = {}): ReasoningStep {
+  return {
+    id: 'step-1',
+    icon: '🔍',
+    label: 'Assumptions',
+    status: 'done',
+    timestamp: new Date().toISOString(),
+    body: 'Step body content',
+    ...overrides,
+  }
 }
 
 describe('ReasoningPhase', () => {
-  it('renders the phase name', () => {
-    render(<ReasoningPhase phase={basePhase} />)
+  it('renders the step label', () => {
+    render(<ReasoningPhase step={makeStep()} />)
     expect(screen.getByText('Assumptions')).toBeInTheDocument()
   })
 
-  it('starts collapsed when status is complete and defaultOpen is false', () => {
-    render(<ReasoningPhase phase={basePhase} />)
-    expect(screen.queryByText('Step one content')).not.toBeInTheDocument()
+  it('renders the step icon', () => {
+    render(<ReasoningPhase step={makeStep({ icon: '⚙️' })} />)
+    expect(screen.getByText('⚙️')).toBeInTheDocument()
   })
 
-  it('starts open when defaultOpen is true', () => {
-    render(<ReasoningPhase phase={basePhase} defaultOpen />)
-    expect(screen.getByText('Step one content')).toBeInTheDocument()
+  it('starts collapsed when status is done', () => {
+    render(<ReasoningPhase step={makeStep({ status: 'done' })} />)
+    expect(screen.queryByText('Step body content')).not.toBeInTheDocument()
   })
 
-  it('starts open when status is streaming', () => {
-    const phase: ReasoningPhaseType = { ...basePhase, status: 'streaming' }
-    render(<ReasoningPhase phase={phase} />)
-    expect(screen.getByText('Step one content')).toBeInTheDocument()
+  it('starts collapsed when status is pending', () => {
+    render(<ReasoningPhase step={makeStep({ status: 'pending' })} />)
+    expect(screen.queryByText('Step body content')).not.toBeInTheDocument()
   })
 
-  it('clicking toggle opens a collapsed phase', () => {
-    render(<ReasoningPhase phase={basePhase} />)
+  it('starts expanded when status is active', () => {
+    render(<ReasoningPhase step={makeStep({ status: 'active' })} />)
+    expect(screen.getByText('Step body content')).toBeInTheDocument()
+  })
+
+  it('starts expanded when status is error', () => {
+    render(<ReasoningPhase step={makeStep({ status: 'error' })} />)
+    expect(screen.getByText('Step body content')).toBeInTheDocument()
+  })
+
+  it('clicking toggle expands a collapsed step', () => {
+    render(<ReasoningPhase step={makeStep({ status: 'done' })} />)
     fireEvent.click(screen.getByRole('button'))
-    expect(screen.getByText('Step one content')).toBeInTheDocument()
+    expect(screen.getByText('Step body content')).toBeInTheDocument()
   })
 
-  it('shows checkmark when complete', () => {
-    render(<ReasoningPhase phase={basePhase} />)
-    expect(screen.getByText('✓')).toBeInTheDocument()
-  })
-
-  it('shows LIVE label when streaming', () => {
-    const phase: ReasoningPhaseType = { ...basePhase, status: 'streaming' }
-    render(<ReasoningPhase phase={phase} />)
-    expect(screen.getByText('LIVE')).toBeInTheDocument()
-  })
-
-  it('pending phase has reduced opacity and non-clickable button', () => {
-    const phase: ReasoningPhaseType = { ...basePhase, status: 'pending' }
-    const { container } = render(<ReasoningPhase phase={phase} />)
-    const wrapper = container.firstChild as HTMLElement
-    expect(wrapper.style.opacity).toBe('0.35')
-  })
-
-  it('pending phase does not open on click', () => {
-    const phase: ReasoningPhaseType = { ...basePhase, status: 'pending' }
-    render(<ReasoningPhase phase={phase} />)
+  it('clicking toggle collapses an expanded step', () => {
+    render(<ReasoningPhase step={makeStep({ status: 'active' })} />)
     fireEvent.click(screen.getByRole('button'))
-    expect(screen.queryByText('Step one content')).not.toBeInTheDocument()
+    expect(screen.queryByText('Step body content')).not.toBeInTheDocument()
+  })
+
+  it('shows duration when durationMs is provided', () => {
+    render(<ReasoningPhase step={makeStep({ status: 'done', durationMs: 420 })} />)
+    expect(screen.getByText(/420ms/)).toBeInTheDocument()
+  })
+
+  it('renders child steps when expanded', () => {
+    const step = makeStep({
+      status: 'active',
+      children: [makeStep({ id: 'child-1', label: 'Child Step', body: 'Child body' })],
+    })
+    render(<ReasoningPhase step={step} />)
+    expect(screen.getByText('Child Step')).toBeInTheDocument()
+  })
+
+  it('does not show children toggle when no children', () => {
+    render(<ReasoningPhase step={makeStep({ children: [] })} />)
+    const btn = screen.getByRole('button')
+    expect(btn.textContent).not.toContain('▶')
   })
 })

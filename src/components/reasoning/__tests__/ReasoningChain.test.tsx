@@ -1,108 +1,97 @@
-import React from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
-import { ReasoningChain } from '../ReasoningChain'
-import type { ReasoningData, ReasoningPhase } from '../types'
+import { ReasoningChainComponent } from '../ReasoningChain'
+import type { ReasoningChain, ReasoningStep } from '../../../types/reasoning'
 
-function makePhase(index: 1 | 2 | 3 | 4 | 5, name: string, status: ReasoningPhase['status'] = 'complete'): ReasoningPhase {
+function makeStep(id: string, status: ReasoningStep['status'] = 'done', label = 'Step'): ReasoningStep {
   return {
-    id: `phase-${index}`,
-    index,
-    name,
+    id,
+    icon: '✅',
+    label,
     status,
-    steps: [{ id: `step-${index}`, content: `${name} step`, status, startedAt: 0 }],
-    startedAt: 0,
-    completedAt: status === 'complete' ? 100 : undefined,
+    timestamp: new Date().toISOString(),
   }
 }
 
-const completeReasoning: ReasoningData = {
-  id: 'r-001',
-  version: 1,
-  status: 'complete',
-  phases: [
-    makePhase(1, 'Assumptions'),
-    makePhase(2, 'Heuristics'),
-    makePhase(3, 'First Principles'),
-    makePhase(4, 'Extension'),
-    makePhase(5, 'Convergence'),
+const completeChain: ReasoningChain = {
+  id: 'chain-001',
+  rootLabel: 'Reasoning trace',
+  steps: [
+    makeStep('s1', 'done', 'Assumptions'),
+    makeStep('s2', 'done', 'Heuristics'),
+    makeStep('s3', 'done', 'Convergence'),
   ],
-  startedAt: 0,
-  completedAt: 1000,
+  startedAt: new Date(Date.now() - 2000).toISOString(),
+  completedAt: new Date().toISOString(),
 }
 
-const streamingReasoning: ReasoningData = {
-  ...completeReasoning,
-  id: 'r-002',
-  status: 'streaming',
-  phases: [
-    makePhase(1, 'Assumptions', 'complete'),
-    makePhase(2, 'Heuristics', 'streaming'),
-    makePhase(3, 'First Principles', 'pending'),
-    makePhase(4, 'Extension', 'pending'),
-    makePhase(5, 'Convergence', 'pending'),
+const activeChain: ReasoningChain = {
+  id: 'chain-002',
+  rootLabel: 'Live reasoning',
+  steps: [
+    makeStep('s1', 'done', 'Assumptions'),
+    makeStep('s2', 'active', 'Heuristics'),
   ],
+  startedAt: new Date().toISOString(),
 }
 
-describe('ReasoningChain', () => {
-  it('renders the scaffold header', () => {
-    render(<ReasoningChain messageId="msg-1" reasoning={completeReasoning} />)
-    expect(screen.getByText('5-Phase Scaffold')).toBeInTheDocument()
+const emptyChain: ReasoningChain = {
+  id: 'chain-003',
+  rootLabel: 'Empty chain',
+  steps: [],
+  startedAt: new Date().toISOString(),
+}
+
+describe('ReasoningChainComponent', () => {
+  it('renders the chain root label', () => {
+    render(<ReasoningChainComponent chain={completeChain} />)
+    expect(screen.getByText('Reasoning trace')).toBeInTheDocument()
   })
 
-  it('starts collapsed when status is complete', () => {
-    render(<ReasoningChain messageId="msg-1" reasoning={completeReasoning} />)
+  it('starts expanded by default', () => {
+    render(<ReasoningChainComponent chain={completeChain} />)
+    expect(screen.getByText('Assumptions')).toBeInTheDocument()
+    expect(screen.getByText('Heuristics')).toBeInTheDocument()
+  })
+
+  it('shows step count in header', () => {
+    render(<ReasoningChainComponent chain={completeChain} />)
+    expect(screen.getByText(/3 steps/)).toBeInTheDocument()
+  })
+
+  it('shows "done" label when chain is complete', () => {
+    render(<ReasoningChainComponent chain={completeChain} />)
+    expect(screen.getByText(/done/)).toBeInTheDocument()
+  })
+
+  it('clicking toggle collapses the chain', () => {
+    render(<ReasoningChainComponent chain={completeChain} />)
+    expect(screen.getByText('Assumptions')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button'))
     expect(screen.queryByText('Assumptions')).not.toBeInTheDocument()
   })
 
-  it('shows phase count when complete', () => {
-    render(<ReasoningChain messageId="msg-1" reasoning={completeReasoning} />)
-    expect(screen.getByText('5/5 phases')).toBeInTheDocument()
-  })
-
-  it('starts expanded when status is streaming', () => {
-    render(<ReasoningChain messageId="msg-1" reasoning={streamingReasoning} />)
-    expect(screen.getByText('Reasoning…')).toBeInTheDocument()
-    expect(screen.getByText('Assumptions')).toBeInTheDocument()
-  })
-
-  it('clicking the header expands a collapsed chain', () => {
-    render(<ReasoningChain messageId="msg-1" reasoning={completeReasoning} />)
-    fireEvent.click(screen.getByRole('button'))
-    expect(screen.getByText('Assumptions')).toBeInTheDocument()
-    expect(screen.getByText('Convergence')).toBeInTheDocument()
-  })
-
-  it('clicking again collapses an expanded chain', () => {
-    render(<ReasoningChain messageId="msg-1" reasoning={completeReasoning} />)
+  it('clicking toggle again re-expands', () => {
+    render(<ReasoningChainComponent chain={completeChain} />)
     const btn = screen.getByRole('button')
     fireEvent.click(btn)
     fireEvent.click(btn)
-    expect(screen.queryByText('Assumptions')).not.toBeInTheDocument()
+    expect(screen.getByText('Assumptions')).toBeInTheDocument()
   })
 
-  it('does not re-render when version is unchanged (memo)', () => {
-    let renderCount = 0
-    const Spy = (props: { reasoning: ReasoningData }) => {
-      renderCount++
-      return <ReasoningChain messageId="msg-1" reasoning={props.reasoning} />
-    }
-
-    const { rerender } = render(<Spy reasoning={completeReasoning} />)
-    const countAfterMount = renderCount
-
-    // Same version — memo should prevent re-render of ReasoningChain
-    rerender(<Spy reasoning={{ ...completeReasoning }} />)
-
-    // Spy itself re-renders, but ReasoningChain should not
-    // We verify that the DOM hasn't changed as a proxy for skipped render
-    expect(screen.queryByText('Assumptions')).not.toBeInTheDocument()
-    expect(renderCount).toBeGreaterThanOrEqual(countAfterMount)
+  it('shows "Waiting for steps..." when chain has no steps', () => {
+    render(<ReasoningChainComponent chain={emptyChain} />)
+    expect(screen.getByText('Waiting for steps...')).toBeInTheDocument()
   })
 
-  it('re-renders when version increments', () => {
-    const { rerender } = render(<ReasoningChain messageId="msg-1" reasoning={completeReasoning} />)
-    rerender(<ReasoningChain messageId="msg-1" reasoning={{ ...completeReasoning, version: 2 }} />)
-    expect(screen.getByText('5-Phase Scaffold')).toBeInTheDocument()
+  it('shows active step count when chain is in progress', () => {
+    render(<ReasoningChainComponent chain={activeChain} />)
+    expect(screen.getByText(/2 steps/)).toBeInTheDocument()
+  })
+
+  it('shows progress bar when there are active steps', () => {
+    const { container } = render(<ReasoningChainComponent chain={activeChain} />)
+    const progressBar = container.querySelector('.bg-orange-500')
+    expect(progressBar).toBeTruthy()
   })
 })
