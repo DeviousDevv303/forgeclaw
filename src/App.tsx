@@ -16,9 +16,7 @@ import { useAgentActivityStream } from './hooks/useAgentActivityStream'
 import { useWarRoom } from './hooks/useWarRoom'
 import type { CristianDecision } from './types/warRoom'
 import { collectMockEvents } from './lib/reasoningMock'
-import { parseRepoUrl, fetchRepoTree, fetchFileContent, pushFile, triggerWorkflow } from './shared/api/githubClient'
 import { pushFile as githubPushFile } from './lib/github'
-import type { EmitFailureOptions } from './hooks/useErrorBus'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import {
   PROVIDERS, PROVIDER_ORDER, DEFAULT_PROVIDER, DEFAULT_MODEL,
@@ -46,13 +44,6 @@ interface CorpusEntry {
   response: string
   source: 'claude-haiku' | 'ollama'
   timestamp: string
-}
-
-interface RepoTreeItem {
-  path: string
-  type: 'blob' | 'tree'
-  sha: string
-  size?: number
 }
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
@@ -106,199 +97,6 @@ function cleanForSpeech(text: string): string {
     .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
     .replace(/[\u{2600}-\u{26FF}]/gu, '')
     .replace(/\*\*/g, '').replace(/\*/g, '').trim()
-}
-
-// ─── RepoAnalyzer Component ───────────────────────────────────────────────────
-
-interface RepoAnalyzerProps {
-  apiKey: string
-  onAnalyze: (prompt: string) => void
-  analyzing: boolean
-  emitFailure: (opts: EmitFailureOptions) => string
-}
-
-function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyzerProps) {
-  const [repoUrl, setRepoUrl] = useState('https://github.com/DeviousDevv303/forgeclaw')
-  const [ghToken, setGhToken] = useState(() => safeGetItem('gh_token') || '')
-  const [tree, setTree] = useState<RepoTreeItem[]>([])
-  const [loadingTree, setLoadingTree] = useState(false)
-  const [treeError, setTreeError] = useState<string | null>(null)
-  const [selectedFile, setSelectedFile] = useState<string | null>(null)
-  const [fileContent, setFileContent] = useState<string>('')
-  const [fileSha, setFileSha] = useState<string>('')
-  const [loadingFile, setLoadingFile] = useState(false)
-  const [editMode, setEditMode] = useState(false)
-  const [editContent, setEditContent] = useState('')
-  const [commitMsg, setCommitMsg] = useState('')
-  const [pushing, setPushing] = useState(false)
-  const [pushStatus, setPushStatus] = useState<string | null>(null)
-  const [workflowId, setWorkflowId] = useState('')
-  const [workflowRef, setWorkflowRef] = useState('main')
-  const [dispatching, setDispatching] = useState(false)
-  const [dispatchStatus, setDispatchStatus] = useState<string | null>(null)
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
-  const [filter, setFilter] = useState('')
-
-  useEffect(() => { safeSetItem('gh_token', ghToken) }, [ghToken])
-
-  const parsed = parseRepoUrl(repoUrl)
-
-  const loadTree = async () => {
-    if (!parsed) { setTreeError('Invalid GitHub repo URL'); return }
-    setLoadingTree(true); setTreeError(null); setTree([]); setSelectedFile(null); setFileContent('')
-    try {
-      const items = await fetchRepoTree(parsed.owner, parsed.repo, ghToken)
-      setTree(items)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Failed to load tree'
-      setTreeError(msg)
-      emitFailure({ source: 'github', severity: 'error', message: `Tree load failed: ${msg}`, context: { repo: repoUrl } })
-    } finally { setLoadingTree(false) }
-  }
-
-  const loadFile = async (path: string) => {
-    if (!parsed) return
-    setLoadingFile(true); setSelectedFile(path); setFileContent(''); setEditMode(false); setPushStatus(null)
-    try {
-      const { content, sha } = await fetchFileContent(parsed.owner, parsed.repo, path, ghToken)
-      setFileContent(content); setFileSha(sha); setEditContent(content)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Error loading file'
-      setFileContent(msg)
-      emitFailure({ source: 'github', severity: 'error', message: `File fetch failed: ${msg}`, context: { path } })
-    } finally { setLoadingFile(false) }
-  }
-
-  // STANDING RULE: Do not touch push/dispatch logic below
-  const handlePush = async () => {
-    if (!parsed || !selectedFile || !commitMsg) return
-    setPushing(true); setPushStatus(null)
-    try {
-      await pushFile(parsed.owner, parsed.repo, selectedFile, editContent, commitMsg, fileSha || undefined, ghToken)
-      setPushStatus('✓ Pushed successfully')
-      setFileContent(editContent); setEditMode(false)
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Push failed'
-      setPushStatus(`✗ ${msg}`)
-      emitFailure({ source: 'github', severity: 'error', message: `Push failed: ${msg}`, context: { path: selectedFile } })
-    } finally { setPushing(false) }
-  }
-
-  const handleDispatch = async () => {
-    if (!parsed || !workflowId) return
-    setDispatching(true); setDispatchStatus(null)
-    try {
-      await triggerWorkflow(parsed.owner, parsed.repo, workflowId, workflowRef, ghToken)
-      setDispatchStatus('✓ Workflow dispatched')
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Dispatch failed'
-      setDispatchStatus(`✗ ${msg}`)
-      emitFailure({ source: 'github', severity: 'error', message: `Workflow dispatch failed: ${msg}`, context: { workflowId, ref: workflowRef } })
-    } finally { setDispatching(false) }
-  }
-
-  const handleAnalyze = () => {
-    if (!fileContent || !selectedFile) return
-    const prompt = `Analyze this file from ${repoUrl}:\n\nFile: ${selectedFile}\n\`\`\`\n${fileContent.slice(0, 6000)}\n\`\`\`\n\nProvide a thorough code review using the ForgeMind reasoning scaffold.`
-    onAnalyze(prompt)
-  }
-
-  const toggleDir = (dir: string) => {
-    setExpandedDirs(prev => {
-      const next = new Set(prev)
-      if (next.has(dir)) next.delete(dir); else next.add(dir)
-      return next
-    })
-  }
-
-  const filteredTree = filter
-    ? tree.filter(i => i.path.toLowerCase().includes(filter.toLowerCase()))
-    : tree
-
-  const visibleItems = filteredTree.filter(item => {
-    if (filter) return true
-    const parts = item.path.split('/')
-    if (parts.length === 1) return true
-    for (let i = 1; i < parts.length; i++) {
-      const parent = parts.slice(0, i).join('/')
-      if (!expandedDirs.has(parent)) return false
-    }
-    return true
-  })
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', height: '100%' }}>
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <input value={repoUrl} onChange={e => setRepoUrl(e.target.value)} placeholder="https://github.com/owner/repo" style={inputStyle} onKeyDown={e => e.key === 'Enter' && loadTree()} />
-        <input value={ghToken} onChange={e => setGhToken(e.target.value)} placeholder="GitHub token (optional for public)" type="password" style={{ ...inputStyle, maxWidth: '200px' }} />
-        <button onClick={loadTree} disabled={loadingTree || !repoUrl} style={repoBtn}>{loadingTree ? '...' : 'LOAD'}</button>
-      </div>
-      {treeError && <div style={{ color: '#f97316', fontSize: '11px' }}>[ERROR]: {treeError}</div>}
-      {tree.length > 0 && (
-        <div style={{ display: 'flex', gap: '10px', flex: 1, minHeight: 0 }}>
-          <div style={{ width: '240px', flexShrink: 0, background: '#0f0f0f', border: '1px solid #222', borderRadius: '6px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '6px 8px', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ color: '#f97316', fontSize: '9px', letterSpacing: '1px' }}>FILE TREE</span>
-              <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="filter..." style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', color: '#ccc', fontSize: '10px', fontFamily: 'monospace' }} />
-            </div>
-            <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
-              {visibleItems.map(item => {
-                const depth = item.path.split('/').length - 1
-                const name = item.path.split('/').pop() || item.path
-                const isDir = item.type === 'tree'
-                const isOpen = expandedDirs.has(item.path)
-                const isSelected = selectedFile === item.path
-                return (
-                  <div key={item.path} onClick={() => isDir ? toggleDir(item.path) : loadFile(item.path)} style={{ padding: `3px 8px 3px ${8 + depth * 12}px`, cursor: 'pointer', fontSize: '11px', color: isSelected ? '#f97316' : isDir ? '#888' : '#ccc', background: isSelected ? '#1a1a1a' : 'transparent', display: 'flex', alignItems: 'center', gap: '5px', userSelect: 'none' }}>
-                    <span style={{ fontSize: '9px', opacity: 0.6 }}>{isDir ? (isOpen ? '▾' : '▸') : '·'}</span>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0 }}>
-            {selectedFile ? (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '0.5px' }}>{selectedFile}</span>
-                  <div style={{ marginLeft: 'auto', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                    <button onClick={handleAnalyze} disabled={!fileContent || analyzing || !apiKey} style={{ ...repoBtn, background: '#f97316', color: '#000' }}>{analyzing ? 'ANALYZING...' : '⚡ ANALYZE'}</button>
-                    <button onClick={() => setEditMode(!editMode)} style={repoBtn}>{editMode ? 'VIEW' : 'EDIT'}</button>
-                  </div>
-                </div>
-                {loadingFile ? (
-                  <div style={{ color: '#f97316', fontSize: '11px' }}>Loading...</div>
-                ) : editMode ? (
-                  <>
-                    <textarea value={editContent} onChange={e => setEditContent(e.target.value)} style={{ flex: 1, background: '#0f0f0f', color: '#e5e5e5', border: '1px solid #333', borderRadius: '4px', padding: '10px', fontSize: '12px', fontFamily: 'monospace', resize: 'none', minHeight: '200px' }} />
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <input value={commitMsg} onChange={e => setCommitMsg(e.target.value)} placeholder="Commit message..." style={{ ...inputStyle, flex: 1 }} />
-                      <button onClick={handlePush} disabled={pushing || !commitMsg || !ghToken} style={{ ...repoBtn, background: '#22c55e', color: '#000' }}>{pushing ? 'PUSHING...' : 'PUSH'}</button>
-                    </div>
-                    {pushStatus && <div style={{ fontSize: '11px', color: pushStatus.startsWith('✓') ? '#22c55e' : '#f97316' }}>{pushStatus}</div>}
-                  </>
-                ) : (
-                  <pre style={{ flex: 1, background: '#0f0f0f', color: '#ccc', border: '1px solid #1a1a1a', borderRadius: '4px', padding: '10px', fontSize: '11px', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, minHeight: '200px' }}>{fileContent || '(empty file)'}</pre>
-                )}
-              </>
-            ) : (
-              <div style={{ color: '#444', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1 }}>Select a file from the tree</div>
-            )}
-            <div style={{ background: '#0f0f0f', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <span style={{ color: '#f97316', fontSize: '9px', letterSpacing: '1px' }}>ACTIONS DISPATCH</span>
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                <input value={workflowId} onChange={e => setWorkflowId(e.target.value)} placeholder="workflow file or ID (e.g. deploy.yml)" style={{ ...inputStyle, flex: 2 }} />
-                <input value={workflowRef} onChange={e => setWorkflowRef(e.target.value)} placeholder="ref (e.g. main)" style={{ ...inputStyle, flex: 1, maxWidth: '100px' }} />
-                <button onClick={handleDispatch} disabled={dispatching || !workflowId || !ghToken} style={repoBtn}>{dispatching ? '...' : 'DISPATCH'}</button>
-              </div>
-              {dispatchStatus && <div style={{ fontSize: '11px', color: dispatchStatus.startsWith('✓') ? '#22c55e' : '#f97316' }}>{dispatchStatus}</div>}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -899,15 +697,5 @@ const actionButtonStyle: React.CSSProperties = {
   padding: '2px 6px', cursor: 'pointer', borderRadius: '3px', fontWeight: 'bold', letterSpacing: '0.5px', transition: 'all 0.2s',
 }
 
-const inputStyle: React.CSSProperties = {
-  background: '#111', border: '1px solid #222', borderRadius: '4px', color: '#ccc',
-  padding: '5px 8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none',
-}
-
-const repoBtn: React.CSSProperties = {
-  background: 'transparent', border: '1px solid #333', color: '#f97316', padding: '4px 10px',
-  borderRadius: '4px', cursor: 'pointer', fontSize: '10px', fontWeight: 'bold', fontFamily: 'monospace',
-  textTransform: 'uppercase', whiteSpace: 'nowrap',
-}
 
 export default App
