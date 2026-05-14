@@ -7,6 +7,7 @@ import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/s
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { BrowserAutomationPanel } from './components/BrowserAutomationPanel'
+import { WhatsAppConnector } from './components/WhatsAppConnector'
 import { ReasoningChainComponent } from './components/reasoning/ReasoningChain'
 import { SystemMonitor } from './components/monitor/SystemMonitor'
 import { useReasoningStream } from './hooks/useReasoningStream'
@@ -297,7 +298,7 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyze
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'failures' | 'browserauto'
+type Tab = 'forgemind' | 'failures' | 'browserauto' | 'whatsapp'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -634,6 +635,7 @@ function App() {
 
   const TABS: { id: Tab; label: string }[] = [
     { id: 'forgemind',   label: '🧠 ForgeMind' },
+    { id: 'whatsapp',    label: '💬 WhatsApp' },
     { id: 'failures',    label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
     { id: 'browserauto', label: 'Browser' },
   ]
@@ -842,6 +844,13 @@ function App() {
               onResolve={resolveFailure}
               onClearResolved={clearResolved}
             />
+          </div>
+        )}
+
+        {/* ── WhatsApp Tab ── */}
+        {activeTab === 'whatsapp' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <WhatsAppConnector />
           </div>
         )}
 
