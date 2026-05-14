@@ -12,22 +12,24 @@ export function useReasoningStream(options: UseReasoningStreamOptions = {}) {
   const chainCounter = useRef(0)
   const stepCounter = useRef(0)
 
-  // Derive chains from activity events if provided, else use local state
+  // Derive chains from activity events if provided, else use local state.
+  // Uses local counters (not refs) so the memo stays pure and StrictMode-safe.
   const chains = useMemo<ReasoningChain[]>(() => {
     if (!options.activityEvents || options.activityEvents.length === 0) {
       return localChains
     }
 
-    // Map activity events to reasoning chains
     const eventChains: ReasoningChain[] = []
     let currentChain: ReasoningChain | null = null
+    let chainCount = 0
+    let stepCount = 0
 
     for (const event of options.activityEvents) {
       if (event.type === 'reasoning_phase') {
         if (!currentChain) {
-          chainCounter.current += 1
+          chainCount += 1
           currentChain = {
-            id: `chain-${event.timestamp}-${chainCounter.current}`,
+            id: `chain-${event.timestamp}-${chainCount}`,
             rootLabel: `${event.agentId} reasoning`,
             steps: [],
             startedAt: new Date(event.timestamp).toISOString(),
@@ -35,9 +37,9 @@ export function useReasoningStream(options: UseReasoningStreamOptions = {}) {
           eventChains.push(currentChain)
         }
 
-        stepCounter.current += 1
+        stepCount += 1
         const step: ReasoningStep = {
-          id: `step-${event.timestamp}-${stepCounter.current}`,
+          id: `step-${event.timestamp}-${stepCount}`,
           icon: phaseToIcon(event.phase),
           label: event.phase.replace(/_/g, ' '),
           status: 'done',

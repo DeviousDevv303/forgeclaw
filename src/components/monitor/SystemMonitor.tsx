@@ -108,8 +108,8 @@ export const SystemMonitor = memo(function SystemMonitor({
             <div className="border-t border-slate-700 pt-2 mb-2">
               <div className="text-xs text-slate-500 mb-1">Agent Sync</div>
               <div className="space-y-0.5">
-                {agentMessages.map((msg, i) => (
-                  <AgentSyncMessage key={`${msg.timestamp}-${i}`} event={msg} />
+                {agentMessages.map((msg) => (
+                  <AgentSyncMessage key={`${msg.agentId}-${msg.timestamp}`} event={msg} />
                 ))}
               </div>
             </div>

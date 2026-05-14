@@ -25,33 +25,31 @@ export function useSystemMonitor() {
       timestamp: new Date().toISOString(),
       status: 'running',
     }
-    setOperations(prev => [...prev, op])
-    setState(prev => ({
-      ...prev,
-      currentTool: tool,
-      isActive: true,
-      lastUpdate: new Date().toISOString(),
-    }))
+    setOperations(prev => {
+      const next = [...prev, op]
+      setState(s => ({ ...s, operations: next, currentTool: tool, isActive: true, lastUpdate: new Date().toISOString() }))
+      return next
+    })
     return id
   }, [])
 
   const finishOperation = useCallback((id: string, status: 'done' | 'failed' = 'done', detail?: string) => {
-    let stillActive = false
     setOperations(prev => {
       const updated = prev.map(op =>
         op.id === id
           ? { ...op, status, detail, durationMs: Date.now() - new Date(op.timestamp).getTime() }
           : op
       )
-      stillActive = updated.some(o => o.id !== id && o.status === 'running')
+      const stillActive = updated.some(o => o.id !== id && o.status === 'running')
+      setState(s => ({
+        ...s,
+        operations: updated,
+        currentTool: stillActive ? s.currentTool : null,
+        isActive: stillActive,
+        lastUpdate: new Date().toISOString(),
+      }))
       return updated
     })
-    setState(prev => ({
-      ...prev,
-      currentTool: stillActive ? prev.currentTool : null,
-      isActive: stillActive,
-      lastUpdate: new Date().toISOString(),
-    }))
   }, [])
 
   const logActivity = useCallback((activity: Omit<SystemActivity, 'id' | 'timestamp'>): string => {
@@ -81,13 +79,7 @@ export function useSystemMonitor() {
   const clearAll = useCallback(() => {
     setOperations([])
     setActivities([])
-    setState({
-      operations: [],
-      currentTool: null,
-      currentPhase: 'idle',
-      isActive: false,
-      lastUpdate: new Date().toISOString(),
-    })
+    setState({ operations: [], currentTool: null, currentPhase: 'idle', isActive: false, lastUpdate: new Date().toISOString() })
   }, [])
 
   return {

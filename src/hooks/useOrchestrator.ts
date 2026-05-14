@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import type { AgentContract, AgentId, AuthorityScope, OrchestratorEvent, TaskSpec } from '../types/orchestrator'
 import type { EmitFailureOptions } from './useErrorBus'
 import { AutonomyEngine } from '../core/autonomyEngine'
@@ -79,7 +79,8 @@ export function useOrchestrator({ emitFailure, errorLog = [] }: UseOrchestratorO
   const [taskQueue, setTaskQueue] = useState<TaskSpec[]>([])
   const [events, setEvents] = useState<OrchestratorEvent[]>([])
 
-  const autonomy = new AutonomyEngine()
+  // Stable across renders — AutonomyEngine is stateless so one instance is fine
+  const autonomyRef = useRef(new AutonomyEngine())
 
   const getAgentContract = useCallback((agentId: AgentId): AgentContract | undefined => {
     return AGENT_CONTRACTS[agentId]
@@ -110,9 +111,9 @@ export function useOrchestrator({ emitFailure, errorLog = [] }: UseOrchestratorO
       contracts: AGENT_CONTRACTS,
     }
 
-    const decision = autonomy.evaluate(taskSpec, context)
+    const decision = autonomyRef.current.evaluate(taskSpec, context)
 
-    autonomy.logDecision({
+    autonomyRef.current.logDecision({
       taskId: taskSpec.taskId,
       agentId: taskSpec.agentId,
       decision: decision.action,
@@ -163,7 +164,7 @@ export function useOrchestrator({ emitFailure, errorLog = [] }: UseOrchestratorO
       severity: 'info',
     })
     return true
-  }, [emitOrchestratorEvent, errorLog, autonomy])
+  }, [emitOrchestratorEvent, errorLog])
 
   const resolveTask = useCallback((taskId: string) => {
     setTaskQueue(prev => prev.filter(t => t.taskId !== taskId))

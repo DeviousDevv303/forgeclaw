@@ -6,8 +6,8 @@ import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
-import { OrchestratorPanel } from './components/OrchestratorPanel'
 import { BrowserAutomationPanel } from './components/BrowserAutomationPanel'
+import { WhatsAppConnector } from './components/WhatsAppConnector'
 import { ReasoningChainComponent } from './components/reasoning/ReasoningChain'
 import { SystemMonitor } from './components/monitor/SystemMonitor'
 import { useReasoningStream } from './hooks/useReasoningStream'
@@ -298,11 +298,11 @@ function RepoAnalyzer({ apiKey, onAnalyze, analyzing, emitFailure }: RepoAnalyze
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'repoagent' | 'failures' | 'orchestrator' | 'browserauto'
+type Tab = 'forgemind' | 'failures' | 'browserauto' | 'whatsapp'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
-  const { taskQueue, events: orchEvents, admitTask, resolveTask, contracts } = useOrchestrator({ emitFailure })
+  const { admitTask, resolveTask } = useOrchestrator({ emitFailure })
   
   // Activity stream is single source of truth
   const activityStream = useAgentActivityStream()
@@ -634,9 +634,8 @@ function App() {
   }
 
   const TABS: { id: Tab; label: string }[] = [
-    { id: 'forgemind',    label: '🧠 ForgeMind' },
-    { id: 'repoagent',   label: '🐙 RepoAgent' },
-    { id: 'orchestrator',label: `🎛️ Orchestrator${taskQueue.length > 0 ? ` (${taskQueue.length})` : ''}` },
+    { id: 'forgemind',   label: '🧠 ForgeMind' },
+    { id: 'whatsapp',    label: '💬 WhatsApp' },
     { id: 'failures',    label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
     { id: 'browserauto', label: 'Browser' },
   ]
@@ -690,7 +689,7 @@ function App() {
 
       {/* Main */}
       {/* Main Content */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: activeTab === 'repoagent' ? '1200px' : '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 2, isolation: 'isolate', overflow: 'hidden' }}>
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 2, isolation: 'isolate', overflow: 'hidden' }}>
 
         {/* API Key - moved to settings, only show if empty */}
         {!apiKey && (
@@ -749,7 +748,7 @@ function App() {
         {/* ── ForgeMind Tab ── */}
         {activeTab === 'forgemind' && (
           <>
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
+            <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
               {messages.length === 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444', gap: '16px' }}>
                   <p>System initialized. Awaiting input...</p>
@@ -837,36 +836,6 @@ function App() {
           </>
         )}
 
-        {/* ── RepoAgent Tab ── */}
-        {activeTab === 'repoagent' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <div style={{ marginBottom: '10px' }}>
-              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '1px' }}>REPO AGENT</span>
-              <span style={{ color: '#555', fontSize: '10px', marginLeft: '8px' }}>Browse · Analyze · Push · Deploy</span>
-            </div>
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <RepoAnalyzer
-                apiKey={apiKey}
-                onAnalyze={async (prompt) => { setActiveTab('forgemind'); await sendPrompt(prompt) }}
-                analyzing={loading}
-                emitFailure={emitFailure}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* ── Orchestrator Tab ── */}
-        {activeTab === 'orchestrator' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <OrchestratorPanel
-              taskQueue={taskQueue}
-              events={orchEvents}
-              contracts={contracts}
-              onResolveTask={resolveTask}
-            />
-          </div>
-        )}
-
         {/* ── Failures Tab ── */}
         {activeTab === 'failures' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -875,6 +844,13 @@ function App() {
               onResolve={resolveFailure}
               onClearResolved={clearResolved}
             />
+          </div>
+        )}
+
+        {/* ── WhatsApp Tab ── */}
+        {activeTab === 'whatsapp' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+            <WhatsAppConnector />
           </div>
         )}
 
