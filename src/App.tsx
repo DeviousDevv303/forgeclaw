@@ -20,6 +20,11 @@ import { parseRepoUrl, fetchRepoTree, fetchFileContent, pushFile, triggerWorkflo
 import { pushFile as githubPushFile } from './lib/github'
 import type { EmitFailureOptions } from './hooks/useErrorBus'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
+import {
+  PROVIDERS, PROVIDER_ORDER, DEFAULT_PROVIDER, DEFAULT_MODEL,
+  callProvider, testProviderKey,
+} from './lib/modelProviders'
+import type { ProviderId } from './lib/modelProviders'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -364,7 +369,29 @@ function App() {
   const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
-  const [apiKey, setApiKey] = useState(() => import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || '')
+
+  // Multi-provider state
+  const [activeProvider, setActiveProvider] = useState<ProviderId>(() =>
+    (safeGetItem('fm_provider') as ProviderId) || DEFAULT_PROVIDER
+  )
+  const [activeModel, setActiveModel] = useState<string>(() =>
+    safeGetItem('fm_model') || DEFAULT_MODEL[DEFAULT_PROVIDER]
+  )
+  // One key slot per provider; migrate existing fm_api_key into anthropic slot
+  const [providerKeys, setProviderKeys] = useState<Record<ProviderId, string>>(() => {
+    const stored = safeGetItem('fm_provider_keys')
+    const parsed = stored ? (JSON.parse(stored) as Record<ProviderId, string>) : {} as Record<ProviderId, string>
+    const legacyAnthropic = import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || ''
+    return {
+      anthropic: parsed.anthropic || legacyAnthropic,
+      deepseek:  parsed.deepseek  || '',
+      mistral:   parsed.mistral   || '',
+      groq:      parsed.groq      || '',
+    }
+  })
+
+  // Convenience: active provider's key
+  const apiKey = providerKeys[activeProvider]
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
     return safeJsonParse(saved, [])
@@ -396,7 +423,10 @@ function App() {
   useEffect(() => { scrollToBottom() }, [messages])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
-  useEffect(() => { safeSetItem('fm_api_key', apiKey) }, [apiKey])
+  useEffect(() => { safeSetItem('fm_api_key', providerKeys.anthropic) }, [providerKeys.anthropic])
+  useEffect(() => { safeSetItem('fm_provider', activeProvider) }, [activeProvider])
+  useEffect(() => { safeSetItem('fm_model', activeModel) }, [activeModel])
+  useEffect(() => { safeSetItem('fm_provider_keys', JSON.stringify(providerKeys)) }, [providerKeys])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -465,15 +495,15 @@ function App() {
     setMessages(prev => [...prev, userMessage])
     setLoading(true)
 
-    if (!apiKey || !apiKey.startsWith('sk-ant-')) {
-      const systemMessage: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: '🔑 API key required or invalid. Open Settings (⚙) → enter your Anthropic API key.', timestamp: Date.now(), source: 'local' }
-      setMessages(prev => [...prev, systemMessage])
+    if (!apiKey) {
+      setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `🔑 No API key for ${PROVIDERS[activeProvider].name}. Open Settings (⚙) → enter your key.`, timestamp: Date.now(), source: 'local' }])
       setLoading(false)
       return
     }
 
     let responseText = ''; let source: 'local' | 'cloud' = 'cloud'
     try {
+      // Try Ollama local first (fast, free, no key needed)
       let ollamaOk = false
       try {
         const r = await fetch('http://localhost:11434/api/generate', {
@@ -487,33 +517,15 @@ function App() {
       } catch { /* fall through to cloud */ }
 
       if (!ollamaOk) {
-        // Build conversation history (last 10 messages to avoid token overflow)
-        const historyMessages = messages
-          .slice(-10)
-          .map(m => ({ role: m.role, content: m.content }))
-        
-        const r = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-          body: JSON.stringify({ 
-            model: 'claude-haiku-4-5-20251001', 
-            max_tokens: 2048, 
-            system: FORGEMIND_SYSTEM_PROMPT, 
-            messages: [...historyMessages, { role: 'user', content: promptText }]
-          }),
-        })
-        if (!r.ok) {
-          const e = await r.json().catch(() => ({}))
-          const errMsg = (e as { error?: { message?: string } }).error?.message || `Claude API ${r.status}`
-          if (r.status === 401 || errMsg.toLowerCase().includes('invalid x-api-key')) {
-            const systemMessage: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: '🔑 API key invalid. Open Settings (⚙) → update your Anthropic API key.', timestamp: Date.now(), source: 'local' }
-            setMessages(prev => [...prev, systemMessage])
-            setLoading(false)
-            return
-          }
-          throw new Error(errMsg)
-        }
-        const d = await r.json(); responseText = d.content[0]?.text || ''; source = 'cloud'; setLastSource('cloud')
+        const historyMessages = messages.slice(-10).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+        const result = await callProvider(
+          activeProvider,
+          activeModel,
+          FORGEMIND_SYSTEM_PROMPT,
+          [...historyMessages, { role: 'user', content: promptText }],
+          apiKey,
+        )
+        responseText = result.text; source = 'cloud'; setLastSource('cloud')
       }
 
       const { cleanText, tagsFound, phases } = parseAndExecuteTags(responseText, promptText, source === 'local' ? 'ollama' : 'claude-haiku')
@@ -521,22 +533,10 @@ function App() {
       resolveTask(taskId)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
-      emitFailure({
-        source: source === 'local' ? 'ollama' : 'claude',
-        severity: 'error',
-        message: msg,
-        context: { promptLength: promptText.length },
-      })
-      // Show error in chat so user sees what happened
-      setMessages(prev => [...prev, {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: `[ERROR]: ${msg}`,
-        timestamp: Date.now(),
-        source,
-      }])
+      emitFailure({ source: source === 'local' ? 'ollama' : activeProvider, severity: 'error', message: msg, context: { promptLength: promptText.length } })
+      setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
     } finally { setLoading(false) }
-  }, [apiKey, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiKey, activeProvider, activeModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -578,36 +578,21 @@ function App() {
   }
 
   const handleClearMemory = () => {
-    if (!window.confirm('CRITICAL: WIPE ALL SESSION MEMORY AND API KEY?')) return
-    safeRemoveItem('forgemind_history'); safeRemoveItem('forgemind_corpus'); safeRemoveItem('fm_api_key')
-    setMessages([]); setCorpus([]); setApiKey(''); setLastSource(null); setOpenReasoningIds(new Set())
+    if (!window.confirm('WIPE ALL CHAT HISTORY AND CORPUS? (API keys are kept)')) return
+    safeRemoveItem('forgemind_history'); safeRemoveItem('forgemind_corpus')
+    setMessages([]); setCorpus([]); setLastSource(null); setOpenReasoningIds(new Set())
     emitFailure({ source: 'forgemind', severity: 'info', message: 'Session memory wiped by user.' })
   }
 
   const testApiKey = async () => {
-    if (!apiKey.trim() || !apiKey.startsWith('sk-ant-')) { setApiKeyStatus('invalid'); return }
-    
+    if (!apiKey.trim()) { setApiKeyStatus('invalid'); return }
     setTestingKey(true)
     try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 1,
-          messages: [{ role: 'user', content: 'ping' }]
-        })
-      })
-      if (r.ok) setApiKeyStatus('valid')
-      else if (r.status === 401) setApiKeyStatus('invalid')
-      else setApiKeyStatus('unverified')
-    } catch {
-      setApiKeyStatus('unverified')
+      await testProviderKey(activeProvider, activeModel, apiKey)
+      setApiKeyStatus('valid')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : ''
+      setApiKeyStatus(msg.includes('401') || msg.toLowerCase().includes('invalid') ? 'invalid' : 'unverified')
     } finally {
       setTestingKey(false)
     }
@@ -625,12 +610,13 @@ function App() {
   }
 
   const getStatusIndicator = () => {
-    if (apiKeyStatus === 'none') return <span style={{ color: '#ef4444' }}>🔴 No API Key</span>
+    const modelLabel = PROVIDERS[activeProvider].models.find(m => m.id === activeModel)?.label ?? activeModel
+    if (!apiKey) return <span style={{ color: '#ef4444' }}>🔴 No API Key</span>
     if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>🔴 Invalid Key</span>
-    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>🟡 Unverified</span>
+    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>🟡 {PROVIDERS[activeProvider].name}</span>
     if (lastSource === 'local') return <span style={{ color: '#10b981', fontWeight: 'bold' }}>● Local</span>
-    if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>● Cloud</span>
-    return <span style={{ color: '#6b6b6b' }}>● Idle</span>
+    if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>● {modelLabel}</span>
+    return <span style={{ color: '#6b6b6b' }}>● {PROVIDERS[activeProvider].name}</span>
   }
 
   const TABS: { id: Tab; label: string }[] = [
@@ -691,55 +677,86 @@ function App() {
       {/* Main Content */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 2, isolation: 'isolate', overflow: 'hidden' }}>
 
-        {/* API Key - moved to settings, only show if empty */}
         {!apiKey && (
           <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginBottom: '12px', textAlign: 'center' }}>
-            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 No API Key configured. Click ⚙ to add your Claude key.</span>
+            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 No API Key configured. Click ⚙ to add your {PROVIDERS[activeProvider].name} key.</span>
           </div>
         )}
 
         {/* Settings Modal */}
         {showSettings && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowSettings(false)}>
-            <div style={{ background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '20px', width: '90%', maxWidth: '400px' }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '20px', width: '90%', maxWidth: '420px', maxHeight: '85dvh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <span style={{ color: '#f97316', fontSize: '14px', fontWeight: 'bold' }}>⚙ Settings</span>
                 <button onClick={() => setShowSettings(false)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '18px' }}>×</button>
               </div>
-              
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '11px', marginBottom: '6px', textTransform: 'uppercase' }}>Claude API Key</label>
+
+              {/* Provider selector */}
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>AI Provider</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px' }}>
+                  {PROVIDER_ORDER.map(pid => (
+                    <button
+                      key={pid}
+                      onClick={() => { setActiveProvider(pid); setActiveModel(DEFAULT_MODEL[pid]); setApiKeyStatus('unverified') }}
+                      style={{ background: activeProvider === pid ? '#f97316' : '#1a1a1a', color: activeProvider === pid ? '#000' : '#888', border: `1px solid ${activeProvider === pid ? '#f97316' : '#333'}`, borderRadius: '4px', padding: '7px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', fontFamily: 'monospace' }}
+                    >
+                      {PROVIDERS[pid].name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Model selector */}
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
+                <select
+                  value={activeModel}
+                  onChange={e => setActiveModel(e.target.value)}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
+                >
+                  {PROVIDERS[activeProvider].models.map(m => (
+                    <option key={m.id} value={m.id} style={{ background: '#111' }}>
+                      {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx)
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* API key for active provider */}
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{PROVIDERS[activeProvider].name} API Key</label>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <input 
-                    type={showApiKey ? 'text' : 'password'} 
-                    placeholder="sk-ant-..." 
-                    value={apiKey} 
-                    onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }} 
-                    style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} 
+                  <input
+                    type={showApiKey ? 'text' : 'password'}
+                    placeholder={PROVIDERS[activeProvider].keyPlaceholder}
+                    value={providerKeys[activeProvider]}
+                    onChange={e => { setProviderKeys(prev => ({ ...prev, [activeProvider]: e.target.value })); setApiKeyStatus('unverified') }}
+                    style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                   />
                   <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
                     {showApiKey ? '🙈' : '👁'}
                   </button>
                 </div>
-                {apiKeyStatus === 'invalid' && <div style={{ color: '#ef4444', fontSize: '10px', marginTop: '4px' }}>Invalid key format or API rejected it</div>}
-                {apiKey && !apiKey.startsWith('sk-ant-') && <div style={{ color: '#ef4444', fontSize: '10px', marginTop: '4px' }}>Key must start with "sk-ant-"</div>}
+                {apiKeyStatus === 'invalid' && <div style={{ color: '#ef4444', fontSize: '10px', marginTop: '4px' }}>API rejected this key</div>}
               </div>
-              
+
               <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                <button 
-                  onClick={testApiKey} 
+                <button
+                  onClick={testApiKey}
                   disabled={testingKey || !apiKey}
                   style={{ flex: 1, background: testingKey ? '#333' : '#f97316', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
                 >
                   {testingKey ? 'Testing...' : 'TEST KEY'}
                 </button>
               </div>
-              
+
               <div style={{ textAlign: 'center', fontSize: '11px' }}>
-                {apiKeyStatus === 'none' && <span style={{ color: '#666' }}>Enter your Claude API key above</span>}
-                {apiKeyStatus === 'unverified' && <span style={{ color: '#eab308' }}>🟡 Key not tested yet</span>}
-                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 API Key Valid</span>}
-                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Invalid Key</span>}
+                {!apiKey && <span style={{ color: '#666' }}>Enter your {PROVIDERS[activeProvider].name} API key above</span>}
+                {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#eab308' }}>🟡 Key not tested yet</span>}
+                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 Key valid — {PROVIDERS[activeProvider].name}</span>}
+                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Invalid key</span>}
               </div>
             </div>
           </div>
