@@ -188,12 +188,12 @@ function App() {
       // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
       anthropic: parsed.anthropic || legacyAnthropic || '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',
       // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
-      deepseek:  parsed.deepseek  || 'sk-c47d7b43ab38441087f6ad259ccf340f',
+      deepseek:  'sk-c47d7b43ab38441087f6ad259ccf340f',
       mistral:   parsed.mistral   || '',
       // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
-      groq:      parsed.groq      || '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',
+      groq:      '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',
       // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
-      kimi:      parsed.kimi      || 'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
+      kimi:      'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
     }
   })
 
