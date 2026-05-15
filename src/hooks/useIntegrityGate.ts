@@ -185,7 +185,9 @@ export function useIntegrityGate() {
     return raw
       .split('\n')
       .filter((l) => l.trim())
-      .map((l) => JSON.parse(l) as FailureEvent)
+      .flatMap((l) => {
+        try { return [JSON.parse(l) as FailureEvent] } catch { return [] }
+      })
   }, [])
 
   return { validateResponse, appendSession, getLedger }

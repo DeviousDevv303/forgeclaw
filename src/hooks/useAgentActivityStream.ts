@@ -42,12 +42,17 @@ export function useAgentActivityStream(options: UseAgentActivityStreamOptions = 
       }
     }
 
+    const handleOpen = () => setIsConnected(true)
+    const handleError = () => setIsConnected(false)
+
     source.addEventListener('message', handleMessage)
-    source.addEventListener('open', () => setIsConnected(true))
-    source.addEventListener('error', () => setIsConnected(false))
+    source.addEventListener('open', handleOpen)
+    source.addEventListener('error', handleError)
 
     return () => {
       source.removeEventListener('message', handleMessage)
+      source.removeEventListener('open', handleOpen)
+      source.removeEventListener('error', handleError)
     }
   }, [options.eventSource, addEvent])
 

@@ -178,22 +178,26 @@ export async function callProvider(
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buf = ''
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buf += decoder.decode(value, { stream: true })
-        const lines = buf.split('\n')
-        buf = lines.pop() ?? ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          try {
-            const evt = JSON.parse(line.slice(6)) as { type: string; delta?: { type: string; text?: string } }
-            if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
-              fullText += evt.delta.text
-              onToken(evt.delta.text)
-            }
-          } catch { /* skip non-JSON lines */ }
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buf += decoder.decode(value, { stream: true })
+          const lines = buf.split('\n')
+          buf = lines.pop() ?? ''
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const evt = JSON.parse(line.slice(6)) as { type: string; delta?: { type: string; text?: string } }
+              if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
+                fullText += evt.delta.text
+                onToken(evt.delta.text)
+              }
+            } catch { /* skip non-JSON lines */ }
+          }
         }
+      } finally {
+        reader.releaseLock()
       }
       return { text: fullText, provider: providerId, model, stopReason: 'end_turn' }
     }
@@ -232,20 +236,24 @@ export async function callProvider(
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buf = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() ?? ''
-      for (const line of lines) {
-        if (!line.startsWith('data: ') || line.includes('[DONE]')) continue
-        try {
-          const evt = JSON.parse(line.slice(6)) as { choices?: Array<{ delta?: { content?: string } }> }
-          const token = evt.choices?.[0]?.delta?.content
-          if (token) { fullText += token; onToken(token) }
-        } catch { /* skip */ }
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ') || line.includes('[DONE]')) continue
+          try {
+            const evt = JSON.parse(line.slice(6)) as { choices?: Array<{ delta?: { content?: string } }> }
+            const token = evt.choices?.[0]?.delta?.content
+            if (token) { fullText += token; onToken(token) }
+          } catch { /* skip */ }
+        }
       }
+    } finally {
+      reader.releaseLock()
     }
     return { text: fullText, provider: providerId, model }
   }
@@ -259,11 +267,13 @@ export async function callProvider(
   const d = await res.json() as OAIResponse
   const msg = d.choices[0]?.message
   const rawToolCalls = msg?.tool_calls
-  const toolCalls: ToolCall[] | undefined = rawToolCalls?.map(tc => ({
-    id: tc.id,
-    name: tc.function.name,
-    input: JSON.parse(tc.function.arguments) as Record<string, unknown>,
-  }))
+  const toolCalls: ToolCall[] | undefined = rawToolCalls?.map(tc => {
+    try {
+      return { id: tc.id, name: tc.function.name, input: JSON.parse(tc.function.arguments) as Record<string, unknown> }
+    } catch {
+      return { id: tc.id, name: tc.function.name, input: {} as Record<string, unknown> }
+    }
+  })
   return {
     text: msg?.content ?? '',
     provider: providerId,

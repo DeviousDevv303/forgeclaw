@@ -216,12 +216,12 @@ export const FORGE_TOOLS: ToolDef[] = [
 // ─── Context loader ────────────────────────────────────────────────────────────
 
 export function loadToolContext(): ToolContext {
-  const waRaw = safeGetItem('wa_credentials')
-  const wa = waRaw ? JSON.parse(waRaw) : {}
+  let wa: Record<string, string> = {}
+  try { wa = JSON.parse(safeGetItem('wa_credentials') || '{}') } catch { /* ignore */ }
   return {
-    ghToken:        safeGetItem('gh_token') || safeGetItem('fm_provider_keys') ? JSON.parse(safeGetItem('fm_provider_keys') || '{}').github || '' : '',
-    ghOwner:        safeGetItem('fc_gh_owner') || 'DeviousDevv303',
-    ghRepo:         safeGetItem('fc_gh_repo')  || 'forgeclaw',
+    ghToken:         safeGetItem('gh_token') || '',
+    ghOwner:         safeGetItem('fc_gh_owner') || 'DeviousDevv303',
+    ghRepo:          safeGetItem('fc_gh_repo')  || 'forgeclaw',
     waPhoneNumberId: wa.phoneNumberId,
     waAccessToken:   wa.accessToken,
     waRecipient:     wa.recipientNumber,
