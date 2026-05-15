@@ -179,9 +179,12 @@ function App() {
   const [showApiKey, setShowApiKey] = useState(false)
 
   // Multi-provider state
-  const [activeProvider, setActiveProvider] = useState<ProviderId>(() =>
-    (safeGetItem('fm_provider') as ProviderId) || DEFAULT_PROVIDER
-  )
+  const [activeProvider, setActiveProvider] = useState<ProviderId>(() => {
+    const saved = safeGetItem('fm_provider') as ProviderId | null
+    // Migrate away from dead Groq default — fall back to Anthropic
+    if (!saved || saved === 'groq') return DEFAULT_PROVIDER
+    return saved
+  })
   const [activeModel, setActiveModel] = useState<string>(() =>
     safeGetItem('fm_model') || DEFAULT_MODEL[DEFAULT_PROVIDER]
   )
