@@ -64,8 +64,13 @@ Always think through every response using this 5-phase reasoning framework. Outp
 function cleanOutput(text: string): string {
   return text
     .replace(/\*\*/g, '').replace(/\*/g, '')
-    .replace(/#{1,6}\s/g, '').replace(/__|_/g, '')
-    .replace(/\s+\n/g, '\n').trim()
+    .replace(/#{1,6}\s?/g, '')
+    .replace(/__|_/g, '')
+    .replace(/^-{3,}\s*$/gm, '')          // strip --- horizontal rules
+    .replace(/^\s*[-•]\s+/gm, '')         // strip dash/bullet list markers
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')           // collapse excessive blank lines
+    .trim()
 }
 
 function cleanForSpeech(text: string): string {
@@ -809,110 +814,147 @@ function App() {
                         )}
                       </div>
 
-                      {/* ── TACTICAL OPS LOG ── military-style reasoning trace below bubble */}
-                      {msg.role === 'assistant' && msg.toolResults && msg.toolResults.length > 0 && (
-                        <div style={{ width: '100%', maxWidth: '90%', marginTop: '4px', fontFamily: "'Courier New', Courier, monospace" }}>
-                          {/* Header bar */}
-                          <button
-                            onClick={() => toggleReasoning(msg.id)}
-                            style={{
-                              width: '100%', textAlign: 'left', padding: '4px 10px',
-                              background: 'linear-gradient(90deg, #0d1a0d 0%, #111d0e 100%)',
-                              border: '1px solid #3a5c2a',
-                              borderBottom: reasoningOpen ? '1px solid #1e3318' : '1px solid #3a5c2a',
-                              borderRadius: reasoningOpen ? '3px 3px 0 0' : '3px',
-                              cursor: 'pointer',
-                              display: 'flex', alignItems: 'center', gap: '8px',
-                            }}
-                          >
-                            <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>▶</span>
-                            <span style={{ color: '#6aab52', fontSize: '9px', letterSpacing: '2px', textTransform: 'uppercase' }}>
-                              ◼ TACTICAL OPS LOG
-                            </span>
-                            <span style={{ color: '#3a5c2a', fontSize: '9px', marginLeft: '4px' }}>|</span>
-                            <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>
-                              {msg.toolResults.length} ACTION{msg.toolResults.length !== 1 ? 'S' : ''} EXECUTED
-                            </span>
-                            <span style={{ marginLeft: 'auto', color: '#3a5c2a', fontSize: '9px', letterSpacing: '1px' }}>
-                              {reasoningOpen ? '[COLLAPSE]' : '[EXPAND]'}
-                            </span>
-                          </button>
-
-                          {reasoningOpen && (
-                            <div style={{
-                              background: '#060e06',
-                              border: '1px solid #3a5c2a', borderTop: 'none',
-                              borderRadius: '0 0 3px 3px',
-                              padding: '0',
-                              display: 'flex', flexDirection: 'column',
-                            }}>
-                              {/* Classification banner */}
-                              <div style={{ background: '#0a1a0a', borderBottom: '1px solid #1e3318', padding: '2px 10px', display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '2px' }}>// FORGECLAW AUTONOMOUS SHELL — INTERNAL OPS RECORD //</span>
-                                <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>UNCLASSIFIED</span>
-                              </div>
-
-                              {msg.toolResults.map((tr, i) => {
-                                const key = `${msg.id}_${i}`
-                                const isExpanded = expandedToolIds.has(key)
-                                const hasMore = tr.output.includes('\n') || tr.output.length > 100
-                                const status = tr.isError ? 'FAILED' : 'COMPLETE'
-                                const statusColor = tr.isError ? '#cc3333' : '#5a9e44'
-                                const seqNum = String(i + 1).padStart(2, '0')
-                                return (
-                                  <div key={i} style={{ borderBottom: i < msg.toolResults!.length - 1 ? '1px solid #0f1f0f' : 'none' }}>
-                                    {/* Step row */}
-                                    <div
-                                      style={{ padding: '5px 10px', display: 'flex', gap: '8px', alignItems: 'center', cursor: hasMore ? 'pointer' : 'default', background: isExpanded ? '#0a180a' : 'transparent' }}
-                                      onClick={() => hasMore && toggleToolExpand(key)}
-                                    >
-                                      <span style={{ color: '#2a5a22', fontSize: '8px', letterSpacing: '1px', flexShrink: 0 }}>[{seqNum}]</span>
-                                      <span style={{ color: '#6aab52', fontSize: '9px', letterSpacing: '1px', flexShrink: 0, textTransform: 'uppercase' }}>{tr.name}</span>
-                                      <span style={{ color: '#2a4a22', fontSize: '9px', flexShrink: 0 }}>→</span>
-                                      <span style={{ color: '#4a7a3a', fontSize: '9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
-                                        {tr.output.split('\n')[0].slice(0, 120)}
-                                      </span>
-                                      <span style={{ color: statusColor, fontSize: '8px', letterSpacing: '1px', flexShrink: 0, border: `1px solid ${statusColor}44`, padding: '0 4px', borderRadius: '2px' }}>{status}</span>
-                                      {hasMore && <span style={{ color: '#2a4a22', fontSize: '8px', flexShrink: 0 }}>{isExpanded ? '▲' : '▼'}</span>}
-                                    </div>
-                                    {/* Expanded output */}
-                                    {isExpanded && (
-                                      <div style={{ padding: '0 10px 8px 10px', background: '#080f08' }}>
-                                        <div style={{ borderLeft: '2px solid #1e3318', paddingLeft: '10px' }}>
-                                          <div style={{ color: '#2a4a22', fontSize: '7px', letterSpacing: '2px', marginBottom: '4px', paddingTop: '4px' }}>— OUTPUT DUMP —</div>
-                                          <pre style={{
-                                            color: tr.isError ? '#cc4444' : '#4a7a3a',
-                                            background: '#050d05',
-                                            border: '1px solid #1a2e1a',
-                                            borderRadius: '2px',
-                                            padding: '6px 8px',
-                                            fontSize: '9px',
-                                            whiteSpace: 'pre-wrap',
-                                            wordBreak: 'break-word',
-                                            maxHeight: '200px',
-                                            overflowY: 'auto',
-                                            margin: 0,
-                                          }}>
-                                            {tr.output}
-                                          </pre>
-                                        </div>
-                                      </div>
-                                    )}
-                                  </div>
-                                )
-                              })}
-
-                              {/* Footer */}
-                              <div style={{ background: '#0a1a0a', borderTop: '1px solid #1e3318', padding: '2px 10px', display: 'flex', justifyContent: 'space-between' }}>
-                                <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>
-                                  {msg.toolResults.filter(t => !t.isError).length} OK / {msg.toolResults.filter(t => t.isError).length} ERR
+                      {/* ── TACTICAL OPS LOG ── military reasoning trace, always shown on assistant turns */}
+                      {(() => {
+                        const phaseKeys = ['PHASE_1', 'PHASE_2', 'PHASE_3', 'PHASE_4'] as const
+                        const phaseLabels: Record<string, string> = { PHASE_1: 'ASSUMPTIONS', PHASE_2: 'HEURISTICS', PHASE_3: 'FIRST PRINCIPLES', PHASE_4: 'IMPLICATIONS' }
+                        const activePhases = phaseKeys.filter(k => msg.phases?.[k])
+                        const toolList = msg.toolResults ?? []
+                        const hasContent = activePhases.length > 0 || toolList.length > 0
+                        if (msg.role !== 'assistant' || !hasContent) return null
+                        const toolOk = toolList.filter(t => !t.isError).length
+                        const toolErr = toolList.filter(t => t.isError).length
+                        return (
+                          <div style={{ width: '100%', maxWidth: '90%', marginTop: '4px', fontFamily: "'Courier New', Courier, monospace" }}>
+                            {/* Header bar */}
+                            <button
+                              onClick={() => toggleReasoning(msg.id)}
+                              style={{
+                                width: '100%', textAlign: 'left', padding: '4px 10px',
+                                background: 'linear-gradient(90deg, #0d1a0d 0%, #111d0e 100%)',
+                                border: '1px solid #3a5c2a',
+                                borderBottom: reasoningOpen ? '1px solid #1e3318' : '1px solid #3a5c2a',
+                                borderRadius: reasoningOpen ? '3px 3px 0 0' : '3px',
+                                cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: '8px',
+                              }}
+                            >
+                              <span style={{ color: '#4a7c3f', fontSize: '9px' }}>▶</span>
+                              <span style={{ color: '#6aab52', fontSize: '9px', letterSpacing: '2px' }}>◼ TACTICAL OPS LOG</span>
+                              <span style={{ color: '#3a5c2a', fontSize: '9px' }}>|</span>
+                              {activePhases.length > 0 && (
+                                <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>
+                                  {activePhases.length} PHASE{activePhases.length !== 1 ? 'S' : ''}
                                 </span>
-                                <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>END OF LOG</span>
+                              )}
+                              {activePhases.length > 0 && toolList.length > 0 && (
+                                <span style={{ color: '#3a5c2a', fontSize: '9px' }}>·</span>
+                              )}
+                              {toolList.length > 0 && (
+                                <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>
+                                  {toolList.length} ACTION{toolList.length !== 1 ? 'S' : ''}
+                                </span>
+                              )}
+                              <span style={{ marginLeft: 'auto', color: '#3a5c2a', fontSize: '9px', letterSpacing: '1px' }}>
+                                {reasoningOpen ? '[COLLAPSE]' : '[EXPAND]'}
+                              </span>
+                            </button>
+
+                            {reasoningOpen && (
+                              <div style={{ background: '#060e06', border: '1px solid #3a5c2a', borderTop: 'none', borderRadius: '0 0 3px 3px', display: 'flex', flexDirection: 'column' }}>
+                                {/* Classification banner */}
+                                <div style={{ background: '#0a1a0a', borderBottom: '1px solid #1e3318', padding: '2px 10px', display: 'flex', justifyContent: 'space-between' }}>
+                                  <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '2px' }}>// FORGECLAW — INTERNAL COGNITIVE OPS RECORD //</span>
+                                  <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>UNCLASSIFIED</span>
+                                </div>
+
+                                {/* ── 5-Phase cognitive scaffold rows ── */}
+                                {activePhases.map((phase, i) => {
+                                  const key = `${msg.id}_phase_${i}`
+                                  const isExpanded = expandedToolIds.has(key)
+                                  const content = msg.phases![phase] ?? ''
+                                  const hasMore = content.length > 100 || content.includes('\n')
+                                  const seqNum = String(i + 1).padStart(2, '0')
+                                  return (
+                                    <div key={phase} style={{ borderBottom: (i < activePhases.length - 1 || toolList.length > 0) ? '1px solid #0f1f0f' : 'none' }}>
+                                      <div
+                                        style={{ padding: '5px 10px', display: 'flex', gap: '8px', alignItems: 'center', cursor: hasMore ? 'pointer' : 'default', background: isExpanded ? '#0a180a' : 'transparent' }}
+                                        onClick={() => hasMore && toggleToolExpand(key)}
+                                      >
+                                        <span style={{ color: '#2a5a22', fontSize: '8px', letterSpacing: '1px', flexShrink: 0 }}>[{seqNum}]</span>
+                                        <span style={{ color: '#6aab52', fontSize: '9px', letterSpacing: '1px', flexShrink: 0 }}>{phaseLabels[phase]}</span>
+                                        <span style={{ color: '#2a4a22', fontSize: '9px', flexShrink: 0 }}>→</span>
+                                        <span style={{ color: '#4a7a3a', fontSize: '9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
+                                          {content.split('\n')[0].slice(0, 120)}
+                                        </span>
+                                        <span style={{ color: '#5a9e44', fontSize: '8px', letterSpacing: '1px', flexShrink: 0, border: '1px solid #5a9e4444', padding: '0 4px', borderRadius: '2px' }}>INTEL</span>
+                                        {hasMore && <span style={{ color: '#2a4a22', fontSize: '8px', flexShrink: 0 }}>{isExpanded ? '▲' : '▼'}</span>}
+                                      </div>
+                                      {isExpanded && (
+                                        <div style={{ padding: '0 10px 8px 10px', background: '#080f08' }}>
+                                          <div style={{ borderLeft: '2px solid #1e3318', paddingLeft: '10px' }}>
+                                            <div style={{ color: '#2a4a22', fontSize: '7px', letterSpacing: '2px', marginBottom: '4px', paddingTop: '4px' }}>— PHASE DETAIL —</div>
+                                            <pre style={{ color: '#4a7a3a', background: '#050d05', border: '1px solid #1a2e1a', borderRadius: '2px', padding: '6px 8px', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '200px', overflowY: 'auto', margin: 0 }}>
+                                              {content}
+                                            </pre>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+
+                                {/* ── Tool execution rows ── */}
+                                {toolList.map((tr, i) => {
+                                  const key = `${msg.id}_${i}`
+                                  const isExpanded = expandedToolIds.has(key)
+                                  const hasMore = tr.output.includes('\n') || tr.output.length > 100
+                                  const status = tr.isError ? 'FAILED' : 'COMPLETE'
+                                  const statusColor = tr.isError ? '#cc3333' : '#5a9e44'
+                                  const seqNum = String(activePhases.length + i + 1).padStart(2, '0')
+                                  return (
+                                    <div key={i} style={{ borderBottom: i < toolList.length - 1 ? '1px solid #0f1f0f' : 'none' }}>
+                                      <div
+                                        style={{ padding: '5px 10px', display: 'flex', gap: '8px', alignItems: 'center', cursor: hasMore ? 'pointer' : 'default', background: isExpanded ? '#0a180a' : 'transparent' }}
+                                        onClick={() => hasMore && toggleToolExpand(key)}
+                                      >
+                                        <span style={{ color: '#2a5a22', fontSize: '8px', letterSpacing: '1px', flexShrink: 0 }}>[{seqNum}]</span>
+                                        <span style={{ color: '#6aab52', fontSize: '9px', letterSpacing: '1px', flexShrink: 0, textTransform: 'uppercase' }}>{tr.name}</span>
+                                        <span style={{ color: '#2a4a22', fontSize: '9px', flexShrink: 0 }}>→</span>
+                                        <span style={{ color: '#4a7a3a', fontSize: '9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
+                                          {tr.output.split('\n')[0].slice(0, 120)}
+                                        </span>
+                                        <span style={{ color: statusColor, fontSize: '8px', letterSpacing: '1px', flexShrink: 0, border: `1px solid ${statusColor}44`, padding: '0 4px', borderRadius: '2px' }}>{status}</span>
+                                        {hasMore && <span style={{ color: '#2a4a22', fontSize: '8px', flexShrink: 0 }}>{isExpanded ? '▲' : '▼'}</span>}
+                                      </div>
+                                      {isExpanded && (
+                                        <div style={{ padding: '0 10px 8px 10px', background: '#080f08' }}>
+                                          <div style={{ borderLeft: '2px solid #1e3318', paddingLeft: '10px' }}>
+                                            <div style={{ color: '#2a4a22', fontSize: '7px', letterSpacing: '2px', marginBottom: '4px', paddingTop: '4px' }}>— OUTPUT DUMP —</div>
+                                            <pre style={{ color: tr.isError ? '#cc4444' : '#4a7a3a', background: '#050d05', border: '1px solid #1a2e1a', borderRadius: '2px', padding: '6px 8px', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '200px', overflowY: 'auto', margin: 0 }}>
+                                              {tr.output}
+                                            </pre>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+
+                                {/* Footer */}
+                                <div style={{ background: '#0a1a0a', borderTop: '1px solid #1e3318', padding: '2px 10px', display: 'flex', justifyContent: 'space-between' }}>
+                                  <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>
+                                    {activePhases.length > 0 && `${activePhases.length} PHASE${activePhases.length !== 1 ? 'S' : ''}`}
+                                    {activePhases.length > 0 && toolList.length > 0 && '  ·  '}
+                                    {toolList.length > 0 && `${toolOk} OK / ${toolErr} ERR`}
+                                  </span>
+                                  <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>END OF LOG</span>
+                                </div>
                               </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                   )
                 })
