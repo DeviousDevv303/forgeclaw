@@ -170,6 +170,7 @@ function App() {
   const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
+  const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(new Set())
 
   // Multi-provider state
   const [activeProvider, setActiveProvider] = useState<ProviderId>(() =>
@@ -452,6 +453,10 @@ function App() {
     setOpenReasoningIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }
 
+  const toggleToolExpand = (key: string) => {
+    setExpandedToolIds(prev => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n })
+  }
+
   const handleClearMemory = () => {
     if (!window.confirm('WIPE ALL CHAT HISTORY AND CORPUS? (API keys are kept)')) return
     safeRemoveItem('forgemind_history'); safeRemoveItem('forgemind_corpus')
@@ -515,7 +520,58 @@ function App() {
           <select value={selectedLanguage} onChange={e => setSelectedLanguage(e.target.value)} style={{ background: '#111', color: '#f97316', border: '1px solid #222', borderRadius: '4px', padding: '4px 8px', fontSize: '10px', fontFamily: 'monospace', outline: 'none' }}>
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
           </select>
-          <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {/* Per-provider credential dots */}
+            <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+              {PROVIDER_ORDER.map(pid => {
+                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : 'K'
+                const hasKey = !!providerKeys[pid]
+                const isActive = pid === activeProvider
+                return (
+                  <span
+                    key={pid}
+                    title={`${PROVIDERS[pid].name}: ${hasKey ? 'key set' : 'no key'} — click to open Settings`}
+                    onClick={() => setShowSettings(true)}
+                    style={{
+                      width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
+                      background: hasKey ? '#22c55e22' : '#1a1a1a',
+                      border: `1px solid ${isActive ? '#f97316' : (hasKey ? '#22c55e' : '#333')}`,
+                      color: hasKey ? '#22c55e' : '#444',
+                      fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >{initial}</span>
+                )
+              })}
+              {/* GitHub token dot */}
+              <span
+                title={`GitHub token: ${safeGetItem('gh_token') ? 'set' : 'not set'} — click to open Settings`}
+                onClick={() => setShowSettings(true)}
+                style={{
+                  width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
+                  background: safeGetItem('gh_token') ? '#22c55e22' : '#1a1a1a',
+                  border: `1px solid ${safeGetItem('gh_token') ? '#22c55e' : '#333'}`,
+                  color: safeGetItem('gh_token') ? '#22c55e' : '#444',
+                  fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >GH</span>
+              {/* WhatsApp dot */}
+              <span
+                title={`WhatsApp: ${safeGetItem('wa_credentials') ? 'configured' : 'not set'} — click to open Settings`}
+                onClick={() => setShowSettings(true)}
+                style={{
+                  width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
+                  background: safeGetItem('wa_credentials') ? '#22c55e22' : '#1a1a1a',
+                  border: `1px solid ${safeGetItem('wa_credentials') ? '#22c55e' : '#333'}`,
+                  color: safeGetItem('wa_credentials') ? '#22c55e' : '#444',
+                  fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+              >WA</span>
+            </div>
+            <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
+          </div>
           <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>WIPE</button>
           <button onClick={handleExportCorpus} style={headerBtnStyle}>EXPORT</button>
         </div>
@@ -676,6 +732,23 @@ function App() {
                   ForgeMind uses these when autonomously calling github_* tools.
                 </div>
               </div>
+
+              {/* Web Search API key */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Web Search — Brave API Key
+                </label>
+                <input
+                  type="password"
+                  placeholder="BSA..."
+                  defaultValue={safeGetItem('fc_brave_key') || ''}
+                  onChange={e => safeSetItem('fc_brave_key', e.target.value)}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                />
+                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
+                  Optional. Enables web_search tool with full results. DuckDuckGo used as fallback.
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -705,16 +778,32 @@ function App() {
                       )}
                       <div style={{ maxWidth: '90%', padding: '10px 14px', borderRadius: '8px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(26, 26, 26, 0.75)', color: msg.role === 'user' ? '#000' : '#e5e5e5', fontSize: '13px', lineHeight: '1.5', border: msg.role === 'assistant' ? '1px solid rgba(34, 34, 34, 0.5)' : 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', width: msg.role === 'assistant' ? '100%' : undefined }}>
 
-                        {/* Tool call trace — shown above final response */}
+                        {/* Tool call trace — shown above final response, click to expand */}
                         {msg.toolResults && msg.toolResults.length > 0 && (
                           <div style={{ marginBottom: '10px', borderBottom: '1px solid #2a2a2a', paddingBottom: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            {msg.toolResults.map((tr, i) => (
-                              <div key={i} style={{ fontSize: '10px', color: tr.isError ? '#ef4444' : '#22c55e', fontFamily: 'monospace', display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
-                                <span style={{ opacity: 0.6 }}>🔧</span>
-                                <span style={{ color: '#f97316' }}>{tr.name}</span>
-                                <span style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }}>→ {tr.output.split('\n')[0]}</span>
-                              </div>
-                            ))}
+                            {msg.toolResults.map((tr, i) => {
+                              const key = `${msg.id}_${i}`
+                              const isExpanded = expandedToolIds.has(key)
+                              const hasMore = tr.output.includes('\n') || tr.output.length > 80
+                              return (
+                                <div key={i} style={{ fontSize: '10px', fontFamily: 'monospace' }}>
+                                  <div
+                                    style={{ color: tr.isError ? '#ef4444' : '#22c55e', display: 'flex', gap: '6px', alignItems: 'flex-start', cursor: hasMore ? 'pointer' : 'default' }}
+                                    onClick={() => hasMore && toggleToolExpand(key)}
+                                  >
+                                    <span style={{ opacity: 0.6 }}>🔧</span>
+                                    <span style={{ color: '#f97316' }}>{tr.name}</span>
+                                    <span style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>→ {tr.output.split('\n')[0]}</span>
+                                    {hasMore && <span style={{ color: '#444', flexShrink: 0 }}>{isExpanded ? '▲' : '▼'}</span>}
+                                  </div>
+                                  {isExpanded && (
+                                    <pre style={{ color: tr.isError ? '#ef4444' : '#888', background: '#0a0a0a', borderRadius: '4px', padding: '6px 8px', marginTop: '4px', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '200px', overflowY: 'auto', margin: '4px 0 0 0' }}>
+                                      {tr.output}
+                                    </pre>
+                                  )}
+                                </div>
+                              )
+                            })}
                           </div>
                         )}
 

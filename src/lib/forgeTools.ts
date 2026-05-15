@@ -42,6 +42,7 @@ export interface ToolContext {
   waPhoneNumberId?: string
   waAccessToken?: string
   waRecipient?: string
+  braveKey?: string
 }
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────────
@@ -198,6 +199,18 @@ export const FORGE_TOOLS: ToolDef[] = [
       required: ['code'],
     },
   },
+  {
+    name: 'web_search',
+    description: 'Search the web for current information. Uses Brave Search if an API key is configured, otherwise DuckDuckGo instant answers.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query' },
+        count: { type: 'string', description: 'Number of results (default: 5, max: 10)' },
+      },
+      required: ['query'],
+    },
+  },
 ]
 
 // ─── Context loader ────────────────────────────────────────────────────────────
@@ -212,6 +225,7 @@ export function loadToolContext(): ToolContext {
     waPhoneNumberId: wa.phoneNumberId,
     waAccessToken:   wa.accessToken,
     waRecipient:     wa.recipientNumber,
+    braveKey:        safeGetItem('fc_brave_key') || undefined,
   }
 }
 
@@ -366,6 +380,41 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const result: unknown = fn()
         const out = result instanceof Promise ? await result : result
         return String(out ?? '(no return value)')
+      }
+
+      // ── Web search ────────────────────────────────────────────────────────────
+      case 'web_search': {
+        const query = input.query as string
+        const count = Math.min(parseInt(String(input.count || '5'), 10) || 5, 10)
+
+        if (ctx.braveKey) {
+          const res = await fetch(
+            `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`,
+            { headers: { Accept: 'application/json', 'X-Subscription-Token': ctx.braveKey } },
+          )
+          if (!res.ok) throw new Error(`Brave Search ${res.status}`)
+          type BraveResult = { title: string; url: string; description: string }
+          const data = await res.json() as { web?: { results: BraveResult[] } }
+          const results = data.web?.results || []
+          if (!results.length) return `No results for "${query}"`
+          return `Brave Search — "${query}":\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.description}`).join('\n\n')}`
+        }
+
+        // Fallback: DuckDuckGo Instant Answers (no key, CORS-enabled)
+        const res = await fetch(
+          `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+        )
+        if (!res.ok) throw new Error(`DuckDuckGo ${res.status}`)
+        type DDGResult = { AbstractText?: string; RelatedTopics?: Array<{ Text?: string; FirstURL?: string }> }
+        const data = await res.json() as DDGResult
+        const parts: string[] = []
+        if (data.AbstractText) parts.push(`Summary: ${data.AbstractText}`)
+        const topics = (data.RelatedTopics || []).slice(0, count).filter(t => t.Text)
+          .map(t => `• ${t.Text}${t.FirstURL ? `\n  ${t.FirstURL}` : ''}`)
+        if (topics.length) parts.push(topics.join('\n'))
+        return parts.length
+          ? `DuckDuckGo — "${query}":\n${parts.join('\n\n')}`
+          : `No results for "${query}". Add a Brave Search API key in Settings for full web results.`
       }
 
       default:
