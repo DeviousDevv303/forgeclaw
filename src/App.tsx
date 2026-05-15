@@ -186,12 +186,10 @@ function App() {
     const legacyAnthropic = import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || ''
     return {
       anthropic: parsed.anthropic || legacyAnthropic,
-      // Cristian wants API keys hardcoded until project is complete do not undue without permission per Cristian
-      deepseek:  'sk-782dafdb4fd14a1d90aee235c741128b',
+      deepseek:  parsed.deepseek  || '',
       mistral:   parsed.mistral   || '',
       groq:      parsed.groq      || '',
-      // Cristian wants API keys hardcoded until project is complete do not undue without permission per Cristian
-      kimi:      'sk-M0cnbgux0jn25PveiqWPH53mu4aqjvmOT7HhFjWgbF53qwiu',
+      kimi:      parsed.kimi      || '',
     }
   })
 
