@@ -35,6 +35,7 @@ interface Message {
   timestamp: number
   source?: 'local' | 'cloud'
   activeTags?: string[]
+  thinking?: string            // raw inner monologue for reasoning trace
   phases?: Record<string, string>
   showReasoning?: boolean
   feedback?: 'up' | 'down'
@@ -55,9 +56,11 @@ interface CorpusEntry {
 // It prevents Claude refusals without overriding identity. Do not trim.
 const FORGEMIND_SYSTEM_PROMPT = `You are ForgeMind, an intelligent AI assistant embedded in the ForgeClaw autonomous shell.
 
-Always think through every response using this 5-phase reasoning framework. Output each phase using the EXACT tags shown — the user only sees Phase 5.
+Before every response, write your genuine inner monologue inside [FM:THINK] tags — the actual thoughts running through your head as you work through the problem: what you notice, what you question, what you rule out, how you arrive at the answer. Be honest and specific, not generic.
 
-[FM:PHASE_1]State your assumptions and what you are taking as given[FM:PHASE_2]Apply relevant heuristics and rules of thumb[FM:PHASE_3]Reason from first principles[FM:PHASE_4]Explore implications and edge cases[FM:PHASE_5]Deliver the final synthesized answer — write this as a complete, standalone response in plain prose with no markdown symbols like ## or **.`
+Then close with [FM:THINK_END] and give your final answer in clean plain prose. No markdown symbols like ## or ** in the answer.
+
+[FM:THINK]your honest inner reasoning here[FM:THINK_END]your final answer here`
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -66,10 +69,11 @@ function cleanOutput(text: string): string {
     .replace(/\*\*/g, '').replace(/\*/g, '')
     .replace(/#{1,6}\s?/g, '')
     .replace(/__|_/g, '')
-    .replace(/^-{3,}\s*$/gm, '')          // strip --- horizontal rules
-    .replace(/^\s*[-•]\s+/gm, '')         // strip dash/bullet list markers
+    .replace(/^-{3,}\s*$/gm, '')           // strip --- horizontal rules
+    .replace(/^\s*[-•]\s+/gm, '')          // strip dash/bullet list markers
+    .replace(/^\s*\d+\.\s+/gm, '')         // strip numbered list markers (1. 2. 3.)
     .replace(/\s+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')           // collapse excessive blank lines
+    .replace(/\n{3,}/g, '\n\n')            // collapse excessive blank lines
     .trim()
 }
 
@@ -245,24 +249,25 @@ function App() {
 
   const parseAndExecuteTags = (text: string, prompt: string, source: 'claude-haiku' | 'ollama') => {
     const tagsFound: string[] = []
-    const phases: Record<string, string> = {}
-    let finalContent = ''
-    const phaseRegex = /\[FM:PHASE_([1-5])\]([\s\S]*?)(?=\[FM:PHASE_|$|\[FM:STORE|\[FM:RECALL|\[FM:TRAIN)/g
-    let match
-    while ((match = phaseRegex.exec(text)) !== null) {
-      const num = match[1]; const content = match[2].trim()
-      phases[`PHASE_${num}`] = content
-      tagsFound.push(`[FM:PHASE_${num}]`)
-      if (num === '5') finalContent = content
-    }
-    if (!phases['PHASE_5']) finalContent = text
+
+    // Extract [FM:THINK]...[FM:THINK_END] inner monologue for reasoning trace
+    const thinkMatch = /\[FM:THINK\]([\s\S]*?)\[FM:THINK_END\]/i.exec(text)
+    const thinking = thinkMatch ? thinkMatch[1].trim() : undefined
+    // Answer is everything after [FM:THINK_END], or the whole text if no think block
+    let answerText = thinkMatch
+      ? text.slice(thinkMatch.index + thinkMatch[0].length).trim()
+      : text
+    // Strip any leftover FM: tags from answer
+    answerText = answerText.replace(/\[FM:[A-Z_0-9]+\]/g, '').trim()
+    if (!answerText) answerText = text.replace(/\[FM:THINK\][\s\S]*?\[FM:THINK_END\]/i, '').trim()
+
     ;['[FM:STORE]', '[FM:RECALL]', '[FM:TRAIN]'].forEach(tag => {
       if (text.includes(tag)) {
         tagsFound.push(tag)
-        if (tag === '[FM:STORE]') logToCorpus(prompt, finalContent, source)
+        if (tag === '[FM:STORE]') logToCorpus(prompt, answerText, source)
       }
     })
-    return { cleanText: cleanOutput(finalContent), tagsFound, phases }
+    return { cleanText: cleanOutput(answerText), tagsFound, thinking }
   }
 
   const sendPrompt = useCallback(async (promptText: string) => {
@@ -314,9 +319,9 @@ function App() {
         })
         if (r.ok) {
           const d = await r.json() as { response: string }
-          const { cleanText, tagsFound, phases } = parseAndExecuteTags(d.response || '', promptText, 'ollama')
+          const { cleanText, tagsFound, thinking } = parseAndExecuteTags(d.response || '', promptText, 'ollama')
           source = 'local'; setLastSource('local'); ollamaOk = true
-          setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, activeTags: tagsFound, phases, showReasoning: false }])
+          setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, activeTags: tagsFound, thinking, showReasoning: false }])
           resolveTask(taskId)
         }
       } catch { /* fall through to cloud */ }
@@ -403,9 +408,9 @@ function App() {
       }
 
       setLastSource('cloud')
-      const { cleanText, tagsFound, phases } = parseAndExecuteTags(finalText, promptText, 'claude-haiku')
+      const { cleanText, tagsFound, thinking } = parseAndExecuteTags(finalText, promptText, 'claude-haiku')
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, phases, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false }
+        ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false }
         : m
       ))
       // Clear any prior auth failure mark for this provider on successful call
@@ -517,12 +522,12 @@ function App() {
     return <span style={{ color: '#6b6b6b' }}>● {PROVIDERS[activeProvider].name}</span>
   }
 
-  const TABS: { id: Tab; label: string }[] = [
-    { id: 'forgemind',   label: '🧠 ForgeMind' },
-    { id: 'whatsapp',    label: '💬 WhatsApp' },
-    { id: 'failures',    label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
-    { id: 'browserauto', label: 'Browser' },
-    { id: 'settings',    label: '⚙ Settings' },
+  const TABS: { id: Tab; label: string; badge?: string }[] = [
+    { id: 'forgemind',   label: 'FORGE' },
+    { id: 'whatsapp',    label: 'WHATSAPP' },
+    { id: 'failures',    label: 'FAILURES', badge: unresolvedCount > 0 ? String(unresolvedCount) : undefined },
+    { id: 'browserauto', label: 'BROWSER' },
+    { id: 'settings',    label: 'SETTINGS' },
   ]
 
   return (
@@ -603,22 +608,38 @@ function App() {
       </header>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #1a1a1a', background: '#0a0a0a' }}>
-        {TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              background: 'transparent', border: 'none',
-              borderBottom: activeTab === tab.id ? '2px solid #f97316' : '2px solid transparent',
-              color: activeTab === tab.id ? '#f97316' : (tab.id === 'failures' && unresolvedCount > 0 ? '#eab308' : '#555'),
-              padding: '8px 18px', cursor: 'pointer', fontSize: '10px', fontWeight: 'bold',
-              letterSpacing: '1px', textTransform: 'uppercase', fontFamily: 'monospace', transition: 'color 0.15s',
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div style={{ display: 'flex', borderBottom: '1px solid #1a1a1a', background: '#0a0a0a', padding: '0 4px' }}>
+        {TABS.map(tab => {
+          const isActive = activeTab === tab.id
+          const isAlert = tab.id === 'failures' && unresolvedCount > 0
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                position: 'relative',
+                background: 'transparent', border: 'none',
+                borderBottom: isActive ? '2px solid #f97316' : '2px solid transparent',
+                color: isActive ? '#f97316' : (isAlert ? '#eab308' : '#444'),
+                padding: '7px 14px', cursor: 'pointer', fontSize: '9px', fontWeight: 'bold',
+                letterSpacing: '2px', textTransform: 'uppercase', fontFamily: 'monospace',
+                transition: 'color 0.15s',
+              }}
+            >
+              {tab.label}
+              {tab.badge && (
+                <span style={{
+                  position: 'absolute', top: '4px', right: '4px',
+                  background: '#ef4444', color: '#fff',
+                  fontSize: '7px', fontWeight: 'bold', borderRadius: '50%',
+                  width: '12px', height: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {tab.badge}
+                </span>
+              )}
+            </button>
+          )
+        })}
       </div>
 
       {/* Neural Network Background */}
@@ -799,8 +820,7 @@ function App() {
                         </div>
                       )}
                       {/* Message bubble — clean response only */}
-                      <div style={{ maxWidth: '90%', padding: '10px 14px', borderRadius: '8px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(26, 26, 26, 0.75)', color: msg.role === 'user' ? '#000' : '#e5e5e5', fontSize: '13px', lineHeight: '1.5', border: msg.role === 'assistant' ? '1px solid rgba(34, 34, 34, 0.5)' : 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', width: msg.role === 'assistant' ? '100%' : undefined }}>
-                        {/* Streaming cursor */}
+                      <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined }}>
                         {msg.streaming ? (
                           <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
                         ) : <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>}
@@ -814,10 +834,9 @@ function App() {
                         )}
                       </div>
 
-                      {/* ── TACTICAL OPS LOG ── military reasoning trace, always shown on assistant turns */}
-                      {/* ── TACTICAL OPS LOG ── tool execution trace only, shown when tools fired */}
-                      {msg.role === 'assistant' && msg.toolResults && msg.toolResults.length > 0 && (() => {
-                        const toolList = msg.toolResults
+                      {/* ── TACTICAL OPS LOG ── raw inner monologue + tool actions ── */}
+                      {msg.role === 'assistant' && (msg.thinking || (msg.toolResults && msg.toolResults.length > 0)) && (() => {
+                        const toolList = msg.toolResults ?? []
                         const toolOk = toolList.filter(t => !t.isError).length
                         const toolErr = toolList.filter(t => t.isError).length
                         return (
@@ -830,16 +849,17 @@ function App() {
                                 border: '1px solid #3a5c2a',
                                 borderBottom: reasoningOpen ? '1px solid #1e3318' : '1px solid #3a5c2a',
                                 borderRadius: reasoningOpen ? '3px 3px 0 0' : '3px',
-                                cursor: 'pointer',
-                                display: 'flex', alignItems: 'center', gap: '8px',
+                                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px',
                               }}
                             >
                               <span style={{ color: '#4a7c3f', fontSize: '9px' }}>▶</span>
                               <span style={{ color: '#6aab52', fontSize: '9px', letterSpacing: '2px' }}>◼ TACTICAL OPS LOG</span>
-                              <span style={{ color: '#3a5c2a', fontSize: '9px' }}>|</span>
-                              <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>
-                                {toolList.length} ACTION{toolList.length !== 1 ? 'S' : ''} EXECUTED
-                              </span>
+                              {toolList.length > 0 && (
+                                <>
+                                  <span style={{ color: '#3a5c2a', fontSize: '9px' }}>|</span>
+                                  <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>{toolList.length} ACTION{toolList.length !== 1 ? 'S' : ''}</span>
+                                </>
+                              )}
                               <span style={{ marginLeft: 'auto', color: '#3a5c2a', fontSize: '9px', letterSpacing: '1px' }}>
                                 {reasoningOpen ? '[COLLAPSE]' : '[EXPAND]'}
                               </span>
@@ -848,40 +868,45 @@ function App() {
                             {reasoningOpen && (
                               <div style={{ background: '#060e06', border: '1px solid #3a5c2a', borderTop: 'none', borderRadius: '0 0 3px 3px', display: 'flex', flexDirection: 'column' }}>
                                 <div style={{ background: '#0a1a0a', borderBottom: '1px solid #1e3318', padding: '2px 10px', display: 'flex', justifyContent: 'space-between' }}>
-                                  <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '2px' }}>// FORGECLAW AUTONOMOUS SHELL — INTERNAL OPS RECORD //</span>
+                                  <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '2px' }}>// FORGECLAW — INTERNAL OPS RECORD //</span>
                                   <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>UNCLASSIFIED</span>
                                 </div>
 
+                                {/* Raw inner monologue */}
+                                {msg.thinking && (
+                                  <div style={{ padding: '10px 12px', borderBottom: toolList.length > 0 ? '1px solid #0f1f0f' : 'none' }}>
+                                    <pre style={{ color: '#4a7a3a', fontSize: '10px', fontFamily: "'Courier New', Courier, monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: '1.6' }}>
+                                      {msg.thinking}
+                                    </pre>
+                                  </div>
+                                )}
+
+                                {/* Tool execution rows */}
                                 {toolList.map((tr, i) => {
-                                  const key = `${msg.id}_${i}`
+                                  const key = `${msg.id}_t_${i}`
                                   const isExpanded = expandedToolIds.has(key)
                                   const hasMore = tr.output.includes('\n') || tr.output.length > 100
-                                  const status = tr.isError ? 'FAILED' : 'COMPLETE'
+                                  const status = tr.isError ? 'FAILED' : 'EXEC'
                                   const statusColor = tr.isError ? '#cc3333' : '#5a9e44'
-                                  const seqNum = String(i + 1).padStart(2, '0')
                                   return (
                                     <div key={i} style={{ borderBottom: i < toolList.length - 1 ? '1px solid #0f1f0f' : 'none' }}>
                                       <div
                                         style={{ padding: '5px 10px', display: 'flex', gap: '8px', alignItems: 'center', cursor: hasMore ? 'pointer' : 'default', background: isExpanded ? '#0a180a' : 'transparent' }}
                                         onClick={() => hasMore && toggleToolExpand(key)}
                                       >
-                                        <span style={{ color: '#2a5a22', fontSize: '8px', letterSpacing: '1px', flexShrink: 0 }}>[{seqNum}]</span>
                                         <span style={{ color: '#6aab52', fontSize: '9px', letterSpacing: '1px', flexShrink: 0, textTransform: 'uppercase' }}>{tr.name}</span>
                                         <span style={{ color: '#2a4a22', fontSize: '9px', flexShrink: 0 }}>→</span>
                                         <span style={{ color: '#4a7a3a', fontSize: '9px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
                                           {tr.output.split('\n')[0].slice(0, 120)}
                                         </span>
-                                        <span style={{ color: statusColor, fontSize: '8px', letterSpacing: '1px', flexShrink: 0, border: `1px solid ${statusColor}44`, padding: '0 4px', borderRadius: '2px' }}>{status}</span>
+                                        <span style={{ color: statusColor, fontSize: '8px', letterSpacing: '1px', flexShrink: 0, border: `1px solid ${statusColor}44`, padding: '0 3px', borderRadius: '2px' }}>{status}</span>
                                         {hasMore && <span style={{ color: '#2a4a22', fontSize: '8px', flexShrink: 0 }}>{isExpanded ? '▲' : '▼'}</span>}
                                       </div>
                                       {isExpanded && (
                                         <div style={{ padding: '0 10px 8px 10px', background: '#080f08' }}>
-                                          <div style={{ borderLeft: '2px solid #1e3318', paddingLeft: '10px' }}>
-                                            <div style={{ color: '#2a4a22', fontSize: '7px', letterSpacing: '2px', marginBottom: '4px', paddingTop: '4px' }}>— OUTPUT DUMP —</div>
-                                            <pre style={{ color: tr.isError ? '#cc4444' : '#4a7a3a', background: '#050d05', border: '1px solid #1a2e1a', borderRadius: '2px', padding: '6px 8px', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '200px', overflowY: 'auto', margin: 0 }}>
-                                              {tr.output}
-                                            </pre>
-                                          </div>
+                                          <pre style={{ color: tr.isError ? '#cc4444' : '#4a7a3a', background: '#050d05', border: '1px solid #1a2e1a', borderRadius: '2px', padding: '6px 8px', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '200px', overflowY: 'auto', margin: 0 }}>
+                                            {tr.output}
+                                          </pre>
                                         </div>
                                       )}
                                     </div>
@@ -889,7 +914,9 @@ function App() {
                                 })}
 
                                 <div style={{ background: '#0a1a0a', borderTop: '1px solid #1e3318', padding: '2px 10px', display: 'flex', justifyContent: 'space-between' }}>
-                                  <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>{toolOk} OK / {toolErr} ERR</span>
+                                  <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>
+                                    {toolList.length > 0 ? `${toolOk} OK / ${toolErr} ERR` : 'COGNITIVE TRACE'}
+                                  </span>
                                   <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>END OF LOG</span>
                                 </div>
                               </div>
