@@ -88,6 +88,29 @@ function cleanForSpeech(text: string): string {
     .replace(/\*\*/g, '').replace(/\*/g, '').trim()
 }
 
+// Render text with clickable markdown links [label](url) and bare https:// URLs.
+function renderWithLinks(text: string): React.ReactNode[] {
+  // Match markdown links first, then bare URLs
+  const LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s,)>\]]+)/g
+  const nodes: React.ReactNode[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = LINK_RE.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index))
+    const label = m[1] ?? m[3]
+    const href  = m[2] ?? m[3]
+    nodes.push(
+      <a key={m.index} href={href} target="_blank" rel="noopener noreferrer"
+        style={{ color: '#38bdf8', textDecoration: 'underline', textDecorationColor: 'rgba(56,189,248,0.4)', wordBreak: 'break-all' }}>
+        {label}
+      </a>
+    )
+    last = m.index + m[0].length
+  }
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'coach'
@@ -1000,7 +1023,13 @@ function App() {
                       <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined }}>
                         {msg.streaming ? (
                           <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
-                        ) : <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>}
+                        ) : (
+                          <span style={{ whiteSpace: 'pre-wrap' }}>
+                            {msg.content.split('\n').map((line, i, arr) => (
+                              <span key={i}>{renderWithLinks(line)}{i < arr.length - 1 ? '\n' : ''}</span>
+                            ))}
+                          </span>
+                        )}
                         {msg.role === 'assistant' && (
                           <div style={{ marginTop: '10px', display: 'flex', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px', alignItems: 'center' }}>
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={actionButtonStyle}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
