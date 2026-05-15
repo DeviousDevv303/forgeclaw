@@ -418,7 +418,7 @@ function App() {
       setLastSource('cloud')
       const { cleanText, tagsFound, phases } = parseAndExecuteTags(finalText, promptText, 'claude-haiku')
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText, streaming: false, activeTags: tagsFound, phases, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false }
+        ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, phases, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false }
         : m
       ))
       resolveTask(taskId)
