@@ -194,6 +194,9 @@ function App() {
   const [rate] = useState<number>(1.0)
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
   const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
+  const [listening, setListening] = useState(false)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const LANGUAGE_NAMES: Record<string, string> = {
@@ -506,6 +509,37 @@ function App() {
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage() }
+  }
+
+  const toggleMic = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const win = window as any
+    const SR = win.SpeechRecognition || win.webkitSpeechRecognition
+    if (!SR) return
+    if (listening) {
+      recognitionRef.current?.stop()
+      setListening(false)
+      return
+    }
+    const rec = new SR()
+    rec.continuous = true
+    rec.interimResults = true
+    rec.lang = selectedLanguage === 'zh' ? 'zh-CN' : selectedLanguage === 'ru' ? 'ru-RU' : selectedLanguage === 'es' ? 'es-ES' : 'en-US'
+    let finalSoFar = ''
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
+      let interim = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalSoFar += e.results[i][0].transcript
+        else interim += e.results[i][0].transcript
+      }
+      setInput(finalSoFar + interim)
+    }
+    rec.onerror = () => { setListening(false) }
+    rec.onend = () => { setListening(false) }
+    recognitionRef.current = rec
+    rec.start()
+    setListening(true)
   }
 
   const getStatusIndicator = () => {
@@ -880,7 +914,25 @@ function App() {
                 )}
                 <div style={{ display: 'flex', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '8px 12px' }}>
                   <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={loading} />
-                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px', WebkitAppearance: 'none' }} rows={2} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} disabled={loading} />
+                  <button
+                    onClick={toggleMic}
+                    title={listening ? 'Stop listening' : 'Speak to type'}
+                    style={{
+                      background: listening ? '#1a0a0a' : 'none',
+                      border: listening ? '1px solid #ef4444' : '1px solid #333',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      padding: '0 8px',
+                      fontSize: '16px',
+                      lineHeight: 1,
+                      color: listening ? '#ef4444' : '#666',
+                      animation: listening ? 'micPulse 1s ease-in-out infinite' : 'none',
+                      flexShrink: 0,
+                    }}
+                  >
+                    🎙️
+                  </button>
+                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px', WebkitAppearance: 'none' }} rows={2} placeholder={listening ? 'Listening…' : 'Ask anything...'} value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} disabled={loading} />
                   <button style={{ background: '#f97316', color: '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '12px', textTransform: 'uppercase' }} onClick={handleSendMessage} disabled={loading}>SEND</button>
                 </div>
               </div>
@@ -983,6 +1035,7 @@ function App() {
       <style>{`
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         @keyframes fadeSlideDown { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes micPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 5px rgba(239,68,68,0); } }
         .pulse-text { animation: pulse 1.5s infinite; }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #0a0a0a; }
