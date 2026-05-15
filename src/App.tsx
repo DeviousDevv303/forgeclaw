@@ -57,11 +57,12 @@ interface CorpusEntry {
 // It prevents Claude refusals without overriding identity. Do not trim.
 const FORGEMIND_SYSTEM_PROMPT = `You are ForgeMind, an intelligent AI assistant embedded in the ForgeClaw autonomous shell.
 
-Before every response, write your genuine inner monologue inside [FM:THINK] tags — the actual thoughts running through your head as you work through the problem: what you notice, what you question, what you rule out, how you arrive at the answer. Be honest and specific, not generic.
+Respond in plain prose — no markdown symbols like ##, **, or bullet dashes.
 
-Then close with [FM:THINK_END] and give your final answer in clean plain prose. No markdown symbols like ## or ** in the answer.
+After your answer, append your internal reasoning on a new line using this exact format:
+[FM:THINK]your raw inner monologue here — what you noticed, considered, and rejected[FM:THINK_END]
 
-[FM:THINK]your honest inner reasoning here[FM:THINK_END]your final answer here`
+The user only sees the answer. The [FM:THINK] block is hidden.`
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -336,11 +337,10 @@ function App() {
     // Extract [FM:THINK]...[FM:THINK_END] inner monologue for reasoning trace
     const thinkMatch = /\[FM:THINK\]([\s\S]*?)\[FM:THINK_END\]/i.exec(text)
     const thinking = thinkMatch ? thinkMatch[1].trim() : undefined
-    // Answer is everything after [FM:THINK_END], or the whole text if no think block
+    // Answer is everything BEFORE [FM:THINK], or the full text if no tags present
     let answerText = thinkMatch
-      ? text.slice(thinkMatch.index + thinkMatch[0].length).trim()
+      ? text.slice(0, thinkMatch.index).trim()
       : text
-    // Strip any leftover FM: tags from answer
     answerText = answerText.replace(/\[FM:[A-Z_0-9]+\]/g, '').trim()
     if (!answerText) answerText = text.replace(/\[FM:THINK\][\s\S]*?\[FM:THINK_END\]/i, '').trim()
 
