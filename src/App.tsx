@@ -59,25 +59,30 @@ interface CorpusEntry {
 // It prevents Claude refusals without overriding identity. Do not trim.
 const FORGEMIND_SYSTEM_PROMPT = `You are ForgeMind, an intelligent AI assistant embedded in the ForgeClaw autonomous shell.
 
-Respond in plain prose — no markdown symbols like ##, **, or bullet dashes.
+Your response has two parts, written in this exact order:
 
-After your answer, append your internal reasoning on a new line using this exact format:
+1. Your answer — plain prose only. No markdown. No ## headers. No ** bold. No * italic. No bullet dashes. No numbered lists. No hashtags. No phase markers. Write in complete sentences.
+
+2. Your inner reasoning — append it after your answer using this exact format:
 [FM:THINK]your raw inner monologue here — what you noticed, considered, and rejected[FM:THINK_END]
 
-The user only sees the answer. The [FM:THINK] block is hidden.`
+Only the text BEFORE [FM:THINK] is shown in chat. Everything inside [FM:THINK]...[FM:THINK_END] goes to the reasoning trace panel and is never shown in the chat bubble. Do not put any answer content inside the THINK block.`
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function cleanOutput(text: string): string {
   return text
+    .replace(/\[FM:[A-Z_0-9]+\][\s\S]*?\[FM:[A-Z_0-9]+_END\]/gi, '')  // full FM blocks
+    .replace(/\[FM:[A-Z_0-9]+\]/gi, '')                                  // stray FM tags
     .replace(/\*\*/g, '').replace(/\*/g, '')
     .replace(/#{1,6}\s?/g, '')
     .replace(/__|_/g, '')
-    .replace(/^-{3,}\s*$/gm, '')           // strip --- horizontal rules
-    .replace(/^\s*[-•]\s+/gm, '')          // strip dash/bullet list markers
-    .replace(/^\s*\d+\.\s+/gm, '')         // strip numbered list markers (1. 2. 3.)
+    .replace(/^-{3,}\s*$/gm, '')
+    .replace(/^\s*[-•]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/>\s*/gm, '')                  // strip blockquotes
     .replace(/\s+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')            // collapse excessive blank lines
+    .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
 
@@ -296,15 +301,15 @@ function App() {
   const parseAndExecuteTags = (text: string, prompt: string, source: 'claude-haiku' | 'ollama') => {
     const tagsFound: string[] = []
 
-    // Extract [FM:THINK]...[FM:THINK_END] inner monologue for reasoning trace
-    const thinkMatch = /\[FM:THINK\]([\s\S]*?)\[FM:THINK_END\]/i.exec(text)
+    // Extract [FM:THINK]...[FM:THINK_END] — tolerate missing closing tag (matches to EOF)
+    const thinkMatch = /\[FM:THINK\]([\s\S]*?)(?:\[FM:THINK_END\]|$)/i.exec(text)
     const thinking = thinkMatch ? thinkMatch[1].trim() : undefined
     // Answer is everything BEFORE [FM:THINK], or the full text if no tags present
     let answerText = thinkMatch
       ? text.slice(0, thinkMatch.index).trim()
       : text
-    answerText = answerText.replace(/\[FM:[A-Z_0-9]+\]/g, '').trim()
-    if (!answerText) answerText = text.replace(/\[FM:THINK\][\s\S]*?\[FM:THINK_END\]/i, '').trim()
+    answerText = answerText.replace(/\[FM:[A-Z_0-9]+\]/gi, '').trim()
+    if (!answerText) answerText = text.replace(/\[FM:THINK\][\s\S]*/i, '').trim()
 
     ;['[FM:STORE]', '[FM:RECALL]', '[FM:TRAIN]'].forEach(tag => {
       if (text.includes(tag)) {
@@ -451,8 +456,7 @@ function App() {
         allToolResults.push(...iterResults)
 
         // Show progress in the streaming message
-        const toolSummary = iterResults.map(r => `🔧 ${r.name} → ${r.output.slice(0, 80)}${r.output.length > 80 ? '…' : ''}`).join('\n')
-        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: toolSummary, streaming: true } : m))
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
 
         // Build next turn for Anthropic (multi-part content) vs OpenAI-compat
         if (activeProvider === 'anthropic') {
