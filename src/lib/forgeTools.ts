@@ -206,7 +206,7 @@ export const FORGE_TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Search query' },
-        count: { type: 'string', description: 'Number of results (default: 5, max: 10)' },
+        count: { type: 'number', description: 'Number of results to return, default 5, max 10' },
       },
       required: ['query'],
     },
