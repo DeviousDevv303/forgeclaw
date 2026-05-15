@@ -10,19 +10,16 @@ export interface AuthState {
 }
 
 export function useAuth() {
-  const [state, setState] = useState<AuthState>({
+  const [state, setState] = useState<AuthState>(() => ({
     user: null,
     session: null,
-    loading: true,
+    loading: !!getSupabase(), // only loading if supabase is configured
     error: null,
-  })
+  }))
 
   useEffect(() => {
     const sb = getSupabase()
-    if (!sb) {
-      setState(prev => ({ ...prev, loading: false }))
-      return
-    }
+    if (!sb) return
 
     sb.auth.getSession().then(({ data, error: err }) => {
       if (err) {

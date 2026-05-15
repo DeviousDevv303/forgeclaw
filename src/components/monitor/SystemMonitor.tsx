@@ -1,4 +1,4 @@
-import { useState, useMemo, memo, useEffect } from 'react'
+import { useState, useMemo, memo } from 'react'
 import type { AgentActivityEvent } from '../../types/reasoning'
 import type { AgentLane as AgentLaneType, Proposal as ProposalType } from '../../types/warRoom'
 import { MonitorEventRow } from './MonitorEventRow'
@@ -25,14 +25,10 @@ export const SystemMonitor = memo(function SystemMonitor({
   onAcknowledge,
   onReject,
 }: SystemMonitorProps) {
-  const [expanded, setExpanded] = useState(expandedProp ?? false)
-
-  // Sync with external expanded prop (Cycle 2: War Room control)
-  useEffect(() => {
-    if (expandedProp !== undefined) {
-      setExpanded(expandedProp)
-    }
-  }, [expandedProp])
+  const [internalExpanded, setInternalExpanded] = useState(expandedProp ?? false)
+  // When expandedProp is provided, it acts as the controlled value
+  const expanded = expandedProp !== undefined ? expandedProp : internalExpanded
+  const setExpanded = (v: boolean) => { if (expandedProp === undefined) setInternalExpanded(v) }
 
   // Auto-expand on activity, collapse after idle
   const displayEvents = useMemo(() => {

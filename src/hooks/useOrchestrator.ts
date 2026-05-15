@@ -176,7 +176,7 @@ export function useOrchestrator({ emitFailure, errorLog = [] }: UseOrchestratorO
     output: string,
     userMessage: string,
     taskSpec: TaskSpec
-  ): Promise<{ allowed: boolean; violation?: any; reason?: string }> => {
+  ): Promise<{ allowed: boolean; violation?: unknown; reason?: string }> => {
     return validateResponse(
       output,
       userMessage,

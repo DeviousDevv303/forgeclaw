@@ -163,7 +163,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // Auth gate
-  const { user, response: authError } = await validateJwt(req, supabaseUrl, serviceRoleKey);
+  const { response: authError } = await validateJwt(req, supabaseUrl, serviceRoleKey);
   if (authError) {
     return authError;
   }

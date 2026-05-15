@@ -292,8 +292,8 @@ export async function mergePullRequest(
       commit_title: commitTitle,
     })
     return { merged: data.merged, message: data.message }
-  } catch (err: any) {
-    return { merged: false, message: err.message || 'Merge failed' }
+  } catch (err: unknown) {
+    return { merged: false, message: err instanceof Error ? err.message : 'Merge failed' }
   }
 }
 
@@ -340,7 +340,7 @@ export async function listWorkflowRuns(
     repo,
     workflow_id: workflowId,
     branch,
-    status: status as any,
+    status: status as 'completed' | 'action_required' | 'cancelled' | 'failure' | 'neutral' | 'skipped' | 'stale' | 'success' | 'timed_out' | 'in_progress' | 'queued' | 'requested' | 'waiting' | 'pending' | undefined,
     per_page: 10,
   })
   return data.workflow_runs.map((run) => ({

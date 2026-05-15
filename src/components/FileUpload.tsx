@@ -63,7 +63,7 @@ export function FileUpload() {
       setResult(data.result || '')
       setRoute(data.route || '')
       setState('success')
-    } catch (_err) {
+    } catch {
       setError('Engine unreachable — is ForgeMind running on port 3001?')
       setState('error')
     }

@@ -31,7 +31,7 @@ export async function migrate(): Promise<void> {
     if (stmt.toUpperCase().includes("PRAGMA")) {
       try {
         database.execute(stmt + ";");
-      } catch (_e) {
+      } catch {
         // PRAGMAs are idempotent — safe to ignore errors
       }
       continue;

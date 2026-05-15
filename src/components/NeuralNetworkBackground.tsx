@@ -452,8 +452,8 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
     // Modern API + fallback for older Safari
     if (motionQuery.addEventListener) {
       motionQuery.addEventListener('change', handleMotionChange);
-    } else if ((motionQuery as any).addListener) {
-      (motionQuery as any).addListener(handleMotionChange);
+    } else if ((motionQuery as MediaQueryList).addListener) {
+      (motionQuery as MediaQueryList).addListener(handleMotionChange);
     }
 
     // Initial state
@@ -470,8 +470,8 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (motionQuery.removeEventListener) {
         motionQuery.removeEventListener('change', handleMotionChange);
-      } else if ((motionQuery as any).removeListener) {
-        (motionQuery as any).removeListener(handleMotionChange);
+      } else if ((motionQuery as MediaQueryList).removeListener) {
+        (motionQuery as MediaQueryList).removeListener(handleMotionChange);
       }
       cancelAnimationFrame(animationRef.current);
       timeoutsRef.current.forEach(t => clearTimeout(t));

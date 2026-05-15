@@ -145,15 +145,14 @@ function App() {
     }
   }, [warRoomToken])
 
-  // DEV-ONLY: Load mock events on mount
+  // DEV-ONLY: Load mock events once on mount — addEvent is stable (useCallback)
+  const addEvent = activityStream.addEvent
   useEffect(() => {
     if (import.meta.env.DEV) {
       const mockEvents = collectMockEvents('forgemind')
-      for (const event of mockEvents) {
-        activityStream.addEvent(event)
-      }
+      for (const event of mockEvents) addEvent(event)
     }
-  }, [])
+  }, [addEvent])
 
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -372,7 +371,7 @@ function App() {
   }
 
   const toggleReasoning = (id: string) => {
-    setOpenReasoningIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+    setOpenReasoningIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }
 
   const handleClearMemory = () => {

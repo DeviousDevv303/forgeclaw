@@ -12,6 +12,7 @@ export function SupabaseProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useSupabaseAuth(): AuthState {
   const ctx = useContext(SupabaseContext)
   if (!ctx) throw new Error('useSupabaseAuth must be used within SupabaseProvider')

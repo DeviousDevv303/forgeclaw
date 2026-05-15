@@ -21,8 +21,8 @@ export function useAgentActivityStream(options: UseAgentActivityStreamOptions = 
     })
   }, [])
 
-  // Stable ref for DEV useEffect
-  addEventRef.current = addEvent
+  // Stable ref — kept in sync via effect so it never goes stale
+  useEffect(() => { addEventRef.current = addEvent }, [addEvent])
 
   const clearEvents = useCallback(() => {
     setEvents([])
