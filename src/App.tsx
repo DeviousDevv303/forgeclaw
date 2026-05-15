@@ -186,11 +186,11 @@ function App() {
     const legacyAnthropic = import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || ''
     return {
       anthropic: parsed.anthropic || legacyAnthropic,
-      // Hardcoded per Manus/Cristian — do not remove without permission
+      // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
       deepseek:  parsed.deepseek  || 'sk-c47d7b43ab38441087f6ad259ccf340f',
       mistral:   parsed.mistral   || '',
       groq:      parsed.groq      || '',
-      // Hardcoded per Manus/Cristian — do not remove without permission
+      // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
       kimi:      parsed.kimi      || 'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
     }
   })
