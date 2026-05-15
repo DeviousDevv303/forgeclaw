@@ -24,7 +24,7 @@ import {
 } from './lib/modelProviders'
 import type { ProviderId, ChatMessage as ProviderMessage } from './lib/modelProviders'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
-import { guardianCheck } from './lib/guardianGate'
+import { isDestructive, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -197,6 +197,15 @@ function App() {
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
   const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
   const [coachAgentId, setCoachAgentId] = useState<string>(() => safeGetItem('fc_coach_agent_id') || '')
+
+  interface PendingCoSign {
+    id: string
+    toolName: string
+    toolInput: Record<string, unknown>
+    reasoning: string
+  }
+  const [pendingCoSigns, setPendingCoSigns] = useState<PendingCoSign[]>([])
+  const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
   const [listening, setListening] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState('')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -376,15 +385,29 @@ function App() {
           break
         }
 
-        // Tool calls → Guardian gate, then execute
+        // Tool calls → Guardian gate (interactive), then execute
         const iterResults: ToolResult[] = []
         for (const call of result.toolCalls) {
-          const gate = guardianCheck(call, result.text || '')
-          if (gate.blocked) {
-            const output = `[GUARDIAN BLOCKED] ${gate.reason}`
-            iterResults.push({ toolCallId: call.id, name: call.name, output, isError: true })
-            emitFailure({ source: 'forgemind', severity: 'warning', message: gate.reason! })
-            continue
+          if (isDestructive(call)) {
+            const coSignId = `cosign_${call.id}`
+            const reasoning = extractThinking(result.text || '') ?? '(no reasoning snapshot)'
+            const approved = await new Promise<boolean>((resolve) => {
+              coSignResolvers.current.set(coSignId, resolve)
+              setPendingCoSigns(prev => [...prev, {
+                id: coSignId,
+                toolName: call.name,
+                toolInput: call.input,
+                reasoning,
+              }])
+            })
+            setPendingCoSigns(prev => prev.filter(cs => cs.id !== coSignId))
+            coSignResolvers.current.delete(coSignId)
+            if (!approved) {
+              const output = `[GUARDIAN REJECTED] User rejected ${call.name} — not executed.`
+              iterResults.push({ toolCallId: call.id, name: call.name, output, isError: true })
+              emitFailure({ source: 'forgemind', severity: 'warning', message: `Guardian: user rejected ${call.name}` })
+              continue
+            }
           }
           const output = await executeTool(call, toolCtx)
           iterResults.push({ toolCallId: call.id, name: call.name, output, isError: output.startsWith('[TOOL ERROR]') })
@@ -938,6 +961,38 @@ function App() {
               onReject={handleReject}
             />
             
+              {/* ── Guardian Gate ── */}
+              {pendingCoSigns.map(cs => (
+                <div key={cs.id} style={{ margin: '0 0 8px', background: '#080d08', border: '1px solid #1e3a1e', borderRadius: '8px', padding: '14px 16px', fontFamily: 'monospace' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                    <span style={{ fontSize: '14px' }}>🛡️</span>
+                    <span style={{ color: '#22c55e', fontSize: '10px', letterSpacing: '2px', fontWeight: 'bold' }}>GUARDIAN GATE</span>
+                    <span style={{ color: '#ef4444', fontSize: '10px', letterSpacing: '1px', marginLeft: 'auto' }}>REQUIRES CO-SIGN</span>
+                  </div>
+                  <div style={{ color: '#4ade80', fontSize: '11px', marginBottom: '6px' }}>
+                    Tool: <span style={{ color: '#86efac' }}>{cs.toolName}</span>
+                  </div>
+                  <div style={{ background: '#040904', border: '1px solid #1a2e1a', borderRadius: '4px', padding: '8px', marginBottom: '10px', maxHeight: '80px', overflowY: 'auto' }}>
+                    <div style={{ color: '#4a7a3a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>REASONING SNAPSHOT</div>
+                    <div style={{ color: '#4a7a3a', fontSize: '10px', lineHeight: '1.5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{cs.reasoning.slice(0, 300)}{cs.reasoning.length > 300 ? '…' : ''}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={() => coSignResolvers.current.get(cs.id)?.(false)}
+                      style={{ flex: 1, background: '#1a0505', border: '1px solid #7f1d1d', color: '#ef4444', borderRadius: '5px', padding: '7px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1px', textTransform: 'uppercase' }}
+                    >
+                      REJECT
+                    </button>
+                    <button
+                      onClick={() => coSignResolvers.current.get(cs.id)?.(true)}
+                      style={{ flex: 1, background: '#051a05', border: '1px solid #14532d', color: '#22c55e', borderRadius: '5px', padding: '7px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1px', textTransform: 'uppercase' }}
+                    >
+                      APPROVE
+                    </button>
+                  </div>
+                </div>
+              ))}
+
               <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0', zIndex: 20 }}>
                 {attachedFile && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: '#f97316', fontSize: '12px' }}>
