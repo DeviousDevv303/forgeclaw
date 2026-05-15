@@ -50,7 +50,7 @@ interface Message {
 interface CorpusEntry {
   prompt: string
   response: string
-  source: 'claude-haiku' | 'ollama'
+  source: string  // provider:model, e.g. 'anthropic:claude-sonnet-4-6' or 'ollama'
   timestamp: string
 }
 
@@ -295,11 +295,11 @@ function App() {
     window.speechSynthesis.onvoiceschanged = loadVoices
   }, [])
 
-  const logToCorpus = (prompt: string, response: string, source: 'claude-haiku' | 'ollama') => {
+  const logToCorpus = (prompt: string, response: string, source: string) => {
     setCorpus(prev => [...prev, { prompt, response, source, timestamp: new Date().toISOString() }])
   }
 
-  const parseAndExecuteTags = (text: string, prompt: string, source: 'claude-haiku' | 'ollama') => {
+  const parseAndExecuteTags = (text: string, prompt: string, source: string) => {
     const tagsFound: string[] = []
 
     // Extract [FM:THINK]...[FM:THINK_END] — tolerate missing closing tag (matches to EOF)
@@ -354,11 +354,11 @@ function App() {
     }
 
     setMessages(prev => [...prev, userMsg])
-    setLoading(true)
 
     let source: 'local' | 'cloud' = 'cloud'
     let cloudMsgId: string | null = null
     try {
+      setLoading(true)
       // ── Ollama local path (only when selected as active provider) ──────────
       let ollamaOk = false
       if (activeProvider === 'ollama') {
@@ -438,6 +438,14 @@ function App() {
                 toolInput: call.input,
                 reasoning,
               }])
+              // Auto-reject after 2 minutes — prevents loading from hanging
+              setTimeout(() => {
+                if (coSignResolvers.current.has(coSignId)) {
+                  coSignResolvers.current.delete(coSignId)
+                  setPendingCoSigns(prev => prev.filter(cs => cs.id !== coSignId))
+                  resolve(false)
+                }
+              }, 120_000)
             })
             setPendingCoSigns(prev => prev.filter(cs => cs.id !== coSignId))
             coSignResolvers.current.delete(coSignId)
@@ -488,7 +496,7 @@ function App() {
       }
 
       setLastSource('cloud')
-      const { cleanText, tagsFound, thinking } = parseAndExecuteTags(finalText, promptText, 'claude-haiku')
+      const { cleanText, tagsFound, thinking } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
       setMessages(prev => prev.map(m => m.id === msgId
         ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
@@ -511,7 +519,15 @@ function App() {
         const newFailed = new Set([...failedProviders, activeProvider])
         setFailedProviders(newFailed)
         const next = PROVIDER_ORDER.find(pid => pid !== activeProvider && (pid === 'ollama' || providerKeys[pid]) && !newFailed.has(pid))
-        if (next) { setActiveProvider(next); setActiveModel(DEFAULT_MODEL[next]) }
+        if (next) {
+          setActiveProvider(next)
+          setActiveModel(DEFAULT_MODEL[next])
+          setMessages(prev => [...prev, {
+            id: (Date.now() + 2).toString(), role: 'assistant',
+            content: `Auth failed on ${PROVIDERS[activeProvider].name}. Switched to ${PROVIDERS[next].name}. Please resend your message.`,
+            timestamp: Date.now(), source: 'local' as const,
+          }])
+        }
       }
     } finally { setLoading(false) }
   }, [apiKey, activeProvider, activeModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps

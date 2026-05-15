@@ -74,7 +74,7 @@ export function useBrowserAutomation() {
         while (attempts < 60) {
           await new Promise((r) => setTimeout(r, 5000))
           const runs = await listWorkflowRuns(octokit, owner, repo, 'browser-automation.yml', 'main', 'completed')
-          workflowRun = runs.find((r) => r.id === runId) || runs[0]
+          workflowRun = runs.find((r) => r.id === runId)
           if (workflowRun?.status === 'completed') break
           attempts++
         }
