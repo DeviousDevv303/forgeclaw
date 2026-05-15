@@ -1041,24 +1041,27 @@ function App() {
                       </div>
 
                       {/* Reasoning trace — minimal collapsible */}
-                      {msg.role === 'assistant' && msg.thinking && (
-                        <div style={{ width: '100%', maxWidth: '90%', marginTop: '4px' }}>
-                          <button
-                            onClick={() => toggleReasoning(msg.id)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 0', display: 'flex', alignItems: 'center', gap: '5px' }}
-                          >
-                            <span style={{ color: '#3a5c2a', fontSize: '9px' }}>{reasoningOpen ? '▼' : '▶'}</span>
-                            <span style={{ color: '#5a9e44', fontSize: '11px', fontFamily: "'Brush Script MT', 'Zapfino', cursive", letterSpacing: '0.5px' }}>Reasoning Trace</span>
-                          </button>
-                          {reasoningOpen && (
-                            <div style={{ background: '#060e06', border: '1px solid #1e3318', borderRadius: '3px', padding: '10px 14px', marginTop: '3px' }}>
-                              <p style={{ color: '#4a7a3a', fontSize: '11px', fontFamily: "'Courier New', Courier, monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: '1.65' }}>
-                                {msg.thinking}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      )}
+                      {msg.role === 'assistant' && msg.thinking && (() => {
+                        const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
+                        return (
+                          <div style={{ width: '100%', maxWidth: '90%', marginTop: '4px' }}>
+                            <button
+                              onClick={() => toggleReasoning(msg.id)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0', minHeight: '36px', display: 'flex', alignItems: 'center', gap: '5px', WebkitTapHighlightColor: 'transparent' }}
+                            >
+                              <span style={{ color: '#3a5c2a', fontSize: '9px' }}>{reasoningOpen ? '▼' : '▶'}</span>
+                              <span style={{ color: '#5a9e44', fontSize: '11px', fontFamily: REASONING_TRACE_FONT, letterSpacing: '0.5px' }}>Reasoning Trace</span>
+                            </button>
+                            {reasoningOpen && (
+                              <div style={{ background: '#060e06', border: '1px solid #1e3318', borderRadius: '3px', padding: '10px 14px', marginTop: '3px' }}>
+                                <p style={{ color: '#4a7a3a', fontSize: '11px', fontFamily: "'Courier New', Courier, monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: '1.65' }}>
+                                  {msg.thinking}
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
                     </div>
                   )
                 })
