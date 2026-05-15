@@ -33,6 +33,7 @@ export interface ToolResult {
   name: string
   output: string
   isError: boolean
+  reasoningStepId?: string
 }
 
 export interface ToolContext {

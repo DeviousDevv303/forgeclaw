@@ -381,6 +381,8 @@ function App() {
       const historyMessages: ProviderMessage[] = messages.slice(-12).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
       const conversationMessages: ProviderMessage[] = [...historyMessages, { role: 'user', content: promptText }]
       const allToolResults: ToolResult[] = []
+      const chainSteps: import('./types/reasoning').ReasoningStep[] = []
+      const chainStartedAt = new Date().toISOString()
       let finalText = ''
       const MAX_ITERS = 15
 
@@ -430,13 +432,18 @@ function App() {
             coSignResolvers.current.delete(coSignId)
             if (!approved) {
               const output = `[GUARDIAN REJECTED] User rejected ${call.name} — not executed.`
-              iterResults.push({ toolCallId: call.id, name: call.name, output, isError: true })
+              const stepId = `step_${call.id}`
+              chainSteps.push({ id: stepId, icon: '❌', label: call.name, status: 'error', timestamp: new Date().toISOString(), body: output, linkedToolCallIds: [call.id] })
+              iterResults.push({ toolCallId: call.id, name: call.name, output, isError: true, reasoningStepId: stepId })
               emitFailure({ source: 'forgemind', severity: 'warning', message: `Guardian: user rejected ${call.name}` })
               continue
             }
           }
           const output = await executeTool(call, toolCtx)
-          iterResults.push({ toolCallId: call.id, name: call.name, output, isError: output.startsWith('[TOOL ERROR]') })
+          const isErr = output.startsWith('[TOOL ERROR]')
+          const stepId = `step_${call.id}`
+          chainSteps.push({ id: stepId, icon: isErr ? '❌' : '✅', label: call.name, status: isErr ? 'error' : 'done', timestamp: new Date().toISOString(), body: output.split('\n')[0].slice(0, 200), linkedToolCallIds: [call.id] })
+          iterResults.push({ toolCallId: call.id, name: call.name, output, isError: isErr, reasoningStepId: stepId })
         }
         allToolResults.push(...iterResults)
 
@@ -473,7 +480,7 @@ function App() {
       setLastSource('cloud')
       const { cleanText, tagsFound, thinking } = parseAndExecuteTags(finalText, promptText, 'claude-haiku')
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false }
+        ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
       // Clear any prior auth failure mark for this provider on successful call
@@ -1158,7 +1165,11 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'activity' && (
+        {activeTab === 'activity' && (() => {
+          // hoveredStepId drives cross-highlight between tool rows within the log
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
+          return (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
@@ -1177,7 +1188,7 @@ function App() {
 
               if (msg.role === 'user') {
                 return (
-                  <div key={msg.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '5px 0', borderBottom: '1px solid #0f0f0f' }}>
+                  <div key={msg.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '5px 0', borderBottom: '1px solid #0f0f0f', opacity: hoveredStepId ? 0.3 : 1, transition: 'opacity 0.15s' }}>
                     <span style={{ color: '#333', fontSize: '8px', flexShrink: 0, marginTop: '2px', width: '90px' }}>{dateStr} {timeStr}</span>
                     <span style={{ color: '#f9731644', fontSize: '8px', letterSpacing: '1px', flexShrink: 0, marginTop: '2px' }}>USER</span>
                     <span style={{ color: '#555', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{msg.content.slice(0, 120)}</span>
@@ -1191,9 +1202,11 @@ function App() {
               const hasThinking = !!msg.thinking
               const src = msg.source === 'local' ? 'LOCAL' : 'CLOUD'
               const srcColor = msg.source === 'local' ? '#10b981' : '#3b82f6'
+              // This response block contains the hovered step
+              const blockHovered = hoveredStepId && msg.toolResults?.some(tr => tr.reasoningStepId === hoveredStepId)
 
               return (
-                <div key={msg.id} style={{ borderBottom: '1px solid #0f0f0f' }}>
+                <div key={msg.id} style={{ borderBottom: '1px solid #0f0f0f', opacity: hoveredStepId && !blockHovered ? 0.25 : 1, transition: 'opacity 0.15s' }}>
                   {/* Response row */}
                   <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '5px 0' }}>
                     <span style={{ color: '#333', fontSize: '8px', flexShrink: 0, marginTop: '2px', width: '90px' }}>{dateStr} {timeStr}</span>
@@ -1211,21 +1224,30 @@ function App() {
                     </div>
                   </div>
                   {/* Tool rows */}
-                  {msg.toolResults && msg.toolResults.map((tr, ti) => (
-                    <div key={ti} style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '2px 0 2px 100px', opacity: 0.7 }}>
-                      <span style={{ color: tr.isError ? '#cc3333' : '#3a5c2a', fontSize: '8px', flexShrink: 0 }}>⬡</span>
-                      <span style={{ color: tr.isError ? '#cc3333' : '#4a7c3f', fontSize: '8px', flexShrink: 0, textTransform: 'uppercase', letterSpacing: '1px' }}>{tr.name}</span>
-                      <span style={{ color: '#2a3a2a', fontSize: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                        {tr.output.split('\n')[0].slice(0, 100)}
-                      </span>
-                      <span style={{ color: tr.isError ? '#cc333388' : '#5a9e4488', fontSize: '7px', flexShrink: 0 }}>{tr.isError ? 'FAILED' : 'OK'}</span>
-                    </div>
-                  ))}
+                  {msg.toolResults && msg.toolResults.map((tr, ti) => {
+                    const isHovered = tr.reasoningStepId === hoveredStepId
+                    const isDimmed = hoveredStepId && !isHovered
+                    return (
+                      <div
+                        key={ti}
+                        onMouseEnter={() => setHoveredStepId(tr.reasoningStepId ?? null)}
+                        onMouseLeave={() => setHoveredStepId(null)}
+                        style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '3px 0 3px 100px', opacity: isDimmed ? 0.2 : 0.85, background: isHovered ? 'rgba(249,115,22,0.06)' : 'transparent', borderLeft: isHovered ? '2px solid rgba(249,115,22,0.4)' : '2px solid transparent', cursor: 'default', transition: 'opacity 0.15s, background 0.15s' }}>
+                        <span style={{ color: tr.isError ? '#cc3333' : '#3a5c2a', fontSize: '8px', flexShrink: 0 }}>⬡</span>
+                        <span style={{ color: tr.isError ? '#cc3333' : '#4a7c3f', fontSize: '8px', flexShrink: 0, textTransform: 'uppercase', letterSpacing: '1px' }}>{tr.name}</span>
+                        <span style={{ color: '#2a3a2a', fontSize: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                          {tr.output.split('\n')[0].slice(0, 100)}
+                        </span>
+                        <span style={{ color: tr.isError ? '#cc333388' : '#5a9e4488', fontSize: '7px', flexShrink: 0 }}>{tr.isError ? 'FAILED' : 'OK'}</span>
+                      </div>
+                    )
+                  })}
                 </div>
               )
             })}
           </div>
-        )}
+          )
+        })()}
 
         {/* ── Voice Tab ── */}
         {activeTab === 'voice' && (

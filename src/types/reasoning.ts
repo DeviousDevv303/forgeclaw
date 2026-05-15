@@ -7,6 +7,7 @@ export interface ReasoningStep {
   durationMs?: number
   body?: string
   children?: ReasoningStep[]
+  linkedToolCallIds?: string[]
 }
 
 export interface ReasoningChain {
