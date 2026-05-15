@@ -35,6 +35,8 @@ interface Message {
   content: string
   timestamp: number
   source?: 'local' | 'cloud'
+  provider?: string
+  model?: string
   activeTags?: string[]
   thinking?: string            // raw inner monologue for reasoning trace
   phases?: Record<string, string>
@@ -404,7 +406,7 @@ function App() {
           const d = await r.json() as { response: string }
           const { cleanText, tagsFound, thinking } = parseAndExecuteTags(d.response || '', promptText, 'ollama')
           source = 'local'; setLastSource('local'); ollamaOk = true
-          setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, activeTags: tagsFound, thinking, showReasoning: false }])
+          setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, provider: 'ollama', model: ollamaModel, activeTags: tagsFound, thinking, showReasoning: false }])
           resolveTask(taskId)
         }
       } catch { /* fall through to cloud */ }
@@ -493,7 +495,7 @@ function App() {
       setLastSource('cloud')
       const { cleanText, tagsFound, thinking } = parseAndExecuteTags(finalText, promptText, 'claude-haiku')
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false }
+        ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false }
         : m
       ))
       // Clear any prior auth failure mark for this provider on successful call
@@ -897,9 +899,13 @@ function App() {
                   return (
                     <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: '4px' }}>
                       {msg.role === 'assistant' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                          <span style={{ fontSize: '14px' }}>🧠</span>
-                          {msg.source && <span style={{ fontSize: '9px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', opacity: 0.7 }}>{msg.source === 'local' ? 'LOCAL' : 'CLOUD'}</span>}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
+                          <span style={{ fontSize: '12px' }}>🧠</span>
+                          {msg.provider && (
+                            <span style={{ fontSize: '8px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', opacity: 0.75, fontFamily: 'monospace', letterSpacing: '1px', textTransform: 'uppercase' }}>
+                              {msg.provider}{msg.model ? ` · ${msg.model}` : ''}
+                            </span>
+                          )}
                         </div>
                       )}
                       {/* Message bubble — clean response only */}
