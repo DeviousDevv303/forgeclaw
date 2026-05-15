@@ -9,7 +9,7 @@ export type FailureSeverity = 'info' | 'warning' | 'error' | 'critical'
 export type FailureSource =
   | 'forgemind' | 'repoagent' | 'ollama' | 'claude' | 'github'
   | 'orchestrator'  // authority layer telemetry
-  | 'deepseek' | 'mistral' | 'groq' | 'anthropic'  // pluggable LLM providers
+  | 'deepseek' | 'mistral' | 'groq' | 'anthropic' | 'kimi'  // pluggable LLM providers
 
 export interface FailureEvent {
   id: string

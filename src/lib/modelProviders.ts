@@ -3,7 +3,7 @@
 // 5-phase scaffold) stays the same regardless of which provider is active.
 // Safety governance lives in ForgeClaw's architecture, not the LLM layer.
 
-export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq'
+export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi'
 
 export interface ModelOption {
   id: string
@@ -70,9 +70,22 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     keyPlaceholder: 'gsk_...',
     keyPrefix: 'gsk_',
   },
+
+  kimi: {
+    id: 'kimi',
+    name: 'Kimi',
+    url: 'https://api.moonshot.cn/v1/chat/completions',
+    models: [
+      { id: 'moonshot-v1-128k', label: 'Kimi 128K',                    contextK: 128, note: 'Long context' },
+      { id: 'moonshot-v1-32k',  label: 'Kimi 32K',                     contextK: 32  },
+      { id: 'moonshot-v1-8k',   label: 'Kimi 8K (fast)',               contextK: 8   },
+      { id: 'kimi-k1-5',        label: 'Kimi k1.5 (reasoning)',        contextK: 128, note: 'Extended reasoning' },
+    ],
+    keyPlaceholder: 'sk-...',
+  },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['anthropic', 'deepseek', 'mistral', 'groq']
+export const PROVIDER_ORDER: ProviderId[] = ['anthropic', 'deepseek', 'mistral', 'groq', 'kimi']
 
 export const DEFAULT_PROVIDER: ProviderId = 'anthropic'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
@@ -80,6 +93,7 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   deepseek:  'deepseek-chat',
   mistral:   'mistral-large-latest',
   groq:      'llama-3.3-70b-versatile',
+  kimi:      'moonshot-v1-128k',
 }
 
 // ─── Call ─────────────────────────────────────────────────────────────────────

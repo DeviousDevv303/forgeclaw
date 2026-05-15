@@ -188,6 +188,7 @@ function App() {
       deepseek:  parsed.deepseek  || '',
       mistral:   parsed.mistral   || '',
       groq:      parsed.groq      || '',
+      kimi:      parsed.kimi      || '',
     }
   })
 
