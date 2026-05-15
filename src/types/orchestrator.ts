@@ -24,6 +24,12 @@ export interface AgentContract {
   maxRetries: number
   inputSchema: Record<string, unknown>
   outputSchema: Record<string, unknown>
+  // Guardian policy fields
+  vetoAuthority?: boolean              // can this agent block other agents' tasks
+  requiresGuardianValidation?: boolean // all tool executions require Guardian co-sign
+  escalationThreshold?: number         // confidence below this triggers escalation (0.0–1.0)
+  reviewerChain?: AgentId[]            // ordered list of agents that review this agent's output
+  excludedScopes?: AuthorityScope[]    // scopes explicitly denied even if in maxScopes
 }
 
 export interface TaskSpec {
