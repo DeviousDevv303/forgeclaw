@@ -942,19 +942,19 @@ function App() {
                               }}
                             >
                               <span style={{ color: '#4a7c3f', fontSize: '9px' }}>▶</span>
-                              <span style={{ color: '#6aab52', fontSize: '9px', letterSpacing: '2px' }}>◼ TACTICAL OPS LOG</span>
+                              <span style={{ color: '#6aab52', fontSize: '11px', fontFamily: "'Georgia', 'Palatino Linotype', serif", fontStyle: 'italic', letterSpacing: '1px' }}>Reasoning Trace</span>
                               {msg.thinking && (
                                 <>
                                   <span style={{ color: '#3a5c2a', fontSize: '9px' }}>|</span>
-                                  <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>
-                                    {parseThinkingToTraceNodes(msg.thinking, msg.timestamp, 'Claude').length} THOUGHTS
+                                  <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px', fontFamily: 'monospace' }}>
+                                    {parseThinkingToTraceNodes(msg.thinking, msg.timestamp, 'Claude').length} thoughts
                                   </span>
                                 </>
                               )}
                               {toolList.length > 0 && (
                                 <>
                                   <span style={{ color: '#3a5c2a', fontSize: '9px' }}>·</span>
-                                  <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>{toolList.length} ACTION{toolList.length !== 1 ? 'S' : ''}</span>
+                                  <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px', fontFamily: 'monospace' }}>{toolList.length} action{toolList.length !== 1 ? 's' : ''}</span>
                                 </>
                               )}
                               <span style={{ marginLeft: 'auto', color: '#3a5c2a', fontSize: '9px', letterSpacing: '1px' }}>
