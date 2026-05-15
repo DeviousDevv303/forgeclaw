@@ -358,24 +358,26 @@ function App() {
     let source: 'local' | 'cloud' = 'cloud'
     let cloudMsgId: string | null = null
     try {
-      // ── Try Ollama local first (fast, free, no key needed) ─────────────────
+      // ── Ollama local path (only when selected as active provider) ──────────
       let ollamaOk = false
-      try {
-        const ollamaModel = safeGetItem('fc_ollama_model') || 'qwen2.5:1.8b'
-        const r = await fetch('http://localhost:11434/api/generate', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: ollamaModel, system: FORGEMIND_SYSTEM_PROMPT, prompt: promptText, stream: false }),
-          signal: AbortSignal.timeout(2000),
-        })
-        if (r.ok) {
-          const d = await r.json() as { response: string }
-          const { cleanText, tagsFound, thinking } = parseAndExecuteTags(d.response || '', promptText, 'ollama')
-          source = 'local'; setLastSource('local'); ollamaOk = true
-          setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, provider: 'ollama', model: ollamaModel, activeTags: tagsFound, thinking, showReasoning: false }])
-          resolveTask(taskId)
-        }
-      } catch { /* fall through to cloud */ }
-      if (ollamaOk) { setLoading(false); return }
+      if (activeProvider === 'ollama') {
+        try {
+          const ollamaModel = safeGetItem('fc_ollama_model') || 'qwen2.5:1.8b'
+          const r = await fetch('http://localhost:11434/api/generate', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: ollamaModel, system: FORGEMIND_SYSTEM_PROMPT, prompt: promptText, stream: false }),
+            signal: AbortSignal.timeout(2000),
+          })
+          if (r.ok) {
+            const d = await r.json() as { response: string }
+            const { cleanText, tagsFound, thinking } = parseAndExecuteTags(d.response || '', promptText, 'ollama')
+            source = 'local'; setLastSource('local'); ollamaOk = true
+            setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, provider: 'ollama', model: ollamaModel, activeTags: tagsFound, thinking, showReasoning: false }])
+            resolveTask(taskId)
+          }
+        } catch { /* fall through to cloud */ }
+        if (ollamaOk) { setLoading(false); return }
+      }
 
       // ── Cloud agentic loop (tool calling, up to 15 iterations) ────────────
       source = 'cloud'
