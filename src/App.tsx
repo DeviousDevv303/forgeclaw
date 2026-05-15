@@ -6,7 +6,6 @@ import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
-import { BrowserAutomationPanel } from './components/BrowserAutomationPanel'
 import { WhatsAppConnector } from './components/WhatsAppConnector'
 import { ReasoningChainComponent } from './components/reasoning/ReasoningChain'
 import { SystemMonitor } from './components/monitor/SystemMonitor'
@@ -86,7 +85,7 @@ function cleanForSpeech(text: string): string {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'failures' | 'browserauto' | 'whatsapp' | 'settings'
+type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -526,7 +525,7 @@ function App() {
     { id: 'forgemind',   label: 'FORGE' },
     { id: 'whatsapp',    label: 'WHATSAPP' },
     { id: 'failures',    label: 'FAILURES', badge: unresolvedCount > 0 ? String(unresolvedCount) : undefined },
-    { id: 'browserauto', label: 'BROWSER' },
+    { id: 'activity',    label: 'ACTIVITY' },
     { id: 'settings',    label: 'SETTINGS' },
   ]
 
@@ -976,7 +975,74 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'browserauto' && <BrowserAutomationPanel />}
+        {activeTab === 'activity' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
+              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>EXECUTION LOG</span>
+              <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{messages.filter(m => m.role === 'assistant').length} RESPONSES · {messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0)} TOOL CALLS</span>
+            </div>
+
+            {messages.length === 0 && (
+              <div style={{ color: '#333', fontSize: '10px', textAlign: 'center', marginTop: '40px', letterSpacing: '2px' }}>NO ACTIVITY YET</div>
+            )}
+
+            {messages.map((msg) => {
+              const ts = new Date(msg.timestamp)
+              const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              const dateStr = ts.toLocaleDateString([], { month: 'short', day: 'numeric' })
+
+              if (msg.role === 'user') {
+                return (
+                  <div key={msg.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '5px 0', borderBottom: '1px solid #0f0f0f' }}>
+                    <span style={{ color: '#333', fontSize: '8px', flexShrink: 0, marginTop: '2px', width: '90px' }}>{dateStr} {timeStr}</span>
+                    <span style={{ color: '#f9731644', fontSize: '8px', letterSpacing: '1px', flexShrink: 0, marginTop: '2px' }}>USER</span>
+                    <span style={{ color: '#555', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{msg.content.slice(0, 120)}</span>
+                  </div>
+                )
+              }
+
+              // Assistant entry
+              const toolCount = msg.toolResults?.length ?? 0
+              const toolErrors = msg.toolResults?.filter(t => t.isError).length ?? 0
+              const hasThinking = !!msg.thinking
+              const src = msg.source === 'local' ? 'LOCAL' : 'CLOUD'
+              const srcColor = msg.source === 'local' ? '#10b981' : '#3b82f6'
+
+              return (
+                <div key={msg.id} style={{ borderBottom: '1px solid #0f0f0f' }}>
+                  {/* Response row */}
+                  <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '5px 0' }}>
+                    <span style={{ color: '#333', fontSize: '8px', flexShrink: 0, marginTop: '2px', width: '90px' }}>{dateStr} {timeStr}</span>
+                    <span style={{ color: `${srcColor}88`, fontSize: '8px', letterSpacing: '1px', flexShrink: 0, marginTop: '2px' }}>{src}</span>
+                    <span style={{ color: '#888', fontSize: '10px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {msg.content.slice(0, 100)}
+                    </span>
+                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0, alignItems: 'center' }}>
+                      {hasThinking && <span style={{ color: '#2a4a22', fontSize: '7px', border: '1px solid #2a4a22', padding: '0 3px', borderRadius: '2px', letterSpacing: '1px' }}>TRACE</span>}
+                      {toolCount > 0 && (
+                        <span style={{ color: toolErrors > 0 ? '#cc333388' : '#5a9e4488', fontSize: '7px', border: `1px solid ${toolErrors > 0 ? '#cc333344' : '#5a9e4444'}`, padding: '0 3px', borderRadius: '2px', letterSpacing: '1px' }}>
+                          {toolCount} TOOL{toolCount !== 1 ? 'S' : ''}{toolErrors > 0 ? ` · ${toolErrors} ERR` : ''}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Tool rows */}
+                  {msg.toolResults && msg.toolResults.map((tr, ti) => (
+                    <div key={ti} style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '2px 0 2px 100px', opacity: 0.7 }}>
+                      <span style={{ color: tr.isError ? '#cc3333' : '#3a5c2a', fontSize: '8px', flexShrink: 0 }}>⬡</span>
+                      <span style={{ color: tr.isError ? '#cc3333' : '#4a7c3f', fontSize: '8px', flexShrink: 0, textTransform: 'uppercase', letterSpacing: '1px' }}>{tr.name}</span>
+                      <span style={{ color: '#2a3a2a', fontSize: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        {tr.output.split('\n')[0].slice(0, 100)}
+                      </span>
+                      <span style={{ color: tr.isError ? '#cc333388' : '#5a9e4488', fontSize: '7px', flexShrink: 0 }}>{tr.isError ? 'FAILED' : 'OK'}</span>
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
+          </div>
+        )}
       </main>
 
       {/* Footer signature */}
