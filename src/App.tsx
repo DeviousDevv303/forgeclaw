@@ -307,6 +307,7 @@ function App() {
     }
 
     let source: 'local' | 'cloud' = 'cloud'
+    let cloudMsgId: string | null = null
     try {
       // ── Try Ollama local first (fast, free, no key needed) ─────────────────
       let ollamaOk = false
@@ -329,7 +330,8 @@ function App() {
 
       // ── Cloud agentic loop (tool calling, up to 15 iterations) ────────────
       source = 'cloud'
-      const msgId = (Date.now() + 1).toString()
+      cloudMsgId = (Date.now() + 1).toString()
+      const msgId = cloudMsgId
 
       // Streaming placeholder
       setMessages(prev => [...prev, { id: msgId, role: 'assistant', content: '', timestamp: Date.now(), source: 'cloud', streaming: true }])
@@ -410,9 +412,13 @@ function App() {
       resolveTask(taskId)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
-      const failSource = activeProvider // past ollamaOk early return, always cloud here
-      emitFailure({ source: failSource, severity: 'error', message: msg, context: { promptLength: promptText.length } })
-      setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
+      emitFailure({ source: activeProvider, severity: 'error', message: msg, context: { promptLength: promptText.length } })
+      if (cloudMsgId) {
+        // Replace the orphaned streaming placeholder with the error — no duplicate bubble
+        setMessages(prev => prev.map(m => m.id === cloudMsgId ? { ...m, content: `[ERROR]: ${msg}`, streaming: false } : m))
+      } else {
+        setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
+      }
     } finally { setLoading(false) }
   }, [apiKey, activeProvider, activeModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
