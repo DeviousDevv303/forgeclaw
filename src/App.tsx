@@ -188,7 +188,8 @@ function App() {
       anthropic: parsed.anthropic || legacyAnthropic || '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',
       // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
       deepseek:  'sk-c47d7b43ab38441087f6ad259ccf340f',
-      mistral:   parsed.mistral   || '',
+      // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
+      mistral:   parsed.mistral   || 'Ile5nNCCMWmVOnx3jtJH8T1TshigIU3I',
       // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
       groq:      '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',
       // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
