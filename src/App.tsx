@@ -528,6 +528,24 @@ function App() {
     navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000)
   }
 
+  const browserSpeak = (id: string, clean: string) => {
+    if (!clean) { setSpeakingId(null); return }
+    const synth = window.speechSynthesis
+    // Chrome bug: synthesis engine silently jams after extended use.
+    // Cancel → resume → small delay forces it to reset before the new utterance.
+    synth.cancel()
+    synth.resume()
+    const u = new SpeechSynthesisUtterance(clean)
+    const voice = getVoiceForLanguage(selectedLanguage)
+    if (voice) u.voice = voice
+    u.rate = rate
+    u.onerror = () => setSpeakingId(null)
+    u.onend = () => setSpeakingId(null)
+    setSpeakingId(id)
+    // 80ms gap lets the cancel/resume flush before we enqueue the new utterance
+    setTimeout(() => synth.speak(u), 80)
+  }
+
   const handleSpeak = async (id: string, text: string) => {
     // Stop if already speaking this message
     if (speakingId === id) {
@@ -543,6 +561,7 @@ function App() {
     elAudioRef.current = null
 
     const clean = cleanForSpeech(text)
+    if (!clean) return
 
     // ElevenLabs path — requires API key + voice ID
     if (elApiKey && elVoiceId) {
@@ -572,26 +591,12 @@ function App() {
       } catch (err) {
         setSpeakingId(null)
         emitFailure({ source: 'forgemind', severity: 'warning', message: `ElevenLabs TTS: ${err instanceof Error ? err.message : String(err)}` })
-        // Fall through to browser TTS
-        const u = new SpeechSynthesisUtterance(clean)
-        const voice = getVoiceForLanguage(selectedLanguage)
-        if (voice) u.voice = voice
-        u.rate = rate
-        u.onend = () => setSpeakingId(null)
-        setSpeakingId(id)
-        window.speechSynthesis.speak(u)
+        browserSpeak(id, clean)
       }
       return
     }
 
-    // Browser TTS fallback
-    const u = new SpeechSynthesisUtterance(clean)
-    const voice = getVoiceForLanguage(selectedLanguage)
-    if (voice) u.voice = voice
-    u.rate = rate
-    u.onend = () => setSpeakingId(null)
-    setSpeakingId(id)
-    window.speechSynthesis.speak(u)
+    browserSpeak(id, clean)
   }
 
 
