@@ -233,6 +233,14 @@ function App() {
   useEffect(() => { safeSetItem('fm_model', activeModel) }, [activeModel])
   useEffect(() => { safeSetItem('fm_provider_keys', JSON.stringify(providerKeys)) }, [providerKeys])
 
+  // On mount: if active provider has no key, auto-switch to first one that does
+  useEffect(() => {
+    if (!providerKeys[activeProvider]) {
+      const fallback = PROVIDER_ORDER.find(pid => providerKeys[pid])
+      if (fallback) { setActiveProvider(fallback); setActiveModel(DEFAULT_MODEL[fallback]) }
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const loadVoices = () => {
       const allVoices = window.speechSynthesis.getVoices()
@@ -276,35 +284,38 @@ function App() {
 
   const sendPrompt = useCallback(async (promptText: string) => {
     if (!promptText.trim()) return
+
+    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: promptText, timestamp: Date.now() }
+
     if (!apiKey) {
-      emitFailure({ source: 'forgemind', severity: 'warning', message: 'Claude API key required. Enter your key to continue.' })
+      setMessages(prev => [...prev, userMsg, {
+        id: (Date.now() + 1).toString(), role: 'assistant',
+        content: `🔑 No API key for ${PROVIDERS[activeProvider].name}. Open ⚙ Settings and switch to DeepSeek — it has a key pre-loaded.`,
+        timestamp: Date.now(), source: 'local' as const,
+      }])
+      emitFailure({ source: 'forgemind', severity: 'warning', message: `No API key for ${PROVIDERS[activeProvider].name}` })
       return
     }
 
     // Orchestrator: admit forgemind chat task
     const taskId = `fm-${Date.now()}`
     const admitted = admitTask({
-      taskId,
-      agentId: 'forgemind',
-      intent: 'chat',
-      payload: { promptLength: promptText.length },
-      timeout: 30000,
+      taskId, agentId: 'forgemind', intent: 'chat',
+      payload: { promptLength: promptText.length }, timeout: 30000,
       requestedScopes: ['llm:generate', 'corpus:write', 'errorBus:emit'],
     })
     if (!admitted) {
-      emitFailure({ source: 'forgemind', severity: 'warning', message: 'Orchestrator blocked this task. Check the Orchestrator tab.', context: { taskId } })
+      setMessages(prev => [...prev, userMsg, {
+        id: (Date.now() + 1).toString(), role: 'assistant',
+        content: `⚠️ Task blocked by Guardian. Check the ⚠️ Failures tab.`,
+        timestamp: Date.now(), source: 'local' as const,
+      }])
+      emitFailure({ source: 'forgemind', severity: 'warning', message: 'Guardian blocked this task.', context: { taskId } })
       return
     }
 
-    const userMessage: Message = { id: Date.now().toString(), role: 'user', content: promptText, timestamp: Date.now() }
-    setMessages(prev => [...prev, userMessage])
+    setMessages(prev => [...prev, userMsg])
     setLoading(true)
-
-    if (!apiKey) {
-      setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `🔑 No API key for ${PROVIDERS[activeProvider].name}. Open Settings (⚙) → enter your key.`, timestamp: Date.now(), source: 'local' }])
-      setLoading(false)
-      return
-    }
 
     let source: 'local' | 'cloud' = 'cloud'
     let cloudMsgId: string | null = null
@@ -453,9 +464,6 @@ function App() {
     setSpeakingId(id); window.speechSynthesis.speak(u)
   }
 
-  const handleFeedback = (id: string, type: 'up' | 'down') => {
-    setMessages(prev => prev.map(m => m.id === id ? { ...m, feedback: type } : m))
-  }
 
   const toggleReasoning = (id: string) => {
     setOpenReasoningIds(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n })
@@ -823,8 +831,6 @@ function App() {
                           <div style={{ marginTop: '10px', display: 'flex', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px', alignItems: 'center' }}>
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={actionButtonStyle}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
                             <button onClick={() => handleSpeak(msg.id, msg.content)} style={actionButtonStyle}>{speakingId === msg.id ? '■' : 'READ'}</button>
-                            <button onClick={() => handleFeedback(msg.id, 'up')} title="Helpful" style={{ ...actionButtonStyle, fontSize: '13px', padding: '2px 5px', border: msg.feedback === 'up' ? '1px solid #3b82f6' : '1px solid #222', color: msg.feedback === 'up' ? '#60a5fa' : '#4a7ab5', textShadow: msg.feedback === 'up' ? '0 0 8px #3b82f6' : 'none' }}>👍</button>
-                            <button onClick={() => handleFeedback(msg.id, 'down')} title="Not helpful" style={{ ...actionButtonStyle, fontSize: '13px', padding: '2px 5px', border: msg.feedback === 'down' ? '1px solid #3b82f6' : '1px solid #222', color: msg.feedback === 'down' ? '#60a5fa' : '#4a7ab5', textShadow: msg.feedback === 'down' ? '0 0 8px #3b82f6' : 'none' }}>👎</button>
                             {msg.phases && Object.keys(msg.phases).length > 0 && (
                               <button onClick={() => toggleReasoning(msg.id)} style={{ ...actionButtonStyle, marginLeft: 'auto', border: reasoningOpen ? '1px solid #f97316' : '1px solid #444', color: reasoningOpen ? '#f97316' : '#888', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <span style={{ fontSize: '8px', display: 'inline-block', transform: reasoningOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
