@@ -191,7 +191,7 @@ function App() {
       mistral:   parsed.mistral   || '',
       groq:      parsed.groq      || '',
       // Hardcoded per Manus/Cristian — do not remove without permission
-      kimi:      parsed.kimi      || 'sk-M0cnbgux0jn25PveiqWPH53mu4aqjvmOT7HhFjWgbF53qwiu',
+      kimi:      parsed.kimi      || 'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
     }
   })
 
