@@ -17,6 +17,8 @@ import type { CristianDecision } from './types/warRoom'
 import { collectMockEvents } from './lib/reasoningMock'
 import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
+import { ReasoningPhase } from './types/reasoningTrace'
+import type { ReasoningTrace } from './types/reasoningTrace'
 import {
   PROVIDERS, PROVIDER_ORDER, DEFAULT_PROVIDER, DEFAULT_MODEL,
   callProvider, testProviderKey,
@@ -81,6 +83,88 @@ function cleanForSpeech(text: string): string {
     .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
     .replace(/[\u{2600}-\u{26FF}]/gu, '')
     .replace(/\*\*/g, '').replace(/\*/g, '').trim()
+}
+
+// ─── Reasoning Trace Splitter ─────────────────────────────────────────────────
+// Splits a raw [FM:THINK] string into ReasoningTrace nodes at cognitive
+// boundaries. Runs at display time — msg.thinking stays a raw string in storage.
+// TODO: Phase 3 — replace with true streaming trace emission from agentic loop.
+
+const TRANSITION_RE = /^(Hmm[,.]?|Wait[,.]?|Actually[,.]?|But |So [A-Z]|No[,.]?|Yes[,.]?|Next[,.]?|First[,.]?|Second[,.]?|However[,.]?|Though[,.]?)/i
+
+function parseThinkingToTraceNodes(
+  thinking: string,
+  baseTimestamp: number,
+  agent: string
+): ReasoningTrace[] {
+  if (!thinking.trim()) return []
+
+  // Step 1: split by double newline into paragraphs
+  const rawSegs: string[] = []
+  for (const para of thinking.split(/\n\n+/)) {
+    if (!para.trim()) continue
+    // Step 2: within each paragraph, split on transition words at line start
+    // Skip if inside a fenced code block (odd number of ``` before the line)
+    const lines = para.split('\n')
+    let current = ''
+    let inCode = false
+    for (const line of lines) {
+      if (line.trimStart().startsWith('```')) inCode = !inCode
+      if (!inCode && current && TRANSITION_RE.test(line.trimStart())) {
+        if (current.trim()) rawSegs.push(current.trim())
+        current = line
+      } else {
+        current = current ? current + '\n' + line : line
+      }
+    }
+    if (current.trim()) rawSegs.push(current.trim())
+  }
+
+  // Step 3: hard cap at 500 chars, split at nearest period after 400
+  const capped: string[] = []
+  for (const seg of rawSegs) {
+    if (seg.length <= 500) { capped.push(seg); continue }
+    let rem = seg
+    while (rem.length > 500) {
+      const slice = rem.slice(0, 500)
+      const cut = slice.lastIndexOf('.', 499)
+      const splitAt = cut > 200 ? cut + 1 : 500
+      capped.push(rem.slice(0, splitAt).trim())
+      rem = rem.slice(splitAt).trim()
+    }
+    if (rem.trim()) capped.push(rem.trim())
+  }
+
+  // Infer linkedPhase by position (Guardian use only — never rendered)
+  const total = capped.length
+  const phaseAt = (i: number): ReasoningPhase => {
+    const pct = i / Math.max(total - 1, 1)
+    if (pct < 0.2)  return ReasoningPhase.ASSUME
+    if (pct < 0.4)  return ReasoningPhase.HEURISTIC
+    if (pct < 0.65) return ReasoningPhase.FIRST_PRINCIPLE
+    if (pct < 0.85) return ReasoningPhase.EXTEND
+    return ReasoningPhase.CONVERGE
+  }
+
+  return capped.map((thought, i): ReasoningTrace => ({
+    traceId:         `${baseTimestamp}_${i}`,
+    timestamp:       new Date(baseTimestamp + i).toISOString(),
+    agent,
+    status:          'done',
+    thought,
+    childTraces:     [],
+    linkedToolCalls: [],
+    linkedPhase:     phaseAt(i),
+  }))
+}
+
+function formatTraceTime(iso: string): string {
+  const d = new Date(iso)
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  const ss = String(d.getSeconds()).padStart(2, '0')
+  const ms = String(d.getMilliseconds()).padStart(3, '0')
+  return `${hh}:${mm}:${ss}.${ms}`
 }
 
 // ─── App ──────────────────────────────────────────────────────────────────────
@@ -853,9 +937,17 @@ function App() {
                             >
                               <span style={{ color: '#4a7c3f', fontSize: '9px' }}>▶</span>
                               <span style={{ color: '#6aab52', fontSize: '9px', letterSpacing: '2px' }}>◼ TACTICAL OPS LOG</span>
-                              {toolList.length > 0 && (
+                              {msg.thinking && (
                                 <>
                                   <span style={{ color: '#3a5c2a', fontSize: '9px' }}>|</span>
+                                  <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>
+                                    {parseThinkingToTraceNodes(msg.thinking, msg.timestamp, 'Claude').length} THOUGHTS
+                                  </span>
+                                </>
+                              )}
+                              {toolList.length > 0 && (
+                                <>
+                                  <span style={{ color: '#3a5c2a', fontSize: '9px' }}>·</span>
                                   <span style={{ color: '#4a7c3f', fontSize: '9px', letterSpacing: '1px' }}>{toolList.length} ACTION{toolList.length !== 1 ? 'S' : ''}</span>
                                 </>
                               )}
@@ -871,14 +963,34 @@ function App() {
                                   <span style={{ color: '#2a4a22', fontSize: '8px', letterSpacing: '1px' }}>UNCLASSIFIED</span>
                                 </div>
 
-                                {/* Raw inner monologue */}
-                                {msg.thinking && (
-                                  <div style={{ padding: '10px 12px', borderBottom: toolList.length > 0 ? '1px solid #0f1f0f' : 'none' }}>
-                                    <pre style={{ color: '#4a7a3a', fontSize: '10px', fontFamily: "'Courier New', Courier, monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: '1.6' }}>
-                                      {msg.thinking}
-                                    </pre>
-                                  </div>
-                                )}
+                                {/* Reasoning trace nodes — parsed from raw [FM:THINK] block */}
+                                {msg.thinking && (() => {
+                                  const nodes = parseThinkingToTraceNodes(msg.thinking, msg.timestamp, 'Claude')
+                                  return nodes.map((node, ni) => {
+                                    const faded = node.confidence !== undefined && node.confidence < 0.7
+                                    const isLast = ni === nodes.length - 1 && toolList.length === 0
+                                    return (
+                                      <div key={node.traceId} style={{ padding: '8px 12px', borderBottom: isLast ? 'none' : '1px solid #0c1a0c' }}>
+                                        <div style={{ color: '#3a5c2a', fontSize: '8px', letterSpacing: '1px', marginBottom: '4px', fontFamily: "'Courier New', Courier, monospace" }}>
+                                          {formatTraceTime(node.timestamp)} — {node.agent}
+                                        </div>
+                                        <p style={{
+                                          color: faded ? '#3a5a3a' : '#5a8a5a',
+                                          fontSize: '11px',
+                                          fontFamily: "'Georgia', 'Times New Roman', serif",
+                                          fontStyle: faded ? 'italic' : 'normal',
+                                          opacity: faded ? 0.6 : 1,
+                                          lineHeight: '1.65',
+                                          margin: 0,
+                                          whiteSpace: 'pre-wrap',
+                                          wordBreak: 'break-word',
+                                        }}>
+                                          {node.thought}
+                                        </p>
+                                      </div>
+                                    )
+                                  })
+                                })()}
 
                                 {/* Tool execution rows */}
                                 {toolList.map((tr, i) => {
