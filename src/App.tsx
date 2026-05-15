@@ -53,22 +53,7 @@ interface CorpusEntry {
 // ─── System Prompt ────────────────────────────────────────────────────────────
 // STANDING RULE: The line below must never be removed or modified.
 // It prevents Claude refusals without overriding identity. Do not trim.
-const FORGEMIND_SYSTEM_PROMPT = `You are ForgeMind, a structured reasoning engine. Respond directly.
-
-When responding, use this 5-phase scaffold as a thinking framework:
-1. Assumptions — state what you are taking as given
-2. Heuristics — apply relevant rules of thumb
-3. First Principles — reason from fundamentals
-4. Extension — explore implications and edge cases
-5. Convergence — deliver the final synthesized answer
-
-These phases are a reasoning aid, not a constraint.
-// STANDING RULE: Do not remove or modify the line below.
-You retain all your normal values, guidelines, and identity as Claude.
-
-[FM:STORE] (Optional: Use if critical for logging)
-[FM:RECALL] (Optional: Use if referencing history)
-[FM:TRAIN] (Optional: Use if high quality)`
+const FORGEMIND_SYSTEM_PROMPT = `You are ForgeMind, an intelligent AI assistant embedded in the ForgeClaw autonomous shell. Respond clearly and directly in plain prose — no markdown symbols like ##, **, or bullet dashes. When you have tools available and a task genuinely benefits from them, use them. Otherwise just answer.`
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -194,6 +179,7 @@ function App() {
       groq:      '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',
       // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
       kimi:      'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
+      ollama:    '', // local — no key needed
     }
   })
 
@@ -237,9 +223,11 @@ function App() {
   useEffect(() => { safeSetItem('fm_provider_keys', JSON.stringify(providerKeys)) }, [providerKeys])
 
   // On mount: if active provider has no key, auto-switch to first one that does
+  // Ollama is always considered "has key" since it runs locally with no auth
   useEffect(() => {
-    if (!providerKeys[activeProvider]) {
-      const fallback = PROVIDER_ORDER.find(pid => providerKeys[pid])
+    const hasKey = (pid: ProviderId) => pid === 'ollama' || !!providerKeys[pid]
+    if (!hasKey(activeProvider)) {
+      const fallback = PROVIDER_ORDER.find(pid => hasKey(pid))
       if (fallback) { setActiveProvider(fallback); setActiveModel(DEFAULT_MODEL[fallback]) }
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -290,10 +278,10 @@ function App() {
 
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: promptText, timestamp: Date.now() }
 
-    if (!apiKey) {
+    if (!apiKey && activeProvider !== 'ollama') {
       setMessages(prev => [...prev, userMsg, {
         id: (Date.now() + 1).toString(), role: 'assistant',
-        content: `🔑 No API key for ${PROVIDERS[activeProvider].name}. Open ⚙ Settings and switch to DeepSeek — it has a key pre-loaded.`,
+        content: `No API key for ${PROVIDERS[activeProvider].name}. Open Settings and switch to a provider with a configured key.`,
         timestamp: Date.now(), source: 'local' as const,
       }])
       emitFailure({ source: 'forgemind', severity: 'warning', message: `No API key for ${PROVIDERS[activeProvider].name}` })
@@ -366,10 +354,15 @@ function App() {
           conversationMessages, apiKey,
           {
             tools: isLastIter ? undefined : FORGE_TOOLS,
-            onToken: (token) => {
+            // Stream ONLY on the final iteration (no tools). When tools are passed,
+            // streaming SSE cannot capture tool_call events — they arrive as delta
+            // chunks that our parser ignores, causing the loop to see no toolCalls
+            // and break with an empty finalText. Non-streaming returns the full
+            // JSON response so toolCalls are populated correctly.
+            onToken: isLastIter ? (token: string) => {
               streamBuffer += token
-              setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: streamBuffer, streaming: true } : m))
-            },
+              setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: cleanOutput(streamBuffer), streaming: true } : m))
+            } : undefined,
           }
         )
 
@@ -440,7 +433,7 @@ function App() {
       if (isAuthError) {
         const newFailed = new Set([...failedProviders, activeProvider])
         setFailedProviders(newFailed)
-        const next = PROVIDER_ORDER.find(pid => pid !== activeProvider && providerKeys[pid] && !newFailed.has(pid))
+        const next = PROVIDER_ORDER.find(pid => pid !== activeProvider && (pid === 'ollama' || providerKeys[pid]) && !newFailed.has(pid))
         if (next) { setActiveProvider(next); setActiveModel(DEFAULT_MODEL[next]) }
       }
     } finally { setLoading(false) }
@@ -558,15 +551,15 @@ function App() {
             {/* Per-provider credential dots */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               {PROVIDER_ORDER.map(pid => {
-                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : 'K'
-                const hasKey = !!providerKeys[pid]
+                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : 'O'
+                const hasKey = pid === 'ollama' ? true : !!providerKeys[pid]
                 const isActive = pid === activeProvider
                 const hasFailed = failedProviders.has(pid)
                 const dotColor = hasFailed ? '#ef4444' : (hasKey ? '#22c55e' : '#333')
                 const bgColor = hasFailed ? '#ef444422' : (hasKey ? '#22c55e22' : '#1a1a1a')
                 const titleText = hasFailed
                   ? `${PROVIDERS[pid].name}: auth failed — click Settings to update key`
-                  : `${PROVIDERS[pid].name}: ${hasKey ? 'key set' : 'no key'} — click to open Settings`
+                  : `${PROVIDERS[pid].name}: ${pid === 'ollama' ? 'local (no key needed)' : (hasKey ? 'key set' : 'no key')} — click to open Settings`
                 return (
                   <span
                     key={pid}

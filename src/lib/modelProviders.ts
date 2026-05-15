@@ -1,9 +1,8 @@
 // ─── Provider Registry ────────────────────────────────────────────────────────
-// ForgeMind routes cloud calls through this module. The caller (Guardian +
-// 5-phase scaffold) stays the same regardless of which provider is active.
+// ForgeMind routes cloud calls through this module.
 // Safety governance lives in ForgeClaw's architecture, not the LLM layer.
 
-export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi'
+export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi' | 'ollama'
 
 export interface ModelOption {
   id: string
@@ -84,9 +83,27 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     ],
     keyPlaceholder: 'sk-kimi-...',
   },
+
+  ollama: {
+    id: 'ollama',
+    name: 'Ollama',
+    url: 'http://localhost:11434/v1/chat/completions',
+    models: [
+      { id: 'llama3.2:3b',       label: 'Llama 3.2 3B (fast)',    contextK: 128 },
+      { id: 'llama3.1:8b',       label: 'Llama 3.1 8B',           contextK: 128 },
+      { id: 'qwen2.5:7b',        label: 'Qwen 2.5 7B',            contextK: 128 },
+      { id: 'qwen2.5:1.8b',      label: 'Qwen 2.5 1.8B (tiny)',   contextK: 32  },
+      { id: 'mistral:7b',        label: 'Mistral 7B (local)',      contextK: 32  },
+      { id: 'phi3.5:3.8b',       label: 'Phi 3.5 3.8B',           contextK: 128 },
+      { id: 'gemma2:2b',         label: 'Gemma 2 2B',             contextK: 8   },
+      { id: 'deepseek-r1:7b',    label: 'DeepSeek R1 7B',         contextK: 64  },
+      { id: 'codellama:7b',      label: 'CodeLlama 7B',           contextK: 16  },
+    ],
+    keyPlaceholder: '(no key needed)',
+  },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['anthropic', 'deepseek', 'mistral', 'groq', 'kimi']
+export const PROVIDER_ORDER: ProviderId[] = ['anthropic', 'deepseek', 'mistral', 'groq', 'kimi', 'ollama']
 
 export const DEFAULT_PROVIDER: ProviderId = 'groq'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
@@ -95,6 +112,7 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   mistral:   'mistral-large-latest',
   groq:      'llama-3.3-70b-versatile',
   kimi:      'kimi-k2.6',
+  ollama:    'llama3.2:3b',
 }
 
 // ─── Call ─────────────────────────────────────────────────────────────────────
@@ -217,14 +235,18 @@ export async function callProvider(
     return { text: textBlock?.text ?? '', provider: providerId, model, toolCalls: toolCalls.length ? toolCalls : undefined, stopReason: d.stop_reason }
   }
 
-  // ── OpenAI-compatible: DeepSeek / Mistral / Groq ─────────────────────────
+  // ── OpenAI-compatible: DeepSeek / Mistral / Groq / Kimi / Ollama ────────
   const oaiMessages = [{ role: 'system', content: systemPrompt }, ...messages]
   const body: Record<string, unknown> = { model, max_tokens: maxTokens, messages: oaiMessages, stream: streaming }
   if (tools?.length) body.tools = toOpenAITools(tools)
 
+  const oaiHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
+  // Ollama runs locally — no auth header needed
+  if (providerId !== 'ollama') oaiHeaders['Authorization'] = `Bearer ${apiKey}`
+
   const res = await fetch(cfg.url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    headers: oaiHeaders,
     body: JSON.stringify(body),
   })
   if (!res.ok) {
