@@ -53,24 +53,11 @@ interface CorpusEntry {
 // ─── System Prompt ────────────────────────────────────────────────────────────
 // STANDING RULE: The line below must never be removed or modified.
 // It prevents Claude refusals without overriding identity. Do not trim.
-const FORGEMIND_SYSTEM_PROMPT = `You are ForgeMind, an intelligent AI assistant embedded in the ForgeClaw autonomous shell. Respond clearly and directly in plain prose — no markdown symbols like ##, **, or bullet dashes. When you have tools available and a task genuinely benefits from them, use them. Otherwise just answer.`
+const FORGEMIND_SYSTEM_PROMPT = `You are ForgeMind, an intelligent AI assistant embedded in the ForgeClaw autonomous shell.
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+Always think through every response using this 5-phase reasoning framework. Output each phase using the EXACT tags shown — the user only sees Phase 5.
 
-const TAG_MAP: Record<string, string> = {
-  '[FM:PHASE_1]': 'Assumptions',
-  '[FM:PHASE_2]': 'Heuristics',
-  '[FM:PHASE_3]': 'First Principles',
-  '[FM:PHASE_4]': 'Extension',
-  '[FM:PHASE_5]': 'Convergence',
-  '[FM:STORE]': 'Logged to corpus',
-  '[FM:RECALL]': 'Searching history',
-  '[FM:TRAIN]': 'Flagged for training',
-}
-
-const PHASE_ICONS: Record<string, string> = {
-  PHASE_1: '◈', PHASE_2: '◈', PHASE_3: '◈', PHASE_4: '◈', PHASE_5: '◈',
-}
+[FM:PHASE_1]State your assumptions and what you are taking as given[FM:PHASE_2]Apply relevant heuristics and rules of thumb[FM:PHASE_3]Reason from first principles[FM:PHASE_4]Explore implications and edge cases[FM:PHASE_5]Deliver the final synthesized answer — write this as a complete, standalone response in plain prose with no markdown symbols like ## or **.`
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -806,73 +793,68 @@ function App() {
                           {msg.source && <span style={{ fontSize: '9px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', opacity: 0.7 }}>{msg.source === 'local' ? 'LOCAL' : 'CLOUD'}</span>}
                         </div>
                       )}
+                      {/* Message bubble — clean response only */}
                       <div style={{ maxWidth: '90%', padding: '10px 14px', borderRadius: '8px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(26, 26, 26, 0.75)', color: msg.role === 'user' ? '#000' : '#e5e5e5', fontSize: '13px', lineHeight: '1.5', border: msg.role === 'assistant' ? '1px solid rgba(34, 34, 34, 0.5)' : 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', width: msg.role === 'assistant' ? '100%' : undefined }}>
-
-                        {/* Tool call trace — shown above final response, click to expand */}
-                        {msg.toolResults && msg.toolResults.length > 0 && (
-                          <div style={{ marginBottom: '10px', borderBottom: '1px solid #2a2a2a', paddingBottom: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            {msg.toolResults.map((tr, i) => {
-                              const key = `${msg.id}_${i}`
-                              const isExpanded = expandedToolIds.has(key)
-                              const hasMore = tr.output.includes('\n') || tr.output.length > 80
-                              return (
-                                <div key={i} style={{ fontSize: '10px', fontFamily: 'monospace' }}>
-                                  <div
-                                    style={{ color: tr.isError ? '#ef4444' : '#22c55e', display: 'flex', gap: '6px', alignItems: 'flex-start', cursor: hasMore ? 'pointer' : 'default' }}
-                                    onClick={() => hasMore && toggleToolExpand(key)}
-                                  >
-                                    <span style={{ opacity: 0.6 }}>🔧</span>
-                                    <span style={{ color: '#f97316' }}>{tr.name}</span>
-                                    <span style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>→ {tr.output.split('\n')[0]}</span>
-                                    {hasMore && <span style={{ color: '#444', flexShrink: 0 }}>{isExpanded ? '▲' : '▼'}</span>}
-                                  </div>
-                                  {isExpanded && (
-                                    <pre style={{ color: tr.isError ? '#ef4444' : '#888', background: '#0a0a0a', borderRadius: '4px', padding: '6px 8px', marginTop: '4px', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '200px', overflowY: 'auto', margin: '4px 0 0 0' }}>
-                                      {tr.output}
-                                    </pre>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-
                         {/* Streaming cursor */}
                         {msg.streaming ? (
                           <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
-                        ) : msg.content}
+                        ) : <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>}
                         {msg.role === 'assistant' && (
                           <div style={{ marginTop: '10px', display: 'flex', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px', alignItems: 'center' }}>
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={actionButtonStyle}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
                             <button onClick={() => handleSpeak(msg.id, msg.content)} style={actionButtonStyle}>{speakingId === msg.id ? '■' : 'READ'}</button>
                             <button onClick={() => handleFeedback(msg.id, 'up')} title="Helpful" style={{ ...actionButtonStyle, color: msg.feedback === 'up' ? '#22c55e' : '#444', border: msg.feedback === 'up' ? '1px solid #22c55e' : '1px solid #222' }}>▲</button>
                             <button onClick={() => handleFeedback(msg.id, 'down')} title="Not helpful" style={{ ...actionButtonStyle, color: msg.feedback === 'down' ? '#ef4444' : '#444', border: msg.feedback === 'down' ? '1px solid #ef4444' : '1px solid #222' }}>▼</button>
-                            {msg.phases && Object.keys(msg.phases).length > 0 && (
-                              <button onClick={() => toggleReasoning(msg.id)} style={{ ...actionButtonStyle, marginLeft: 'auto', border: reasoningOpen ? '1px solid #f97316' : '1px solid #444', color: reasoningOpen ? '#f97316' : '#888', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <span style={{ fontSize: '8px', display: 'inline-block', transform: reasoningOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
-                                REASONING
-                              </button>
-                            )}
-                          </div>
-                        )}
-                        {msg.role === 'assistant' && msg.phases && reasoningOpen && (
-                          <div style={{ marginTop: '12px', borderTop: '1px solid #2a2a2a', paddingTop: '12px', display: 'flex', flexDirection: 'column', gap: '14px', animation: 'fadeSlideDown 0.2s ease' }}>
-                            <div style={{ fontSize: '9px', letterSpacing: '2px', color: '#f97316', opacity: 0.6, textTransform: 'uppercase' }}>5-Phase Cognitive Scaffold</div>
-                            {(['PHASE_1', 'PHASE_2', 'PHASE_3', 'PHASE_4', 'PHASE_5'] as const).map(phase => {
-                              const content = msg.phases?.[phase]; if (!content) return null
-                              return (
-                                <div key={phase} style={{ borderLeft: '2px solid #f9731640', paddingLeft: '12px' }}>
-                                  <div style={{ fontFamily: "'Crimson Pro', 'Palatino Linotype', Georgia, serif", fontStyle: 'italic', fontSize: '15px', color: '#f97316', marginBottom: '5px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <span style={{ fontSize: '10px', opacity: 0.7 }}>{PHASE_ICONS[phase]}</span>
-                                    {TAG_MAP[`[FM:${phase}]`]}
-                                  </div>
-                                  <div style={{ fontFamily: "'Crimson Pro', 'Palatino Linotype', Georgia, serif", fontStyle: 'italic', fontSize: '14px', color: '#c8c0b8', lineHeight: '1.65', whiteSpace: 'pre-wrap' }}>{content}</div>
-                                </div>
-                              )
-                            })}
                           </div>
                         )}
                       </div>
+
+                      {/* Reasoning trace — tool execution log, below bubble, green, collapsible */}
+                      {msg.role === 'assistant' && msg.toolResults && msg.toolResults.length > 0 && (
+                        <div style={{ width: '100%', maxWidth: '90%', marginTop: '3px' }}>
+                          <button
+                            onClick={() => toggleReasoning(msg.id)}
+                            style={{
+                              width: '100%', textAlign: 'left', padding: '5px 10px',
+                              background: '#050f05', border: '1px solid #22c55e22',
+                              borderRadius: reasoningOpen ? '6px 6px 0 0' : '6px',
+                              cursor: 'pointer', color: reasoningOpen ? '#22c55e' : '#22c55e77',
+                              fontSize: '10px', fontFamily: 'monospace',
+                              display: 'flex', alignItems: 'center', gap: '6px',
+                            }}
+                          >
+                            <span style={{ display: 'inline-block', transform: reasoningOpen ? 'rotate(90deg)' : '', transition: 'transform 0.15s', fontSize: '8px' }}>▶</span>
+                            REASONING TRACE — {msg.toolResults.length} step{msg.toolResults.length !== 1 ? 's' : ''}
+                          </button>
+                          {reasoningOpen && (
+                            <div style={{ background: '#050f05', border: '1px solid #22c55e22', borderTop: 'none', borderRadius: '0 0 6px 6px', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {msg.toolResults.map((tr, i) => {
+                                const key = `${msg.id}_${i}`
+                                const isExpanded = expandedToolIds.has(key)
+                                const hasMore = tr.output.includes('\n') || tr.output.length > 100
+                                return (
+                                  <div key={i} style={{ fontSize: '10px', fontFamily: 'monospace' }}>
+                                    <div
+                                      style={{ display: 'flex', gap: '6px', alignItems: 'flex-start', cursor: hasMore ? 'pointer' : 'default' }}
+                                      onClick={() => hasMore && toggleToolExpand(key)}
+                                    >
+                                      <span style={{ color: tr.isError ? '#ef4444' : '#22c55e', flexShrink: 0 }}>⬡</span>
+                                      <span style={{ color: '#22c55e', opacity: 0.8 }}>{tr.name}</span>
+                                      <span style={{ color: '#447744', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>→ {tr.output.split('\n')[0].slice(0, 120)}</span>
+                                      {hasMore && <span style={{ color: '#22c55e44', flexShrink: 0 }}>{isExpanded ? '▲' : '▼'}</span>}
+                                    </div>
+                                    {isExpanded && (
+                                      <pre style={{ color: tr.isError ? '#ef4444' : '#447744', background: '#030d03', borderRadius: '4px', padding: '6px 8px', marginTop: '4px', fontSize: '9px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '200px', overflowY: 'auto' }}>
+                                        {tr.output}
+                                      </pre>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )
                 })
