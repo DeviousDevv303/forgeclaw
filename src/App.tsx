@@ -210,6 +210,7 @@ function App() {
   const [selectedLanguage, setSelectedLanguage] = useState<string>('en')
   const [rate] = useState<number>(1.0)
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
+  const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const LANGUAGE_NAMES: Record<string, string> = {
@@ -422,6 +423,8 @@ function App() {
         ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, phases, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false }
         : m
       ))
+      // Clear any prior auth failure mark for this provider on successful call
+      if (failedProviders.has(activeProvider)) setFailedProviders(prev => { const n = new Set(prev); n.delete(activeProvider); return n })
       resolveTask(taskId)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
@@ -431,6 +434,14 @@ function App() {
         setMessages(prev => prev.map(m => m.id === cloudMsgId ? { ...m, content: `[ERROR]: ${msg}`, streaming: false } : m))
       } else {
         setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
+      }
+      // Auth failure: mark provider red and auto-switch to next working one
+      const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)
+      if (isAuthError) {
+        const newFailed = new Set([...failedProviders, activeProvider])
+        setFailedProviders(newFailed)
+        const next = PROVIDER_ORDER.find(pid => pid !== activeProvider && providerKeys[pid] && !newFailed.has(pid))
+        if (next) { setActiveProvider(next); setActiveModel(DEFAULT_MODEL[next]) }
       }
     } finally { setLoading(false) }
   }, [apiKey, activeProvider, activeModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -550,16 +561,22 @@ function App() {
                 const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : 'K'
                 const hasKey = !!providerKeys[pid]
                 const isActive = pid === activeProvider
+                const hasFailed = failedProviders.has(pid)
+                const dotColor = hasFailed ? '#ef4444' : (hasKey ? '#22c55e' : '#333')
+                const bgColor = hasFailed ? '#ef444422' : (hasKey ? '#22c55e22' : '#1a1a1a')
+                const titleText = hasFailed
+                  ? `${PROVIDERS[pid].name}: auth failed — click Settings to update key`
+                  : `${PROVIDERS[pid].name}: ${hasKey ? 'key set' : 'no key'} — click to open Settings`
                 return (
                   <span
                     key={pid}
-                    title={`${PROVIDERS[pid].name}: ${hasKey ? 'key set' : 'no key'} — click to open Settings`}
+                    title={titleText}
                     onClick={() => setActiveTab('settings')}
                     style={{
                       width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
-                      background: hasKey ? '#22c55e22' : '#1a1a1a',
-                      border: `1px solid ${isActive ? '#f97316' : (hasKey ? '#22c55e' : '#333')}`,
-                      color: hasKey ? '#22c55e' : '#444',
+                      background: bgColor,
+                      border: `1px solid ${isActive ? '#f97316' : dotColor}`,
+                      color: hasFailed ? '#ef4444' : (hasKey ? '#22c55e' : '#444'),
                       fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                     }}
