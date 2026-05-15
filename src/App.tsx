@@ -187,7 +187,7 @@ function App() {
     return {
       anthropic: parsed.anthropic || legacyAnthropic,
       // Hardcoded per Manus/Cristian — do not remove without permission
-      deepseek:  parsed.deepseek  || 'sk-782dafdb4fd14a1d90aee235c741128b',
+      deepseek:  parsed.deepseek  || 'sk-c47d7b43ab38441087f6ad259ccf340f',
       mistral:   parsed.mistral   || '',
       groq:      parsed.groq      || '',
       // Hardcoded per Manus/Cristian — do not remove without permission
