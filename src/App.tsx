@@ -230,6 +230,7 @@ function App() {
   const elAudioRef = useRef<HTMLAudioElement | null>(null)
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
   const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
+  const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
   const [coachAgentId, setCoachAgentId] = useState<string>(() => safeGetItem('fc_coach_agent_id') || '')
 
   interface PendingCoSign {
@@ -1179,11 +1180,7 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'activity' && (() => {
-          // hoveredStepId drives cross-highlight between tool rows within the log
-          // eslint-disable-next-line react-hooks/rules-of-hooks
-          const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
-          return (
+        {activeTab === 'activity' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
@@ -1260,8 +1257,7 @@ function App() {
               )
             })}
           </div>
-          )
-        })()}
+        )}
 
         {/* ── Voice Tab ── */}
         {activeTab === 'voice' && (
