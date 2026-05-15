@@ -194,6 +194,9 @@ function App() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [selectedLanguage, setSelectedLanguage] = useState<string>('en')
   const [rate] = useState<number>(1.0)
+  const [elApiKey, setElApiKey] = useState<string>(() => safeGetItem('fc_el_api_key') || '')
+  const [elVoiceId, setElVoiceId] = useState<string>(() => safeGetItem('fc_el_voice_id') || '')
+  const elAudioRef = useRef<HTMLAudioElement | null>(null)
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
   const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
   const [coachAgentId, setCoachAgentId] = useState<string>(() => safeGetItem('fc_coach_agent_id') || '')
@@ -495,13 +498,70 @@ function App() {
     navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000)
   }
 
-  const handleSpeak = (id: string, text: string) => {
-    if (speakingId === id) { window.speechSynthesis.cancel(); setSpeakingId(null); return }
+  const handleSpeak = async (id: string, text: string) => {
+    // Stop if already speaking this message
+    if (speakingId === id) {
+      window.speechSynthesis.cancel()
+      elAudioRef.current?.pause()
+      elAudioRef.current = null
+      setSpeakingId(null)
+      return
+    }
+    // Stop anything currently playing
     window.speechSynthesis.cancel()
-    const u = new SpeechSynthesisUtterance(cleanForSpeech(text))
+    elAudioRef.current?.pause()
+    elAudioRef.current = null
+
+    const clean = cleanForSpeech(text)
+
+    // ElevenLabs path — requires API key + voice ID
+    if (elApiKey && elVoiceId) {
+      setSpeakingId(id)
+      try {
+        const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elVoiceId}/stream`, {
+          method: 'POST',
+          headers: {
+            'xi-api-key': elApiKey,
+            'Content-Type': 'application/json',
+            Accept: 'audio/mpeg',
+          },
+          body: JSON.stringify({
+            text: clean,
+            model_id: 'eleven_multilingual_v2',
+            voice_settings: { stability: 0.45, similarity_boost: 0.85, style: 0.35, use_speaker_boost: true },
+          }),
+        })
+        if (!res.ok) throw new Error(`ElevenLabs ${res.status}`)
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        const audio = new Audio(url)
+        elAudioRef.current = audio
+        audio.onended = () => { setSpeakingId(null); URL.revokeObjectURL(url) }
+        audio.onerror = () => { setSpeakingId(null); URL.revokeObjectURL(url) }
+        audio.play()
+      } catch (err) {
+        setSpeakingId(null)
+        emitFailure({ source: 'forgemind', severity: 'warning', message: `ElevenLabs TTS: ${err instanceof Error ? err.message : String(err)}` })
+        // Fall through to browser TTS
+        const u = new SpeechSynthesisUtterance(clean)
+        const voice = getVoiceForLanguage(selectedLanguage)
+        if (voice) u.voice = voice
+        u.rate = rate
+        u.onend = () => setSpeakingId(null)
+        setSpeakingId(id)
+        window.speechSynthesis.speak(u)
+      }
+      return
+    }
+
+    // Browser TTS fallback
+    const u = new SpeechSynthesisUtterance(clean)
     const voice = getVoiceForLanguage(selectedLanguage)
-    if (voice) u.voice = voice; u.rate = rate; u.onend = () => setSpeakingId(null)
-    setSpeakingId(id); window.speechSynthesis.speak(u)
+    if (voice) u.voice = voice
+    u.rate = rate
+    u.onend = () => setSpeakingId(null)
+    setSpeakingId(id)
+    window.speechSynthesis.speak(u)
   }
 
 
@@ -838,6 +898,33 @@ function App() {
                 </div>
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
                   ForgeMind uses these when autonomously calling github_* tools.
+                </div>
+              </div>
+
+              {/* ElevenLabs TTS */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Voice — ElevenLabs API Key
+                </label>
+                <input
+                  type="password"
+                  placeholder="sk_..."
+                  value={elApiKey}
+                  onChange={e => { setElApiKey(e.target.value); safeSetItem('fc_el_api_key', e.target.value) }}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                />
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Voice — ElevenLabs Voice ID
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. qNkzaJoHLLdpvgh5tISm"
+                  value={elVoiceId}
+                  onChange={e => { setElVoiceId(e.target.value); safeSetItem('fc_el_voice_id', e.target.value) }}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                />
+                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
+                  Get your key + Rick Sanchez voice ID from elevenlabs.io → Voice Library. Falls back to browser TTS if empty.
                 </div>
               </div>
 
