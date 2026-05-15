@@ -105,7 +105,7 @@ function cleanForSpeech(text: string): string {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'failures' | 'browserauto' | 'whatsapp'
+type Tab = 'forgemind' | 'failures' | 'browserauto' | 'whatsapp' | 'settings'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -166,7 +166,6 @@ function App() {
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
@@ -526,6 +525,7 @@ function App() {
     { id: 'whatsapp',    label: '💬 WhatsApp' },
     { id: 'failures',    label: unresolvedCount > 0 ? `⚠️ Failures (${unresolvedCount})` : '⚠️ Failures' },
     { id: 'browserauto', label: 'Browser' },
+    { id: 'settings',    label: '⚙ Settings' },
   ]
 
   return (
@@ -534,7 +534,7 @@ function App() {
       {/* Header */}
       <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button onClick={() => setShowSettings(true)} style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: 0 }}>⚙</button>
+          <button onClick={() => setActiveTab('settings')} style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: 0 }}>⚙</button>
           <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>FORGECLAW</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -553,7 +553,7 @@ function App() {
                   <span
                     key={pid}
                     title={`${PROVIDERS[pid].name}: ${hasKey ? 'key set' : 'no key'} — click to open Settings`}
-                    onClick={() => setShowSettings(true)}
+                    onClick={() => setActiveTab('settings')}
                     style={{
                       width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
                       background: hasKey ? '#22c55e22' : '#1a1a1a',
@@ -568,7 +568,7 @@ function App() {
               {/* GitHub token dot */}
               <span
                 title={`GitHub token: ${safeGetItem('gh_token') ? 'set' : 'not set'} — click to open Settings`}
-                onClick={() => setShowSettings(true)}
+                onClick={() => setActiveTab('settings')}
                 style={{
                   width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
                   background: safeGetItem('gh_token') ? '#22c55e22' : '#1a1a1a',
@@ -581,7 +581,7 @@ function App() {
               {/* WhatsApp dot */}
               <span
                 title={`WhatsApp: ${safeGetItem('wa_credentials') ? 'configured' : 'not set'} — click to open Settings`}
-                onClick={() => setShowSettings(true)}
+                onClick={() => setActiveTab('settings')}
                 style={{
                   width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
                   background: safeGetItem('wa_credentials') ? '#22c55e22' : '#1a1a1a',
@@ -636,14 +636,10 @@ function App() {
           </div>
         )}
 
-        {/* Settings Modal */}
-        {showSettings && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowSettings(false)}>
-            <div style={{ background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '20px', width: '90%', maxWidth: '420px', maxHeight: '85dvh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <span style={{ color: '#f97316', fontSize: '14px', fontWeight: 'bold' }}>⚙ Settings</span>
-                <button onClick={() => setShowSettings(false)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '18px' }}>×</button>
-              </div>
+        {/* ── Settings Tab ── */}
+        {activeTab === 'settings' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+            <div style={{ maxWidth: '480px', margin: '0 auto' }}>
 
               {/* Provider selector */}
               <div style={{ marginBottom: '14px' }}>
@@ -771,6 +767,7 @@ function App() {
                   Optional. Enables web_search tool with full results. DuckDuckGo used as fallback.
                 </div>
               </div>
+
             </div>
           </div>
         )}
