@@ -74,14 +74,15 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   kimi: {
     id: 'kimi',
     name: 'Kimi',
-    url: 'https://api.moonshot.cn/v1/chat/completions',
+    url: 'https://api.moonshot.ai/v1/chat/completions',
     models: [
-      { id: 'moonshot-v1-128k', label: 'Kimi 128K',                    contextK: 128, note: 'Long context' },
-      { id: 'moonshot-v1-32k',  label: 'Kimi 32K',                     contextK: 32  },
-      { id: 'moonshot-v1-8k',   label: 'Kimi 8K (fast)',               contextK: 8   },
-      { id: 'kimi-k1-5',        label: 'Kimi k1.5 (reasoning)',        contextK: 128, note: 'Extended reasoning' },
+      { id: 'kimi-k2.6',          label: 'Kimi K2.6',                    contextK: 128, note: 'Latest' },
+      { id: 'kimi-k2.6-thinking', label: 'Kimi K2.6 Thinking',           contextK: 128, note: 'Reasoning traces' },
+      { id: 'kimi-k1-5',          label: 'Kimi k1.5 (reasoning)',        contextK: 128, note: 'Extended reasoning' },
+      { id: 'moonshot-v1-128k',   label: 'Moonshot 128K',                contextK: 128 },
+      { id: 'moonshot-v1-8k',     label: 'Moonshot 8K (fast)',           contextK: 8   },
     ],
-    keyPlaceholder: 'sk-...',
+    keyPlaceholder: 'sk-kimi-...',
   },
 }
 
@@ -93,7 +94,7 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   deepseek:  'deepseek-chat',
   mistral:   'mistral-large-latest',
   groq:      'llama-3.3-70b-versatile',
-  kimi:      'moonshot-v1-128k',
+  kimi:      'kimi-k2.6',
 }
 
 // ─── Call ─────────────────────────────────────────────────────────────────────
