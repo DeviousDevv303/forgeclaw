@@ -22,7 +22,9 @@ import {
   PROVIDERS, PROVIDER_ORDER, DEFAULT_PROVIDER, DEFAULT_MODEL,
   callProvider, testProviderKey,
 } from './lib/modelProviders'
-import type { ProviderId } from './lib/modelProviders'
+import type { ProviderId, ChatMessage as ProviderMessage } from './lib/modelProviders'
+import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
+import type { ToolResult } from './lib/forgeTools'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,6 +39,8 @@ interface Message {
   showReasoning?: boolean
   feedback?: 'up' | 'down'
   reasoning?: ReasoningChainType
+  toolResults?: ToolResult[]   // agentic tool calls this message made
+  streaming?: boolean          // true while tokens are arriving
 }
 
 interface CorpusEntry {
@@ -298,39 +302,112 @@ function App() {
       return
     }
 
-    let responseText = ''; let source: 'local' | 'cloud' = 'cloud'
+    let source: 'local' | 'cloud' = 'cloud'
     try {
-      // Try Ollama local first (fast, free, no key needed)
+      // ── Try Ollama local first (fast, free, no key needed) ─────────────────
       let ollamaOk = false
       try {
+        const ollamaModel = safeGetItem('fc_ollama_model') || 'qwen2.5:1.8b'
         const r = await fetch('http://localhost:11434/api/generate', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: 'qwen2.5:1.8b', system: FORGEMIND_SYSTEM_PROMPT, prompt: promptText, stream: false }),
-          signal: AbortSignal.timeout(1500),
+          body: JSON.stringify({ model: ollamaModel, system: FORGEMIND_SYSTEM_PROMPT, prompt: promptText, stream: false }),
+          signal: AbortSignal.timeout(2000),
         })
         if (r.ok) {
-          const d = await r.json(); responseText = d.response || ''; source = 'local'; setLastSource('local'); ollamaOk = true
+          const d = await r.json() as { response: string }
+          const { cleanText, tagsFound, phases } = parseAndExecuteTags(d.response || '', promptText, 'ollama')
+          source = 'local'; setLastSource('local'); ollamaOk = true
+          setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, activeTags: tagsFound, phases, showReasoning: false }])
+          resolveTask(taskId)
         }
       } catch { /* fall through to cloud */ }
+      if (ollamaOk) { setLoading(false); return }
 
-      if (!ollamaOk) {
-        const historyMessages = messages.slice(-10).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+      // ── Cloud agentic loop (tool calling, up to 15 iterations) ────────────
+      source = 'cloud'
+      const msgId = (Date.now() + 1).toString()
+
+      // Streaming placeholder
+      setMessages(prev => [...prev, { id: msgId, role: 'assistant', content: '', timestamp: Date.now(), source: 'cloud', streaming: true }])
+
+      const toolCtx = loadToolContext()
+      const historyMessages: ProviderMessage[] = messages.slice(-12).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+      const conversationMessages: ProviderMessage[] = [...historyMessages, { role: 'user', content: promptText }]
+      const allToolResults: ToolResult[] = []
+      let finalText = ''
+      const MAX_ITERS = 15
+
+      for (let iter = 0; iter < MAX_ITERS; iter++) {
+        const isLastIter = iter === MAX_ITERS - 1
+        let streamBuffer = ''
+
         const result = await callProvider(
-          activeProvider,
-          activeModel,
-          FORGEMIND_SYSTEM_PROMPT,
-          [...historyMessages, { role: 'user', content: promptText }],
-          apiKey,
+          activeProvider, activeModel, FORGEMIND_SYSTEM_PROMPT,
+          conversationMessages, apiKey,
+          {
+            tools: isLastIter ? undefined : FORGE_TOOLS,
+            onToken: (token) => {
+              streamBuffer += token
+              setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: streamBuffer, streaming: true } : m))
+            },
+          }
         )
-        responseText = result.text; source = 'cloud'; setLastSource('cloud')
+
+        // No tool calls → final answer
+        if (!result.toolCalls?.length) {
+          finalText = result.text || streamBuffer
+          break
+        }
+
+        // Tool calls → execute each, feed results back
+        const iterResults: ToolResult[] = []
+        for (const call of result.toolCalls) {
+          const output = await executeTool(call, toolCtx)
+          iterResults.push({ toolCallId: call.id, name: call.name, output, isError: output.startsWith('[TOOL ERROR]') })
+        }
+        allToolResults.push(...iterResults)
+
+        // Show progress in the streaming message
+        const toolSummary = iterResults.map(r => `🔧 ${r.name} → ${r.output.slice(0, 80)}${r.output.length > 80 ? '…' : ''}`).join('\n')
+        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: toolSummary, streaming: true } : m))
+
+        // Build next turn for Anthropic (multi-part content) vs OpenAI-compat
+        if (activeProvider === 'anthropic') {
+          conversationMessages.push({
+            role: 'assistant',
+            content: [
+              ...(result.text ? [{ type: 'text' as const, text: result.text }] : []),
+              ...result.toolCalls.map(tc => ({ type: 'tool_use' as const, id: tc.id, name: tc.name, input: tc.input })),
+            ],
+          })
+          conversationMessages.push({
+            role: 'user',
+            content: iterResults.map(r => ({ type: 'tool_result' as const, tool_use_id: r.toolCallId, content: r.output })),
+          })
+        } else {
+          // OpenAI-compat tool result format
+          conversationMessages.push({
+            role: 'assistant',
+            content: result.text || '',
+            tool_calls: result.toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.name, arguments: JSON.stringify(tc.input) } })),
+          })
+          for (const r of iterResults) {
+            conversationMessages.push({ role: 'tool', content: r.output, tool_call_id: r.toolCallId })
+          }
+        }
       }
 
-      const { cleanText, tagsFound, phases } = parseAndExecuteTags(responseText, promptText, source === 'local' ? 'ollama' : 'claude-haiku')
-      setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, activeTags: tagsFound, phases, showReasoning: false }])
+      setLastSource('cloud')
+      const { cleanText, tagsFound, phases } = parseAndExecuteTags(finalText, promptText, 'claude-haiku')
+      setMessages(prev => prev.map(m => m.id === msgId
+        ? { ...m, content: cleanText, streaming: false, activeTags: tagsFound, phases, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false }
+        : m
+      ))
       resolveTask(taskId)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error'
-      emitFailure({ source: source === 'local' ? 'ollama' : activeProvider, severity: 'error', message: msg, context: { promptLength: promptText.length } })
+      const failSource = activeProvider // past ollamaOk early return, always cloud here
+      emitFailure({ source: failSource, severity: 'error', message: msg, context: { promptLength: promptText.length } })
       setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
     } finally { setLoading(false) }
   }, [apiKey, activeProvider, activeModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -555,6 +632,49 @@ function App() {
                 {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 Key valid — {PROVIDERS[activeProvider].name}</span>}
                 {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Invalid key</span>}
               </div>
+
+              {/* Ollama local model scaffold */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Local Ollama Model <span style={{ color: '#333', textTransform: 'none' }}>(used first, cloud fallback)</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="qwen2.5:1.8b"
+                  defaultValue={safeGetItem('fc_ollama_model') || 'qwen2.5:1.8b'}
+                  onChange={e => safeSetItem('fc_ollama_model', e.target.value)}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                />
+                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
+                  Any model installed via <code style={{ color: '#555' }}>ollama pull</code>. Leave blank to always use cloud.
+                </div>
+              </div>
+
+              {/* GitHub tool connector config */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  GitHub Tool Connector
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {[
+                    { key: 'gh_token',    label: 'GitHub Token', placeholder: 'ghp_...' },
+                    { key: 'fc_gh_owner', label: 'Default Owner', placeholder: 'DeviousDevv303' },
+                    { key: 'fc_gh_repo',  label: 'Default Repo',  placeholder: 'forgeclaw' },
+                  ].map(f => (
+                    <input
+                      key={f.key}
+                      type={f.key === 'gh_token' ? 'password' : 'text'}
+                      placeholder={f.placeholder}
+                      defaultValue={safeGetItem(f.key) || ''}
+                      onChange={e => safeSetItem(f.key, e.target.value)}
+                      style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                    />
+                  ))}
+                </div>
+                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
+                  ForgeMind uses these when autonomously calling github_* tools.
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -583,7 +703,24 @@ function App() {
                         </div>
                       )}
                       <div style={{ maxWidth: '90%', padding: '10px 14px', borderRadius: '8px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(26, 26, 26, 0.75)', color: msg.role === 'user' ? '#000' : '#e5e5e5', fontSize: '13px', lineHeight: '1.5', border: msg.role === 'assistant' ? '1px solid rgba(34, 34, 34, 0.5)' : 'none', boxShadow: '0 2px 10px rgba(0,0,0,0.3)', width: msg.role === 'assistant' ? '100%' : undefined }}>
-                        {msg.content}
+
+                        {/* Tool call trace — shown above final response */}
+                        {msg.toolResults && msg.toolResults.length > 0 && (
+                          <div style={{ marginBottom: '10px', borderBottom: '1px solid #2a2a2a', paddingBottom: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            {msg.toolResults.map((tr, i) => (
+                              <div key={i} style={{ fontSize: '10px', color: tr.isError ? '#ef4444' : '#22c55e', fontFamily: 'monospace', display: 'flex', gap: '6px', alignItems: 'flex-start' }}>
+                                <span style={{ opacity: 0.6 }}>🔧</span>
+                                <span style={{ color: '#f97316' }}>{tr.name}</span>
+                                <span style={{ color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }}>→ {tr.output.split('\n')[0]}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Streaming cursor */}
+                        {msg.streaming ? (
+                          <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
+                        ) : msg.content}
                         {msg.role === 'assistant' && (
                           <div style={{ marginTop: '10px', display: 'flex', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px', alignItems: 'center' }}>
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={actionButtonStyle}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
@@ -670,6 +807,11 @@ function App() {
 
         {activeTab === 'browserauto' && <BrowserAutomationPanel />}
       </main>
+
+      {/* Footer signature */}
+      <footer style={{ textAlign: 'center', padding: '6px', borderTop: '1px solid #111', fontSize: '9px', color: '#2a2a2a', letterSpacing: '1.5px', flexShrink: 0, userSelect: 'none' }}>
+        FORGECLAW · AUTONOMOUS REASONING ENGINE · BUILT BY DEVIOUSDEVV303
+      </footer>
 
       <style>{`
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }

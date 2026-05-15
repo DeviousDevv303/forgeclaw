@@ -84,15 +84,41 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
 
 // ─── Call ─────────────────────────────────────────────────────────────────────
 
+import { toAnthropicTools, toOpenAITools } from './forgeTools'
+import type { ToolDef, ToolCall } from './forgeTools'
+
 export interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
+  role: 'user' | 'assistant' | 'tool'
+  content: string | AnthropicContent[]
+  tool_call_id?: string   // OpenAI-compat tool result
+  tool_calls?: OpenAIToolCall[]
+}
+
+// Anthropic multi-part content block
+export type AnthropicContent =
+  | { type: 'text';        text: string }
+  | { type: 'tool_use';    id: string; name: string; input: Record<string, unknown> }
+  | { type: 'tool_result'; tool_use_id: string; content: string }
+
+// OpenAI-compat tool call shape
+export interface OpenAIToolCall {
+  id: string
+  type: 'function'
+  function: { name: string; arguments: string }
 }
 
 export interface CallResult {
   text: string
   provider: ProviderId
   model: string
+  toolCalls?: ToolCall[]     // populated when LLM wants to call tools
+  stopReason?: string
+}
+
+export interface CallOptions {
+  tools?: ToolDef[]
+  onToken?: (token: string) => void  // streaming callback
+  maxTokens?: number
 }
 
 export async function callProvider(
@@ -101,11 +127,23 @@ export async function callProvider(
   systemPrompt: string,
   messages: ChatMessage[],
   apiKey: string,
+  options: CallOptions = {},
 ): Promise<CallResult> {
   const cfg = PROVIDERS[providerId]
+  const { tools, onToken, maxTokens = 4096 } = options
+  const streaming = !!onToken
 
-  // ── Anthropic (proprietary message format) ───────────────────────────────
+  // ── Anthropic ───────────────────────────────────────────────────────────────
   if (providerId === 'anthropic') {
+    const body: Record<string, unknown> = {
+      model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages,
+      stream: streaming,
+    }
+    if (tools?.length) body.tools = toAnthropicTools(tools)
+
     const res = await fetch(cfg.url, {
       method: 'POST',
       headers: {
@@ -114,35 +152,111 @@ export async function callProvider(
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify({ model, max_tokens: 2048, system: systemPrompt, messages }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) {
       const e = await res.json().catch(() => ({})) as { error?: { message?: string } }
       throw new Error(e.error?.message || `Anthropic ${res.status}`)
     }
-    const d = await res.json() as { content: Array<{ text: string }> }
-    return { text: d.content[0]?.text ?? '', provider: providerId, model }
+
+    if (streaming && res.body) {
+      let fullText = ''
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          try {
+            const evt = JSON.parse(line.slice(6)) as { type: string; delta?: { type: string; text?: string } }
+            if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && evt.delta.text) {
+              fullText += evt.delta.text
+              onToken(evt.delta.text)
+            }
+          } catch { /* skip non-JSON lines */ }
+        }
+      }
+      return { text: fullText, provider: providerId, model, stopReason: 'end_turn' }
+    }
+
+    type AnthropicResponse = {
+      stop_reason: string
+      content: Array<
+        | { type: 'text'; text: string }
+        | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
+      >
+    }
+    const d = await res.json() as AnthropicResponse
+    const textBlock = d.content.find(b => b.type === 'text') as { type: 'text'; text: string } | undefined
+    const toolBlocks = d.content.filter(b => b.type === 'tool_use') as Array<{ type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }>
+    const toolCalls: ToolCall[] = toolBlocks.map(b => ({ id: b.id, name: b.name, input: b.input }))
+    return { text: textBlock?.text ?? '', provider: providerId, model, toolCalls: toolCalls.length ? toolCalls : undefined, stopReason: d.stop_reason }
   }
 
   // ── OpenAI-compatible: DeepSeek / Mistral / Groq ─────────────────────────
+  const oaiMessages = [{ role: 'system', content: systemPrompt }, ...messages]
+  const body: Record<string, unknown> = { model, max_tokens: maxTokens, messages: oaiMessages, stream: streaming }
+  if (tools?.length) body.tools = toOpenAITools(tools)
+
   const res = await fetch(cfg.url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 2048,
-      messages: [{ role: 'system', content: systemPrompt }, ...messages],
-    }),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
   })
   if (!res.ok) {
     const e = await res.json().catch(() => ({})) as { error?: { message?: string } }
     throw new Error(e.error?.message || `${cfg.name} ${res.status}`)
   }
-  const d = await res.json() as { choices: Array<{ message: { content: string } }> }
-  return { text: d.choices[0]?.message?.content ?? '', provider: providerId, model }
+
+  if (streaming && res.body) {
+    let fullText = ''
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ') || line.includes('[DONE]')) continue
+        try {
+          const evt = JSON.parse(line.slice(6)) as { choices?: Array<{ delta?: { content?: string } }> }
+          const token = evt.choices?.[0]?.delta?.content
+          if (token) { fullText += token; onToken(token) }
+        } catch { /* skip */ }
+      }
+    }
+    return { text: fullText, provider: providerId, model }
+  }
+
+  type OAIResponse = {
+    choices: Array<{
+      message: { content: string | null; tool_calls?: OpenAIToolCall[] }
+      finish_reason: string
+    }>
+  }
+  const d = await res.json() as OAIResponse
+  const msg = d.choices[0]?.message
+  const rawToolCalls = msg?.tool_calls
+  const toolCalls: ToolCall[] | undefined = rawToolCalls?.map(tc => ({
+    id: tc.id,
+    name: tc.function.name,
+    input: JSON.parse(tc.function.arguments) as Record<string, unknown>,
+  }))
+  return {
+    text: msg?.content ?? '',
+    provider: providerId,
+    model,
+    toolCalls: toolCalls?.length ? toolCalls : undefined,
+    stopReason: d.choices[0]?.finish_reason,
+  }
 }
 
 // Quick key validation — pings the provider with a 1-token request
