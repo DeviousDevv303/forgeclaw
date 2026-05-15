@@ -23,6 +23,7 @@ import {
 } from './lib/modelProviders'
 import type { ProviderId, ChatMessage as ProviderMessage } from './lib/modelProviders'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
+import { guardianCheck } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -373,9 +374,16 @@ function App() {
           break
         }
 
-        // Tool calls → execute each, feed results back
+        // Tool calls → Guardian gate, then execute
         const iterResults: ToolResult[] = []
         for (const call of result.toolCalls) {
+          const gate = guardianCheck(call, result.text || '')
+          if (gate.blocked) {
+            const output = `[GUARDIAN BLOCKED] ${gate.reason}`
+            iterResults.push({ toolCallId: call.id, name: call.name, output, isError: true })
+            emitFailure({ source: 'forgemind', severity: 'warning', message: gate.reason! })
+            continue
+          }
           const output = await executeTool(call, toolCtx)
           iterResults.push({ toolCallId: call.id, name: call.name, output, isError: output.startsWith('[TOOL ERROR]') })
         }
