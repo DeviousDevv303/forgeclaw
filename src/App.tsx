@@ -1194,7 +1194,7 @@ function App() {
                               <span style={{ color: '#5a9e44', fontSize: '11px', fontFamily: REASONING_TRACE_FONT, letterSpacing: '0.5px' }}>Reasoning Trace</span>
                             </button>
                             {reasoningOpen && (
-                              <div style={{ background: '#060e06', border: '1px solid #1e3318', borderRadius: '3px', padding: '10px 14px', marginTop: '3px' }}>
+                              <div style={{ background: '#060e06', border: '1px solid #1e3318', borderRadius: '3px', padding: '10px 14px', marginTop: '3px', maxHeight: '180px', overflowY: 'auto' }}>
                                 <p style={{ color: '#4a7a3a', fontSize: '11px', fontFamily: "'Courier New', Courier, monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: '1.65' }}>
                                   {msg.thinking}
                                 </p>
