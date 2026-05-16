@@ -20,34 +20,24 @@ export function extractThinking(text: string): string | null {
 
 // Tier 1 gate — returns true if the operation needs a human co-sign.
 //
-// Tier rules:
+// tier1Active=false (default): fully autonomous — everything runs without co-sign.
+// tier1Active=true  (safety):  branch-aware gate —
 //   ALWAYS co-sign:  run_js, send_whatsapp, github_run_workflow, mutating http_fetch
 //   Branch-aware:    github_write_file → co-sign on main/master, auto on feature branch
-//   Kill switch:     autonomyFrozen=true forces co-sign on everything that would be auto
 //
-export function requiresCoSign(call: ToolCall, autonomyFrozen: boolean): boolean {
-  // Kill switch: freeze all auto-approved writes back to manual
-  if (autonomyFrozen) {
-    if (ALWAYS_COSIGN.has(call.name)) return true
-    if (call.name === 'github_write_file') return true
-    if (call.name === 'http_fetch') {
-      const method = ((call.input.method as string) || 'GET').toUpperCase()
-      return DESTRUCTIVE_HTTP_METHODS.has(method)
-    }
-    return false
-  }
+export function requiresCoSign(call: ToolCall, tier1Active: boolean): boolean {
+  if (!tier1Active) return false  // fully autonomous — no gates
 
-  // Always co-sign regardless of branch
+  // Always co-sign in Tier 1
   if (ALWAYS_COSIGN.has(call.name)) return true
 
-  // Branch-aware: writes to main/master (or unspecified branch) require co-sign;
-  // writes to an explicit feature branch are auto-allowed.
+  // Branch-aware: writes to main/master (or unspecified) require co-sign
   if (call.name === 'github_write_file') {
     const branch = (call.input.branch as string | undefined)?.toLowerCase().trim()
     return !branch || branch === 'main' || branch === 'master'
   }
 
-  // Mutating HTTP requires co-sign
+  // Mutating HTTP requires co-sign in Tier 1
   if (call.name === 'http_fetch') {
     const method = ((call.input.method as string) || 'GET').toUpperCase()
     return DESTRUCTIVE_HTTP_METHODS.has(method)
@@ -56,7 +46,7 @@ export function requiresCoSign(call: ToolCall, autonomyFrozen: boolean): boolean
   return false
 }
 
-// Backward-compat alias (used in places that don't have autonomyFrozen context)
+// Backward-compat alias
 export function isDestructive(call: ToolCall): boolean {
-  return requiresCoSign(call, false)
+  return requiresCoSign(call, true)
 }

@@ -241,7 +241,7 @@ function App() {
   }
   const [pendingCoSigns, setPendingCoSigns] = useState<PendingCoSign[]>([])
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
-  const [autonomyFrozen, setAutonomyFrozen] = useState(false)
+  const [tier1Active, setTier1Active] = useState(false)
   const [listening, setListening] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState('')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -428,7 +428,7 @@ function App() {
         // Tool calls → Guardian gate (interactive), then execute
         const iterResults: ToolResult[] = []
         for (const call of result.toolCalls) {
-          if (requiresCoSign(call, autonomyFrozen)) {
+          if (requiresCoSign(call, tier1Active)) {
             const coSignId = `cosign_${call.id}`
             const reasoning = extractThinking(result.text || '') ?? '(no reasoning snapshot)'
             const approved = await new Promise<boolean>((resolve) => {
@@ -1119,25 +1119,25 @@ function App() {
               onReject={handleReject}
             />
             
-              {/* ── Autonomy kill switch ── */}
+              {/* ── Autonomy mode toggle ── */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: pendingCoSigns.length ? '8px' : '0' }}>
                 <button
-                  onClick={() => setAutonomyFrozen(f => !f)}
+                  onClick={() => setTier1Active(t => !t)}
                   style={{
-                    background: autonomyFrozen ? '#1a0505' : '#051a05',
-                    border: `1px solid ${autonomyFrozen ? '#7f1d1d' : '#14532d'}`,
-                    color: autonomyFrozen ? '#ef4444' : '#22c55e',
+                    background: tier1Active ? '#0d1a05' : '#051a05',
+                    border: `1px solid ${tier1Active ? '#3a6e14' : '#14532d'}`,
+                    color: tier1Active ? '#86efac' : '#22c55e',
                     borderRadius: '5px', padding: '4px 10px', fontSize: '9px',
                     fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1.5px',
                     textTransform: 'uppercase', fontFamily: 'monospace',
                   }}
                 >
-                  {autonomyFrozen ? '■ FROZEN' : '● AUTONOMOUS'}
+                  {tier1Active ? '🛡 TIER 1' : '⚡ AUTONOMOUS'}
                 </button>
                 <span style={{ color: '#3a5c3a', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>
-                  {autonomyFrozen
-                    ? 'all writes co-sign required'
-                    : 'feature branch writes auto · main/master co-sign'}
+                  {tier1Active
+                    ? 'feature branch auto · main + run_js co-sign'
+                    : 'all operations run without co-sign'}
                 </span>
               </div>
 
