@@ -596,13 +596,13 @@ function App() {
     const synth = window.speechSynthesis
     console.log('[TTS] browserSpeak called:', { id, chars: clean.length })
     synth.cancel()
-    synth.resume()
 
     const u = new SpeechSynthesisUtterance(clean)
-    utterancesRef.current.push(u)  // hold a ref so Chrome GC can't collect it mid-speech
+    utterancesRef.current.push(u)
 
     const voice = getVoiceForLanguage(selectedLanguage)
     if (voice) { u.voice = voice; console.log('[TTS] voice:', voice.name) }
+    else { console.warn('[TTS] no voice found for lang:', selectedLanguage) }
     u.rate = rate
 
     let started = false
@@ -619,26 +619,37 @@ function App() {
     }
 
     setSpeakingId(id)
+    // resume() immediately before speak() — Chrome can re-suspend in the gap if called earlier
     setTimeout(() => {
       try {
+        synth.resume()
         synth.speak(u)
         console.log('[TTS] speak() enqueued — pending:', synth.pending, 'speaking:', synth.speaking)
-        // Safety net: if onstart hasn't fired after 5s the engine silently jammed
+        // Jam detection: if onstart hasn't fired in 2s, engine is stuck — retry once
         setTimeout(() => {
           if (!started) {
-            console.warn('[TTS] onstart never fired — silent jam detected, resetting engine')
+            console.warn('[TTS] jam detected — auto-retrying')
             synth.cancel()
-            synth.resume()
-            setSpeakingId(null)
             utterancesRef.current = utterancesRef.current.filter(x => x !== u)
+            const retry = new SpeechSynthesisUtterance(clean)
+            if (voice) retry.voice = voice
+            retry.rate = rate
+            retry.onstart = () => { console.log('[TTS] retry onstart fired') }
+            retry.onerror = () => { setSpeakingId(null) }
+            retry.onend   = () => { setSpeakingId(null) }
+            utterancesRef.current.push(retry)
+            synth.resume()
+            synth.speak(retry)
+            // Give up after another 3s
+            setTimeout(() => { if (!retry.onstart) setSpeakingId(null) }, 3000)
           }
-        }, 5000)
+        }, 2000)
       } catch (err) {
         console.error('[TTS] speak() threw DOMException:', err)
         setSpeakingId(null)
         utterancesRef.current = utterancesRef.current.filter(x => x !== u)
       }
-    }, 80)
+    }, 150)
   }
 
   const handleSpeak = async (id: string, text: string) => {
