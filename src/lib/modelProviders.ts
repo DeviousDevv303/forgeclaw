@@ -52,9 +52,9 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     name: 'Mistral',
     url: 'https://api.mistral.ai/v1/chat/completions',
     models: [
-      { id: 'mistral-large-latest',  label: 'Mistral Large',    contextK: 128 },
-      { id: 'mistral-medium-latest', label: 'Mistral Medium',   contextK: 128 },
-      { id: 'open-mistral-7b',       label: 'Mistral 7B (open)', contextK: 32 },
+      { id: 'mistral-large-latest',  label: 'Mistral Large',         contextK: 128 },
+      { id: 'mistral-small-latest',  label: 'Mistral Small',         contextK: 32  },
+      { id: 'open-mistral-nemo',     label: 'Mistral Nemo (open)',   contextK: 128 },
     ],
     keyPlaceholder: 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
   },
@@ -252,8 +252,14 @@ export async function callProvider(
     body: JSON.stringify(body),
   })
   if (!res.ok) {
-    const e = await res.json().catch(() => ({})) as { error?: { message?: string } }
-    throw new Error(e.error?.message || `${cfg.name} ${res.status}`)
+    const raw = await res.text().catch(() => '')
+    let msg = `${cfg.name} ${res.status}`
+    try {
+      const e = JSON.parse(raw) as { error?: { message?: string } | string; message?: string }
+      const detail = typeof e.error === 'string' ? e.error : e.error?.message ?? e.message
+      if (detail) msg = detail
+    } catch { if (raw) msg = raw.slice(0, 200) }
+    throw new Error(msg)
   }
 
   if (streaming && res.body) {
