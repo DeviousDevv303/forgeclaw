@@ -242,6 +242,33 @@ function App() {
   const [pendingCoSigns, setPendingCoSigns] = useState<PendingCoSign[]>([])
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
   const [tier1Active, setTier1Active] = useState(false)
+
+  // Ollama live model discovery
+  interface OllamaModel { id: string; label: string; size: string }
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
+  const [ollamaOnline, setOllamaOnline] = useState<boolean | null>(null)
+
+  const fetchOllamaModels = useCallback(async () => {
+    try {
+      const res = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(3000) })
+      if (!res.ok) throw new Error('offline')
+      type Tag = { name: string; size: number; details?: { parameter_size?: string } }
+      const data = await res.json() as { models: Tag[] }
+      const discovered: OllamaModel[] = (data.models || []).map(m => ({
+        id: m.name,
+        label: m.name,
+        size: m.details?.parameter_size ?? (m.size ? `${(m.size / 1e9).toFixed(1)}GB` : ''),
+      }))
+      setOllamaModels(discovered)
+      setOllamaOnline(true)
+      // Auto-select first discovered model if current activeModel isn't in the list
+      if (discovered.length && !discovered.find(m => m.id === activeModel)) {
+        setActiveModel(discovered[0].id)
+      }
+    } catch {
+      setOllamaOnline(false)
+    }
+  }, [activeModel])
   const [listening, setListening] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState('')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -270,6 +297,8 @@ function App() {
   useEffect(() => { safeSetItem('fm_provider', activeProvider) }, [activeProvider])
   useEffect(() => { safeSetItem('fm_model', activeModel) }, [activeModel])
   useEffect(() => { safeSetItem('fm_provider_keys', JSON.stringify(providerKeys)) }, [providerKeys])
+  // Auto-discover Ollama models on mount and whenever Ollama becomes the active provider
+  useEffect(() => { if (activeProvider === 'ollama') fetchOllamaModels() }, [activeProvider, fetchOllamaModels])
 
   // On mount: if active provider has no key, auto-switch to first one that does
   // Ollama is always considered "has key" since it runs locally with no auth
@@ -364,17 +393,16 @@ function App() {
       let ollamaOk = false
       if (activeProvider === 'ollama') {
         try {
-          const ollamaModel = safeGetItem('fc_ollama_model') || 'qwen2.5:1.8b'
           const r = await fetch('http://localhost:11434/api/generate', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: ollamaModel, system: FORGEMIND_SYSTEM_PROMPT, prompt: promptText, stream: false }),
+            body: JSON.stringify({ model: activeModel, system: FORGEMIND_SYSTEM_PROMPT, prompt: promptText, stream: false }),
             signal: AbortSignal.timeout(2000),
           })
           if (r.ok) {
             const d = await r.json() as { response: string }
-            const { cleanText, tagsFound, thinking } = parseAndExecuteTags(d.response || '', promptText, 'ollama')
+            const { cleanText, tagsFound, thinking } = parseAndExecuteTags(d.response || '', promptText, `ollama:${activeModel}`)
             source = 'local'; setLastSource('local'); ollamaOk = true
-            setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, provider: 'ollama', model: ollamaModel, activeTags: tagsFound, thinking, showReasoning: false }])
+            setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, provider: 'ollama', model: activeModel, activeTags: tagsFound, thinking, showReasoning: false }])
             resolveTask(taskId)
           }
         } catch { /* fall through to cloud */ }
@@ -871,17 +899,40 @@ function App() {
 
               {/* Model selector */}
               <div style={{ marginBottom: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                  <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
+                  {activeProvider === 'ollama' && (
+                    <>
+                      <span style={{ fontSize: '9px', color: ollamaOnline === true ? '#22c55e' : ollamaOnline === false ? '#ef4444' : '#555', fontFamily: 'monospace' }}>
+                        {ollamaOnline === true ? `● ${ollamaModels.length} installed` : ollamaOnline === false ? '● offline' : '● …'}
+                      </span>
+                      <button onClick={fetchOllamaModels} style={{ background: 'none', border: '1px solid #222', color: '#555', borderRadius: '3px', padding: '1px 6px', fontSize: '9px', cursor: 'pointer', fontFamily: 'monospace' }}>↺</button>
+                    </>
+                  )}
+                </div>
                 <select
                   value={activeModel}
                   onChange={e => setActiveModel(e.target.value)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
-                  {PROVIDERS[activeProvider].models.map(m => (
-                    <option key={m.id} value={m.id} style={{ background: '#111' }}>
-                      {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx)
-                    </option>
-                  ))}
+                  {activeProvider === 'ollama'
+                    ? ollamaModels.length > 0
+                      ? ollamaModels.map(m => (
+                          <option key={m.id} value={m.id} style={{ background: '#111' }}>
+                            {m.label}{m.size ? ` (${m.size})` : ''}
+                          </option>
+                        ))
+                      : PROVIDERS['ollama'].models.map(m => (
+                          <option key={m.id} value={m.id} style={{ background: '#111' }}>
+                            {m.label} ({m.contextK}K ctx)
+                          </option>
+                        ))
+                    : PROVIDERS[activeProvider].models.map(m => (
+                        <option key={m.id} value={m.id} style={{ background: '#111' }}>
+                          {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx)
+                        </option>
+                      ))
+                  }
                 </select>
               </div>
 
