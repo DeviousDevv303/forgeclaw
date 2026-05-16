@@ -274,6 +274,8 @@ function App() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const utterancesRef = useRef<SpeechSynthesisUtterance[]>([])         // prevent Chrome GC of in-flight utterances
+  const ttsResumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const LANGUAGE_NAMES: Record<string, string> = {
     en: 'English',
@@ -313,16 +315,22 @@ function App() {
   useEffect(() => {
     const loadVoices = () => {
       const allVoices = window.speechSynthesis.getVoices()
-      // Filter to English, Spanish, Russian, Chinese only
       const allowedLangs = ['en', 'es', 'ru', 'zh']
-      const filtered = allVoices.filter(v => {
-        const langPrefix = v.lang.split('-')[0].toLowerCase()
-        return allowedLangs.includes(langPrefix)
-      })
+      const filtered = allVoices.filter(v => allowedLangs.includes(v.lang.split('-')[0].toLowerCase()))
       setVoices(filtered)
+      console.log('[TTS] voices loaded:', filtered.length)
     }
-    loadVoices()
+    // Set handler BEFORE first getVoices() call — fixes Chrome voice-loading race
     window.speechSynthesis.onvoiceschanged = loadVoices
+    loadVoices()
+  }, [])
+
+  // Keep Chrome TTS engine warm — prevents silent jams after long idle periods
+  useEffect(() => {
+    ttsResumeIntervalRef.current = setInterval(() => {
+      if (!window.speechSynthesis.speaking) window.speechSynthesis.resume()
+    }, 10_000)
+    return () => { if (ttsResumeIntervalRef.current) clearInterval(ttsResumeIntervalRef.current) }
   }, [])
 
   const logToCorpus = (prompt: string, response: string, source: string) => {
@@ -586,19 +594,51 @@ function App() {
   const browserSpeak = (id: string, clean: string) => {
     if (!clean) { setSpeakingId(null); return }
     const synth = window.speechSynthesis
-    // Chrome bug: synthesis engine silently jams after extended use.
-    // Cancel → resume → small delay forces it to reset before the new utterance.
+    console.log('[TTS] browserSpeak called:', { id, chars: clean.length })
     synth.cancel()
     synth.resume()
+
     const u = new SpeechSynthesisUtterance(clean)
+    utterancesRef.current.push(u)  // hold a ref so Chrome GC can't collect it mid-speech
+
     const voice = getVoiceForLanguage(selectedLanguage)
-    if (voice) u.voice = voice
+    if (voice) { u.voice = voice; console.log('[TTS] voice:', voice.name) }
     u.rate = rate
-    u.onerror = () => setSpeakingId(null)
-    u.onend = () => setSpeakingId(null)
+
+    let started = false
+    u.onstart = () => { started = true; console.log('[TTS] onstart fired') }
+    u.onerror  = (e) => {
+      console.warn('[TTS] onerror:', e.error)
+      setSpeakingId(null)
+      utterancesRef.current = utterancesRef.current.filter(x => x !== u)
+    }
+    u.onend = () => {
+      console.log('[TTS] onend')
+      setSpeakingId(null)
+      utterancesRef.current = utterancesRef.current.filter(x => x !== u)
+    }
+
     setSpeakingId(id)
-    // 80ms gap lets the cancel/resume flush before we enqueue the new utterance
-    setTimeout(() => synth.speak(u), 80)
+    setTimeout(() => {
+      try {
+        synth.speak(u)
+        console.log('[TTS] speak() enqueued — pending:', synth.pending, 'speaking:', synth.speaking)
+        // Safety net: if onstart hasn't fired after 5s the engine silently jammed
+        setTimeout(() => {
+          if (!started) {
+            console.warn('[TTS] onstart never fired — silent jam detected, resetting engine')
+            synth.cancel()
+            synth.resume()
+            setSpeakingId(null)
+            utterancesRef.current = utterancesRef.current.filter(x => x !== u)
+          }
+        }, 5000)
+      } catch (err) {
+        console.error('[TTS] speak() threw DOMException:', err)
+        setSpeakingId(null)
+        utterancesRef.current = utterancesRef.current.filter(x => x !== u)
+      }
+    }, 80)
   }
 
   const handleSpeak = async (id: string, text: string) => {
