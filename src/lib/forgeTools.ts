@@ -64,13 +64,14 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'github_write_file',
-    description: 'Create or update a file in a GitHub repository with a commit message.',
+    description: 'Create or update a file in a GitHub repository with a commit message. Use a feature branch (not main) for autonomous writes — main requires Guardian co-sign.',
     parameters: {
       type: 'object',
       properties: {
         path:    { type: 'string', description: 'File path relative to repo root' },
         content: { type: 'string', description: 'Full file content to write' },
         message: { type: 'string', description: 'Commit message' },
+        branch:  { type: 'string', description: 'Branch to write to. Omit or use "main" to write to the default branch (requires co-sign). Use a feature branch name for autonomous writes.' },
         owner:   { type: 'string', description: 'GitHub owner (defaults to configured)' },
         repo:    { type: 'string', description: 'GitHub repo (defaults to configured)' },
       },
@@ -201,6 +202,32 @@ export const FORGE_TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'github_get_run_status',
+    description: 'Get the status and conclusion of a GitHub Actions workflow run by run ID.',
+    parameters: {
+      type: 'object',
+      properties: {
+        run_id: { type: 'string', description: 'Workflow run ID (returned by github_run_workflow)' },
+        owner:  { type: 'string', description: 'GitHub owner' },
+        repo:   { type: 'string', description: 'GitHub repo' },
+      },
+      required: ['run_id'],
+    },
+  },
+  {
+    name: 'github_get_run_logs',
+    description: 'Get job and step details for a GitHub Actions workflow run. Returns each job name, its conclusion, and the status of every step — useful for diagnosing CI failures.',
+    parameters: {
+      type: 'object',
+      properties: {
+        run_id: { type: 'string', description: 'Workflow run ID' },
+        owner:  { type: 'string', description: 'GitHub owner' },
+        repo:   { type: 'string', description: 'GitHub repo' },
+      },
+      required: ['run_id'],
+    },
+  },
+  {
     name: 'web_search',
     description: 'Search the web for current information. Uses Brave Search if an API key is configured, otherwise DuckDuckGo instant answers.',
     parameters: {
@@ -259,22 +286,59 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const path    = input.path    as string
         const content = input.content as string
         const message = input.message as string
+        const branch  = input.branch  as string | undefined
         if (!token) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
 
-        // Get existing SHA if file exists
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
+        // Get existing SHA (required by GitHub API to update an existing file)
+        const existingUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}${branch ? `?ref=${branch}` : ''}`
         let sha: string | undefined
-        const existing = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { headers }).then(r => r.json()).catch(() => null) as { sha?: string } | null
+        const existing = await fetch(existingUrl, { headers }).then(r => r.json()).catch(() => null) as { sha?: string } | null
         if (existing?.sha) sha = existing.sha
 
         const body: Record<string, unknown> = { message, content: btoa(unescape(encodeURIComponent(content))) }
         if (sha) body.sha = sha
+        if (branch) body.branch = branch
         const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { method: 'PUT', headers, body: JSON.stringify(body) })
         if (!res.ok) {
           const err = await res.json().catch(() => ({})) as { message?: string }
           throw new Error(err.message || `GitHub ${res.status}`)
         }
-        return `✓ ${sha ? 'Updated' : 'Created'} ${path} in ${owner}/${repo} with message: "${message}"`
+        const branchLabel = branch ? ` on branch ${branch}` : ''
+        return `✓ ${sha ? 'Updated' : 'Created'} ${path} in ${owner}/${repo}${branchLabel} — "${message}"`
+      }
+
+      // ── GitHub: get run status ───────────────────────────────────────────────
+      case 'github_get_run_status': {
+        const runId = input.run_id as string
+        const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
+        if (token) headers.Authorization = `token ${token}`
+        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}`, { headers })
+        if (!res.ok) throw new Error(`GitHub ${res.status}`)
+        type Run = { id: number; name: string; status: string; conclusion: string | null; html_url: string; created_at: string; updated_at: string }
+        const run = await res.json() as Run
+        return `Run #${run.id} — ${run.name}\nStatus: ${run.status}\nConclusion: ${run.conclusion ?? 'pending'}\nStarted: ${run.created_at}\nUpdated: ${run.updated_at}\n${run.html_url}`
+      }
+
+      // ── GitHub: get run logs (job + step details) ────────────────────────────
+      case 'github_get_run_logs': {
+        const runId = input.run_id as string
+        const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
+        if (token) headers.Authorization = `token ${token}`
+        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/jobs`, { headers })
+        if (!res.ok) throw new Error(`GitHub ${res.status}`)
+        type Step = { name: string; status: string; conclusion: string | null; number: number }
+        type Job  = { id: number; name: string; status: string; conclusion: string | null; steps: Step[] }
+        const data = await res.json() as { jobs: Job[] }
+        const lines: string[] = []
+        for (const job of data.jobs) {
+          lines.push(`\nJOB: ${job.name} — ${job.conclusion ?? job.status}`)
+          for (const step of job.steps) {
+            const icon = step.conclusion === 'success' ? '✅' : step.conclusion === 'failure' ? '❌' : step.conclusion === 'skipped' ? '⏭' : '⏳'
+            lines.push(`  ${icon} Step ${step.number}: ${step.name} (${step.conclusion ?? step.status})`)
+          }
+        }
+        return lines.join('\n').trim() || '(no jobs found)'
       }
 
       // ── GitHub: list files ───────────────────────────────────────────────────
