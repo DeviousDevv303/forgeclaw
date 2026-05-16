@@ -1,3 +1,5 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). AGPL-3.0 License.
+// Original work. Unauthorized commercial use prohibited. https://github.com/DeviousDevv303/forgeclaw
 export interface MonitorOperation {
   id: string
   type: 'read' | 'write' | 'execute' | 'error' | 'info' | 'warn'

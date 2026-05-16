@@ -1,3 +1,5 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). AGPL-3.0 License.
+// Original work. Unauthorized commercial use prohibited. https://github.com/DeviousDevv303/forgeclaw
 // STANDING RULE: Do not modify severity definitions or add predictive types
 
 export type FailureSeverity = 'info' | 'warning' | 'error' | 'critical'

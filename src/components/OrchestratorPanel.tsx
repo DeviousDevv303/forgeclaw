@@ -1,3 +1,5 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). AGPL-3.0 License.
+// Original work. Unauthorized commercial use prohibited. https://github.com/DeviousDevv303/forgeclaw
 import { useState } from 'react'
 import type { AgentContract, AgentId, OrchestratorEvent, TaskSpec } from '../types/orchestrator'
 

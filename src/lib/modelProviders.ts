@@ -1,3 +1,5 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). AGPL-3.0 License.
+// Original work. Unauthorized commercial use prohibited. https://github.com/DeviousDevv303/forgeclaw
 // ─── Provider Registry ────────────────────────────────────────────────────────
 // ForgeMind routes cloud calls through this module.
 // Safety governance lives in ForgeClaw's architecture, not the LLM layer.

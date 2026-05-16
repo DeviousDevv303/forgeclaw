@@ -1,3 +1,5 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). AGPL-3.0 License.
+// Original work. Unauthorized commercial use prohibited. https://github.com/DeviousDevv303/forgeclaw
 // ─── ForgeClaw Tool Suite ─────────────────────────────────────────────────────
 // Gives ForgeMind hands. Each tool maps to a real browser-executable action.
 // Tool calling works with all four providers (Anthropic, DeepSeek, Mistral, Groq).

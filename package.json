@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Multi-agent governance shell with autonomous GitHub operations, browser automation, and integrity enforcement.",
   "author": "DeviousDevv303 <towerslutz@gmail.com>",
-  "license": "MIT",
+  "license": "AGPL-3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

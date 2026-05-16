@@ -1,3 +1,5 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). AGPL-3.0 License.
+// Original work. Unauthorized commercial use prohibited. https://github.com/DeviousDevv303/forgeclaw
 export interface GuardianTrace {
   R0: boolean  // Contract exists (precondition)
   R1: boolean  // Identity valid (precondition)

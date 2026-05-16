@@ -1,3 +1,5 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). AGPL-3.0 License.
+// Original work. Unauthorized commercial use prohibited. https://github.com/DeviousDevv303/forgeclaw
 // ReasoningPhase — INTERNAL ONLY.
 // Zero JSX render paths. Guardian review logic only.
 // If a React component imports ReasoningPhase for rendering, that is a bug.
