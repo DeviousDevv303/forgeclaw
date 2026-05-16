@@ -53,3 +53,35 @@ Do not add xAI/Grok provider.
 
 Both agents must pull from `origin/main` before starting any work session.
 Neither agent can push directly to GitHub — Claude pushes via local proxy.
+
+---
+
+## Commit Message Format — REQUIRED
+
+Every commit that touches a shared file MUST include a `[co-agent:]` tag:
+
+```
+feat: description
+
+Body.
+
+[co-agent: claude] TOUCHES: src/App.tsx — KimiClaw TTS (browserSpeak) preserved ✅
+```
+
+Rules:
+- `PRESERVE: <symbol>` — flag something the other agent must not overwrite
+- `TOUCHES: <file>` — any shared file touched in this commit
+- `OVERWRITES: <sha> <what>` — explicit callout when reverting prior work
+
+KimiClaw greps with: `git log --oneline | grep "co-agent"`
+
+---
+
+## src/App.tsx Collision Rules
+
+`browserSpeak()` (~L586) is KimiClaw's TTS hardening. Before editing App.tsx:
+1. `grep -n "utterancesRef\|ttsResumeIntervalRef" src/App.tsx`
+2. If present — those lines belong to KimiClaw. Do not remove or simplify them.
+3. Add `[co-agent: claude] PRESERVE: browserSpeak TTS hardening` to your commit.
+
+This was overwritten 3 times (d43b848, 06b47f4, restored at 7e441ac). Do not repeat.
