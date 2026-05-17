@@ -10,6 +10,7 @@ import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { WhatsAppConnector } from './components/WhatsAppConnector'
 import { StrategicCoach } from './components/StrategicCoach'
+import { AgentsPanel } from './components/AgentsPanel'
 import { ReasoningChainComponent } from './components/reasoning/ReasoningChain'
 import { SystemMonitor } from './components/monitor/SystemMonitor'
 import { useReasoningStream } from './hooks/useReasoningStream'
@@ -121,7 +122,7 @@ function renderWithLinks(text: string): React.ReactNode[] {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'coach' | 'research' | 'coder'
+type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'coach' | 'agents'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -829,8 +830,7 @@ function App() {
   const TABS: { id: Tab; label: string; badge?: string }[] = [
     { id: 'forgemind',   label: 'FORGE' },
     { id: 'coach',       label: 'COACH' },
-    { id: 'research',    label: 'RESEARCH' },
-    { id: 'coder',       label: 'CODER' },
+    { id: 'agents',      label: 'AGENTS' },
     { id: 'voice',       label: 'VOICE' },
     { id: 'whatsapp',    label: 'WHATSAPP' },
     { id: 'failures',    label: 'FAILURES', badge: unresolvedCount > 0 ? String(unresolvedCount) : undefined },
@@ -1412,28 +1412,9 @@ function App() {
           </div>
         )}
 
-        {/* ── Research Agent Tab ── */}
-        {activeTab === 'research' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#333', fontFamily: 'monospace', fontSize: '11px' }}>
-            <span style={{ fontSize: '24px' }}>🔍</span>
-            <span style={{ color: '#f97316', letterSpacing: '3px', fontSize: '10px', fontWeight: 'bold' }}>RESEARCH AGENT</span>
-            <span style={{ color: '#444', fontSize: '9px', textAlign: 'center', maxWidth: '260px', lineHeight: '1.6' }}>
-              Deep-dive researcher with web search, URL reading, and synthesis. KimiClaw building this panel.
-            </span>
-            <span style={{ color: '#222', fontSize: '8px', letterSpacing: '2px' }}>COMING SOON</span>
-          </div>
-        )}
-
-        {/* ── Coder Agent Tab ── */}
-        {activeTab === 'coder' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#333', fontFamily: 'monospace', fontSize: '11px' }}>
-            <span style={{ fontSize: '24px' }}>⌨️</span>
-            <span style={{ color: '#f97316', letterSpacing: '3px', fontSize: '10px', fontWeight: 'bold' }}>CODE AGENT</span>
-            <span style={{ color: '#444', fontSize: '9px', textAlign: 'center', maxWidth: '260px', lineHeight: '1.6' }}>
-              TypeScript / React / Python specialist. Reads, writes, and iterates on code with full GitHub access. KimiClaw building this panel.
-            </span>
-            <span style={{ color: '#222', fontSize: '8px', letterSpacing: '2px' }}>COMING SOON</span>
-          </div>
+        {/* ── Agents Tab ── */}
+        {activeTab === 'agents' && (
+          <AgentsPanel activeProvider={activeProvider} activeModel={activeModel} apiKey={apiKey} />
         )}
 
         {activeTab === 'activity' && (

@@ -36,7 +36,7 @@ Do not change colors, fonts, sizes, or structure for any reason.
 
 ## Tab Structure (current)
 
-`FORGE | COACH | VOICE | WHATSAPP | FAILURES | ACTIVITY | SETTINGS`
+`FORGE | COACH | AGENTS | VOICE | WHATSAPP | FAILURES | ACTIVITY | SETTINGS`
 
 Do not add or remove tabs without Cristian's explicit instruction.
 Do not restore `RepoAgent` or `OrchestratorPanel` tabs.
