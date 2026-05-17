@@ -193,9 +193,14 @@ function App() {
     if (!saved || saved === 'groq') return DEFAULT_PROVIDER
     return saved
   })
-  const [activeModel, setActiveModel] = useState<string>(() =>
-    safeGetItem('fm_model') || DEFAULT_MODEL[DEFAULT_PROVIDER]
-  )
+  const [activeModel, setActiveModel] = useState<string>(() => {
+    const savedProvider = (safeGetItem('fm_provider') as ProviderId | null) || DEFAULT_PROVIDER
+    const savedModel = safeGetItem('fm_model')
+    // If saved model belongs to saved provider, use it; otherwise use provider default
+    const providerModels = PROVIDERS[savedProvider]?.models.map(m => m.id) || []
+    if (savedModel && providerModels.includes(savedModel)) return savedModel
+    return DEFAULT_MODEL[savedProvider]
+  })
   // One key slot per provider; migrate existing fm_api_key into anthropic slot
   const [providerKeys, setProviderKeys] = useState<Record<ProviderId, string>>(() => {
     const stored = safeGetItem('fm_provider_keys')
