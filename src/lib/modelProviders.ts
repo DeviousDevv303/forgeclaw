@@ -274,20 +274,23 @@ export async function callProvider(
     oaiHeaders['X-Title'] = 'ForgeClaw'
   }
 
-  const res = await fetch(cfg.url, {
-    method: 'POST',
-    headers: oaiHeaders,
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
+  // OpenRouter free-tier endpoints are flaky — retry transient provider errors
+  const maxAttempts = providerId === 'openrouter' ? 3 : 1
+  let res!: Response
+  let lastErrMsg = `${cfg.name} error`
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1500))
+    res = await fetch(cfg.url, { method: 'POST', headers: oaiHeaders, body: JSON.stringify(body) })
+    if (res.ok) break
     const raw = await res.text().catch(() => '')
-    let msg = `${cfg.name} ${res.status}`
     try {
       const e = JSON.parse(raw) as { error?: { message?: string } | string; message?: string }
       const detail = typeof e.error === 'string' ? e.error : e.error?.message ?? e.message
-      if (detail) msg = detail
-    } catch { if (raw) msg = raw.slice(0, 200) }
-    throw new Error(msg)
+      lastErrMsg = detail || `${cfg.name} ${res.status}`
+    } catch { lastErrMsg = raw ? raw.slice(0, 200) : `${cfg.name} ${res.status}` }
+    const isTransient = /provider returned error|upstream|overload/i.test(lastErrMsg) || res.status === 502 || res.status === 503
+    if (!isTransient || attempt === maxAttempts - 1) throw new Error(lastErrMsg)
   }
 
   if (streaming && res.body) {
