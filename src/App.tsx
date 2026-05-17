@@ -1032,7 +1032,15 @@ function App() {
                     type={showApiKey ? 'text' : 'password'}
                     placeholder={PROVIDERS[activeProvider].keyPlaceholder}
                     value={providerKeys[activeProvider]}
-                    onChange={e => { setProviderKeys(prev => ({ ...prev, [activeProvider]: e.target.value })); setApiKeyStatus('unverified') }}
+                    onChange={e => {
+                      const val = e.target.value
+                      setProviderKeys(prev => {
+                        const next = { ...prev, [activeProvider]: val }
+                        safeSetItem('fm_provider_keys', JSON.stringify(next))  // sync write — survives immediate refresh
+                        return next
+                      })
+                      setApiKeyStatus('unverified')
+                    }}
                     style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                   />
                   <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
