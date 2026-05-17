@@ -1224,7 +1224,7 @@ function App() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
                           <span style={{ fontSize: '12px' }}>🧠</span>
                           {msg.provider && (
-                            <span style={{ fontSize: '8px', color: msg.source === 'local' ? '#10b981' : '#3b82f6', opacity: 0.75, fontFamily: 'monospace', letterSpacing: '1px', textTransform: 'uppercase' }}>
+                            <span style={{ fontSize: '11px', color: '#5a9e44', fontFamily: 'monospace', letterSpacing: '1px', textTransform: 'uppercase' }}>
                               {msg.provider}{msg.model ? ` · ${msg.model}` : ''}
                             </span>
                           )}
