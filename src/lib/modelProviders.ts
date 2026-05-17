@@ -109,13 +109,13 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     name: 'OpenRouter',
     url: 'https://openrouter.ai/api/v1/chat/completions',
     models: [
-      { id: 'google/gemma-4-27b-it',                    label: 'Gemma 4 27B',              contextK: 128, note: 'Top uncensored benchmark' },
-      { id: 'google/gemma-4-9b-it',                     label: 'Gemma 4 9B (fast)',         contextK: 32  },
-      { id: 'meta-llama/llama-3.3-70b-instruct',        label: 'Llama 3.3 70B',            contextK: 128 },
-      { id: 'meta-llama/llama-3.1-405b-instruct',       label: 'Llama 3.1 405B',           contextK: 128 },
+      { id: 'google/gemma-2-27b-it',                    label: 'Gemma 2 27B',               contextK: 128, note: 'Uncensored open model' },
+      { id: 'google/gemma-2-9b-it',                     label: 'Gemma 2 9B (fast)',          contextK: 32  },
+      { id: 'meta-llama/llama-3.3-70b-instruct',        label: 'Llama 3.3 70B',             contextK: 128 },
+      { id: 'meta-llama/llama-3.1-8b-instruct',         label: 'Llama 3.1 8B (fast)',        contextK: 128 },
       { id: 'nousresearch/hermes-3-llama-3.1-405b',     label: 'Hermes 3 405B (uncensored)', contextK: 128, note: 'Fully uncensored' },
-      { id: 'deepseek/deepseek-r1',                     label: 'DeepSeek R1',               contextK: 128 },
-      { id: 'mistralai/mistral-large',                  label: 'Mistral Large',             contextK: 128 },
+      { id: 'deepseek/deepseek-r1',                     label: 'DeepSeek R1',                contextK: 128 },
+      { id: 'mistralai/mistral-large',                  label: 'Mistral Large',              contextK: 128 },
     ],
     keyPlaceholder: 'sk-or-...',
     keyPrefix: 'sk-or-',
@@ -132,7 +132,7 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   groq:        'llama-3.3-70b-versatile',
   kimi:        'kimi-k2.6',
   ollama:      'llama3.2:3b',
-  openrouter:  'google/gemma-4-27b-it',
+  openrouter:  'meta-llama/llama-3.3-70b-instruct',
 }
 
 // ─── Call ─────────────────────────────────────────────────────────────────────

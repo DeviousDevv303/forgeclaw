@@ -1046,6 +1046,26 @@ function App() {
                 {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Invalid key</span>}
               </div>
 
+              {/* OpenRouter custom model ID */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  OpenRouter — Custom Model ID
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. google/gemma-4-27b-it or meta-llama/llama-3.3-70b-instruct"
+                  defaultValue={safeGetItem('fc_openrouter_model') || ''}
+                  onChange={e => {
+                    safeSetItem('fc_openrouter_model', e.target.value)
+                    if (activeProvider === 'openrouter' && e.target.value.trim()) setActiveModel(e.target.value.trim())
+                  }}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                />
+                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
+                  Find exact IDs at openrouter.ai/models — paste the full path, e.g. <span style={{ color: '#444' }}>google/gemma-4-27b-it</span>
+                </div>
+              </div>
+
               {/* Ollama local model scaffold */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
