@@ -91,6 +91,8 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     name: 'Ollama',
     url: 'http://localhost:11434/v1/chat/completions',
     models: [
+      { id: 'gemma4:latest',     label: 'Gemma 4 (latest)',       contextK: 128 },
+      { id: 'gemma4:4b',         label: 'Gemma 4 4B',             contextK: 128 },
       { id: 'llama3.2:3b',       label: 'Llama 3.2 3B (fast)',    contextK: 128 },
       { id: 'llama3.1:8b',       label: 'Llama 3.1 8B',           contextK: 128 },
       { id: 'qwen2.5:7b',        label: 'Qwen 2.5 7B',            contextK: 128 },

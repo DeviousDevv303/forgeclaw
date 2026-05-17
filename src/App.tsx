@@ -801,12 +801,16 @@ function App() {
 
   const getStatusIndicator = () => {
     const modelLabel = PROVIDERS[activeProvider].models.find(m => m.id === activeModel)?.label ?? activeModel
+    // Ollama is local — no key needed, skip auth checks
+    if (activeProvider === 'ollama') {
+      return <span style={{ color: '#10b981', fontWeight: 'bold' }}>● {modelLabel}</span>
+    }
     if (!apiKey) return <span style={{ color: '#ef4444' }}>🔴 No API Key</span>
     if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>🔴 Invalid Key</span>
     if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>🟡 {PROVIDERS[activeProvider].name}</span>
     if (lastSource === 'local') return <span style={{ color: '#10b981', fontWeight: 'bold' }}>● Local</span>
     if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>● {modelLabel}</span>
-    return <span style={{ color: '#6b6b6b' }}>● {PROVIDERS[activeProvider].name}</span>
+    return <span style={{ color: '#6b6b6b' }}>● {modelLabel}</span>
   }
 
   const TABS: { id: Tab; label: string; badge?: string }[] = [
@@ -945,7 +949,7 @@ function App() {
       {/* Main Content */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 2, isolation: 'isolate', overflow: 'hidden' }}>
 
-        {!apiKey && (
+        {!apiKey && activeProvider !== 'ollama' && (
           <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginBottom: '12px', textAlign: 'center' }}>
             <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 No API Key configured. Click ⚙ to add your {PROVIDERS[activeProvider].name} key.</span>
           </div>
