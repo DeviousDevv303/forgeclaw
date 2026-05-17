@@ -111,7 +111,8 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     name: 'OpenRouter',
     url: 'https://openrouter.ai/api/v1/chat/completions',
     models: [
-      { id: 'google/gemma-2-27b-it',                    label: 'Gemma 2 27B',               contextK: 128, note: 'Uncensored open model' },
+      { id: 'google/gemma-4-26b-a4b-it:free',           label: 'Gemma 4 26B (free)',         contextK: 262, note: 'Top uncensored benchmark' },
+      { id: 'google/gemma-2-27b-it',                    label: 'Gemma 2 27B',               contextK: 128 },
       { id: 'google/gemma-2-9b-it',                     label: 'Gemma 2 9B (fast)',          contextK: 32  },
       { id: 'meta-llama/llama-3.3-70b-instruct',        label: 'Llama 3.3 70B',             contextK: 128 },
       { id: 'meta-llama/llama-3.1-8b-instruct',         label: 'Llama 3.1 8B (fast)',        contextK: 128 },
@@ -134,7 +135,7 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   groq:        'llama-3.3-70b-versatile',
   kimi:        'kimi-k2.6',
   ollama:      'llama3.2:3b',
-  openrouter:  'meta-llama/llama-3.3-70b-instruct',
+  openrouter:  'google/gemma-4-26b-a4b-it:free',
 }
 
 // ─── Call ─────────────────────────────────────────────────────────────────────
