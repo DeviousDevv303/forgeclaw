@@ -8,6 +8,8 @@ const ALWAYS_COSIGN = new Set([
   'run_js',              // unsandboxed — full localStorage access including API keys
   'send_whatsapp',       // external message, irreversible
   'github_run_workflow', // triggers production pipelines
+  'gmail_send',          // external email, irreversible
+  'calendar_create',     // creates real calendar events
 ])
 
 // HTTP methods that modify state

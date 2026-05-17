@@ -28,6 +28,7 @@ import type { ProviderId, ChatMessage as ProviderMessage } from './lib/modelProv
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
+import { runSubAgent } from './lib/managedAgent'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ function renderWithLinks(text: string): React.ReactNode[] {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'coach'
+type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'coach' | 'research' | 'coder'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -234,6 +235,17 @@ function App() {
   const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
   const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
   const [coachAgentId, setCoachAgentId] = useState<string>(() => safeGetItem('fc_coach_agent_id') || '')
+
+  // Activity log — Manus-like live view of tool calls
+  interface ActivityEntry {
+    id: string
+    timestamp: number
+    tool: string
+    input: Record<string, unknown>
+    output?: string
+    status: 'running' | 'done' | 'error'
+  }
+  const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
 
   interface PendingCoSign {
     id: string
@@ -427,7 +439,11 @@ function App() {
       // Streaming placeholder
       setMessages(prev => [...prev, { id: msgId, role: 'assistant', content: '', timestamp: Date.now(), source: 'cloud', streaming: true }])
 
-      const toolCtx = loadToolContext()
+      const toolCtx = {
+        ...loadToolContext(),
+        spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
+          runSubAgent(systemPrompt, task, tools, activeProvider, activeModel, apiKey, FORGE_TOOLS, loadToolContext()),
+      }
       const historyMessages: ProviderMessage[] = messages.slice(-12).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
       const conversationMessages: ProviderMessage[] = [...historyMessages, { role: 'user', content: promptText }]
       const allToolResults: ToolResult[] = []
@@ -497,8 +513,11 @@ function App() {
               continue
             }
           }
+          const actEntryId = `act_${call.id}_${Date.now()}`
+          setActivityLog(prev => [...prev.slice(-99), { id: actEntryId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
           const output = await executeTool(call, toolCtx)
           const isErr = output.startsWith('[TOOL ERROR]')
+          setActivityLog(prev => prev.map(e => e.id === actEntryId ? { ...e, output: output.slice(0, 300), status: isErr ? 'error' : 'done' } : e))
           const stepId = `step_${call.id}`
           chainSteps.push({ id: stepId, icon: isErr ? '❌' : '✅', label: call.name, status: isErr ? 'error' : 'done', timestamp: new Date().toISOString(), body: output.split('\n')[0].slice(0, 200), linkedToolCallIds: [call.id] })
           iterResults.push({ toolCallId: call.id, name: call.name, output, isError: isErr, reasoningStepId: stepId })
@@ -792,10 +811,12 @@ function App() {
   const TABS: { id: Tab; label: string; badge?: string }[] = [
     { id: 'forgemind',   label: 'FORGE' },
     { id: 'coach',       label: 'COACH' },
+    { id: 'research',    label: 'RESEARCH' },
+    { id: 'coder',       label: 'CODER' },
     { id: 'voice',       label: 'VOICE' },
     { id: 'whatsapp',    label: 'WHATSAPP' },
     { id: 'failures',    label: 'FAILURES', badge: unresolvedCount > 0 ? String(unresolvedCount) : undefined },
-    { id: 'activity',    label: 'ACTIVITY' },
+    { id: 'activity',    label: 'ACTIVITY', badge: activityLog.filter(e => e.status === 'running').length > 0 ? '●' : undefined },
     { id: 'settings',    label: 'SETTINGS' },
   ]
 
@@ -1111,6 +1132,23 @@ function App() {
                 </div>
               </div>
 
+              {/* Google OAuth Token */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Google OAuth Token — Gmail + Calendar
+                </label>
+                <input
+                  type="password"
+                  placeholder="ya29...."
+                  defaultValue={safeGetItem('fc_google_token') || ''}
+                  onChange={e => safeSetItem('fc_google_token', e.target.value)}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                />
+                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
+                  Google Cloud Console → APIs → OAuth 2.0. Scopes needed: gmail.send, gmail.readonly, calendar, calendar.readonly.
+                </div>
+              </div>
+
               {/* Strategic Coach Agent ID */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -1323,15 +1361,76 @@ function App() {
           </div>
         )}
 
+        {/* ── Research Agent Tab ── */}
+        {activeTab === 'research' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#333', fontFamily: 'monospace', fontSize: '11px' }}>
+            <span style={{ fontSize: '24px' }}>🔍</span>
+            <span style={{ color: '#f97316', letterSpacing: '3px', fontSize: '10px', fontWeight: 'bold' }}>RESEARCH AGENT</span>
+            <span style={{ color: '#444', fontSize: '9px', textAlign: 'center', maxWidth: '260px', lineHeight: '1.6' }}>
+              Deep-dive researcher with web search, URL reading, and synthesis. KimiClaw building this panel.
+            </span>
+            <span style={{ color: '#222', fontSize: '8px', letterSpacing: '2px' }}>COMING SOON</span>
+          </div>
+        )}
+
+        {/* ── Coder Agent Tab ── */}
+        {activeTab === 'coder' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', color: '#333', fontFamily: 'monospace', fontSize: '11px' }}>
+            <span style={{ fontSize: '24px' }}>⌨️</span>
+            <span style={{ color: '#f97316', letterSpacing: '3px', fontSize: '10px', fontWeight: 'bold' }}>CODE AGENT</span>
+            <span style={{ color: '#444', fontSize: '9px', textAlign: 'center', maxWidth: '260px', lineHeight: '1.6' }}>
+              TypeScript / React / Python specialist. Reads, writes, and iterates on code with full GitHub access. KimiClaw building this panel.
+            </span>
+            <span style={{ color: '#222', fontSize: '8px', letterSpacing: '2px' }}>COMING SOON</span>
+          </div>
+        )}
+
         {activeTab === 'activity' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
               <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>EXECUTION LOG</span>
-              <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{messages.filter(m => m.role === 'assistant').length} RESPONSES · {messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0)} TOOL CALLS</span>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                {activityLog.length > 0 && (
+                  <button onClick={() => setActivityLog([])} style={{ background: 'none', border: '1px solid #222', color: '#444', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>CLEAR</button>
+                )}
+                <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{messages.filter(m => m.role === 'assistant').length} RESPONSES · {messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0)} TOOL CALLS</span>
+              </div>
             </div>
 
-            {messages.length === 0 && (
+            {/* ── Live tool activity (Manus-style) ── */}
+            {activityLog.length > 0 && (
+              <div style={{ marginBottom: '16px', border: '1px solid #1a1a1a', borderRadius: '6px', overflow: 'hidden' }}>
+                <div style={{ padding: '6px 10px', background: '#0d0d0d', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: activityLog.some(e => e.status === 'running') ? '#f97316' : '#22c55e', animation: activityLog.some(e => e.status === 'running') ? 'pulse 1s infinite' : 'none' }} />
+                  <span style={{ color: '#f97316', fontSize: '9px', letterSpacing: '2px', fontWeight: 'bold' }}>LIVE AGENT WORK</span>
+                  <span style={{ color: '#333', fontSize: '8px', marginLeft: 'auto' }}>{activityLog.length} STEPS</span>
+                </div>
+                {activityLog.map(entry => (
+                  <div key={entry.id} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '6px 10px', borderBottom: '1px solid #0d0d0d', background: entry.status === 'running' ? '#0a0d0a' : 'transparent' }}>
+                    <span style={{ fontSize: '9px', flexShrink: 0, marginTop: '1px' }}>
+                      {entry.status === 'running' ? '⟳' : entry.status === 'error' ? '✗' : '✓'}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={{ color: entry.status === 'error' ? '#ef4444' : entry.status === 'running' ? '#f97316' : '#22c55e', fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>{entry.tool}</span>
+                        <span style={{ color: '#333', fontSize: '7px' }}>{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                      </div>
+                      <div style={{ color: '#444', fontSize: '8px', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {Object.entries(entry.input).slice(0, 2).map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`).join(' · ')}
+                      </div>
+                      {entry.output && (
+                        <div style={{ color: entry.status === 'error' ? '#ef444488' : '#3a6a3a', fontSize: '8px', marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {entry.output.split('\n')[0].slice(0, 120)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {messages.length === 0 && activityLog.length === 0 && (
               <div style={{ color: '#333', fontSize: '10px', textAlign: 'center', marginTop: '40px', letterSpacing: '2px' }}>NO ACTIVITY YET</div>
             )}
 

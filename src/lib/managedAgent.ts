@@ -1,5 +1,75 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+import type { ToolDef, ToolCall, ToolContext } from './forgeTools'
+import { executeTool } from './forgeTools'
+import { callProvider } from './modelProviders'
+import type { ProviderId } from './modelProviders'
+
+// ─── Sub-agent runner ─────────────────────────────────────────────────────────
+// Runs a mini agentic loop (max 8 iterations) with a custom system prompt.
+// Used by the spawn_agent tool so ForgeMind can delegate complex subtasks.
+
+export async function runSubAgent(
+  systemPrompt: string,
+  task: string,
+  allowedTools: string[] | undefined,
+  provider: ProviderId,
+  model: string,
+  apiKey: string,
+  allTools: ToolDef[],
+  toolCtx: ToolContext,
+): Promise<string> {
+  const tools = allowedTools
+    ? allTools.filter(t => allowedTools.includes(t.name))
+    : allTools
+
+  type Msg = { role: 'user' | 'assistant'; content: unknown }
+  const messages: Msg[] = [{ role: 'user', content: task }]
+  const MAX_ITERS = 8
+
+  for (let i = 0; i < MAX_ITERS; i++) {
+    const isLast = i === MAX_ITERS - 1
+    const result = await callProvider(provider, model, systemPrompt, messages as Parameters<typeof callProvider>[3], apiKey, {
+      tools: isLast ? undefined : tools,
+    })
+
+    if (!result.toolCalls?.length) {
+      return result.text || '(no response)'
+    }
+
+    const iterResults = await Promise.all(
+      result.toolCalls.map(async (tc: ToolCall) => ({
+        toolCallId: tc.id,
+        name: tc.name,
+        output: await executeTool(tc, toolCtx),
+      }))
+    )
+
+    if (provider === 'anthropic') {
+      messages.push({
+        role: 'assistant',
+        content: [
+          ...(result.text ? [{ type: 'text', text: result.text }] : []),
+          ...result.toolCalls.map((tc: ToolCall) => ({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input })),
+        ],
+      })
+      messages.push({
+        role: 'user',
+        content: iterResults.map(r => ({ type: 'tool_result', tool_use_id: r.toolCallId, content: r.output })),
+      })
+    } else {
+      messages.push({ role: 'assistant', content: result.text || '' })
+      for (const r of iterResults) {
+        messages.push({ role: 'user', content: `[Tool: ${r.name}] ${r.output}` })
+      }
+    }
+  }
+
+  return '(sub-agent reached iteration limit)'
+}
+
+// ─── Managed Agent session API ────────────────────────────────────────────────
+
 const BASE = 'https://api.anthropic.com/v1'
 
 const betaHeaders = (apiKey: string) => ({
