@@ -603,9 +603,9 @@ function App() {
       promptText = `[File: ${attachedFile.name}]\n\n${fileContent}\n\n${input || 'Analyze this file.'}`
     }
     
-    await sendPrompt(promptText)
     setInput('')
     setAttachedFile(null)
+    await sendPrompt(promptText)
   }
 
   const handleCopy = (id: string, text: string) => {
