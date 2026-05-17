@@ -1249,6 +1249,11 @@ function App() {
                             <button onClick={() => handleFeedback(msg.id, 'down')} title="Not helpful" style={{ ...actionButtonStyle, color: msg.feedback === 'down' ? '#ef4444' : '#444', border: msg.feedback === 'down' ? '1px solid #ef4444' : '1px solid #222' }}>▼</button>
                           </div>
                         )}
+                        {msg.role === 'user' && (
+                          <div style={{ marginTop: '8px', display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                            <button onClick={() => handleCopy(msg.id, msg.content)} style={{ ...actionButtonStyle, color: '#000', border: '1px solid rgba(0,0,0,0.3)' }}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
+                          </div>
+                        )}
                       </div>
 
                       {/* Reasoning trace — minimal collapsible */}
