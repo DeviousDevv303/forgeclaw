@@ -268,6 +268,11 @@ export async function callProvider(
   const oaiHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
   // Ollama runs locally — no auth header needed
   if (providerId !== 'ollama') oaiHeaders['Authorization'] = `Bearer ${apiKey}`
+  // OpenRouter requires app identification headers; free-tier providers reject requests without them
+  if (providerId === 'openrouter') {
+    oaiHeaders['HTTP-Referer'] = 'https://deviousdevv303.github.io/forgeclaw'
+    oaiHeaders['X-Title'] = 'ForgeClaw'
+  }
 
   const res = await fetch(cfg.url, {
     method: 'POST',
