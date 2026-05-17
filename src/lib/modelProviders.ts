@@ -11,6 +11,7 @@ export interface ModelOption {
   label: string
   contextK: number
   note?: string
+  noTools?: boolean  // true = provider routes this model to endpoints without function-calling support
 }
 
 export interface ProviderConfig {
@@ -111,7 +112,8 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     name: 'OpenRouter',
     url: 'https://openrouter.ai/api/v1/chat/completions',
     models: [
-      { id: 'google/gemma-4-26b-a4b-it:free',           label: 'Gemma 4 26B (free)',         contextK: 262, note: 'Top uncensored benchmark' },
+      { id: 'google/gemma-4-26b-a4b-it:free',           label: 'Gemma 4 26B (free)',         contextK: 262, note: 'Top uncensored benchmark', noTools: true },
+      { id: 'google/gemma-3-27b-it:free',              label: 'Gemma 3 27B (free)',         contextK: 128, noTools: true },
       { id: 'google/gemma-2-27b-it',                    label: 'Gemma 2 27B',               contextK: 128 },
       { id: 'google/gemma-2-9b-it',                     label: 'Gemma 2 9B (fast)',          contextK: 32  },
       { id: 'meta-llama/llama-3.3-70b-instruct',        label: 'Llama 3.3 70B',             contextK: 128 },
@@ -333,6 +335,11 @@ export async function callProvider(
     toolCalls: toolCalls?.length ? toolCalls : undefined,
     stopReason: d.choices[0]?.finish_reason,
   }
+}
+
+// Returns false for models that don't support function-calling (e.g. OpenRouter free-tier)
+export function modelSupportsTools(providerId: ProviderId, modelId: string): boolean {
+  return !(PROVIDERS[providerId]?.models.find(m => m.id === modelId)?.noTools ?? false)
 }
 
 // Quick key validation — pings the provider with a 1-token request

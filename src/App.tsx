@@ -22,7 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import {
   PROVIDERS, PROVIDER_ORDER, DEFAULT_PROVIDER, DEFAULT_MODEL,
-  callProvider, testProviderKey,
+  callProvider, testProviderKey, modelSupportsTools,
 } from './lib/modelProviders'
 import type { ProviderId, ChatMessage as ProviderMessage } from './lib/modelProviders'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
@@ -457,22 +457,26 @@ function App() {
       const chainStartedAt = new Date().toISOString()
       let finalText = ''
       const MAX_ITERS = 15
+      // Some models (e.g. OpenRouter free-tier) don't support function calling at all
+      const supportsTools = modelSupportsTools(activeProvider, activeModel)
 
       for (let iter = 0; iter < MAX_ITERS; iter++) {
         const isLastIter = iter === MAX_ITERS - 1
+        // For no-tools models, treat every iteration as the final one
+        const noMoreTools = isLastIter || !supportsTools
         let streamBuffer = ''
 
         const result = await callProvider(
           activeProvider, activeModel, FORGEMIND_SYSTEM_PROMPT,
           conversationMessages, apiKey,
           {
-            tools: isLastIter ? undefined : FORGE_TOOLS,
-            // Stream ONLY on the final iteration (no tools). When tools are passed,
+            tools: noMoreTools ? undefined : FORGE_TOOLS,
+            // Stream ONLY on iterations without tools. When tools are passed,
             // streaming SSE cannot capture tool_call events — they arrive as delta
             // chunks that our parser ignores, causing the loop to see no toolCalls
             // and break with an empty finalText. Non-streaming returns the full
             // JSON response so toolCalls are populated correctly.
-            onToken: isLastIter ? (token: string) => {
+            onToken: noMoreTools ? (token: string) => {
               streamBuffer += token
               setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: cleanOutput(streamBuffer), streaming: true } : m))
             } : undefined,
