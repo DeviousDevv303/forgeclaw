@@ -4,7 +4,7 @@
 // ForgeMind routes cloud calls through this module.
 // Safety governance lives in ForgeClaw's architecture, not the LLM layer.
 
-export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi' | 'ollama'
+export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi' | 'ollama' | 'openrouter'
 
 export interface ModelOption {
   id: string
@@ -103,18 +103,36 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     ],
     keyPlaceholder: '(no key needed)',
   },
+
+  openrouter: {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    url: 'https://openrouter.ai/api/v1/chat/completions',
+    models: [
+      { id: 'google/gemma-4-27b-it',                    label: 'Gemma 4 27B',              contextK: 128, note: 'Top uncensored benchmark' },
+      { id: 'google/gemma-4-9b-it',                     label: 'Gemma 4 9B (fast)',         contextK: 32  },
+      { id: 'meta-llama/llama-3.3-70b-instruct',        label: 'Llama 3.3 70B',            contextK: 128 },
+      { id: 'meta-llama/llama-3.1-405b-instruct',       label: 'Llama 3.1 405B',           contextK: 128 },
+      { id: 'nousresearch/hermes-3-llama-3.1-405b',     label: 'Hermes 3 405B (uncensored)', contextK: 128, note: 'Fully uncensored' },
+      { id: 'deepseek/deepseek-r1',                     label: 'DeepSeek R1',               contextK: 128 },
+      { id: 'mistralai/mistral-large',                  label: 'Mistral Large',             contextK: 128 },
+    ],
+    keyPlaceholder: 'sk-or-...',
+    keyPrefix: 'sk-or-',
+  },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['anthropic', 'deepseek', 'mistral', 'groq', 'kimi', 'ollama']
+export const PROVIDER_ORDER: ProviderId[] = ['anthropic', 'deepseek', 'mistral', 'groq', 'kimi', 'openrouter', 'ollama']
 
 export const DEFAULT_PROVIDER: ProviderId = 'anthropic'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
-  anthropic: 'claude-haiku-4-5-20251001',
-  deepseek:  'deepseek-chat',
-  mistral:   'mistral-large-latest',
-  groq:      'llama-3.3-70b-versatile',
-  kimi:      'kimi-k2.6',
-  ollama:    'llama3.2:3b',
+  anthropic:   'claude-haiku-4-5-20251001',
+  deepseek:    'deepseek-chat',
+  mistral:     'mistral-large-latest',
+  groq:        'llama-3.3-70b-versatile',
+  kimi:        'kimi-k2.6',
+  ollama:      'llama3.2:3b',
+  openrouter:  'google/gemma-4-27b-it',
 }
 
 // ─── Call ─────────────────────────────────────────────────────────────────────

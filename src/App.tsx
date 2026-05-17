@@ -212,7 +212,8 @@ function App() {
       groq:      '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',
       // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
       kimi:      'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
-      ollama:    '', // local — no key needed
+      ollama:      '', // local — no key needed
+      openrouter:  parsed.openrouter || '',
     }
   })
 
@@ -838,7 +839,7 @@ function App() {
             {/* Per-provider credential dots */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               {PROVIDER_ORDER.map(pid => {
-                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : 'O'
+                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : pid === 'openrouter' ? 'OR' : 'O'
                 const hasKey = pid === 'ollama' ? true : !!providerKeys[pid]
                 const isActive = pid === activeProvider
                 const hasFailed = failedProviders.has(pid)
