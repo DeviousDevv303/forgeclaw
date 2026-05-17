@@ -307,11 +307,11 @@ export async function callProvider(
         buf = lines.pop() ?? ''
         for (const line of lines) {
           if (!line.startsWith('data: ') || line.includes('[DONE]')) continue
-          try {
-            const evt = JSON.parse(line.slice(6)) as { choices?: Array<{ delta?: { content?: string } }> }
-            const token = evt.choices?.[0]?.delta?.content
-            if (token) { fullText += token; onToken(token) }
-          } catch { /* skip */ }
+          let evt: { choices?: Array<{ delta?: { content?: string } }>; error?: { message?: string } }
+          try { evt = JSON.parse(line.slice(6)) } catch { continue }
+          if (evt.error?.message) throw new Error(evt.error.message)  // provider error mid-stream
+          const token = evt.choices?.[0]?.delta?.content
+          if (token) { fullText += token; onToken(token) }
         }
       }
     } finally {

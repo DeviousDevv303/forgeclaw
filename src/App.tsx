@@ -576,8 +576,12 @@ function App() {
       const msg = err instanceof Error ? err.message : 'Unknown error'
       emitFailure({ source: activeProvider, severity: 'error', message: msg, context: { promptLength: promptText.length } })
       if (cloudMsgId) {
-        // Replace the orphaned streaming placeholder with the error — no duplicate bubble
-        setMessages(prev => prev.map(m => m.id === cloudMsgId ? { ...m, content: `[ERROR]: ${msg}`, streaming: false } : m))
+        // If tokens already streamed in, keep them — don't overwrite a real answer with an error
+        setMessages(prev => prev.map(m => {
+          if (m.id !== cloudMsgId) return m
+          const hasContent = m.content && m.content.trim() !== '' && m.content !== 'Processing…'
+          return { ...m, content: hasContent ? m.content : `[ERROR]: ${msg}`, streaming: false }
+        }))
       } else {
         setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
       }
