@@ -1332,8 +1332,8 @@ function App() {
                           <div style={{ marginTop: '10px', display: 'flex', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px', alignItems: 'center' }}>
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={actionButtonStyle}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
                             <button onClick={() => handleSpeak(msg.id, msg.content)} style={{ ...actionButtonStyle, fontSize: '13px' }}>{speakingId === msg.id ? '⏸' : '▶'}</button>
-                            <button onClick={() => handleFeedback(msg.id, 'up')} title="Helpful" style={{ ...actionButtonStyle, color: msg.feedback === 'up' ? '#22c55e' : '#444', border: msg.feedback === 'up' ? '1px solid #22c55e' : '1px solid #222' }}>▲</button>
-                            <button onClick={() => handleFeedback(msg.id, 'down')} title="Not helpful" style={{ ...actionButtonStyle, color: msg.feedback === 'down' ? '#ef4444' : '#444', border: msg.feedback === 'down' ? '1px solid #ef4444' : '1px solid #222' }}>▼</button>
+                            <button onClick={() => handleFeedback(msg.id, 'up')} title="Helpful" style={{ background: msg.feedback === 'up' ? '#2563eb' : 'transparent', border: msg.feedback === 'up' ? '1px solid #2563eb' : '1px solid #222', color: msg.feedback === 'up' ? '#fff' : '#555', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '13px', lineHeight: 1, transition: 'all 0.15s' }}>👍</button>
+                            <button onClick={() => handleFeedback(msg.id, 'down')} title="Not helpful" style={{ background: msg.feedback === 'down' ? '#991b1b' : 'transparent', border: msg.feedback === 'down' ? '1px solid #991b1b' : '1px solid #222', color: msg.feedback === 'down' ? '#fff' : '#555', borderRadius: '5px', padding: '3px 7px', cursor: 'pointer', fontSize: '13px', lineHeight: 1, transition: 'all 0.15s' }}>👎</button>
                           </div>
                         )}
                         {msg.role === 'user' && (
