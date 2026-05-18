@@ -635,10 +635,13 @@ function App() {
       if (failedProviders.has(activeProvider)) setFailedProviders(prev => { const n = new Set(prev); n.delete(activeProvider); return n })
       resolveTask(taskId)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Unknown error'
-      emitFailure({ source: activeProvider, severity: 'error', message: msg, context: { promptLength: promptText.length } })
+      const rawMsg = err instanceof Error ? err.message : 'Unknown error'
+      const isOllamaFetch = activeProvider === 'ollama' && /failed to fetch|networkerror|net::err/i.test(rawMsg)
+      const msg = isOllamaFetch
+        ? 'Ollama requires a local server running at localhost:11434 — not reachable from this device. Switch to a cloud provider in the selector above.'
+        : rawMsg
+      emitFailure({ source: activeProvider, severity: 'error', message: rawMsg, context: { promptLength: promptText.length } })
       if (cloudMsgId) {
-        // If tokens already streamed in, keep them — don't overwrite a real answer with an error
         setMessages(prev => prev.map(m => {
           if (m.id !== cloudMsgId) return m
           const hasContent = m.content && m.content.trim() !== '' && m.content !== 'Processing…'
@@ -649,16 +652,18 @@ function App() {
       }
       // Auth failure: mark provider red and auto-switch to next working one
       const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)
-      if (isAuthError) {
+      if (isAuthError || isOllamaFetch) {
         const newFailed = new Set([...failedProviders, activeProvider])
         setFailedProviders(newFailed)
-        const next = PROVIDER_ORDER.find(pid => pid !== activeProvider && (pid === 'ollama' || providerKeys[pid]) && !newFailed.has(pid))
+        const next = PROVIDER_ORDER.find(pid => pid !== activeProvider && pid !== 'ollama' && providerKeys[pid] && !newFailed.has(pid))
         if (next) {
           setActiveProvider(next)
           setActiveModel(DEFAULT_MODEL[next])
           setMessages(prev => [...prev, {
             id: (Date.now() + 2).toString(), role: 'assistant',
-            content: `Auth failed on ${PROVIDERS[activeProvider].name}. Switched to ${PROVIDERS[next].name}. Please resend your message.`,
+            content: isOllamaFetch
+              ? `Ollama (local) not reachable — auto-switched to ${PROVIDERS[next].name}. Resend your message.`
+              : `Auth failed on ${PROVIDERS[activeProvider].name}. Switched to ${PROVIDERS[next].name}. Please resend your message.`,
             timestamp: Date.now(), source: 'local' as const,
           }])
         }
