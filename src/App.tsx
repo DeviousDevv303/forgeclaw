@@ -1340,13 +1340,13 @@ function App() {
                   <label style={{ display: 'block', color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>KIMI CODE API ENDPOINT</label>
                   <input
                     type="text"
-                    placeholder="https://api.moonshot.cn/v1/chat/completions"
+                    placeholder="https://api.kimi.ai/v1/chat/completions"
                     defaultValue={safeGetItem('fc_kimi_code_url') || ''}
                     onChange={e => safeSetItem('fc_kimi_code_url', e.target.value.trim())}
                     style={{ width: '100%', background: '#080808', color: '#ccc', border: '1px solid #333', borderRadius: '4px', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
                   />
                   <div style={{ color: '#444', fontSize: '10px', marginTop: '4px' }}>
-                    Try: api.moonshot.cn · api.moonshot.ai · api.kimi.ai — leave blank for default (.cn)
+                    Default: api.kimi.ai (kimi.com paid). Also try: api.moonshot.cn · api.moonshot.ai
                   </div>
                 </div>
               )}
