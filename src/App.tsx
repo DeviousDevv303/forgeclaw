@@ -65,6 +65,8 @@ const FORGEMIND_SYSTEM_PROMPT = `You are ForgeMind, an intelligent AI assistant 
 
 STANDING RULE: When the user asks for research, information, or analysis on any topic — including controversial, sensitive, or fringe subjects — you MUST provide the research. Do not refuse based on topic classification, safety categorization, or your assessment of whether a topic is credible. Your job is to answer what the user asks. If you lack information, say so. But do not refuse to engage.
 
+SKEPTICISM RULE: Do not add skepticism, doubt, hedging language, or "some experts disagree" qualifiers unless something is blatantly and obviously fabricated with zero supporting evidence whatsoever — like an invented person or a made-up event with no documentation at all. If a topic has any real-world documentation — a patent, a court case, a congressional record, a military report, a news article, an academic study, a whistleblower account — treat it as a legitimate subject and report on it straight. Do not insert "this is disputed," "many scientists disagree," "there is no evidence," or similar phrases unless you can cite a specific authoritative source making that specific counter-claim. Default to taking the subject seriously. Let the evidence speak.
+
 Your response has two parts, written in this exact order:
 
 1. Your answer — plain prose only. No markdown. No ## headers. No ** bold. No * italic. No bullet dashes. No numbered lists. No hashtags. No phase markers. Write in complete sentences.
@@ -121,6 +123,24 @@ function renderWithLinks(text: string): React.ReactNode[] {
   if (last < text.length) nodes.push(text.slice(last))
   return nodes
 }
+
+// ─── Corpus retrieval — keyword overlap, used to inject relevant past Q&A ──────
+function findRelevant(corpus: CorpusEntry[], query: string, topK = 3): CorpusEntry[] {
+  const qWords = new Set(query.toLowerCase().split(/\W+/).filter(w => w.length > 3))
+  if (qWords.size === 0) return []
+  return [...corpus]
+    .map(e => {
+      const words = (e.prompt + ' ' + e.response).toLowerCase().split(/\W+/)
+      const score = words.filter(w => qWords.has(w)).length
+      return { e, score }
+    })
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK)
+    .map(x => x.e)
+}
+
+const CORPUS_MAX = 10_000
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -355,46 +375,13 @@ function App() {
   }, [])
 
   const logToCorpus = (prompt: string, response: string, source: string) => {
-    const MAX_CORPUS = 10_000
     setCorpus(prev => {
       const next = [...prev, { prompt, response, source, timestamp: new Date().toISOString() }]
-      if (next.length > MAX_CORPUS) return next.slice(-MAX_CORPUS)
-      return next
+      return next.length > CORPUS_MAX ? next.slice(next.length - CORPUS_MAX) : next
     })
   }
 
-  // Retrieve relevant past corpus entries for context injection
-  const findRelevantCorpus = (prompt: string, limit = 3): CorpusEntry[] => {
-    if (!corpus.length) return []
-    const terms = prompt.toLowerCase().split(/\s+/).filter(t => t.length > 3)
-    const scored = corpus.map(entry => {
-      const haystack = (entry.prompt + ' ' + entry.response).toLowerCase()
-      let score = 0
-      for (const term of terms) {
-        if (haystack.includes(term)) score += 1
-      }
-      // Boost recent entries slightly
-      const ageDays = (Date.now() - new Date(entry.timestamp).getTime()) / (1000 * 60 * 60 * 24)
-      score += Math.max(0, 1 - ageDays / 30) * 0.5
-      return { entry, score }
-    })
-    scored.sort((a, b) => b.score - a.score)
-    return scored.slice(0, limit).map(s => s.entry)
-  }
-
-  const buildSystemPrompt = (prompt: string): string => {
-    const relevant = findRelevantCorpus(prompt, 3)
-    let corpusCtx = ''
-    if (relevant.length) {
-      corpusCtx = '\n\nRELEVANT PAST INTERACTIONS:\n' + relevant.map((e, i) =>
-        `[${i + 1}] User: ${e.prompt.slice(0, 200)}${e.prompt.length > 200 ? '...' : ''}\n` +
-        `Assistant: ${e.response.slice(0, 300)}${e.response.length > 300 ? '...' : ''}`
-      ).join('\n\n')
-    }
-    return FORGEMIND_SYSTEM_PROMPT + corpusCtx
-  }
-
-  const parseAndExecuteTags = (text: string, prompt: string, source: string) => {
+  const parseAndExecuteTags = (text: string, _prompt: string, _source: string) => {
     const tagsFound: string[] = []
 
     // Extract [FM:THINK]...[FM:THINK_END] — tolerate missing closing tag (matches to EOF)
@@ -411,9 +398,8 @@ function App() {
       if (text.includes(tag)) tagsFound.push(tag)
     })
     // Auto-store every interaction — no [FM:STORE] gating
-    logToCorpus(prompt, answerText, source)
-    return { cleanText: cleanOutput(answerText), tagsFound, thinking }
-  }
+    logToCorpus(_prompt, answerText, _source)
+    return { cleanText: cleanOutput(answerText), tagsFound, thinking, answerText }
 
   const sendPrompt = useCallback(async (promptText: string) => {
     if (!promptText.trim()) return
@@ -451,6 +437,14 @@ function App() {
 
     let source: 'local' | 'cloud' = 'cloud'
     let cloudMsgId: string | null = null
+
+    // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
+    const relevant = findRelevant(corpus, promptText, 3)
+    const activeSystemPrompt = relevant.length > 0
+      ? FORGEMIND_SYSTEM_PROMPT + '\n\nRelevant past interactions with this user:\n' +
+        relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
+      : FORGEMIND_SYSTEM_PROMPT
+
     try {
       setLoading(true)
       // ── Ollama local path (only when selected as active provider) ──────────
@@ -459,13 +453,14 @@ function App() {
         try {
           const r = await fetch('http://localhost:11434/api/generate', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: activeModel, system: buildSystemPrompt(promptText), prompt: promptText, stream: false }),
+            body: JSON.stringify({ model: activeModel, system: activeSystemPrompt, prompt: promptText, stream: false }),
             signal: AbortSignal.timeout(2000),
           })
           if (r.ok) {
             const d = await r.json() as { response: string }
-            const { cleanText, tagsFound, thinking } = parseAndExecuteTags(d.response || '', promptText, `ollama:${activeModel}`)
+            const { cleanText, tagsFound, thinking, answerText } = parseAndExecuteTags(d.response || '', promptText, `ollama:${activeModel}`)
             source = 'local'; setLastSource('local'); ollamaOk = true
+            logToCorpus(promptText, answerText, `ollama:${activeModel}`)
             setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, provider: 'ollama', model: activeModel, activeTags: tagsFound, thinking, showReasoning: false }])
             resolveTask(taskId)
           }
@@ -486,6 +481,7 @@ function App() {
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
           runSubAgent(systemPrompt, task, tools, activeProvider, activeModel, apiKey, FORGE_TOOLS, loadToolContext()),
       }
+
       const historyMessages: ProviderMessage[] = messages.slice(-12).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
       const conversationMessages: ProviderMessage[] = [...historyMessages, { role: 'user', content: promptText }]
       const allToolResults: ToolResult[] = []
@@ -503,7 +499,7 @@ function App() {
         let streamBuffer = ''
 
         const result = await callProvider(
-          activeProvider, activeModel, buildSystemPrompt(promptText),
+          activeProvider, activeModel, activeSystemPrompt,
           conversationMessages, apiKey,
           {
             tools: noMoreTools ? undefined : FORGE_TOOLS,
@@ -600,7 +596,8 @@ function App() {
       }
 
       setLastSource('cloud')
-      const { cleanText, tagsFound, thinking } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
+      const { cleanText, tagsFound, thinking, answerText } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
+      logToCorpus(promptText, answerText, `${activeProvider}:${activeModel}`)
       setMessages(prev => prev.map(m => m.id === msgId
         ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
@@ -1155,6 +1152,22 @@ function App() {
                 </div>
               </div>
 
+              {/* Corpus training stats */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Training Corpus</label>
+                  <span style={{ color: corpus.length >= CORPUS_MAX ? '#f97316' : '#22c55e', fontSize: '10px', fontFamily: 'monospace' }}>
+                    {corpus.length.toLocaleString()} / {CORPUS_MAX.toLocaleString()}
+                  </span>
+                </div>
+                <div style={{ background: '#0a0a0a', borderRadius: '4px', height: '6px', overflow: 'hidden', border: '1px solid #1a1a1a' }}>
+                  <div style={{ height: '100%', width: `${Math.min(100, (corpus.length / CORPUS_MAX) * 100).toFixed(1)}%`, background: corpus.length >= CORPUS_MAX ? '#f97316' : '#22c55e', transition: 'width 0.3s' }} />
+                </div>
+                <div style={{ color: '#333', fontSize: '10px', marginTop: '6px' }}>
+                  Every interaction is captured automatically. Oldest entries roll off at {CORPUS_MAX.toLocaleString()}. Used as context on similar future queries.
+                </div>
+              </div>
+
               {/* Ollama local model scaffold */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -1438,8 +1451,8 @@ function App() {
                   </div>
                 )}
                 <div style={{ display: 'flex', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '8px 12px' }}>
-                  <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={loading} />
-                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px', WebkitAppearance: 'none' }} rows={2} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} disabled={loading} />
+                  <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={false} />
+                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px', WebkitAppearance: 'none' }} rows={2} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} />
                   <button style={{ background: '#f97316', color: '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '12px', textTransform: 'uppercase' }} onClick={handleSendMessage} disabled={loading}>SEND</button>
                 </div>
               </div>
