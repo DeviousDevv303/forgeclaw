@@ -233,21 +233,18 @@ function App() {
   // One key slot per provider; migrate existing fm_api_key into anthropic slot
   const [providerKeys, setProviderKeys] = useState<Record<ProviderId, string>>(() => {
     const stored = safeGetItem('fm_provider_keys')
-    const parsed = stored ? (JSON.parse(stored) as Record<ProviderId, string>) : {} as Record<ProviderId, string>
+    const parsed = stored ? safeJsonParse<Record<ProviderId, string>>(stored, {} as Record<ProviderId, string>) : {} as Record<ProviderId, string>
     const legacyAnthropic = import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || ''
     return {
-      // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
-      anthropic: parsed.anthropic || legacyAnthropic || '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',
-      // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
-      deepseek:  'sk-c47d7b43ab38441087f6ad259ccf340f',
-      // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
-      mistral:   parsed.mistral   || 'Ile5nNCCMWmVOnx3jtJH8T1TshigIU3I',
-      // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
-      groq:      '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',
-      // ⚠️ DO NOT REMOVE UNLESS CRISTIAN EXPLICITLY SAYS TO. IF HE DOES NOT SAY REMOVE — STAND DOWN.
-      kimi:      'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
-      ollama:      '', // local — no key needed
-      openrouter:  parsed.openrouter || '',
+      // User-entered key takes priority; hardcoded key is the fallback.
+      // ⚠️ DO NOT REMOVE HARDCODED FALLBACKS UNLESS CRISTIAN EXPLICITLY SAYS TO.
+      anthropic:  parsed.anthropic  || legacyAnthropic || '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',
+      deepseek:   parsed.deepseek   || 'sk-c47d7b43ab38441087f6ad259ccf340f',
+      mistral:    parsed.mistral    || 'Ile5nNCCMWmVOnx3jtJH8T1TshigIU3I',
+      groq:       parsed.groq       || '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',
+      kimi:       parsed.kimi       || 'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
+      ollama:     '',
+      openrouter: parsed.openrouter || '',
     }
   })
 
