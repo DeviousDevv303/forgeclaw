@@ -30,29 +30,19 @@ import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
 import { runSubAgent } from './lib/managedAgent'
+import {
+  MAX_AGENT_ITERATIONS,
+  SOFT_REVIEW_ITERS,
+  classifyToolFailure,
+  decideRetry,
+  isDestructiveTool,
+} from './lib/agentCore'
+import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type AgentPhase = 'OBJECTIVE' | 'PLAN' | 'EXECUTION' | 'VERIFICATION' | 'NEXT_ACTION' | 'COMPLETE' | 'BLOCKED'
 
-// Phase 5 foundation: failure classification for self-correction loop
-type ToolFailureClass =
-  | 'TOOL_FAILURE'
-  | 'AUTH_FAILURE'
-  | 'NETWORK_FAILURE'
-  | 'DEPENDENCY_FAILURE'
-  | 'INVALID_ASSUMPTION'
-  | 'USER_CONSTRAINT'
-  | 'UNKNOWN'
-
-function classifyToolFailure(errorMsg: string): ToolFailureClass {
-  if (/401|403|unauthorized|forbidden|api key|invalid.*key/i.test(errorMsg)) return 'AUTH_FAILURE'
-  if (/failed to fetch|network|timeout|econnrefused|enotfound/i.test(errorMsg)) return 'NETWORK_FAILURE'
-  if (/not found|missing|dependency|module/i.test(errorMsg)) return 'DEPENDENCY_FAILURE'
-  if (/tool error|invalid input|bad request/i.test(errorMsg)) return 'TOOL_FAILURE'
-  if (/assumption|expected.*but got/i.test(errorMsg)) return 'INVALID_ASSUMPTION'
-  return 'UNKNOWN'
-}
 
 interface Message {
   id: string
@@ -150,6 +140,12 @@ PLAN: Numbered steps — what you will do, in order, with success criteria.
 EXECUTION: What you actually did. Tool calls made, results received, adjustments after failures.
 VERIFICATION: Evidence of success or specific failure diagnosis.
 STATUS: IN_PROGRESS | BLOCKED | COMPLETE
+
+CREATIVE TASK EXCEPTION:
+For creative or exploratory tasks (writing, art direction, brainstorming, style), use the execution loop lightly: understand intent → produce artifact → review against user direction → refine if needed. Do not over-constrain creative work with excessive planning. Preserve style, surprise, and user taste. Execution structure should serve the creative goal, not override it.
+
+RETRY AUTHORITY:
+Safe failed actions may be retried automatically (up to 3 attempts per tool). Require explicit user approval before retrying actions that are: destructive, irreversible, externally visible, costly, or security-sensitive. When blocked on approval, report exactly what needs authorization and stop attempting that action.
 
 ANTI-CHAT RULE:
 Default mode is execution. Do not produce long conversational prose unless the task explicitly requests explanation. Results, not narration.
@@ -381,6 +377,7 @@ function App() {
   const [elVoiceId, setElVoiceId] = useState<string>(() => safeGetItem('fc_el_voice_id') || '')
   const elAudioRef = useRef<HTMLAudioElement | null>(null)
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
+  const [openPlanIds, setOpenPlanIds] = useState<Set<string>>(new Set())
   const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
   const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
   const [coachAgentId, setCoachAgentId] = useState<string>(() => safeGetItem('fc_coach_agent_id') || '')
@@ -642,12 +639,20 @@ function App() {
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
       const chainStartedAt = new Date().toISOString()
       let finalText = ''
-      const MAX_AGENT_ITERATIONS = 40
+      const toolRetryCounts = new Map<string, number>()
       // Some models (e.g. OpenRouter free-tier) don't support function calling at all
       const supportsTools = modelSupportsTools(activeProvider, activeModel)
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
+
+        // Soft-review checkpoint at SOFT_REVIEW_ITERS — inject a progress prompt
+        if (iter === SOFT_REVIEW_ITERS && !isLastIter) {
+          conversationMessages.push({
+            role: 'user',
+            content: `[SOFT CHECKPOINT — iteration ${SOFT_REVIEW_ITERS}/${MAX_AGENT_ITERATIONS}] Summarize progress so far, set STATUS, and continue executing or mark COMPLETE/BLOCKED.`,
+          })
+        }
         // For no-tools models, treat every iteration as the final one
         const noMoreTools = isLastIter || !supportsTools
         let streamBuffer = ''
@@ -716,11 +721,29 @@ function App() {
           setActivityLog(prev => [...prev.slice(-99), { id: actEntryId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
           const output = await executeTool(call, toolCtx)
           const isErr = output.startsWith('[TOOL ERROR]')
-          const failClass = isErr ? classifyToolFailure(output) : null
+          let retryAnnotation = ''
+          if (isErr) {
+            const failClass: ToolFailureClass = classifyToolFailure(output)
+            const retryKey = call.name
+            const attempts = (toolRetryCounts.get(retryKey) ?? 0) + 1
+            toolRetryCounts.set(retryKey, attempts)
+            const decision: RetryDecision = decideRetry(failClass, attempts, isDestructiveTool(call.name))
+            retryAnnotation = `[${failClass}][RETRY:${decision.shouldRetry ? 'YES' : 'NO'}] ${decision.reason}`
+            if (decision.alternativeStrategy) retryAnnotation += ` Strategy: ${decision.alternativeStrategy}`
+            if (decision.requiresUserApproval) {
+              // Surface approval need as a co-sign style notification
+              emitFailure({ source: 'forgemind', severity: 'warning', message: `Retry blocked — user approval needed for ${call.name}: ${decision.reason}` })
+            }
+          } else {
+            // Reset retry count on success
+            toolRetryCounts.delete(call.name)
+          }
           setActivityLog(prev => prev.map(e => e.id === actEntryId ? { ...e, output: output.slice(0, 300), status: isErr ? 'error' : 'done' } : e))
           const stepId = `step_${call.id}`
-          chainSteps.push({ id: stepId, icon: isErr ? '❌' : '✅', label: call.name, status: isErr ? 'error' : 'done', timestamp: new Date().toISOString(), body: (failClass ? `[${failClass}] ` : '') + output.split('\n')[0].slice(0, 200), linkedToolCallIds: [call.id] })
-          iterResults.push({ toolCallId: call.id, name: call.name, output, isError: isErr, reasoningStepId: stepId })
+          chainSteps.push({ id: stepId, icon: isErr ? '❌' : '✅', label: call.name, status: isErr ? 'error' : 'done', timestamp: new Date().toISOString(), body: (retryAnnotation || output.split('\n')[0]).slice(0, 200), linkedToolCallIds: [call.id] })
+          // Inject retry guidance into tool result so the model adapts its next action
+          const outputWithRetry = isErr && retryAnnotation ? `${output}\n\n${retryAnnotation}` : output
+          iterResults.push({ toolCallId: call.id, name: call.name, output: outputWithRetry, isError: isErr, reasoningStepId: stepId })
         }
         allToolResults.push(...iterResults)
 
@@ -1534,25 +1557,41 @@ function App() {
                           )}
                         </div>
                       )}
-                      {/* PLAN panel — shown above message bubble when plan is extracted */}
-                      {msg.role === 'assistant' && msg.plan && !msg.streaming && (
-                        <div style={{ maxWidth: '90%', marginBottom: '6px', borderRadius: '6px', border: '1px solid #1a3a1a', background: '#050e05', padding: '10px 14px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                            <span style={{ color: '#22c55e', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 700 }}>◆ PLAN</span>
-                            {msg.agentPhase && (
-                              <span style={{
-                                fontSize: '8px', fontFamily: 'monospace', letterSpacing: '1.5px', padding: '2px 6px', borderRadius: '3px',
-                                background: msg.agentPhase === 'COMPLETE' ? '#052e12' : msg.agentPhase === 'BLOCKED' ? '#2e0505' : '#0a1a1a',
-                                color: msg.agentPhase === 'COMPLETE' ? '#22c55e' : msg.agentPhase === 'BLOCKED' ? '#ef4444' : '#38bdf8',
-                                border: `1px solid ${msg.agentPhase === 'COMPLETE' ? '#14532d' : msg.agentPhase === 'BLOCKED' ? '#7f1d1d' : '#0c4a6e'}`,
-                              }}>
-                                {msg.agentPhase}
-                              </span>
+                      {/* PLAN panel — collapsible, status badge always visible */}
+                      {msg.role === 'assistant' && msg.plan && !msg.streaming && (() => {
+                        const planOpen = openPlanIds.has(msg.id)
+                        const togglePlan = () => setOpenPlanIds(prev => {
+                          const n = new Set(prev); planOpen ? n.delete(msg.id) : n.add(msg.id); return n
+                        })
+                        return (
+                          <div style={{ maxWidth: '90%', marginBottom: '6px', borderRadius: '6px', border: '1px solid #1a3a1a', background: '#050e05' }}>
+                            <button
+                              onClick={togglePlan}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '8px 14px', WebkitTapHighlightColor: 'transparent' }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ color: '#3a5c2a', fontSize: '8px' }}>{planOpen ? '▼' : '▶'}</span>
+                                <span style={{ color: '#22c55e', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 700 }}>◆ EXECUTION PLAN</span>
+                              </div>
+                              {msg.agentPhase && (
+                                <span style={{
+                                  fontSize: '8px', fontFamily: 'monospace', letterSpacing: '1.5px', padding: '2px 6px', borderRadius: '3px',
+                                  background: msg.agentPhase === 'COMPLETE' ? '#052e12' : msg.agentPhase === 'BLOCKED' ? '#2e0505' : '#0a1a1a',
+                                  color: msg.agentPhase === 'COMPLETE' ? '#22c55e' : msg.agentPhase === 'BLOCKED' ? '#ef4444' : '#38bdf8',
+                                  border: `1px solid ${msg.agentPhase === 'COMPLETE' ? '#14532d' : msg.agentPhase === 'BLOCKED' ? '#7f1d1d' : '#0c4a6e'}`,
+                                }}>
+                                  {msg.agentPhase}
+                                </span>
+                              )}
+                            </button>
+                            {planOpen && (
+                              <div style={{ padding: '0 14px 10px', borderTop: '1px solid #1a3a1a' }}>
+                                <pre style={{ margin: '8px 0 0', color: '#4ade80', fontSize: '11px', fontFamily: "'Courier New', monospace", whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>{msg.plan}</pre>
+                              </div>
                             )}
                           </div>
-                          <pre style={{ margin: 0, color: '#4ade80', fontSize: '11px', fontFamily: "'Courier New', monospace", whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>{msg.plan}</pre>
-                        </div>
-                      )}
+                        )
+                      })()}
 
                       {/* Message bubble — clean response only */}
                       <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined }}>
