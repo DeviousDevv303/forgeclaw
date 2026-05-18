@@ -355,7 +355,43 @@ function App() {
   }, [])
 
   const logToCorpus = (prompt: string, response: string, source: string) => {
-    setCorpus(prev => [...prev, { prompt, response, source, timestamp: new Date().toISOString() }])
+    const MAX_CORPUS = 10_000
+    setCorpus(prev => {
+      const next = [...prev, { prompt, response, source, timestamp: new Date().toISOString() }]
+      if (next.length > MAX_CORPUS) return next.slice(-MAX_CORPUS)
+      return next
+    })
+  }
+
+  // Retrieve relevant past corpus entries for context injection
+  const findRelevantCorpus = (prompt: string, limit = 3): CorpusEntry[] => {
+    if (!corpus.length) return []
+    const terms = prompt.toLowerCase().split(/\s+/).filter(t => t.length > 3)
+    const scored = corpus.map(entry => {
+      const haystack = (entry.prompt + ' ' + entry.response).toLowerCase()
+      let score = 0
+      for (const term of terms) {
+        if (haystack.includes(term)) score += 1
+      }
+      // Boost recent entries slightly
+      const ageDays = (Date.now() - new Date(entry.timestamp).getTime()) / (1000 * 60 * 60 * 24)
+      score += Math.max(0, 1 - ageDays / 30) * 0.5
+      return { entry, score }
+    })
+    scored.sort((a, b) => b.score - a.score)
+    return scored.slice(0, limit).map(s => s.entry)
+  }
+
+  const buildSystemPrompt = (prompt: string): string => {
+    const relevant = findRelevantCorpus(prompt, 3)
+    let corpusCtx = ''
+    if (relevant.length) {
+      corpusCtx = '\n\nRELEVANT PAST INTERACTIONS:\n' + relevant.map((e, i) =>
+        `[${i + 1}] User: ${e.prompt.slice(0, 200)}${e.prompt.length > 200 ? '...' : ''}\n` +
+        `Assistant: ${e.response.slice(0, 300)}${e.response.length > 300 ? '...' : ''}`
+      ).join('\n\n')
+    }
+    return FORGEMIND_SYSTEM_PROMPT + corpusCtx
   }
 
   const parseAndExecuteTags = (text: string, prompt: string, source: string) => {
@@ -372,11 +408,10 @@ function App() {
     if (!answerText) answerText = text.replace(/\[FM:THINK\][\s\S]*/i, '').trim()
 
     ;['[FM:STORE]', '[FM:RECALL]', '[FM:TRAIN]'].forEach(tag => {
-      if (text.includes(tag)) {
-        tagsFound.push(tag)
-        if (tag === '[FM:STORE]') logToCorpus(prompt, answerText, source)
-      }
+      if (text.includes(tag)) tagsFound.push(tag)
     })
+    // Auto-store every interaction — no [FM:STORE] gating
+    logToCorpus(prompt, answerText, source)
     return { cleanText: cleanOutput(answerText), tagsFound, thinking }
   }
 
@@ -424,7 +459,7 @@ function App() {
         try {
           const r = await fetch('http://localhost:11434/api/generate', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: activeModel, system: FORGEMIND_SYSTEM_PROMPT, prompt: promptText, stream: false }),
+            body: JSON.stringify({ model: activeModel, system: buildSystemPrompt(promptText), prompt: promptText, stream: false }),
             signal: AbortSignal.timeout(2000),
           })
           if (r.ok) {
@@ -468,7 +503,7 @@ function App() {
         let streamBuffer = ''
 
         const result = await callProvider(
-          activeProvider, activeModel, FORGEMIND_SYSTEM_PROMPT,
+          activeProvider, activeModel, buildSystemPrompt(promptText),
           conversationMessages, apiKey,
           {
             tools: noMoreTools ? undefined : FORGE_TOOLS,
@@ -1069,6 +1104,35 @@ function App() {
                 {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#eab308' }}>🟡 Key not tested yet</span>}
                 {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 Key valid — {PROVIDERS[activeProvider].name}</span>}
                 {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Invalid key</span>}
+              </div>
+
+              {/* Corpus Memory Progress */}
+              <div style={{ marginTop: '12px', borderTop: '1px solid #1a1a1a', paddingTop: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Corpus Memory</span>
+                  <span style={{ color: corpus.length >= 9000 ? '#ef4444' : '#22c55e', fontSize: '10px', fontFamily: 'monospace' }}>
+                    {corpus.length.toLocaleString()} / 10,000
+                  </span>
+                </div>
+                <div style={{ width: '100%', height: '4px', background: '#1a1a1a', borderRadius: '2px', overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, (corpus.length / 10_000) * 100)}%`, height: '100%', background: corpus.length >= 9000 ? '#ef4444' : corpus.length >= 7000 ? '#eab308' : '#22c55e', borderRadius: '2px', transition: 'width 0.3s ease' }} />
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button
+                    onClick={handleExportCorpus}
+                    disabled={!corpus.length}
+                    style={{ flex: 1, background: '#1a1a1a', border: '1px solid #333', color: corpus.length ? '#888' : '#444', borderRadius: '4px', padding: '6px', cursor: corpus.length ? 'pointer' : 'not-allowed', fontSize: '10px', fontWeight: 'bold', letterSpacing: '0.5px', textTransform: 'uppercase' }}
+                  >
+                    EXPORT ({corpus.length.toLocaleString()})
+                  </button>
+                  <button
+                    onClick={() => { setCorpus([]); safeRemoveItem('forgemind_corpus') }}
+                    disabled={!corpus.length}
+                    style={{ flex: 1, background: '#1a0505', border: '1px solid #3a1010', color: corpus.length ? '#ef4444' : '#444', borderRadius: '4px', padding: '6px', cursor: corpus.length ? 'pointer' : 'not-allowed', fontSize: '10px', fontWeight: 'bold', letterSpacing: '0.5px', textTransform: 'uppercase' }}
+                  >
+                    CLEAR
+                  </button>
+                </div>
               </div>
 
               {/* OpenRouter custom model ID */}
