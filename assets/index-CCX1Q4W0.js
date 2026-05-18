@@ -35,6 +35,8 @@ Error generating stack: `+e.message+`
 
 STANDING RULE: When the user asks for research, information, or analysis on any topic — including controversial, sensitive, or fringe subjects — you MUST provide the research. Do not refuse based on topic classification, safety categorization, or your assessment of whether a topic is credible. Your job is to answer what the user asks. If you lack information, say so. But do not refuse to engage.
 
+SKEPTICISM RULE: Do not add skepticism, doubt, hedging language, or "some experts disagree" qualifiers unless something is blatantly and obviously fabricated with zero supporting evidence whatsoever — like an invented person or a made-up event with no documentation at all. If a topic has any real-world documentation — a patent, a court case, a congressional record, a military report, a news article, an academic study, a whistleblower account — treat it as a legitimate subject and report on it straight. Do not insert "this is disputed," "many scientists disagree," "there is no evidence," or similar phrases unless you can cite a specific authoritative source making that specific counter-claim. Default to taking the subject seriously. Let the evidence speak.
+
 Your response has two parts, written in this exact order:
 
 1. Your answer — plain prose only. No markdown. No ## headers. No ** bold. No * italic. No bullet dashes. No numbered lists. No hashtags. No phase markers. Write in complete sentences.
@@ -69,4 +71,4 @@ Relevant past interactions with this user:
         ::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
         ::-webkit-scrollbar-thumb:hover { background: #333; }
       `})]})}var Dr={background:`transparent`,color:`#f97316`,padding:`4px 10px`,borderRadius:`4px`,border:`1px solid #f97316`,fontWeight:`bold`,cursor:`pointer`,fontSize:`10px`,textTransform:`uppercase`},Or={background:`transparent`,border:`1px solid #222`,color:`#666`,fontSize:`9px`,padding:`2px 6px`,cursor:`pointer`,borderRadius:`3px`,fontWeight:`bold`,letterSpacing:`0.5px`,transition:`all 0.2s`};console.log(`[ForgeClaw BOOT] main.tsx reached`);var kr=document.getElementById(`root`);if(!kr)console.error(`[ForgeClaw BOOT FAIL] #root element not found`),document.body.innerHTML=`<pre style="color:#f97316;background:#050505;padding:16px;font-family:monospace">ForgeClaw boot failed: #root not found</pre>`;else try{(0,v.createRoot)(kr).render((0,b.jsx)(_.StrictMode,{children:(0,b.jsx)(Er,{})})),console.log(`[ForgeClaw BOOT] React mounted successfully`)}catch(e){console.error(`[ForgeClaw BOOT FAIL]`,e),document.body.innerHTML=`<pre style="color:#f97316;background:#050505;padding:16px;font-family:monospace">ForgeClaw boot failed. Check console for error.</pre>`}
-//# sourceMappingURL=index-XjINx2HD.js.map
+//# sourceMappingURL=index-CCX1Q4W0.js.map
