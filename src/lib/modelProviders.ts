@@ -65,9 +65,10 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     name: 'Groq',
     url: 'https://api.groq.com/openai/v1/chat/completions',
     models: [
-      { id: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B (fast)',  contextK: 128 },
-      { id: 'llama-3.1-8b-instant',    label: 'Llama 3.1 8B (instant)', contextK: 128 },
-      { id: 'mixtral-8x7b-32768',      label: 'Mixtral 8x7B',           contextK: 32  },
+      { id: 'llama-3.3-70b-versatile',                    label: 'Llama 3.3 70B (fast)',    contextK: 128 },
+      { id: 'meta-llama/llama-4-scout-17b-16e-instruct',  label: 'Llama 4 Scout 17B',       contextK: 128, note: 'Llama 4' },
+      { id: 'qwen/qwen3-32b',                             label: 'Qwen 3 32B',              contextK: 128 },
+      { id: 'llama-3.1-8b-instant',                       label: 'Llama 3.1 8B (instant)',  contextK: 128 },
     ],
     keyPlaceholder: 'gsk_...',
     keyPrefix: 'gsk_',
