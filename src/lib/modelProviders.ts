@@ -11,6 +11,7 @@ export interface ModelOption {
   label: string
   contextK: number
   note?: string
+  noTools?: boolean  // true = provider routes this model to endpoints without function-calling support
 }
 
 export interface ProviderConfig {
@@ -111,7 +112,9 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     name: 'OpenRouter',
     url: 'https://openrouter.ai/api/v1/chat/completions',
     models: [
-      { id: 'google/gemma-2-27b-it',                    label: 'Gemma 2 27B',               contextK: 128, note: 'Uncensored open model' },
+      { id: 'google/gemma-4-26b-a4b-it:free',           label: 'Gemma 4 26B (free)',         contextK: 262, note: 'Top uncensored benchmark', noTools: true },
+      { id: 'google/gemma-3-27b-it:free',              label: 'Gemma 3 27B (free)',         contextK: 128, noTools: true },
+      { id: 'google/gemma-2-27b-it',                    label: 'Gemma 2 27B',               contextK: 128 },
       { id: 'google/gemma-2-9b-it',                     label: 'Gemma 2 9B (fast)',          contextK: 32  },
       { id: 'meta-llama/llama-3.3-70b-instruct',        label: 'Llama 3.3 70B',             contextK: 128 },
       { id: 'meta-llama/llama-3.1-8b-instruct',         label: 'Llama 3.1 8B (fast)',        contextK: 128 },
@@ -133,8 +136,8 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   mistral:     'mistral-large-latest',
   groq:        'llama-3.3-70b-versatile',
   kimi:        'kimi-k2.6',
-  ollama:      'gemma4:latest',
-  openrouter:  'nousresearch/hermes-3-llama-3.1-405b',
+  ollama:      'llama3.2:3b',
+  openrouter:  'google/gemma-4-26b-a4b-it:free',
 }
 
 // ─── Call ─────────────────────────────────────────────────────────────────────
@@ -265,21 +268,29 @@ export async function callProvider(
   const oaiHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
   // Ollama runs locally — no auth header needed
   if (providerId !== 'ollama') oaiHeaders['Authorization'] = `Bearer ${apiKey}`
+  // OpenRouter requires app identification headers; free-tier providers reject requests without them
+  if (providerId === 'openrouter') {
+    oaiHeaders['HTTP-Referer'] = 'https://deviousdevv303.github.io/forgeclaw'
+    oaiHeaders['X-Title'] = 'ForgeClaw'
+  }
 
-  const res = await fetch(cfg.url, {
-    method: 'POST',
-    headers: oaiHeaders,
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
+  // OpenRouter free-tier endpoints are flaky — retry transient provider errors
+  const maxAttempts = providerId === 'openrouter' ? 3 : 1
+  let res!: Response
+  let lastErrMsg = `${cfg.name} error`
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 1500))
+    res = await fetch(cfg.url, { method: 'POST', headers: oaiHeaders, body: JSON.stringify(body) })
+    if (res.ok) break
     const raw = await res.text().catch(() => '')
-    let msg = `${cfg.name} ${res.status}`
     try {
       const e = JSON.parse(raw) as { error?: { message?: string } | string; message?: string }
       const detail = typeof e.error === 'string' ? e.error : e.error?.message ?? e.message
-      if (detail) msg = detail
-    } catch { if (raw) msg = raw.slice(0, 200) }
-    throw new Error(msg)
+      lastErrMsg = detail || `${cfg.name} ${res.status}`
+    } catch { lastErrMsg = raw ? raw.slice(0, 200) : `${cfg.name} ${res.status}` }
+    const isTransient = /provider returned error|upstream|overload/i.test(lastErrMsg) || res.status === 502 || res.status === 503
+    if (!isTransient || attempt === maxAttempts - 1) throw new Error(lastErrMsg)
   }
 
   if (streaming && res.body) {
@@ -296,11 +307,11 @@ export async function callProvider(
         buf = lines.pop() ?? ''
         for (const line of lines) {
           if (!line.startsWith('data: ') || line.includes('[DONE]')) continue
-          try {
-            const evt = JSON.parse(line.slice(6)) as { choices?: Array<{ delta?: { content?: string } }> }
-            const token = evt.choices?.[0]?.delta?.content
-            if (token) { fullText += token; onToken(token) }
-          } catch { /* skip */ }
+          let evt: { choices?: Array<{ delta?: { content?: string } }>; error?: { message?: string } }
+          try { evt = JSON.parse(line.slice(6)) } catch { continue }
+          if (evt.error?.message) throw new Error(evt.error.message)  // provider error mid-stream
+          const token = evt.choices?.[0]?.delta?.content
+          if (token) { fullText += token; onToken(token) }
         }
       }
     } finally {
@@ -332,6 +343,11 @@ export async function callProvider(
     toolCalls: toolCalls?.length ? toolCalls : undefined,
     stopReason: d.choices[0]?.finish_reason,
   }
+}
+
+// Returns false for models that don't support function-calling (e.g. OpenRouter free-tier)
+export function modelSupportsTools(providerId: ProviderId, modelId: string): boolean {
+  return !(PROVIDERS[providerId]?.models.find(m => m.id === modelId)?.noTools ?? false)
 }
 
 // Quick key validation — pings the provider with a 1-token request
