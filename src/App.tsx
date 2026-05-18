@@ -38,6 +38,7 @@ import {
   isDestructiveTool,
 } from './lib/agentCore'
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
+import { getDiscardedPaths } from './lib/agentCore'
 import { useForgeOps } from './hooks/useForgeOps'
 import { ForgeOps } from './components/ForgeOps'
 import type { AgentPhase } from './types/forgeOps'
@@ -742,6 +743,7 @@ function App() {
             retryAnnotation = `[${failClass}][RETRY:${decision.shouldRetry ? 'YES' : 'NO'}] ${decision.reason}`
             if (decision.alternativeStrategy) retryAnnotation += ` Strategy: ${decision.alternativeStrategy}`
             emitForge({ type: 'RETRY_DECISION', tool: call.name, strategy: decision.alternativeStrategy ?? decision.reason, shouldRetry: decision.shouldRetry })
+            emitForge({ type: 'PATHS_COLLAPSED', chosen: decision.alternativeStrategy ?? decision.reason, discarded: getDiscardedPaths(failClass, call.name) })
             if (decision.requiresUserApproval) {
               emitFailure({ source: 'forgemind', severity: 'warning', message: `Retry blocked — user approval needed for ${call.name}: ${decision.reason}` })
             }

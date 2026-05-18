@@ -1,4 +1,4 @@
-import type { ToolFailureClass } from '../lib/agentCore'
+import type { ToolFailureClass, DiscardedPath } from '../lib/agentCore'
 
 // Re-export so forgeOps owns the canonical AgentPhase definition
 export type AgentPhase =
@@ -7,6 +7,12 @@ export type AgentPhase =
 export type ForgeStage =
   | 'RAW_ORE' | 'SMELTING' | 'HAMMERING' | 'TEMPERING' | 'REFORGING' | 'COMPLETE' | 'BLOCKED'
 
+export interface AlternatePath {
+  label: string
+  probability: number
+  status: 'discarded' | 'active'
+}
+
 export type AgentEvent =
   | { type: 'OBJECTIVE_RECEIVED'; objective: string; timestamp: number }
   | { type: 'PHASE_CHANGE'; phase: AgentPhase; timestamp: number }
@@ -14,6 +20,7 @@ export type AgentEvent =
   | { type: 'TOOL_SUCCESS'; tool: string; timestamp: number }
   | { type: 'TOOL_FAILURE'; tool: string; failClass: ToolFailureClass; timestamp: number }
   | { type: 'RETRY_DECISION'; tool: string; strategy: string; shouldRetry: boolean; timestamp: number }
+  | { type: 'PATHS_COLLAPSED'; chosen: string; discarded: DiscardedPath[]; timestamp: number }
   | { type: 'CONFIDENCE_UPDATE'; value: number; timestamp: number }
   | { type: 'CHECKPOINT'; iter: number; total: number; timestamp: number }
   | { type: 'MISSION_COMPLETE'; timestamp: number }
@@ -31,6 +38,7 @@ export interface ForgeOpsState {
   iterCurrent: number
   iterTotal: number
   riskLevel: 'LOW' | 'MEDIUM' | 'HIGH'
+  collapsedPaths: AlternatePath[]   // last decision's path space
 }
 
 export const INITIAL_FORGE_STATE: ForgeOpsState = {
@@ -44,6 +52,7 @@ export const INITIAL_FORGE_STATE: ForgeOpsState = {
   iterCurrent: 0,
   iterTotal: 40,
   riskLevel: 'LOW',
+  collapsedPaths: [],
 }
 
 export function phaseToStage(phase: AgentPhase): ForgeStage {

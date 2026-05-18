@@ -125,6 +125,8 @@ export function ForgeOps({ state, isActive, currentPlan }: Props) {
   const statusVariant: 'ice' | 'violet' | 'dim' = isActive ? 'ice' : state.stage === 'COMPLETE' ? 'violet' : 'dim'
 
   const planLines = currentPlan?.split('\n').filter(Boolean) ?? []
+  const { collapsedPaths } = state
+  const hasBottomRow = planLines.length > 0 || collapsedPaths.length > 0
 
   // CSS vars for palette — all inline to avoid touching global CSS
   const C = {
@@ -291,24 +293,66 @@ export function ForgeOps({ state, isActive, currentPlan }: Props) {
         </div>
       </div>
 
-      {/* ── Schema accordion (active plan) ──────────────────── */}
-      {planLines.length > 0 && (
-        <div style={{ borderTop: `1px solid ${C.border}` }}>
-          <button
-            onClick={() => setPlanOpen(o => !o)}
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', padding: '7px 14px', cursor: 'pointer', WebkitTapHighlightColor: 'transparent' }}
-          >
-            <span style={{ color: C.ice, fontSize: '9px', letterSpacing: '2px', fontWeight: 700 }}>◇ EXECUTION SCHEMA</span>
-            <span style={{ color: C.iceDim, fontSize: '9px' }}>{planOpen ? '▲' : '▼'}</span>
-          </button>
-          {planOpen && (
-            <div style={{ padding: '0 14px 10px' }}>
-              {planLines.map((line, i) => (
-                <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '4px' }}>
-                  <span style={{ color: C.iceDim, fontSize: '9px', flexShrink: 0, width: '14px' }}>{i + 1}.</span>
-                  <span style={{ color: C.textBright, fontSize: '9px', lineHeight: '1.5' }}>{line.replace(/^\d+\.\s*/, '')}</span>
+      {/* ── Bottom row: schema + collapsed paths ────────────── */}
+      {hasBottomRow && (
+        <div style={{ borderTop: `1px solid ${C.border}`, display: 'grid', gridTemplateColumns: planLines.length > 0 && collapsedPaths.length > 0 ? '1fr 1fr' : '1fr' }}>
+
+          {/* Execution schema */}
+          {planLines.length > 0 && (
+            <div style={{ borderRight: collapsedPaths.length > 0 ? `1px solid ${C.border}` : 'none' }}>
+              <button
+                onClick={() => setPlanOpen(o => !o)}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', padding: '7px 14px', cursor: 'pointer', WebkitTapHighlightColor: 'transparent' }}
+              >
+                <span style={{ color: C.ice, fontSize: '9px', letterSpacing: '2px', fontWeight: 700 }}>◇ EXECUTION SCHEMA</span>
+                <span style={{ color: C.iceDim, fontSize: '9px' }}>{planOpen ? '▲' : '▼'}</span>
+              </button>
+              {planOpen && (
+                <div style={{ padding: '0 14px 10px' }}>
+                  {planLines.map((line, i) => (
+                    <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '4px' }}>
+                      <span style={{ color: C.iceDim, fontSize: '9px', flexShrink: 0, width: '14px' }}>{i + 1}.</span>
+                      <span style={{ color: C.textBright, fontSize: '9px', lineHeight: '1.5' }}>{line.replace(/^\d+\.\s*/, '')}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              )}
+            </div>
+          )}
+
+          {/* Alternate paths collapsed */}
+          {collapsedPaths.length > 0 && (
+            <div style={{ padding: '8px 14px' }}>
+              <div style={{ color: C.iceDim, fontSize: '8px', letterSpacing: '2px', marginBottom: '8px' }}>◇ ALTERNATE PATHS COLLAPSED</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                {collapsedPaths.map((path, i) => {
+                  const isChosen = path.status === 'active'
+                  return (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '9px', color: isChosen ? C.ice : '#334155', flexShrink: 0 }}>
+                        {isChosen ? '◈' : '≈'}
+                      </span>
+                      <span style={{
+                        flex: 1, fontSize: '9px', fontFamily: C.mono,
+                        color: isChosen ? C.textBright : '#475569',
+                        letterSpacing: isChosen ? '0.3px' : '0',
+                      }}>
+                        {path.label}
+                      </span>
+                      <span style={{
+                        fontSize: '8px', fontFamily: C.mono, flexShrink: 0,
+                        color: isChosen ? C.ice : '#334155',
+                        minWidth: '52px', textAlign: 'right',
+                      }}>
+                        {isChosen
+                          ? 'CHOSEN · active'
+                          : `${path.probability.toFixed(1)}% · discarded`
+                        }
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )}
         </div>

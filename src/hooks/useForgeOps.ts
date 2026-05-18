@@ -63,6 +63,15 @@ function reducer(state: ForgeOpsState, event: AgentEvent): ForgeOpsState {
       return { ...next, riskLevel: calcRisk(next) }
     }
 
+    case 'PATHS_COLLAPSED': {
+      const collapsedPaths: import('../types/forgeOps').AlternatePath[] = [
+        { label: event.chosen, probability: 100, status: 'active' },
+        ...event.discarded.map(d => ({ label: d.label, probability: d.probability, status: 'discarded' as const }))
+          .sort((a, b) => b.probability - a.probability),
+      ]
+      return { ...state, collapsedPaths, events }
+    }
+
     case 'CONFIDENCE_UPDATE': {
       const next: ForgeOpsState = { ...state, confidence: event.value, events }
       return { ...next, riskLevel: calcRisk(next) }

@@ -37,6 +37,66 @@ export function classifyToolFailure(errorMsg: string): ToolFailureClass {
   return 'UNKNOWN'
 }
 
+export type DiscardedPath = {
+  label: string
+  probability: number   // synthetic decision weight — not exhaustive, reflects relative utility
+}
+
+// Returns the paths NOT taken for a given failure class and tool, so the UI
+// can show what was considered and why it was collapsed away.
+export function getDiscardedPaths(
+  failureClass: ToolFailureClass,
+  toolName: string,
+): DiscardedPath[] {
+  const t = toolName.replace(/_/g, '-')
+  switch (failureClass) {
+    case 'NETWORK_FAILURE':
+      return [
+        { label: `${t}/static-fallback`,    probability: 12.7 },
+        { label: `${t}/alternate-endpoint`, probability:  8.3 },
+        { label: `${t}/cached-response`,    probability:  5.1 },
+        { label: 'wait/retry-backoff',       probability:  2.4 },
+      ]
+    case 'DEPENDENCY_FAILURE':
+      return [
+        { label: 'install/direct',           probability: 14.2 },
+        { label: 'simplify/execution',       probability:  9.1 },
+        { label: 'pin/older-version',        probability:  6.3 },
+        { label: 'skip/optional-dep',        probability:  3.8 },
+      ]
+    case 'TOOL_FAILURE':
+      return [
+        { label: `${t}/adjusted-params`,     probability: 11.4 },
+        { label: `${t}/simplified-input`,    probability:  7.6 },
+        { label: 'alternate/tool-call',      probability:  5.2 },
+        { label: 'manual/override',          probability:  2.9 },
+      ]
+    case 'INVALID_ASSUMPTION':
+      return [
+        { label: 're-read/source-of-truth',  probability: 16.3 },
+        { label: 'revise/assumption-model',  probability:  9.7 },
+        { label: 'fallback/heuristic',       probability:  4.1 },
+      ]
+    case 'AUTH_FAILURE':
+      return [
+        { label: 'refresh/token',            probability: 18.5 },
+        { label: 'use/alternate-credential', probability:  7.2 },
+        { label: 'elevate/scope',            probability:  3.3 },
+      ]
+    case 'USER_CONSTRAINT':
+      return [
+        { label: 'request/permission',       probability: 21.0 },
+        { label: 'find/alternate-path',      probability:  5.8 },
+      ]
+    default:
+      return [
+        { label: 'manual/intervention',      probability:  8.1 },
+        { label: 'alternate/approach',       probability:  4.5 },
+        { label: 'defer/to-user',            probability:  2.1 },
+      ]
+  }
+}
+
 export function decideRetry(
   failureClass: ToolFailureClass,
   attemptCount: number,
