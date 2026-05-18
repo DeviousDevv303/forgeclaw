@@ -77,7 +77,7 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   kimi: {
     id: 'kimi',
     name: 'Kimi',
-    url: 'https://api.moonshot.ai/v1/chat/completions',
+    url: 'https://api.moonshot.cn/v1/chat/completions',
     models: [
       { id: 'kimi-k2.6',          label: 'Kimi K2.6',                    contextK: 128, note: 'Latest' },
       { id: 'kimi-k2.6-thinking', label: 'Kimi K2.6 Thinking',           contextK: 128, note: 'Reasoning traces' },
@@ -91,13 +91,15 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   kimi_code: {
     id: 'kimi_code',
     name: 'Kimi Code',
-    url: 'https://api.moonshot.ai/v1/chat/completions',
+    url: 'https://api.moonshot.cn/v1/chat/completions',
     models: [
-      { id: 'kimi-k2.6',          label: 'Kimi K2.6 (Code)',             contextK: 128, note: 'Flagship' },
-      { id: 'kimi-k2.6-thinking', label: 'Kimi K2.6 Thinking (Code)',    contextK: 128, note: 'Reasoning' },
-      { id: 'moonshot-v1-128k',   label: 'Moonshot 128K',                contextK: 128 },
+      { id: 'moonshot-v1-8k',     label: 'Moonshot 8K (fast)',            contextK: 8   },
+      { id: 'moonshot-v1-32k',    label: 'Moonshot 32K',                  contextK: 32  },
+      { id: 'moonshot-v1-128k',   label: 'Moonshot 128K',                 contextK: 128 },
+      { id: 'kimi-k2.6',          label: 'Kimi K2.6 (Code)',              contextK: 128, note: 'Flagship' },
+      { id: 'kimi-k2.6-thinking', label: 'Kimi K2.6 Thinking',           contextK: 128, note: 'Reasoning' },
     ],
-    keyPlaceholder: 'sk-kimi-oxr... (Kimi Code key)',
+    keyPlaceholder: 'sk-kimi-... (from kimi.com/code/console)',
   },
 
   ollama: {
@@ -149,7 +151,7 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   mistral:     'mistral-large-latest',
   groq:        'llama-3.3-70b-versatile',
   kimi:        'kimi-k2.6',
-  kimi_code:   'kimi-k2.6',
+  kimi_code:   'moonshot-v1-8k',
   ollama:      'llama3.2:3b',
   openrouter:  'google/gemma-4-26b-a4b-it:free',
 }
