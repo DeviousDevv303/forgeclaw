@@ -1,0 +1,15 @@
+export const L = {
+  bg:        '#0a0a0f',
+  surface:   '#0d0d14',
+  border:    '#2d5a4b',
+  text:      '#d4d0c8',
+  textDim:   '#6b7280',
+  lattice:   '#2d5a4b',
+  active:    '#4a9e8c',
+  activeDim: '#1a3a33',
+  anomaly:   '#7b3fa3',
+  critical:  '#6b21a8',
+  guard:     '#c4762a',
+  ghost:     '#1a2a33',
+  mono:      "'Courier New', monospace",
+} as const
