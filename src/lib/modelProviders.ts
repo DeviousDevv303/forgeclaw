@@ -8,7 +8,7 @@ export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi' 
 
 function kimiCodeUrl(): string {
   try {
-    return localStorage.getItem('fc_kimi_code_url') || 'https://api.kimi.ai/v1/chat/completions'
+    return localStorage.getItem('fc_kimi_code_url') || 'https://api.moonshot.cn/v1/chat/completions'
   } catch { return 'https://api.moonshot.cn/v1/chat/completions' }
 }
 
