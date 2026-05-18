@@ -26,6 +26,9 @@ export type AgentEvent =
   | { type: 'MISSION_COMPLETE'; timestamp: number }
   | { type: 'MISSION_BLOCKED'; reason: string; timestamp: number }
   | { type: 'RESET'; timestamp: number }
+  | { type: 'GUARDIAN_WARNING'; reason: string; nodeId?: string; timestamp: number }
+  | { type: 'THREAD_SPAWN'; threadId: string; parentTool: string; timestamp: number }
+  | { type: 'THREAD_MERGE'; threadId: string; timestamp: number }
 
 export interface ForgeOpsState {
   objective: string
@@ -39,6 +42,10 @@ export interface ForgeOpsState {
   iterTotal: number
   riskLevel: 'LOW' | 'MEDIUM' | 'HIGH'
   collapsedPaths: AlternatePath[]   // last decision's path space
+  integrityFrozen: boolean
+  guardianOverrideNeeded: boolean
+  guardianWarning: string | null
+  threadCount: number
 }
 
 export const INITIAL_FORGE_STATE: ForgeOpsState = {
@@ -53,6 +60,10 @@ export const INITIAL_FORGE_STATE: ForgeOpsState = {
   iterTotal: 40,
   riskLevel: 'LOW',
   collapsedPaths: [],
+  integrityFrozen: false,
+  guardianOverrideNeeded: false,
+  guardianWarning: null,
+  threadCount: 0,
 }
 
 export function phaseToStage(phase: AgentPhase): ForgeStage {

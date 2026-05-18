@@ -27,7 +27,7 @@ function reducer(state: ForgeOpsState, event: AgentEvent): ForgeOpsState {
       return { ...INITIAL_FORGE_STATE, events }
 
     case 'OBJECTIVE_RECEIVED':
-      return { ...INITIAL_FORGE_STATE, objective: event.objective, stage: 'RAW_ORE', events }
+      return { ...INITIAL_FORGE_STATE, objective: event.objective, stage: 'RAW_ORE', events, integrityFrozen: false, guardianOverrideNeeded: false, guardianWarning: null, threadCount: 0 }
 
     case 'PHASE_CHANGE': {
       const stage = phaseToStage(event.phase)
@@ -52,15 +52,23 @@ function reducer(state: ForgeOpsState, event: AgentEvent): ForgeOpsState {
     case 'TOOL_FAILURE': {
       const toolBus = { ...state.toolBus, [event.tool]: 'error' as const }
       const confidence = Math.max(0.30, state.confidence - 0.08)
-      const next: ForgeOpsState = { ...state, toolBus, confidence, events }
-      return { ...next, riskLevel: calcRisk(next) }
+      const base: ForgeOpsState = { ...state, toolBus, confidence, events }
+      const withRisk: ForgeOpsState = { ...base, riskLevel: calcRisk(base) }
+      if (confidence < 0.60) {
+        return { ...withRisk, integrityFrozen: true, guardianWarning: 'Coherence below threshold — thread allocation frozen' }
+      }
+      return withRisk
     }
 
     case 'RETRY_DECISION': {
       const retryCount = event.shouldRetry ? state.retryCount + 1 : state.retryCount
       const stage = event.shouldRetry ? 'REFORGING' : state.stage
-      const next: ForgeOpsState = { ...state, retryCount, stage, events }
-      return { ...next, riskLevel: calcRisk(next) }
+      const base: ForgeOpsState = { ...state, retryCount, stage, events }
+      const withRisk: ForgeOpsState = { ...base, riskLevel: calcRisk(base) }
+      if (retryCount >= 3) {
+        return { ...withRisk, guardianOverrideNeeded: true, guardianWarning: 'Reoptimization gate exceeded — Guardian override required' }
+      }
+      return withRisk
     }
 
     case 'PATHS_COLLAPSED': {
@@ -85,6 +93,15 @@ function reducer(state: ForgeOpsState, event: AgentEvent): ForgeOpsState {
 
     case 'MISSION_BLOCKED':
       return { ...state, stage: 'BLOCKED', phase: 'BLOCKED', events }
+
+    case 'GUARDIAN_WARNING':
+      return { ...state, guardianWarning: event.reason, events }
+
+    case 'THREAD_SPAWN':
+      return { ...state, threadCount: state.threadCount + 1, events }
+
+    case 'THREAD_MERGE':
+      return { ...state, threadCount: Math.max(0, state.threadCount - 1), events }
 
     default:
       return { ...state, events }

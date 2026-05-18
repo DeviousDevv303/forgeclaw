@@ -40,7 +40,7 @@ import {
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
 import { useForgeOps } from './hooks/useForgeOps'
-import { ForgeOps } from './components/ForgeOps'
+import { SyncognitiveLattice } from './components/lattice/SyncognitiveLattice'
 import type { AgentPhase } from './types/forgeOps'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -729,6 +729,7 @@ function App() {
           }
           const actEntryId = `act_${call.id}_${Date.now()}`
           setActivityLog(prev => [...prev.slice(-99), { id: actEntryId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
+          emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
           emitForge({ type: 'TOOL_START', tool: call.name, iter })
           const output = await executeTool(call, toolCtx)
           const isErr = output.startsWith('[TOOL ERROR]')
@@ -757,6 +758,7 @@ function App() {
           // Inject retry guidance into tool result so the model adapts its next action
           const outputWithRetry = isErr && retryAnnotation ? `${output}\n\n${retryAnnotation}` : output
           iterResults.push({ toolCallId: call.id, name: call.name, output: outputWithRetry, isError: isErr, reasoningStepId: stepId })
+          emitForge({ type: 'THREAD_MERGE', threadId: call.id })
         }
         allToolResults.push(...iterResults)
 
@@ -1551,7 +1553,7 @@ function App() {
         {activeTab === 'forgemind' && (
           <>
             {/* ForgeOps Mission Control — live execution theater */}
-            <ForgeOps state={forgeState} isActive={loading} currentPlan={currentPlan} />
+            <SyncognitiveLattice state={forgeState} isActive={loading} currentPlan={currentPlan} />
 
             <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
               {messages.length === 0 ? (
