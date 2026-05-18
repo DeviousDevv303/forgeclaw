@@ -254,6 +254,11 @@ function App() {
   const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
+  const [showGhToken, setShowGhToken] = useState(false)
+  const [ghTokenSaved, setGhTokenSaved] = useState(false)
+  const [ghToken, setGhToken] = useState(() => safeGetItem('gh_token') || '')
+  const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
+  const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
 
   // Multi-provider state
   const [activeProvider, setActiveProvider] = useState<ProviderId>(() => {
@@ -1275,29 +1280,60 @@ function App() {
                 </div>
               </div>
 
-              {/* GitHub tool connector config */}
+              {/* GitHub Token */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  GitHub Tool Connector
-                </label>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <label style={{ color: '#f97316', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                    GitHub Token
+                  </label>
+                  {ghToken && <span style={{ color: '#22c55e', fontSize: '10px', fontFamily: 'monospace' }}>● SET</span>}
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '6px' }}>
+                  <input
+                    type={showGhToken ? 'text' : 'password'}
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    value={ghToken}
+                    onChange={e => {
+                      setGhToken(e.target.value)
+                      safeSetItem('gh_token', e.target.value)
+                      setGhTokenSaved(false)
+                    }}
+                    style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${ghToken ? '#22c55e44' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
+                  />
+                  <button onClick={() => setShowGhToken(v => !v)} style={{ background: '#1a1a1a', border: '1px solid #333', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
+                    {showGhToken ? '🙈' : '👁'}
+                  </button>
+                  <button
+                    onClick={() => { safeSetItem('gh_token', ghToken); setGhTokenSaved(true); setTimeout(() => setGhTokenSaved(false), 2000) }}
+                    style={{ background: ghTokenSaved ? '#14532d' : '#1a1a1a', border: `1px solid ${ghTokenSaved ? '#22c55e' : '#333'}`, color: ghTokenSaved ? '#22c55e' : '#888', borderRadius: '4px', padding: '0 12px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', fontWeight: 'bold', whiteSpace: 'nowrap' }}
+                  >
+                    {ghTokenSaved ? '✓ SAVED' : 'SAVE'}
+                  </button>
+                </div>
+                <div style={{ color: '#444', fontSize: '10px', marginBottom: '10px' }}>
+                  Personal access token from github.com → Settings → Developer settings → Personal access tokens. ForgeMind uses this for autonomous GitHub operations.
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  {[
-                    { key: 'gh_token',    label: 'GitHub Token', placeholder: 'ghp_...' },
-                    { key: 'fc_gh_owner', label: 'Default Owner', placeholder: 'DeviousDevv303' },
-                    { key: 'fc_gh_repo',  label: 'Default Repo',  placeholder: 'forgeclaw' },
-                  ].map(f => (
+                  <div>
+                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Default Owner / Org</label>
                     <input
-                      key={f.key}
-                      type={f.key === 'gh_token' ? 'password' : 'text'}
-                      placeholder={f.placeholder}
-                      defaultValue={safeGetItem(f.key) || ''}
-                      onChange={e => safeSetItem(f.key, e.target.value)}
+                      type="text"
+                      placeholder="DeviousDevv303"
+                      value={ghOwner}
+                      onChange={e => { setGhOwner(e.target.value); safeSetItem('fc_gh_owner', e.target.value) }}
                       style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
                     />
-                  ))}
-                </div>
-                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
-                  ForgeMind uses these when autonomously calling github_* tools.
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Default Repo</label>
+                    <input
+                      type="text"
+                      placeholder="forgeclaw"
+                      value={ghRepo}
+                      onChange={e => { setGhRepo(e.target.value); safeSetItem('fc_gh_repo', e.target.value) }}
+                      style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                    />
+                  </div>
                 </div>
               </div>
 
