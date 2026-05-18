@@ -736,14 +736,29 @@ function App() {
             const retry = new SpeechSynthesisUtterance(clean)
             if (voice) retry.voice = voice
             retry.rate = rate
-            retry.onstart = () => { console.log('[TTS] retry onstart fired') }
-            retry.onerror = () => { setSpeakingId(null) }
-            retry.onend   = () => { setSpeakingId(null) }
+            let retryStarted = false
+            retry.onstart = () => { retryStarted = true; console.log('[TTS] retry onstart fired') }
+            retry.onerror = (e) => {
+              console.warn('[TTS] retry onerror:', e.error)
+              setSpeakingId(null)
+              utterancesRef.current = utterancesRef.current.filter(x => x !== retry)
+            }
+            retry.onend   = () => {
+              console.log('[TTS] retry onend')
+              setSpeakingId(null)
+              utterancesRef.current = utterancesRef.current.filter(x => x !== retry)
+            }
             utterancesRef.current.push(retry)
             synth.resume()
             synth.speak(retry)
             // Give up after another 3s
-            setTimeout(() => { if (!retry.onstart) setSpeakingId(null) }, 3000)
+            setTimeout(() => {
+              if (!retryStarted) {
+                console.warn('[TTS] retry also jammed — giving up')
+                setSpeakingId(null)
+                utterancesRef.current = utterancesRef.current.filter(x => x !== retry)
+              }
+            }, 3000)
           }
         }, 2000)
       } catch (err) {
