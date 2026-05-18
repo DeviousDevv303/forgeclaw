@@ -1,5 +1,7 @@
+import { useRef, useEffect, useState } from 'react'
 import type { AgentEvent, ForgeStage } from '../../types/forgeOps'
 import { L } from './palette'
+import { TypingText } from './TypingText'
 
 interface Props {
   events: AgentEvent[]
@@ -62,27 +64,60 @@ function traceLabel(ev: AgentEvent): { text: string; color: string } | null {
   }
 }
 
+interface TraceRowProps {
+  ev: AgentEvent
+  isNew: boolean
+}
+
+function TraceRow({ ev, isNew }: TraceRowProps) {
+  // Capture at mount — never allow isNew to flip after the component is mounted.
+  // If it flipped, useLiveTyping would re-run and interrupt in-progress typing.
+  const [shouldType] = useState(() => isNew)
+  const line = traceLabel(ev)
+  if (!line) return null
+  return (
+    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+      <span style={{ color: L.textDim, fontSize: '9px', flexShrink: 0 }}>{fmtTime(ev.timestamp)}</span>
+      <TypingText
+        text={line.text}
+        color={line.color}
+        speed={28}
+        instant={!shouldType}
+        style={{ fontSize: '9px', lineHeight: '1.45', wordBreak: 'break-word' as const }}
+      />
+    </div>
+  )
+}
+
 export function ProcessTrace({ events }: Props) {
+  // Seed with all events present on first render so they appear instantly.
+  // Events arriving after mount will have timestamps not in the set → they type in.
+  const seenRef = useRef<Set<number> | null>(null)
+  if (seenRef.current === null) {
+    seenRef.current = new Set(events.map(e => e.timestamp))
+  }
+
+  useEffect(() => {
+    events.forEach(ev => seenRef.current!.add(ev.timestamp))
+  }, [events])
+
+  const reversed = [...events].reverse()
+
   return (
     <div style={{ padding: '10px 14px' }}>
       <div style={{ color: L.textDim, fontSize: '8px', letterSpacing: '2px', marginBottom: '8px' }}>
         PROCESS TRACE
       </div>
       <div style={{ maxHeight: '160px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '3px' }}>
-        {events.length === 0
+        {reversed.length === 0
           ? <span style={{ color: L.textDim, fontSize: '9px' }}>awaiting input…</span>
-          : [...events].reverse().map((ev, i) => {
-              const line = traceLabel(ev)
-              if (!line) return null
-              return (
-                <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                  <span style={{ color: L.textDim, fontSize: '9px', flexShrink: 0 }}>{fmtTime(ev.timestamp)}</span>
-                  <span style={{ color: line.color, fontSize: '9px', lineHeight: '1.45', wordBreak: 'break-word' }}>
-                    {line.text}
-                  </span>
-                </div>
-              )
-            })
+          : reversed.map(ev => (
+              <TraceRow
+                key={ev.timestamp}
+                ev={ev}
+                isNew={!seenRef.current!.has(ev.timestamp)}
+              />
+            ))
         }
       </div>
     </div>
