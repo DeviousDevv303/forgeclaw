@@ -1444,10 +1444,10 @@ function App() {
                     <button onClick={() => setAttachedFile(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '14px' }}>×</button>
                   </div>
                 )}
-                <div style={{ display: 'flex', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '8px 12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '6px 10px' }}>
                   <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={false} />
-                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px', WebkitAppearance: 'none' }} rows={2} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} />
-                  <button style={{ background: '#f97316', color: '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '12px', textTransform: 'uppercase' }} onClick={handleSendMessage} disabled={loading}>SEND</button>
+                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} />
+                  <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage} disabled={loading}>SEND</button>
                 </div>
               </div>
           </>
@@ -1605,57 +1605,86 @@ function App() {
         )}
 
         {/* ── Voice Tab ── */}
-        {activeTab === 'voice' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '32px', padding: '40px 20px', background: '#080808' }}>
+        {activeTab === 'voice' && (() => {
+          const lastAI = [...messages].reverse().find(m => m.role === 'assistant' && !m.streaming && m.content)
+          return (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0', background: '#080808', overflowY: 'auto' }}>
 
-            {/* Big mic button */}
-            <button
-              onClick={toggleVoiceMic}
-              style={{
-                width: '120px', height: '120px', borderRadius: '50%',
-                background: listening ? '#1a0505' : '#0f0f0f',
-                border: listening ? '2px solid #ef4444' : '2px solid #2a2a2a',
-                cursor: 'pointer', fontSize: '48px', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', transition: 'all 0.2s',
-                animation: listening ? 'micRing 1.2s ease-in-out infinite' : 'none',
-                boxShadow: listening ? '0 0 30px rgba(239,68,68,0.25)' : '0 0 0 rgba(0,0,0,0)',
-              }}
-              title={listening ? 'Tap to stop' : 'Tap to speak'}
-            >
-              🎙️
-            </button>
+              {/* ── READ ALOUD section ── */}
+              <div style={{ padding: '20px 20px 0', borderBottom: '1px solid #111' }}>
+                <div style={{ fontSize: '10px', color: '#f97316', letterSpacing: '2px', fontFamily: 'monospace', marginBottom: '10px', fontWeight: 'bold' }}>READ ALOUD</div>
+                {lastAI ? (
+                  <div style={{ background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '12px 14px', marginBottom: '12px' }}>
+                    <div style={{ fontFamily: "'Courier New', monospace", fontSize: '13px', color: '#bbb', lineHeight: '1.6', maxHeight: '120px', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {lastAI.content.slice(0, 400)}{lastAI.content.length > 400 ? '…' : ''}
+                    </div>
+                    <div style={{ marginTop: '10px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <button
+                        onClick={() => handleSpeak(lastAI.id, lastAI.content)}
+                        style={{
+                          background: speakingId === lastAI.id ? '#1a1a1a' : '#f97316',
+                          color: speakingId === lastAI.id ? '#ef4444' : '#000',
+                          border: speakingId === lastAI.id ? '1px solid #ef4444' : 'none',
+                          padding: '8px 22px', borderRadius: '6px', fontWeight: 'bold',
+                          cursor: 'pointer', fontSize: '12px', fontFamily: 'monospace', letterSpacing: '2px',
+                        }}
+                      >
+                        {speakingId === lastAI.id ? '⏹ STOP' : '▶ SPEAK'}
+                      </button>
+                      {speakingId === lastAI.id && (
+                        <span style={{ color: '#ef4444', fontSize: '10px', fontFamily: 'monospace', animation: 'pulse 1.2s infinite' }}>● SPEAKING</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ color: '#2a2a2a', fontSize: '11px', fontFamily: 'monospace', paddingBottom: '16px' }}>No AI response yet — send a message first.</div>
+                )}
+              </div>
 
-            <span style={{ color: listening ? '#ef4444' : '#333', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
-              {listening ? '● LISTENING' : 'TAP TO SPEAK'}
-            </span>
+              {/* ── SPEECH INPUT section ── */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px', padding: '28px 20px' }}>
+                <div style={{ fontSize: '10px', color: '#555', letterSpacing: '2px', fontFamily: 'monospace', alignSelf: 'flex-start', fontWeight: 'bold' }}>SPEECH INPUT</div>
 
-            {/* Transcript area */}
-            <div style={{ width: '100%', maxWidth: '640px', minHeight: '160px', background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '16px', fontFamily: "'Courier New', Courier, monospace", fontSize: '14px', color: '#c8c8c8', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-              {voiceTranscript || <span style={{ color: '#2a2a2a' }}>Your words will appear here…</span>}
+                <button
+                  onClick={toggleVoiceMic}
+                  style={{
+                    width: '100px', height: '100px', borderRadius: '50%',
+                    background: listening ? '#1a0505' : '#0f0f0f',
+                    border: listening ? '2px solid #ef4444' : '2px solid #2a2a2a',
+                    cursor: 'pointer', fontSize: '40px', display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', transition: 'all 0.2s',
+                    animation: listening ? 'micRing 1.2s ease-in-out infinite' : 'none',
+                    boxShadow: listening ? '0 0 30px rgba(239,68,68,0.25)' : 'none',
+                  }}
+                  title={listening ? 'Tap to stop' : 'Tap to speak'}
+                >
+                  🎙️
+                </button>
+
+                <span style={{ color: listening ? '#ef4444' : '#333', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
+                  {listening ? '● LISTENING' : 'TAP TO SPEAK'}
+                </span>
+
+                <div style={{ width: '100%', maxWidth: '600px', minHeight: '100px', background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '14px', fontFamily: "'Courier New', monospace", fontSize: '13px', color: '#c8c8c8', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {voiceTranscript || <span style={{ color: '#2a2a2a' }}>Your words will appear here…</span>}
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button onClick={() => setVoiceTranscript('')} style={{ background: 'none', border: '1px solid #2a2a2a', color: '#555', padding: '7px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px' }}>
+                    CLEAR
+                  </button>
+                  <button
+                    onClick={() => { if (!voiceTranscript.trim()) return; setInput(voiceTranscript.trim()); setActiveTab('forgemind') }}
+                    disabled={!voiceTranscript.trim()}
+                    style={{ background: voiceTranscript.trim() ? '#f97316' : '#1a1a1a', color: voiceTranscript.trim() ? '#000' : '#333', padding: '7px 18px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}
+                  >
+                    SEND TO CHAT
+                  </button>
+                </div>
+              </div>
             </div>
-
-            {/* Actions */}
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button
-                onClick={() => { setVoiceTranscript('') }}
-                style={{ background: 'none', border: '1px solid #2a2a2a', color: '#666', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', textTransform: 'uppercase' }}
-              >
-                CLEAR
-              </button>
-              <button
-                onClick={() => {
-                  if (!voiceTranscript.trim()) return
-                  setInput(voiceTranscript.trim())
-                  setActiveTab('forgemind')
-                }}
-                disabled={!voiceTranscript.trim()}
-                style={{ background: voiceTranscript.trim() ? '#f97316' : '#1a1a1a', color: voiceTranscript.trim() ? '#000' : '#333', padding: '8px 20px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', textTransform: 'uppercase', fontWeight: 'bold' }}
-              >
-                SEND TO CHAT
-              </button>
-            </div>
-          </div>
-        )}
+          )
+        })()}
       </main>
 
       {/* Footer signature */}
