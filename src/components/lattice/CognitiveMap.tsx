@@ -1,5 +1,6 @@
 import type { ForgeStage, AgentPhase } from '../../types/forgeOps'
 import { L } from './palette'
+import { TypingText } from './TypingText'
 
 interface Props {
   stage: ForgeStage
@@ -66,9 +67,13 @@ export function CognitiveMap({ stage, integrityFrozen }: Props) {
                 {meta.label}
               </span>
               {active && (
-                <span style={{ color: L.textDim, fontSize: '8px', marginLeft: '8px' }}>
-                  {meta.trace}
-                </span>
+                <TypingText
+                  key={s}
+                  text={meta.trace}
+                  color={L.textDim}
+                  speed={22}
+                  style={{ fontSize: '8px', marginLeft: '8px' }}
+                />
               )}
             </div>
             {active && (
