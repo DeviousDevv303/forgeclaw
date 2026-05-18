@@ -362,6 +362,7 @@ function App() {
       mistral:    parsed.mistral    || 'Ile5nNCCMWmVOnx3jtJH8T1TshigIU3I',
       groq:       parsed.groq       || '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',
       kimi:       parsed.kimi       || 'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
+      kimi_code:  parsed.kimi_code  || '',
       ollama:     '',
       openrouter: parsed.openrouter || '',
     }
@@ -1113,7 +1114,7 @@ function App() {
             {/* Per-provider credential dots */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               {PROVIDER_ORDER.map(pid => {
-                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : pid === 'openrouter' ? 'OR' : 'O'
+                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : pid === 'kimi_code' ? 'KC' : pid === 'openrouter' ? 'OR' : 'O'
                 const hasKey = pid === 'ollama' ? true : !!providerKeys[pid]
                 const isActive = pid === activeProvider
                 const hasFailed = failedProviders.has(pid)

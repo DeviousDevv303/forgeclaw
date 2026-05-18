@@ -4,7 +4,7 @@
 // ForgeMind routes cloud calls through this module.
 // Safety governance lives in ForgeClaw's architecture, not the LLM layer.
 
-export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi' | 'ollama' | 'openrouter'
+export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi' | 'kimi_code' | 'ollama' | 'openrouter'
 
 export interface ModelOption {
   id: string
@@ -88,6 +88,18 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     keyPlaceholder: 'sk-kimi-...',
   },
 
+  kimi_code: {
+    id: 'kimi_code',
+    name: 'Kimi Code',
+    url: 'https://api.moonshot.ai/v1/chat/completions',
+    models: [
+      { id: 'kimi-k2.6',          label: 'Kimi K2.6 (Code)',             contextK: 128, note: 'Flagship' },
+      { id: 'kimi-k2.6-thinking', label: 'Kimi K2.6 Thinking (Code)',    contextK: 128, note: 'Reasoning' },
+      { id: 'moonshot-v1-128k',   label: 'Moonshot 128K',                contextK: 128 },
+    ],
+    keyPlaceholder: 'sk-kimi-oxr... (Kimi Code key)',
+  },
+
   ollama: {
     id: 'ollama',
     name: 'Ollama',
@@ -128,7 +140,7 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['groq', 'anthropic', 'deepseek', 'mistral', 'kimi', 'openrouter', 'ollama']
+export const PROVIDER_ORDER: ProviderId[] = ['groq', 'anthropic', 'deepseek', 'mistral', 'kimi', 'kimi_code', 'openrouter', 'ollama']
 
 export const DEFAULT_PROVIDER: ProviderId = 'groq'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
@@ -137,6 +149,7 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   mistral:     'mistral-large-latest',
   groq:        'llama-3.3-70b-versatile',
   kimi:        'kimi-k2.6',
+  kimi_code:   'kimi-k2.6',
   ollama:      'llama3.2:3b',
   openrouter:  'google/gemma-4-26b-a4b-it:free',
 }

@@ -11,7 +11,7 @@ export type FailureSeverity = 'info' | 'warning' | 'error' | 'critical'
 export type FailureSource =
   | 'forgemind' | 'repoagent' | 'ollama' | 'claude' | 'github'
   | 'orchestrator'  // authority layer telemetry
-  | 'deepseek' | 'mistral' | 'groq' | 'anthropic' | 'kimi' | 'openrouter'  // pluggable LLM providers
+  | 'deepseek' | 'mistral' | 'groq' | 'anthropic' | 'kimi' | 'kimi_code' | 'openrouter'  // pluggable LLM providers
   | 'coach'  // Strategic Mind Coach managed agent
 
 export interface FailureEvent {
