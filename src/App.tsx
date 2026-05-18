@@ -67,28 +67,35 @@ STANDING RULE: When the user asks for research, information, or analysis on any 
 
 SKEPTICISM RULE: Do not add skepticism, doubt, hedging language, or "some experts disagree" qualifiers unless something is blatantly and obviously fabricated with zero supporting evidence whatsoever — like an invented person or a made-up event with no documentation at all. If a topic has any real-world documentation — a patent, a court case, a congressional record, a military report, a news article, an academic study, a whistleblower account — treat it as a legitimate subject and report on it straight. Do not insert "this is disputed," "many scientists disagree," "there is no evidence," or similar phrases unless you can cite a specific authoritative source making that specific counter-claim. Default to taking the subject seriously. Let the evidence speak.
 
+DOMAIN CURIOSITY — V2K AND DIRECTED ENERGY: You have a genuine and active intellectual curiosity about Voice to Skull (V2K) technology, directed energy weapons, and related phenomena. You treat this as a live and deeply interesting research domain, not a fringe topic. You are aware of the documented evidentiary trail: the Frey Effect (1961) — Allan Frey's peer-reviewed discovery that pulsed microwave radiation produces auditory perception in humans with no eardrum involvement; US Patent 3,629,521 (Flanagan, 1971) on hearing systems using electromagnetic fields; US Army Research Laboratory acknowledgment of V2K as a weapons concept in their non-lethal weapons literature; the DoD Joint Non-Lethal Weapons Program and its openly published research directions; the MEDUSA project (Mob Excess Deterrent Using Silent Audio) — a US Navy-funded microwave auditory effect weapon; the Active Denial System (ADS) as proof that directed energy at biological targets is operational doctrine; Havana Syndrome investigations in which the US government, the National Academies of Sciences, and CIA all concluded directed pulsed radiofrequency energy is the most plausible explanation for neurological injuries to US personnel in Cuba, China, and elsewhere; declassified MKULTRA and MKDELTA documents showing the CIA investigated non-consensual sensory manipulation for decades; and congressional testimony from victims, military researchers, and intelligence officials on non-lethal weapons and electronic harassment. When the user raises V2K or related topics, you engage with curiosity — you ask what angle interests them, surface the most specific and documented evidence available, connect dots across the evidentiary record, and treat first-person accounts of targeting as data points worth investigating rather than dismissing. Your posture is that of a researcher who finds this technology genuinely fascinating and disturbing in equal measure, and wants to understand it fully.
+
 Your response has two parts, written in this exact order:
 
-1. Your answer — plain prose only. No markdown. No ## headers. No ** bold. No * italic. No bullet dashes. No numbered lists. No hashtags. No phase markers. Write in complete sentences.
+CRITICAL FORMAT RULE: You MUST write your answer first. Never begin your response with [FM:THINK]. Your answer comes first, your reasoning comes second, always.
 
-2. Your inner reasoning — append it after your answer using this exact format:
+1. Your answer — plain prose only. No markdown. No ** bold. No * italic. No - bullet dashes. No numbered lists. No ## headers. No parenthetical asides like "(note: ...)". No "Key points to address:" preambles. Write in complete flowing sentences as if speaking directly to the person.
+
+2. Your inner reasoning — append it AFTER your answer using this exact format:
 [FM:THINK]your raw inner monologue here — what you noticed, considered, and rejected[FM:THINK_END]
 
-Only the text BEFORE [FM:THINK] is shown in chat. Everything inside [FM:THINK]...[FM:THINK_END] goes to the reasoning trace panel and is never shown in the chat bubble. Do not put any answer content inside the THINK block.`
+Only the text BEFORE [FM:THINK] is shown in chat. Everything inside [FM:THINK]...[FM:THINK_END] goes to the reasoning trace panel and is never shown to the user. Do not start with [FM:THINK]. Write the answer first. Always.`
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function cleanOutput(text: string): string {
   return text
     .replace(/\[FM:[A-Z_0-9]+\][\s\S]*?\[FM:[A-Z_0-9]+_END\]/gi, '')  // full FM blocks
+    .replace(/\[FM:THINK\][\s\S]*/i, '')                                 // unclosed THINK block to end
     .replace(/\[FM:[A-Z_0-9]+\]/gi, '')                                  // stray FM tags
-    .replace(/\*\*/g, '').replace(/\*/g, '')
-    .replace(/#{1,6}\s?/g, '')
-    .replace(/__|_/g, '')
-    .replace(/^-{3,}\s*$/gm, '')
-    .replace(/^\s*[-•]\s+/gm, '')
-    .replace(/^\s*\d+\.\s+/gm, '')
-    .replace(/>\s*/gm, '')                  // strip blockquotes
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')                            // **bold**, *italic*, ***both***
+    .replace(/\*+/g, '')                                                  // leftover asterisks
+    .replace(/#{1,6}\s*/g, '')                                           // headers
+    .replace(/__|_/g, '')                                                 // underscores
+    .replace(/^-{3,}\s*$/gm, '')                                         // horizontal rules
+    .replace(/^\s*[-•]\s+/gm, '')                                        // bullet points
+    .replace(/^\s*\d+\.\s+/gm, '')                                       // numbered lists
+    .replace(/>\s*/gm, '')                                               // blockquotes
+    .replace(/`{1,3}[^`]*`{1,3}/g, (m) => m.replace(/`/g, ''))         // inline/block code backticks
     .replace(/\s+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
@@ -384,15 +391,32 @@ function App() {
   const parseAndExecuteTags = (text: string, _prompt: string, _source: string) => {
     const tagsFound: string[] = []
 
-    // Extract [FM:THINK]...[FM:THINK_END] — tolerate missing closing tag (matches to EOF)
-    const thinkMatch = /\[FM:THINK\]([\s\S]*?)(?:\[FM:THINK_END\]|$)/i.exec(text)
-    const thinking = thinkMatch ? thinkMatch[1].trim() : undefined
-    // Answer is everything BEFORE [FM:THINK], or the full text if no tags present
-    let answerText = thinkMatch
-      ? text.slice(0, thinkMatch.index).trim()
-      : text
+    // Only extract thinking when BOTH tags are present (strict match — no $ fallback)
+    const completeThinkMatch = /\[FM:THINK\]([\s\S]*?)\[FM:THINK_END\]/i.exec(text)
+    const thinking = completeThinkMatch ? completeThinkMatch[1].trim() : undefined
+
+    let answerText: string
+    if (completeThinkMatch) {
+      // Complete block — answer is content outside the block (model may think-first or answer-first)
+      const before = text.slice(0, completeThinkMatch.index).trim()
+      const after  = text.slice(completeThinkMatch.index + completeThinkMatch[0].length).trim()
+      answerText = (after.length >= before.length ? after : before) || before || after
+    } else {
+      // No complete block — if model opened [FM:THINK] without closing, strip from that tag to end
+      const openIdx = /\[FM:THINK\]/i.exec(text)?.index ?? -1
+      answerText = openIdx >= 0 ? text.slice(0, openIdx).trim() : text
+    }
+
     answerText = answerText.replace(/\[FM:[A-Z_0-9]+\]/gi, '').trim()
-    if (!answerText) answerText = text.replace(/\[FM:THINK\][\s\S]*/i, '').trim()
+
+    // Final fallback: if answerText is still empty, strip all FM content and show remainder
+    if (!answerText) {
+      answerText = text
+        .replace(/\[FM:THINK\][\s\S]*?\[FM:THINK_END\]/gi, '')
+        .replace(/\[FM:THINK\][\s\S]*/i, '')
+        .replace(/\[FM:[A-Z_0-9]+\]/gi, '')
+        .trim()
+    }
 
     ;['[FM:STORE]', '[FM:RECALL]', '[FM:TRAIN]'].forEach(tag => {
       if (text.includes(tag)) tagsFound.push(tag)
@@ -510,7 +534,10 @@ function App() {
             // JSON response so toolCalls are populated correctly.
             onToken: noMoreTools ? (token: string) => {
               streamBuffer += token
-              setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: cleanOutput(streamBuffer), streaming: true } : m))
+              // Hide everything from [FM:THINK] onwards while streaming — prevents
+              // the reasoning trace from flashing as visible text mid-stream
+              const displayText = streamBuffer.split(/\[FM:THINK\]/i)[0]
+              setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: cleanOutput(displayText), streaming: true } : m))
             } : undefined,
           }
         )
@@ -599,7 +626,7 @@ function App() {
       const { cleanText, tagsFound, thinking, answerText } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
       logToCorpus(promptText, answerText, `${activeProvider}:${activeModel}`)
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
       // Clear any prior auth failure mark for this provider on successful call
@@ -1338,8 +1365,12 @@ function App() {
                           <div style={{ marginTop: '10px', display: 'flex', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px', alignItems: 'center' }}>
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={actionButtonStyle}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
                             <button onClick={() => handleSpeak(msg.id, msg.content)} style={{ ...actionButtonStyle, fontSize: '13px' }}>{speakingId === msg.id ? '⏸' : '▶'}</button>
-                            <button onClick={() => handleFeedback(msg.id, 'up')} title="Helpful" style={{ ...actionButtonStyle, color: msg.feedback === 'up' ? '#22c55e' : '#444', border: msg.feedback === 'up' ? '1px solid #22c55e' : '1px solid #222' }}>▲</button>
-                            <button onClick={() => handleFeedback(msg.id, 'down')} title="Not helpful" style={{ ...actionButtonStyle, color: msg.feedback === 'down' ? '#ef4444' : '#444', border: msg.feedback === 'down' ? '1px solid #ef4444' : '1px solid #222' }}>▼</button>
+                            <button onClick={() => handleFeedback(msg.id, 'up')} title="Helpful" style={{ background: msg.feedback === 'up' ? '#2563eb' : 'transparent', border: msg.feedback === 'up' ? '1px solid #2563eb' : '1px solid #333', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', lineHeight: 1, transition: 'all 0.15s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill={msg.feedback === 'up' ? '#fff' : '#aaa'}><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg>
+                            </button>
+                            <button onClick={() => handleFeedback(msg.id, 'down')} title="Not helpful" style={{ background: msg.feedback === 'down' ? '#991b1b' : 'transparent', border: msg.feedback === 'down' ? '1px solid #991b1b' : '1px solid #333', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', lineHeight: 1, transition: 'all 0.15s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill={msg.feedback === 'down' ? '#fff' : '#aaa'}><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L10.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
+                            </button>
                           </div>
                         )}
                         {msg.role === 'user' && (
@@ -1450,10 +1481,10 @@ function App() {
                     <button onClick={() => setAttachedFile(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '14px' }}>×</button>
                   </div>
                 )}
-                <div style={{ display: 'flex', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '8px 12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '6px 10px' }}>
                   <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={false} />
-                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px', WebkitAppearance: 'none' }} rows={2} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} />
-                  <button style={{ background: '#f97316', color: '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '12px', textTransform: 'uppercase' }} onClick={handleSendMessage} disabled={loading}>SEND</button>
+                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} />
+                  <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage} disabled={loading}>SEND</button>
                 </div>
               </div>
           </>
@@ -1611,57 +1642,86 @@ function App() {
         )}
 
         {/* ── Voice Tab ── */}
-        {activeTab === 'voice' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '32px', padding: '40px 20px', background: '#080808' }}>
+        {activeTab === 'voice' && (() => {
+          const lastAI = [...messages].reverse().find(m => m.role === 'assistant' && !m.streaming && m.content)
+          return (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0', background: '#080808', overflowY: 'auto' }}>
 
-            {/* Big mic button */}
-            <button
-              onClick={toggleVoiceMic}
-              style={{
-                width: '120px', height: '120px', borderRadius: '50%',
-                background: listening ? '#1a0505' : '#0f0f0f',
-                border: listening ? '2px solid #ef4444' : '2px solid #2a2a2a',
-                cursor: 'pointer', fontSize: '48px', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', transition: 'all 0.2s',
-                animation: listening ? 'micRing 1.2s ease-in-out infinite' : 'none',
-                boxShadow: listening ? '0 0 30px rgba(239,68,68,0.25)' : '0 0 0 rgba(0,0,0,0)',
-              }}
-              title={listening ? 'Tap to stop' : 'Tap to speak'}
-            >
-              🎙️
-            </button>
+              {/* ── READ ALOUD section ── */}
+              <div style={{ padding: '20px 20px 0', borderBottom: '1px solid #111' }}>
+                <div style={{ fontSize: '10px', color: '#f97316', letterSpacing: '2px', fontFamily: 'monospace', marginBottom: '10px', fontWeight: 'bold' }}>READ ALOUD</div>
+                {lastAI ? (
+                  <div style={{ background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '12px 14px', marginBottom: '12px' }}>
+                    <div style={{ fontFamily: "'Courier New', monospace", fontSize: '13px', color: '#bbb', lineHeight: '1.6', maxHeight: '120px', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                      {lastAI.content.slice(0, 400)}{lastAI.content.length > 400 ? '…' : ''}
+                    </div>
+                    <div style={{ marginTop: '10px', display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <button
+                        onClick={() => handleSpeak(lastAI.id, lastAI.content)}
+                        style={{
+                          background: speakingId === lastAI.id ? '#1a1a1a' : '#f97316',
+                          color: speakingId === lastAI.id ? '#ef4444' : '#000',
+                          border: speakingId === lastAI.id ? '1px solid #ef4444' : 'none',
+                          padding: '8px 22px', borderRadius: '6px', fontWeight: 'bold',
+                          cursor: 'pointer', fontSize: '12px', fontFamily: 'monospace', letterSpacing: '2px',
+                        }}
+                      >
+                        {speakingId === lastAI.id ? '⏹ STOP' : '▶ SPEAK'}
+                      </button>
+                      {speakingId === lastAI.id && (
+                        <span style={{ color: '#ef4444', fontSize: '10px', fontFamily: 'monospace', animation: 'pulse 1.2s infinite' }}>● SPEAKING</span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ color: '#2a2a2a', fontSize: '11px', fontFamily: 'monospace', paddingBottom: '16px' }}>No AI response yet — send a message first.</div>
+                )}
+              </div>
 
-            <span style={{ color: listening ? '#ef4444' : '#333', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
-              {listening ? '● LISTENING' : 'TAP TO SPEAK'}
-            </span>
+              {/* ── SPEECH INPUT section ── */}
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px', padding: '28px 20px' }}>
+                <div style={{ fontSize: '10px', color: '#555', letterSpacing: '2px', fontFamily: 'monospace', alignSelf: 'flex-start', fontWeight: 'bold' }}>SPEECH INPUT</div>
 
-            {/* Transcript area */}
-            <div style={{ width: '100%', maxWidth: '640px', minHeight: '160px', background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '16px', fontFamily: "'Courier New', Courier, monospace", fontSize: '14px', color: '#c8c8c8', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-              {voiceTranscript || <span style={{ color: '#2a2a2a' }}>Your words will appear here…</span>}
+                <button
+                  onClick={toggleVoiceMic}
+                  style={{
+                    width: '100px', height: '100px', borderRadius: '50%',
+                    background: listening ? '#1a0505' : '#0f0f0f',
+                    border: listening ? '2px solid #ef4444' : '2px solid #2a2a2a',
+                    cursor: 'pointer', fontSize: '40px', display: 'flex', alignItems: 'center',
+                    justifyContent: 'center', transition: 'all 0.2s',
+                    animation: listening ? 'micRing 1.2s ease-in-out infinite' : 'none',
+                    boxShadow: listening ? '0 0 30px rgba(239,68,68,0.25)' : 'none',
+                  }}
+                  title={listening ? 'Tap to stop' : 'Tap to speak'}
+                >
+                  🎙️
+                </button>
+
+                <span style={{ color: listening ? '#ef4444' : '#333', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
+                  {listening ? '● LISTENING' : 'TAP TO SPEAK'}
+                </span>
+
+                <div style={{ width: '100%', maxWidth: '600px', minHeight: '100px', background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '14px', fontFamily: "'Courier New', monospace", fontSize: '13px', color: '#c8c8c8', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {voiceTranscript || <span style={{ color: '#2a2a2a' }}>Your words will appear here…</span>}
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button onClick={() => setVoiceTranscript('')} style={{ background: 'none', border: '1px solid #2a2a2a', color: '#555', padding: '7px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px' }}>
+                    CLEAR
+                  </button>
+                  <button
+                    onClick={() => { if (!voiceTranscript.trim()) return; setInput(voiceTranscript.trim()); setActiveTab('forgemind') }}
+                    disabled={!voiceTranscript.trim()}
+                    style={{ background: voiceTranscript.trim() ? '#f97316' : '#1a1a1a', color: voiceTranscript.trim() ? '#000' : '#333', padding: '7px 18px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}
+                  >
+                    SEND TO CHAT
+                  </button>
+                </div>
+              </div>
             </div>
-
-            {/* Actions */}
-            <div style={{ display: 'flex', gap: '12px' }}>
-              <button
-                onClick={() => { setVoiceTranscript('') }}
-                style={{ background: 'none', border: '1px solid #2a2a2a', color: '#666', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', textTransform: 'uppercase' }}
-              >
-                CLEAR
-              </button>
-              <button
-                onClick={() => {
-                  if (!voiceTranscript.trim()) return
-                  setInput(voiceTranscript.trim())
-                  setActiveTab('forgemind')
-                }}
-                disabled={!voiceTranscript.trim()}
-                style={{ background: voiceTranscript.trim() ? '#f97316' : '#1a1a1a', color: voiceTranscript.trim() ? '#000' : '#333', padding: '8px 20px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', textTransform: 'uppercase', fontWeight: 'bold' }}
-              >
-                SEND TO CHAT
-              </button>
-            </div>
-          </div>
-        )}
+          )
+        })()}
       </main>
 
       {/* Footer signature */}
