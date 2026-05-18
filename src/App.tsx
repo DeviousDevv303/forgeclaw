@@ -328,6 +328,7 @@ function App() {
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
+  const [testKeyError, setTestKeyError] = useState('')
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [showGhToken, setShowGhToken] = useState(false)
@@ -1016,14 +1017,18 @@ function App() {
   }
 
   const testApiKey = async () => {
-    if (!apiKey.trim()) { setApiKeyStatus('invalid'); return }
+    if (!apiKey.trim()) { setApiKeyStatus('invalid'); setTestKeyError('No key entered'); return }
     setTestingKey(true)
+    setTestKeyError('')
     try {
       await testProviderKey(activeProvider, activeModel, apiKey)
       setApiKeyStatus('valid')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      setApiKeyStatus(msg.includes('401') || msg.toLowerCase().includes('invalid') ? 'invalid' : 'unverified')
+      const msg = err instanceof Error ? err.message : String(err)
+      setTestKeyError(msg)
+      // Only mark invalid for real auth rejections — not model errors, quota, etc.
+      const isAuthReject = msg.includes('401') || /unauthorized|invalid.*(api.?key|token|auth)/i.test(msg)
+      setApiKeyStatus(isAuthReject ? 'invalid' : 'unverified')
     } finally {
       setTestingKey(false)
     }
@@ -1309,7 +1314,7 @@ function App() {
                     {showApiKey ? '🙈' : '👁'}
                   </button>
                 </div>
-                {apiKeyStatus === 'invalid' && <div style={{ color: '#ef4444', fontSize: '10px', marginTop: '4px' }}>API rejected this key</div>}
+                {testKeyError && <div style={{ color: apiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
               </div>
 
               <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
@@ -1326,8 +1331,25 @@ function App() {
                 {!apiKey && <span style={{ color: '#666' }}>Enter your {PROVIDERS[activeProvider].name} API key above</span>}
                 {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#eab308' }}>🟡 Key not tested yet</span>}
                 {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 Key valid — {PROVIDERS[activeProvider].name}</span>}
-                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Invalid key</span>}
+                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Auth rejected</span>}
               </div>
+
+              {/* Kimi Code URL override — endpoint varies by key origin */}
+              {activeProvider === 'kimi_code' && (
+                <div style={{ marginTop: '10px', padding: '8px', background: '#0a0800', border: '1px solid #2a1a00', borderRadius: '4px' }}>
+                  <label style={{ display: 'block', color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>KIMI CODE API ENDPOINT</label>
+                  <input
+                    type="text"
+                    placeholder="https://api.moonshot.cn/v1/chat/completions"
+                    defaultValue={safeGetItem('fc_kimi_code_url') || ''}
+                    onChange={e => safeSetItem('fc_kimi_code_url', e.target.value.trim())}
+                    style={{ width: '100%', background: '#080808', color: '#ccc', border: '1px solid #333', borderRadius: '4px', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                  />
+                  <div style={{ color: '#444', fontSize: '10px', marginTop: '4px' }}>
+                    Try: api.moonshot.cn · api.moonshot.ai · api.kimi.ai — leave blank for default (.cn)
+                  </div>
+                </div>
+              )}
 
               {/* Corpus Memory Progress */}
               <div style={{ marginTop: '12px', borderTop: '1px solid #1a1a1a', paddingTop: '12px' }}>

@@ -6,6 +6,12 @@
 
 export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi' | 'kimi_code' | 'ollama' | 'openrouter'
 
+function kimiCodeUrl(): string {
+  try {
+    return localStorage.getItem('fc_kimi_code_url') || 'https://api.moonshot.cn/v1/chat/completions'
+  } catch { return 'https://api.moonshot.cn/v1/chat/completions' }
+}
+
 export interface ModelOption {
   id: string
   label: string
@@ -203,7 +209,8 @@ export async function callProvider(
   apiKey: string,
   options: CallOptions = {},
 ): Promise<CallResult> {
-  const cfg = PROVIDERS[providerId]
+  const cfg = { ...PROVIDERS[providerId] }
+  if (providerId === 'kimi_code') cfg.url = kimiCodeUrl()
   const { tools, onToken, maxTokens = 4096 } = options
   const streaming = !!onToken
 
