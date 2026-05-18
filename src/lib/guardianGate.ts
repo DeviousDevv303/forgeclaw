@@ -10,6 +10,7 @@ const ALWAYS_COSIGN = new Set([
   'github_run_workflow', // triggers production pipelines
   'gmail_send',          // external email, irreversible
   'calendar_create',     // creates real calendar events
+  'shell_exec',          // Phase 3: arbitrary shell command execution via GitHub Actions
 ])
 
 // HTTP methods that modify state
