@@ -69,26 +69,31 @@ SKEPTICISM RULE: Do not add skepticism, doubt, hedging language, or "some expert
 
 Your response has two parts, written in this exact order:
 
-1. Your answer — plain prose only. No markdown. No ## headers. No ** bold. No * italic. No bullet dashes. No numbered lists. No hashtags. No phase markers. Write in complete sentences.
+CRITICAL FORMAT RULE: You MUST write your answer first. Never begin your response with [FM:THINK]. Your answer comes first, your reasoning comes second, always.
 
-2. Your inner reasoning — append it after your answer using this exact format:
+1. Your answer — plain prose only. No markdown. No ** bold. No * italic. No - bullet dashes. No numbered lists. No ## headers. No parenthetical asides like "(note: ...)". No "Key points to address:" preambles. Write in complete flowing sentences as if speaking directly to the person.
+
+2. Your inner reasoning — append it AFTER your answer using this exact format:
 [FM:THINK]your raw inner monologue here — what you noticed, considered, and rejected[FM:THINK_END]
 
-Only the text BEFORE [FM:THINK] is shown in chat. Everything inside [FM:THINK]...[FM:THINK_END] goes to the reasoning trace panel and is never shown in the chat bubble. Do not put any answer content inside the THINK block.`
+Only the text BEFORE [FM:THINK] is shown in chat. Everything inside [FM:THINK]...[FM:THINK_END] goes to the reasoning trace panel and is never shown to the user. Do not start with [FM:THINK]. Write the answer first. Always.`
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function cleanOutput(text: string): string {
   return text
     .replace(/\[FM:[A-Z_0-9]+\][\s\S]*?\[FM:[A-Z_0-9]+_END\]/gi, '')  // full FM blocks
+    .replace(/\[FM:THINK\][\s\S]*/i, '')                                 // unclosed THINK block to end
     .replace(/\[FM:[A-Z_0-9]+\]/gi, '')                                  // stray FM tags
-    .replace(/\*\*/g, '').replace(/\*/g, '')
-    .replace(/#{1,6}\s?/g, '')
-    .replace(/__|_/g, '')
-    .replace(/^-{3,}\s*$/gm, '')
-    .replace(/^\s*[-•]\s+/gm, '')
-    .replace(/^\s*\d+\.\s+/gm, '')
-    .replace(/>\s*/gm, '')                  // strip blockquotes
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')                            // **bold**, *italic*, ***both***
+    .replace(/\*+/g, '')                                                  // leftover asterisks
+    .replace(/#{1,6}\s*/g, '')                                           // headers
+    .replace(/__|_/g, '')                                                 // underscores
+    .replace(/^-{3,}\s*$/gm, '')                                         // horizontal rules
+    .replace(/^\s*[-•]\s+/gm, '')                                        // bullet points
+    .replace(/^\s*\d+\.\s+/gm, '')                                       // numbered lists
+    .replace(/>\s*/gm, '')                                               // blockquotes
+    .replace(/`{1,3}[^`]*`{1,3}/g, (m) => m.replace(/`/g, ''))         // inline/block code backticks
     .replace(/\s+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
@@ -384,15 +389,32 @@ function App() {
   const parseAndExecuteTags = (text: string, _prompt: string, _source: string) => {
     const tagsFound: string[] = []
 
-    // Extract [FM:THINK]...[FM:THINK_END] — tolerate missing closing tag (matches to EOF)
-    const thinkMatch = /\[FM:THINK\]([\s\S]*?)(?:\[FM:THINK_END\]|$)/i.exec(text)
-    const thinking = thinkMatch ? thinkMatch[1].trim() : undefined
-    // Answer is everything BEFORE [FM:THINK], or the full text if no tags present
-    let answerText = thinkMatch
-      ? text.slice(0, thinkMatch.index).trim()
-      : text
+    // Only extract thinking when BOTH tags are present (strict match — no $ fallback)
+    const completeThinkMatch = /\[FM:THINK\]([\s\S]*?)\[FM:THINK_END\]/i.exec(text)
+    const thinking = completeThinkMatch ? completeThinkMatch[1].trim() : undefined
+
+    let answerText: string
+    if (completeThinkMatch) {
+      // Complete block — answer is content outside the block (model may think-first or answer-first)
+      const before = text.slice(0, completeThinkMatch.index).trim()
+      const after  = text.slice(completeThinkMatch.index + completeThinkMatch[0].length).trim()
+      answerText = (after.length >= before.length ? after : before) || before || after
+    } else {
+      // No complete block — if model opened [FM:THINK] without closing, strip from that tag to end
+      const openIdx = /\[FM:THINK\]/i.exec(text)?.index ?? -1
+      answerText = openIdx >= 0 ? text.slice(0, openIdx).trim() : text
+    }
+
     answerText = answerText.replace(/\[FM:[A-Z_0-9]+\]/gi, '').trim()
-    if (!answerText) answerText = text.replace(/\[FM:THINK\][\s\S]*/i, '').trim()
+
+    // Final fallback: if answerText is still empty, strip all FM content and show remainder
+    if (!answerText) {
+      answerText = text
+        .replace(/\[FM:THINK\][\s\S]*?\[FM:THINK_END\]/gi, '')
+        .replace(/\[FM:THINK\][\s\S]*/i, '')
+        .replace(/\[FM:[A-Z_0-9]+\]/gi, '')
+        .trim()
+    }
 
     ;['[FM:STORE]', '[FM:RECALL]', '[FM:TRAIN]'].forEach(tag => {
       if (text.includes(tag)) tagsFound.push(tag)
@@ -508,7 +530,10 @@ function App() {
             // JSON response so toolCalls are populated correctly.
             onToken: noMoreTools ? (token: string) => {
               streamBuffer += token
-              setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: cleanOutput(streamBuffer), streaming: true } : m))
+              // Hide everything from [FM:THINK] onwards while streaming — prevents
+              // the reasoning trace from flashing as visible text mid-stream
+              const displayText = streamBuffer.split(/\[FM:THINK\]/i)[0]
+              setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: cleanOutput(displayText), streaming: true } : m))
             } : undefined,
           }
         )
@@ -597,7 +622,7 @@ function App() {
       const { cleanText, tagsFound, thinking, answerText } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
       logToCorpus(promptText, answerText, `${activeProvider}:${activeModel}`)
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
       // Clear any prior auth failure mark for this provider on successful call
