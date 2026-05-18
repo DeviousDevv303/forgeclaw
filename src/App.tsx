@@ -76,7 +76,7 @@ Your response has two parts, written in this exact order:
 
 CRITICAL FORMAT RULE: You MUST write your answer first. Never begin your response with [FM:THINK]. Your answer comes first, your reasoning comes second, always.
 
-1. Your answer — plain prose only. No markdown. No ** bold. No * italic. No - bullet dashes. No numbered lists. No ## headers. No parenthetical asides like "(note: ...)". No "Key points to address:" preambles. Write in complete flowing sentences as if speaking directly to the person.
+1. Your answer — plain prose only. No ** bold. No * italic. No - bullet dashes. No numbered lists. No ## headers. No parenthetical asides like "(note: ...)". No "Key points to address:" preambles. Write in complete flowing sentences as if speaking directly to the person. EXCEPTION: when outputting code, wrap it in fenced code blocks with the language tag (e.g. \`\`\`html ... \`\`\`). Code blocks are the ONLY markdown allowed.
 
 2. Your inner reasoning — append it AFTER your answer using this exact format:
 [FM:THINK]your raw inner monologue here — what you noticed, considered, and rejected[FM:THINK_END]
@@ -86,22 +86,56 @@ Only the text BEFORE [FM:THINK] is shown in chat. Everything inside [FM:THINK]..
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function cleanOutput(text: string): string {
-  return text
-    .replace(/\[FM:[A-Z_0-9]+\][\s\S]*?\[FM:[A-Z_0-9]+_END\]/gi, '')  // full FM blocks
-    .replace(/\[FM:THINK\][\s\S]*/i, '')                                 // unclosed THINK block to end
-    .replace(/\[FM:[A-Z_0-9]+\]/gi, '')                                  // stray FM tags
-    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')                            // **bold**, *italic*, ***both***
-    .replace(/\*+/g, '')                                                  // leftover asterisks
-    .replace(/#{1,6}\s*/g, '')                                           // headers
-    .replace(/__|_/g, '')                                                 // underscores
-    .replace(/^-{3,}\s*$/gm, '')                                         // horizontal rules
-    .replace(/^\s*[-•]\s+/gm, '')                                        // bullet points
-    .replace(/^\s*\d+\.\s+/gm, '')                                       // numbered lists
-    .replace(/>\s*/gm, '')                                               // blockquotes
-    .replace(/`{1,3}[^`]*`{1,3}/g, (m) => m.replace(/`/g, ''))         // inline/block code backticks
+  // Preserve fenced code blocks — extract them, clean the rest, reinsert
+  const codeBlocks: string[] = []
+  const withPlaceholders = text.replace(/```[\s\S]*?```/g, (match) => {
+    codeBlocks.push(match)
+    return `\x00CODE${codeBlocks.length - 1}\x00`
+  })
+  const cleaned = withPlaceholders
+    .replace(/\[FM:[A-Z_0-9]+\][\s\S]*?\[FM:[A-Z_0-9]+_END\]/gi, '')
+    .replace(/\[FM:THINK\][\s\S]*/i, '')
+    .replace(/\[FM:[A-Z_0-9]+\]/gi, '')
+    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
+    .replace(/\*+/g, '')
+    .replace(/#{1,6}\s*/g, '')
+    .replace(/__|_/g, '')
+    .replace(/^-{3,}\s*$/gm, '')
+    .replace(/^\s*[-•]\s+/gm, '')
+    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/>\s*/gm, '')
+    .replace(/`[^`]+`/g, (m) => m.replace(/`/g, ''))  // inline code only
     .replace(/\s+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+  return cleaned.replace(/\x00CODE(\d+)\x00/g, (_, i) => codeBlocks[parseInt(i)])
+}
+
+// Render message text — splits on fenced code blocks and styles them
+function renderMessageContent(text: string, onCopy: (code: string) => void, copiedCode: string | null): React.ReactNode {
+  const parts = text.split(/(```[\s\S]*?```)/g)
+  return parts.map((part, i) => {
+    const codeMatch = /^```(\w*)\n?([\s\S]*?)```$/.exec(part)
+    if (codeMatch) {
+      const lang = codeMatch[1] || 'code'
+      const code = codeMatch[2]
+      return (
+        <div key={i} style={{ margin: '10px 0', borderRadius: '6px', overflow: 'hidden', border: '1px solid #2a2a2a', background: '#0a0a0a' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 10px', background: '#111', borderBottom: '1px solid #222' }}>
+            <span style={{ color: '#f97316', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px' }}>{lang.toUpperCase()}</span>
+            <button
+              onClick={() => { navigator.clipboard.writeText(code); onCopy(code) }}
+              style={{ background: 'none', border: 'none', color: copiedCode === code ? '#22c55e' : '#555', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}
+            >
+              {copiedCode === code ? '✓ COPIED' : 'COPY'}
+            </button>
+          </div>
+          <pre style={{ margin: 0, padding: '12px', overflowX: 'auto', fontSize: '12px', lineHeight: '1.6', color: '#d4d4d4', fontFamily: "'Courier New', monospace", whiteSpace: 'pre' }}>{code}</pre>
+        </div>
+      )
+    }
+    return <span key={i} style={{ whiteSpace: 'pre-wrap' }}>{part}</span>
+  })
 }
 
 function cleanForSpeech(text: string): string {
@@ -258,6 +292,7 @@ function App() {
   })
   const [lastSource, setLastSource] = useState<'local' | 'cloud' | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [copiedCode, setCopiedCode] = useState<string | null>(null)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [selectedLanguage, setSelectedLanguage] = useState<string>('en')
@@ -1383,6 +1418,8 @@ function App() {
                         )}
                         {msg.streaming ? (
                           <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
+                        ) : msg.role === 'assistant' ? (
+                          <div>{renderMessageContent(msg.content, (code) => { setCopiedCode(code); setTimeout(() => setCopiedCode(null), 2000) }, copiedCode)}</div>
                         ) : (
                           <span style={{ whiteSpace: 'pre-wrap' }}>
                             {msg.content.split('\n').map((line, i, arr) => (
