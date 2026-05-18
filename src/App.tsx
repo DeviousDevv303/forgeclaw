@@ -424,6 +424,7 @@ function App() {
     // Auto-store every interaction — no [FM:STORE] gating
     logToCorpus(_prompt, answerText, _source)
     return { cleanText: cleanOutput(answerText), tagsFound, thinking, answerText }
+  }
 
   const sendPrompt = useCallback(async (promptText: string) => {
     if (!promptText.trim()) return
