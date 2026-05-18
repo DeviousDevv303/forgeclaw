@@ -37,6 +37,7 @@ interface Message {
   id: string
   role: MessageRole
   content: string
+  imageUrl?: string
   timestamp: number
   source?: 'local' | 'cloud'
   provider?: string
@@ -426,10 +427,13 @@ function App() {
     return { cleanText: cleanOutput(answerText), tagsFound, thinking, answerText }
   }
 
-  const sendPrompt = useCallback(async (promptText: string) => {
+  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string) => {
     if (!promptText.trim()) return
 
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: promptText, timestamp: Date.now() }
+    const displayContent = imageUrl
+      ? promptText.replace(/data:[^;]+;base64,[A-Za-z0-9+/=\n]+/g, '').replace(/\n{3,}/g, '\n').trim()
+      : promptText
+    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
     if (!apiKey && activeProvider !== 'ollama') {
       setMessages(prev => [...prev, userMsg, {
@@ -667,20 +671,22 @@ function App() {
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
-    
+
     let promptText = input
+    let imageUrl: string | undefined
     if (attachedFile) {
-      // Guard against oversized file content
+      const isImage = attachedFile.content.startsWith('data:image')
+      if (isImage) imageUrl = attachedFile.content
       const maxFileSize = 50000 // ~50KB of text
-      const fileContent = attachedFile.content.length > maxFileSize 
+      const fileContent = attachedFile.content.length > maxFileSize
         ? attachedFile.content.slice(0, maxFileSize) + '\n\n[File truncated — too large for API]'
         : attachedFile.content
       promptText = `[File: ${attachedFile.name}]\n\n${fileContent}\n\n${input || 'Analyze this file.'}`
     }
-    
+
     setInput('')
     setAttachedFile(null)
-    await sendPrompt(promptText)
+    await sendPrompt(promptText, imageUrl)
   }
 
   const handleCopy = (id: string, text: string) => {
@@ -1353,6 +1359,9 @@ function App() {
                       )}
                       {/* Message bubble — clean response only */}
                       <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined }}>
+                        {msg.imageUrl && (
+                          <img src={msg.imageUrl} alt="uploaded" style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: msg.content.trim() ? '8px' : 0, objectFit: 'contain' }} />
+                        )}
                         {msg.streaming ? (
                           <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
                         ) : (
