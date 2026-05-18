@@ -274,6 +274,8 @@ function App() {
   const { state: forgeState, emit: emitForge } = useForgeOps()
   const [currentPlan, setCurrentPlan] = useState<string | undefined>()
   const monitor = useSystemMonitor()
+  // Stable per-session ID for shell_exec audit trail — resets on page reload
+  const sessionIdRef = useRef(`fc-${Date.now().toString(36)}`)
 
   // War Room: read gh_token from localStorage (prototype scope — Phase 2 lifts to proper context)
   const warRoomToken = safeGetItem('gh_token') || ''
@@ -638,6 +640,7 @@ function App() {
 
       const toolCtx = {
         ...loadToolContext(),
+        sessionId: sessionIdRef.current,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
           runSubAgent(systemPrompt, task, tools, activeProvider, activeModel, apiKey, FORGE_TOOLS, loadToolContext()),
       }
@@ -1723,6 +1726,15 @@ function App() {
                   <div style={{ color: '#4ade80', fontSize: '11px', marginBottom: '6px' }}>
                     Tool: <span style={{ color: '#86efac' }}>{cs.toolName}</span>
                   </div>
+                  {cs.toolName === 'shell_exec' && typeof cs.toolInput.command === 'string' && (
+                    <div style={{ background: '#0d0800', border: '1px solid #c4762a55', borderRadius: '4px', padding: '8px', marginBottom: '8px' }}>
+                      <div style={{ color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>⚠ SHELL COMMAND</div>
+                      <div style={{ color: '#d4d0c8', fontSize: '10px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>$ {cs.toolInput.command}</div>
+                      {typeof cs.toolInput.reason === 'string' && (
+                        <div style={{ color: '#6b7280', fontSize: '9px', marginTop: '5px' }}>reason: {cs.toolInput.reason}</div>
+                      )}
+                    </div>
+                  )}
                   <div style={{ background: '#040904', border: '1px solid #1a2e1a', borderRadius: '4px', padding: '8px', marginBottom: '10px', maxHeight: '80px', overflowY: 'auto' }}>
                     <div style={{ color: '#4a7a3a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>REASONING SNAPSHOT</div>
                     <div style={{ color: '#4a7a3a', fontSize: '10px', lineHeight: '1.5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{cs.reasoning.slice(0, 300)}{cs.reasoning.length > 300 ? '…' : ''}</div>
