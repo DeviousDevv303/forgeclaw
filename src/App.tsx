@@ -122,6 +122,24 @@ function renderWithLinks(text: string): React.ReactNode[] {
   return nodes
 }
 
+// ─── Corpus retrieval — keyword overlap, used to inject relevant past Q&A ──────
+function findRelevant(corpus: CorpusEntry[], query: string, topK = 3): CorpusEntry[] {
+  const qWords = new Set(query.toLowerCase().split(/\W+/).filter(w => w.length > 3))
+  if (qWords.size === 0) return []
+  return [...corpus]
+    .map(e => {
+      const words = (e.prompt + ' ' + e.response).toLowerCase().split(/\W+/)
+      const score = words.filter(w => qWords.has(w)).length
+      return { e, score }
+    })
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK)
+    .map(x => x.e)
+}
+
+const CORPUS_MAX = 10_000
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'coach' | 'agents'
@@ -355,10 +373,13 @@ function App() {
   }, [])
 
   const logToCorpus = (prompt: string, response: string, source: string) => {
-    setCorpus(prev => [...prev, { prompt, response, source, timestamp: new Date().toISOString() }])
+    setCorpus(prev => {
+      const next = [...prev, { prompt, response, source, timestamp: new Date().toISOString() }]
+      return next.length > CORPUS_MAX ? next.slice(next.length - CORPUS_MAX) : next
+    })
   }
 
-  const parseAndExecuteTags = (text: string, prompt: string, source: string) => {
+  const parseAndExecuteTags = (text: string, _prompt: string, _source: string) => {
     const tagsFound: string[] = []
 
     // Extract [FM:THINK]...[FM:THINK_END] — tolerate missing closing tag (matches to EOF)
@@ -372,12 +393,9 @@ function App() {
     if (!answerText) answerText = text.replace(/\[FM:THINK\][\s\S]*/i, '').trim()
 
     ;['[FM:STORE]', '[FM:RECALL]', '[FM:TRAIN]'].forEach(tag => {
-      if (text.includes(tag)) {
-        tagsFound.push(tag)
-        if (tag === '[FM:STORE]') logToCorpus(prompt, answerText, source)
-      }
+      if (text.includes(tag)) tagsFound.push(tag)
     })
-    return { cleanText: cleanOutput(answerText), tagsFound, thinking }
+    return { cleanText: cleanOutput(answerText), tagsFound, thinking, answerText }
   }
 
   const sendPrompt = useCallback(async (promptText: string) => {
@@ -429,8 +447,9 @@ function App() {
           })
           if (r.ok) {
             const d = await r.json() as { response: string }
-            const { cleanText, tagsFound, thinking } = parseAndExecuteTags(d.response || '', promptText, `ollama:${activeModel}`)
+            const { cleanText, tagsFound, thinking, answerText } = parseAndExecuteTags(d.response || '', promptText, `ollama:${activeModel}`)
             source = 'local'; setLastSource('local'); ollamaOk = true
+            logToCorpus(promptText, answerText, `ollama:${activeModel}`)
             setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, timestamp: Date.now(), source, provider: 'ollama', model: activeModel, activeTags: tagsFound, thinking, showReasoning: false }])
             resolveTask(taskId)
           }
@@ -451,6 +470,14 @@ function App() {
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
           runSubAgent(systemPrompt, task, tools, activeProvider, activeModel, apiKey, FORGE_TOOLS, loadToolContext()),
       }
+
+      // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
+      const relevant = findRelevant(corpus, promptText, 3)
+      const activeSystemPrompt = relevant.length > 0
+        ? FORGEMIND_SYSTEM_PROMPT + '\n\nRelevant past interactions with this user:\n' +
+          relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
+        : FORGEMIND_SYSTEM_PROMPT
+
       const historyMessages: ProviderMessage[] = messages.slice(-12).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
       const conversationMessages: ProviderMessage[] = [...historyMessages, { role: 'user', content: promptText }]
       const allToolResults: ToolResult[] = []
@@ -468,7 +495,7 @@ function App() {
         let streamBuffer = ''
 
         const result = await callProvider(
-          activeProvider, activeModel, FORGEMIND_SYSTEM_PROMPT,
+          activeProvider, activeModel, activeSystemPrompt,
           conversationMessages, apiKey,
           {
             tools: noMoreTools ? undefined : FORGE_TOOLS,
@@ -565,7 +592,8 @@ function App() {
       }
 
       setLastSource('cloud')
-      const { cleanText, tagsFound, thinking } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
+      const { cleanText, tagsFound, thinking, answerText } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
+      logToCorpus(promptText, answerText, `${activeProvider}:${activeModel}`)
       setMessages(prev => prev.map(m => m.id === msgId
         ? { ...m, content: cleanText || finalText || '(empty response)', streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
@@ -1088,6 +1116,22 @@ function App() {
                 />
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
                   Find exact IDs at openrouter.ai/models — paste the full path, e.g. <span style={{ color: '#444' }}>google/gemma-4-27b-it</span>
+                </div>
+              </div>
+
+              {/* Corpus training stats */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Training Corpus</label>
+                  <span style={{ color: corpus.length >= CORPUS_MAX ? '#f97316' : '#22c55e', fontSize: '10px', fontFamily: 'monospace' }}>
+                    {corpus.length.toLocaleString()} / {CORPUS_MAX.toLocaleString()}
+                  </span>
+                </div>
+                <div style={{ background: '#0a0a0a', borderRadius: '4px', height: '6px', overflow: 'hidden', border: '1px solid #1a1a1a' }}>
+                  <div style={{ height: '100%', width: `${Math.min(100, (corpus.length / CORPUS_MAX) * 100).toFixed(1)}%`, background: corpus.length >= CORPUS_MAX ? '#f97316' : '#22c55e', transition: 'width 0.3s' }} />
+                </div>
+                <div style={{ color: '#333', fontSize: '10px', marginTop: '6px' }}>
+                  Every interaction is captured automatically. Oldest entries roll off at {CORPUS_MAX.toLocaleString()}. Used as context on similar future queries.
                 </div>
               </div>
 
