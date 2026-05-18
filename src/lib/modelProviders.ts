@@ -124,17 +124,17 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['anthropic', 'deepseek', 'mistral', 'groq', 'kimi', 'openrouter', 'ollama']
+export const PROVIDER_ORDER: ProviderId[] = ['groq', 'anthropic', 'deepseek', 'mistral', 'kimi', 'openrouter', 'ollama']
 
-export const DEFAULT_PROVIDER: ProviderId = 'anthropic'
+export const DEFAULT_PROVIDER: ProviderId = 'groq'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
   anthropic:   'claude-haiku-4-5-20251001',
   deepseek:    'deepseek-chat',
   mistral:     'mistral-large-latest',
   groq:        'llama-3.3-70b-versatile',
   kimi:        'kimi-k2.6',
-  ollama:      'llama3.2:3b',
-  openrouter:  'meta-llama/llama-3.3-70b-instruct',
+  ollama:      'gemma4:latest',
+  openrouter:  'nousresearch/hermes-3-llama-3.1-405b',
 }
 
 // ─── Call ─────────────────────────────────────────────────────────────────────
