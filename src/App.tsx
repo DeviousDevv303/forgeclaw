@@ -38,11 +38,13 @@ import {
   isDestructiveTool,
 } from './lib/agentCore'
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
+import { useForgeOps } from './hooks/useForgeOps'
+import { ForgeOps } from './components/ForgeOps'
+import type { AgentPhase } from './types/forgeOps'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type AgentPhase = 'OBJECTIVE' | 'PLAN' | 'EXECUTION' | 'VERIFICATION' | 'NEXT_ACTION' | 'COMPLETE' | 'BLOCKED'
-
+// AgentPhase imported from ./types/forgeOps
 
 interface Message {
   id: string
@@ -268,6 +270,8 @@ function App() {
   // Activity stream is single source of truth
   const activityStream = useAgentActivityStream()
   const reasoning = useReasoningStream({ activityEvents: activityStream.events })
+  const { state: forgeState, emit: emitForge } = useForgeOps()
+  const [currentPlan, setCurrentPlan] = useState<string | undefined>()
   const monitor = useSystemMonitor()
 
   // War Room: read gh_token from localStorage (prototype scope — Phase 2 lifts to proper context)
@@ -567,6 +571,10 @@ function App() {
       return
     }
 
+    // Emit forge objective
+    emitForge({ type: 'OBJECTIVE_RECEIVED', objective: displayContent })
+    setCurrentPlan(undefined)
+
     // Orchestrator: admit forgemind chat task
     const taskId = `fm-${Date.now()}`
     const admitted = admitTask({
@@ -648,6 +656,7 @@ function App() {
 
         // Soft-review checkpoint at SOFT_REVIEW_ITERS — inject a progress prompt
         if (iter === SOFT_REVIEW_ITERS && !isLastIter) {
+          emitForge({ type: 'CHECKPOINT', iter: SOFT_REVIEW_ITERS, total: MAX_AGENT_ITERATIONS })
           conversationMessages.push({
             role: 'user',
             content: `[SOFT CHECKPOINT — iteration ${SOFT_REVIEW_ITERS}/${MAX_AGENT_ITERATIONS}] Summarize progress so far, set STATUS, and continue executing or mark COMPLETE/BLOCKED.`,
@@ -719,23 +728,25 @@ function App() {
           }
           const actEntryId = `act_${call.id}_${Date.now()}`
           setActivityLog(prev => [...prev.slice(-99), { id: actEntryId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
+          emitForge({ type: 'TOOL_START', tool: call.name, iter })
           const output = await executeTool(call, toolCtx)
           const isErr = output.startsWith('[TOOL ERROR]')
           let retryAnnotation = ''
           if (isErr) {
             const failClass: ToolFailureClass = classifyToolFailure(output)
+            emitForge({ type: 'TOOL_FAILURE', tool: call.name, failClass })
             const retryKey = call.name
             const attempts = (toolRetryCounts.get(retryKey) ?? 0) + 1
             toolRetryCounts.set(retryKey, attempts)
             const decision: RetryDecision = decideRetry(failClass, attempts, isDestructiveTool(call.name))
             retryAnnotation = `[${failClass}][RETRY:${decision.shouldRetry ? 'YES' : 'NO'}] ${decision.reason}`
             if (decision.alternativeStrategy) retryAnnotation += ` Strategy: ${decision.alternativeStrategy}`
+            emitForge({ type: 'RETRY_DECISION', tool: call.name, strategy: decision.alternativeStrategy ?? decision.reason, shouldRetry: decision.shouldRetry })
             if (decision.requiresUserApproval) {
-              // Surface approval need as a co-sign style notification
               emitFailure({ source: 'forgemind', severity: 'warning', message: `Retry blocked — user approval needed for ${call.name}: ${decision.reason}` })
             }
           } else {
-            // Reset retry count on success
+            emitForge({ type: 'TOOL_SUCCESS', tool: call.name })
             toolRetryCounts.delete(call.name)
           }
           setActivityLog(prev => prev.map(e => e.id === actEntryId ? { ...e, output: output.slice(0, 300), status: isErr ? 'error' : 'done' } : e))
@@ -779,6 +790,10 @@ function App() {
       setLastSource('cloud')
       const { cleanText, tagsFound, thinking, answerText, plan, agentPhase } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
       logToCorpus(promptText, answerText, `${activeProvider}:${activeModel}`)
+      // Sync plan to ForgeOps + emit terminal event
+      if (plan) setCurrentPlan(plan)
+      if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
+      else emitForge({ type: 'MISSION_COMPLETE' })
       setMessages(prev => prev.map(m => m.id === msgId
         ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${PROVIDERS[activeProvider].name}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
@@ -1533,6 +1548,9 @@ function App() {
         {/* ── ForgeMind Tab ── */}
         {activeTab === 'forgemind' && (
           <>
+            {/* ForgeOps Mission Control — live execution theater */}
+            <ForgeOps state={forgeState} isActive={loading} currentPlan={currentPlan} />
+
             <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
               {messages.length === 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444', gap: '16px' }}>
