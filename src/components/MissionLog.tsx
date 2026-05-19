@@ -14,6 +14,8 @@ export interface MissionTask {
   subTasks?: MissionTask[]
   toolIcon?: string
   toolName?: string
+  toolPreview?: string  // short preview text like file content snippet
+  computerLabel?: string // e.g. "Forge's computer"
 }
 
 interface MissionLogProps {
@@ -95,6 +97,64 @@ function TaskNode({ task, depth = 0 }: { task: MissionTask; depth?: number }) {
           {task.description && (
             <div style={{ color: '#555', fontSize: '10px', marginTop: '4px', lineHeight: '1.5' }}>
               {task.description}
+            </div>
+          )}
+
+          {/* Forge's computer — tool preview card */}
+          {task.toolName && (
+            <div style={{
+              marginTop: '8px',
+              padding: '8px 10px',
+              background: '#0d0d0d',
+              border: '1px solid #1a1a1a',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+            }}>
+              <div style={{
+                width: '36px',
+                height: '36px',
+                borderRadius: '6px',
+                background: '#111',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '18px',
+                flexShrink: 0,
+              }}>
+                {task.toolIcon || '🛠️'}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  color: '#888',
+                  fontSize: '10px',
+                  fontWeight: 600,
+                  letterSpacing: '0.5px',
+                  marginBottom: '2px',
+                }}>
+                  {task.computerLabel || "Forge's computer"}
+                </div>
+                <div style={{
+                  color: '#555',
+                  fontSize: '9px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {task.toolName}{task.toolPreview ? ` — ${task.toolPreview}` : ''}
+                </div>
+              </div>
+              {task.status === 'active' && (
+                <span style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  background: '#f97316',
+                  animation: 'pulse 1.2s infinite',
+                  flexShrink: 0,
+                }} />
+              )}
             </div>
           )}
 

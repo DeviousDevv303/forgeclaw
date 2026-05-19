@@ -41,6 +41,7 @@ import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
 import { useForgeOps } from './hooks/useForgeOps'
 import { SyncognitiveLattice } from './components/lattice/SyncognitiveLattice'
+import { Planner, parsePlanText } from './components/Planner'
 import { MissionLog } from './components/MissionLog'
 import type { AgentPhase } from './types/forgeOps'
 
@@ -391,7 +392,6 @@ function App() {
   const [elVoiceId, setElVoiceId] = useState<string>(() => safeGetItem('fc_el_voice_id') || '')
   const elAudioRef = useRef<HTMLAudioElement | null>(null)
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
-  const [openPlanIds, setOpenPlanIds] = useState<Set<string>>(new Set())
   const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
   const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
   const [showConnectors, setShowConnectors] = useState(false)
@@ -1620,38 +1620,26 @@ function App() {
                           )}
                         </div>
                       )}
-                      {/* PLAN panel — collapsible, status badge always visible */}
+                      {/* PLAN panel — Manus-style Planner checklist */}
                       {msg.role === 'assistant' && msg.plan && !msg.streaming && (() => {
-                        const planOpen = openPlanIds.has(msg.id)
-                        const togglePlan = () => setOpenPlanIds(prev => {
-                          const n = new Set(prev); planOpen ? n.delete(msg.id) : n.add(msg.id); return n
+                        const steps = parsePlanText(msg.plan).map((s, i, arr) => {
+                          let status: 'pending' | 'active' | 'done' = 'pending'
+                          if (msg.agentPhase === 'COMPLETE') {
+                            status = 'done'
+                          } else if (msg.agentPhase === 'BLOCKED') {
+                            status = i === arr.length - 1 ? 'active' : i < arr.length - 1 ? 'done' : 'pending'
+                          } else if (msg.streaming || (!msg.agentPhase || msg.agentPhase === 'PLAN')) {
+                            status = i === 0 ? 'active' : 'pending'
+                          } else {
+                            // EXECUTE / VERIFY / ADAPT — mark roughly half as done, one active
+                            const activeIdx = Math.min(Math.floor(arr.length * 0.5), arr.length - 1)
+                            status = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending'
+                          }
+                          return { ...s, status }
                         })
                         return (
-                          <div style={{ maxWidth: '90%', marginBottom: '6px', borderRadius: '6px', border: '1px solid #1a3a1a', background: '#050e05' }}>
-                            <button
-                              onClick={togglePlan}
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '8px 14px', WebkitTapHighlightColor: 'transparent' }}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span style={{ color: '#3a5c2a', fontSize: '8px' }}>{planOpen ? '▼' : '▶'}</span>
-                                <span style={{ color: '#22c55e', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 700 }}>◆ EXECUTION PLAN</span>
-                              </div>
-                              {msg.agentPhase && (
-                                <span style={{
-                                  fontSize: '8px', fontFamily: 'monospace', letterSpacing: '1.5px', padding: '2px 6px', borderRadius: '3px',
-                                  background: msg.agentPhase === 'COMPLETE' ? '#052e12' : msg.agentPhase === 'BLOCKED' ? '#2e0505' : '#0a1a1a',
-                                  color: msg.agentPhase === 'COMPLETE' ? '#22c55e' : msg.agentPhase === 'BLOCKED' ? '#ef4444' : '#38bdf8',
-                                  border: `1px solid ${msg.agentPhase === 'COMPLETE' ? '#14532d' : msg.agentPhase === 'BLOCKED' ? '#7f1d1d' : '#0c4a6e'}`,
-                                }}>
-                                  {msg.agentPhase}
-                                </span>
-                              )}
-                            </button>
-                            {planOpen && (
-                              <div style={{ padding: '0 14px 10px', borderTop: '1px solid #1a3a1a' }}>
-                                <pre style={{ margin: '8px 0 0', color: '#4ade80', fontSize: '11px', fontFamily: "'Courier New', monospace", whiteSpace: 'pre-wrap', lineHeight: '1.6' }}>{msg.plan}</pre>
-                              </div>
-                            )}
+                          <div style={{ maxWidth: '90%', marginBottom: '8px', width: '100%' }}>
+                            <Planner steps={steps} title="Planner" />
                           </div>
                         )
                       })()}
@@ -1921,14 +1909,33 @@ function App() {
             {activityLog.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
                 <MissionLog
-                  tasks={activityLog.map(e => ({
-                    id: e.id,
-                    title: e.tool.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-                    status: e.status === 'running' ? 'active' : e.status,
-                    timestamp: e.timestamp,
-                    description: Object.entries(e.input).slice(0, 2).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(' · '),
-                    ...(e.output ? { skills: [e.output.split('\n')[0].slice(0, 80)] } : {}),
-                  }))}
+                  tasks={activityLog.map(e => {
+                    const toolIconMap: Record<string, string> = {
+                      github_write_file: '⚙️',
+                      github_read_file: '📄',
+                      github_run_workflow: '▶️',
+                      web_search: '🔍',
+                      http_fetch: '🌐',
+                      run_js: '💻',
+                      spawn_agent: '👤',
+                      memory: '🧠',
+                      email: '📧',
+                      calendar: '📅',
+                      shell_exec: '💻',
+                    }
+                    return {
+                      id: e.id,
+                      title: e.tool.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                      status: e.status === 'running' ? 'active' : e.status,
+                      timestamp: e.timestamp,
+                      description: Object.entries(e.input).slice(0, 2).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(' · '),
+                      toolName: e.tool,
+                      toolIcon: toolIconMap[e.tool] || '🛠️',
+                      computerLabel: "Forge's computer",
+                      toolPreview: e.output ? e.output.split('\n')[0].slice(0, 80) : undefined,
+                      ...(e.output ? { skills: [e.output.split('\n')[0].slice(0, 80)] } : {}),
+                    }
+                  })}
                   isThinking={activityLog.some(e => e.status === 'running')}
                   thinkingTitle={activityLog.find(e => e.status === 'running')?.tool.replace(/_/g, ' ')}
                 />
