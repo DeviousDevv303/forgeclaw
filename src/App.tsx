@@ -41,6 +41,7 @@ import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
 import { useForgeOps } from './hooks/useForgeOps'
 import { SyncognitiveLattice } from './components/lattice/SyncognitiveLattice'
+import { MissionLog } from './components/MissionLog'
 import type { AgentPhase } from './types/forgeOps'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -74,6 +75,10 @@ interface CorpusEntry {
   source: string  // provider:model, e.g. 'anthropic:claude-sonnet-4-6' or 'ollama'
   timestamp: string
 }
+
+// ─── Constants ──────────────────────────────────────────────────────────────
+
+const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 // STANDING RULE: The line below must never be removed or modified.
@@ -385,6 +390,7 @@ function App() {
   const [openPlanIds, setOpenPlanIds] = useState<Set<string>>(new Set())
   const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
   const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
+  const [showConnectors, setShowConnectors] = useState(false)
   const [coachAgentId, setCoachAgentId] = useState<string>(() => safeGetItem('fc_coach_agent_id') || '')
 
   // Activity log — Manus-like live view of tool calls
@@ -1573,7 +1579,7 @@ function App() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
                           <span style={{ fontSize: '12px' }}>🧠</span>
                           {msg.provider && (
-                            <span style={{ fontSize: '11px', color: '#94a3b8', fontFamily: 'inherit', letterSpacing: '0.5px' }}>
+                            <span style={{ fontSize: '11px', color: '#5a9e44', fontFamily: REASONING_TRACE_FONT, letterSpacing: '0.5px' }}>
                               {msg.provider}{msg.model ? ` · ${msg.model}` : ''}
                             </span>
                           )}
@@ -1652,7 +1658,6 @@ function App() {
 
                       {/* Reasoning trace — minimal collapsible */}
                       {msg.role === 'assistant' && msg.thinking && (() => {
-                        const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
                         return (
                           <div style={{ width: '100%', maxWidth: '90%', marginTop: '4px' }}>
                             <button
@@ -1753,9 +1758,72 @@ function App() {
                 )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '6px 10px' }}>
                   <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={false} />
+                  {/* Connector badge — Manus-style active tool indicator */}
+                  <button
+                    onClick={() => setShowConnectors(s => !s)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', padding: '4px', position: 'relative', flexShrink: 0 }}
+                    title="Tools & connectors"
+                  >
+                    <span style={{ fontSize: '16px' }}>🛠️</span>
+                    {activityLog.length > 0 && (
+                      <span style={{
+                        position: 'absolute', top: '-4px', right: '-4px',
+                        background: '#f97316', color: '#000', fontSize: '9px',
+                        fontWeight: 'bold', padding: '1px 4px', borderRadius: '6px',
+                        fontFamily: 'monospace', letterSpacing: '0.5px',
+                      }}>
+                        +{activityLog.filter(e => e.status === 'running').length || activityLog.length}
+                      </span>
+                    )}
+                  </button>
                   <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} />
                   <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage} disabled={loading}>SEND</button>
                 </div>
+                {/* Connectors panel — quick-toggle sheet */}
+                {showConnectors && (
+                  <div style={{
+                    position: 'absolute', bottom: '64px', left: '12px', right: '12px',
+                    background: '#0d0d0d', border: '1px solid #1a1a1a', borderRadius: '10px',
+                    padding: '14px', zIndex: 30, maxHeight: '320px', overflowY: 'auto',
+                    boxShadow: '0 -4px 20px rgba(0,0,0,0.6)',
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '2px', fontWeight: 'bold', fontFamily: 'monospace' }}>CONNECTORS</span>
+                      <button onClick={() => setShowConnectors(false)} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '16px' }}>×</button>
+                    </div>
+                    {[
+                      { name: 'GitHub', icon: '⚙️', key: 'gh_token', connected: !!ghToken },
+                      { name: 'Gmail', icon: '📧', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
+                      { name: 'Calendar', icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
+                      { name: 'Web Search', icon: '🔍', key: 'fc_brave_key', connected: !!safeGetItem('fc_brave_key') },
+                      { name: 'ElevenLabs', icon: '🔊', key: 'fc_el_api_key', connected: !!elApiKey },
+                      { name: 'Ollama', icon: '🦙', key: 'fc_ollama_url', connected: ollamaOnline === true },
+                      { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
+                    ].map(conn => (
+                      <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <span style={{ fontSize: '16px' }}>{conn.icon}</span>
+                          <span style={{ color: '#ccc', fontSize: '12px' }}>{conn.name}</span>
+                        </div>
+                        <span style={{
+                          color: conn.connected ? '#22c55e' : '#444',
+                          fontSize: '10px', fontFamily: 'monospace',
+                          letterSpacing: '0.5px',
+                        }}>
+                          {conn.connected ? '● ON' : '○ OFF'}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #1a1a1a' }}>
+                      <button
+                        onClick={() => { setActiveTab('settings'); setShowConnectors(false) }}
+                        style={{ background: 'none', border: '1px solid #333', color: '#888', padding: '6px 12px', borderRadius: '5px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', width: '100%' }}
+                      >
+                        MANAGE CONNECTORS → SETTINGS
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
           </>
         )}
@@ -1808,35 +1876,21 @@ function App() {
               </div>
             </div>
 
-            {/* ── Live tool activity (Manus-style) ── */}
+            {/* ── Mission Log — Manus-style live work log ── */}
             {activityLog.length > 0 && (
-              <div style={{ marginBottom: '16px', border: '1px solid #1a1a1a', borderRadius: '6px', overflow: 'hidden' }}>
-                <div style={{ padding: '6px 10px', background: '#0d0d0d', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: activityLog.some(e => e.status === 'running') ? '#f97316' : '#22c55e', animation: activityLog.some(e => e.status === 'running') ? 'pulse 1s infinite' : 'none' }} />
-                  <span style={{ color: '#f97316', fontSize: '9px', letterSpacing: '2px', fontWeight: 'bold' }}>LIVE AGENT WORK</span>
-                  <span style={{ color: '#333', fontSize: '8px', marginLeft: 'auto' }}>{activityLog.length} STEPS</span>
-                </div>
-                {activityLog.map(entry => (
-                  <div key={entry.id} style={{ display: 'flex', gap: '8px', alignItems: 'flex-start', padding: '6px 10px', borderBottom: '1px solid #0d0d0d', background: entry.status === 'running' ? '#0a0d0a' : 'transparent' }}>
-                    <span style={{ fontSize: '9px', flexShrink: 0, marginTop: '1px' }}>
-                      {entry.status === 'running' ? '⟳' : entry.status === 'error' ? '✗' : '✓'}
-                    </span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <span style={{ color: entry.status === 'error' ? '#ef4444' : entry.status === 'running' ? '#f97316' : '#22c55e', fontSize: '9px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px' }}>{entry.tool}</span>
-                        <span style={{ color: '#333', fontSize: '7px' }}>{new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-                      </div>
-                      <div style={{ color: '#444', fontSize: '8px', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {Object.entries(entry.input).slice(0, 2).map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`).join(' · ')}
-                      </div>
-                      {entry.output && (
-                        <div style={{ color: entry.status === 'error' ? '#ef444488' : '#3a6a3a', fontSize: '8px', marginTop: '3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {entry.output.split('\n')[0].slice(0, 120)}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
+              <div style={{ marginBottom: '16px' }}>
+                <MissionLog
+                  tasks={activityLog.map(e => ({
+                    id: e.id,
+                    title: e.tool.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                    status: e.status === 'running' ? 'active' : e.status,
+                    timestamp: e.timestamp,
+                    description: Object.entries(e.input).slice(0, 2).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(' · '),
+                    ...(e.output ? { skills: [e.output.split('\n')[0].slice(0, 80)] } : {}),
+                  }))}
+                  isThinking={activityLog.some(e => e.status === 'running')}
+                  thinkingTitle={activityLog.find(e => e.status === 'running')?.tool.replace(/_/g, ' ')}
+                />
               </div>
             )}
 
