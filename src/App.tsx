@@ -1807,12 +1807,9 @@ function App() {
         {/* ── Coach Tab ── */}
         {activeTab === 'coach' && (
           <StrategicCoach
-            agentId={coachAgentId}
-            apiKey={providerKeys.anthropic}
-            onAgentIdSave={(id) => {
-              setCoachAgentId(id)
-              safeSetItem('fc_coach_agent_id', id)
-            }}
+            provider={activeProvider}
+            model={activeModel}
+            apiKey={apiKey}
           />
         )}
 

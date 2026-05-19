@@ -1,8 +1,11 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-import { useState, useRef, useEffect } from 'react'
-import { createManagedSession, sendManagedMessage, streamManagedSession } from '../lib/managedAgent'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { callProvider } from '../lib/modelProviders'
+import type { ProviderId } from '../lib/modelProviders'
 import { useErrorBus } from '../hooks/useErrorBus'
+
+const COACH_SYSTEM = `You are the Strategic Mind Coach — a sharp, direct advisor embedded in ForgeClaw. Your role is to help the user think clearly, make better decisions, set goals, and execute. You ask powerful questions when the user is stuck, offer concrete frameworks when useful, and push back respectfully on weak reasoning. Keep responses tight and actionable. No corporate speak. No filler.`
 
 interface CoachMessage {
   role: 'user' | 'assistant'
@@ -10,92 +13,52 @@ interface CoachMessage {
 }
 
 interface Props {
-  agentId: string
+  provider: ProviderId
+  model: string
   apiKey: string
-  onAgentIdSave: (id: string) => void
 }
 
-export function StrategicCoach({ agentId, apiKey, onAgentIdSave }: Props) {
+export function StrategicCoach({ provider, model, apiKey }: Props) {
   const [messages, setMessages] = useState<CoachMessage[]>([])
   const [input, setInput] = useState('')
-  const [streaming, setStreaming] = useState(false)
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  const [agentIdDraft, setAgentIdDraft] = useState(agentId)
-  const streamBuffer = useRef('')
+  const [loading, setLoading] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const { emitFailure } = useErrorBus()
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streaming])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, loading])
 
-  const send = async () => {
+  const send = useCallback(async () => {
     const text = input.trim()
-    if (!text || streaming || !agentId || !apiKey) return
+    if (!text || loading) return
+    if (!apiKey) {
+      setMessages(prev => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '[Error] No API key configured. Open Settings and add a key.' }])
+      setInput('')
+      return
+    }
     setInput('')
-    setMessages(prev => [...prev, { role: 'user', content: text }])
-    setStreaming(true)
-    streamBuffer.current = ''
-
+    const next: CoachMessage[] = [...messages, { role: 'user', content: text }]
+    setMessages(next)
+    setLoading(true)
     try {
-      let sid = sessionId
-      if (!sid) {
-        sid = await createManagedSession(agentId, apiKey)
-        setSessionId(sid)
-      }
-
-      await sendManagedMessage(sid, text, apiKey)
-
-      setMessages(prev => [...prev, { role: 'assistant', content: '' }])
-
-      await streamManagedSession(
-        sid,
+      const result = await callProvider(
+        provider, model, COACH_SYSTEM,
+        next.map(m => ({ role: m.role, content: m.content })),
         apiKey,
-        (token) => {
-          streamBuffer.current += token
-          setMessages(prev => prev.map((m, i) =>
-            i === prev.length - 1 && m.role === 'assistant'
-              ? { ...m, content: streamBuffer.current }
-              : m
-          ))
-        },
-        () => { setStreaming(false) },
       )
+      setMessages(prev => [...prev, { role: 'assistant', content: result.text || '(no response)' }])
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       emitFailure({ source: 'coach', severity: 'error', message: msg })
       setMessages(prev => [...prev, { role: 'assistant', content: `[Error] ${msg}` }])
-      setStreaming(false)
+    } finally {
+      setLoading(false)
     }
-  }
+  }, [input, loading, messages, provider, model, apiKey, emitFailure])
 
   const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() }
   }
 
-  // ── Setup screen ─────────────────────────────────────────────────────────────
-  if (!agentId) {
-    return (
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '20px', padding: '40px', background: '#080808' }}>
-        <div style={{ color: '#f97316', fontSize: '11px', letterSpacing: '3px', fontFamily: 'monospace' }}>STRATEGIC MIND COACH</div>
-        <div style={{ color: '#555', fontSize: '12px', fontFamily: 'monospace' }}>Enter your Managed Agent ID to begin.</div>
-        <div style={{ display: 'flex', gap: '10px', width: '100%', maxWidth: '480px' }}>
-          <input
-            value={agentIdDraft}
-            onChange={e => setAgentIdDraft(e.target.value)}
-            placeholder="agent_xxxxxxxxxx"
-            style={{ flex: 1, background: '#111', border: '1px solid #2a2a2a', borderRadius: '6px', padding: '8px 12px', color: '#e5e5e5', fontFamily: 'monospace', fontSize: '12px', outline: 'none' }}
-          />
-          <button
-            onClick={() => { if (agentIdDraft.trim()) onAgentIdSave(agentIdDraft.trim()) }}
-            style={{ background: '#f97316', color: '#000', border: 'none', borderRadius: '6px', padding: '8px 16px', fontFamily: 'monospace', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '1px' }}
-          >
-            SAVE
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // ── Chat panel ───────────────────────────────────────────────────────────────
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 
@@ -103,13 +66,13 @@ export function StrategicCoach({ agentId, apiKey, onAgentIdSave }: Props) {
       <div style={{ padding: '10px 20px', borderBottom: '1px solid #111', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
         <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace' }}>STRATEGIC MIND COACH</span>
         <span style={{ color: '#333', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '1px' }}>
-          {sessionId ? `SESSION · ${sessionId.slice(-8)}` : 'NO SESSION'}
+          {provider.toUpperCase()} · {model.split('-').slice(-1)[0].toUpperCase()}
         </span>
       </div>
 
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        {messages.length === 0 && (
+        {messages.length === 0 && !loading && (
           <div style={{ color: '#333', fontSize: '11px', textAlign: 'center', marginTop: '60px', fontFamily: 'monospace', letterSpacing: '2px' }}>
             ASK THE COACH
           </div>
@@ -129,10 +92,17 @@ export function StrategicCoach({ agentId, apiKey, onAgentIdSave }: Props) {
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
             }}>
-              {msg.content || (streaming && i === messages.length - 1 ? <span style={{ color: '#444', animation: 'pulse 1.5s infinite' }}>●</span> : '')}
+              {msg.content}
             </div>
           </div>
         ))}
+        {loading && (
+          <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+            <div style={{ background: '#0a0a0a', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '12px 16px' }}>
+              <span style={{ color: '#444', animation: 'pulse 1.5s infinite', fontFamily: 'monospace', fontSize: '12px' }}>● thinking…</span>
+            </div>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
 
@@ -144,16 +114,16 @@ export function StrategicCoach({ agentId, apiKey, onAgentIdSave }: Props) {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
-            disabled={streaming}
+            disabled={loading}
             placeholder="Ask the Coach…"
             style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px', WebkitAppearance: 'none' }}
           />
           <button
-            onClick={send}
-            disabled={streaming || !input.trim()}
-            style={{ background: streaming || !input.trim() ? '#1a1a1a' : '#f97316', color: streaming || !input.trim() ? '#333' : '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: streaming ? 'not-allowed' : 'pointer', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px' }}
+            onClick={() => void send()}
+            disabled={loading || !input.trim()}
+            style={{ background: loading || !input.trim() ? '#1a1a1a' : '#f97316', color: loading || !input.trim() ? '#333' : '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '1px' }}
           >
-            {streaming ? '…' : 'SEND'}
+            {loading ? '…' : 'SEND'}
           </button>
         </div>
       </div>
