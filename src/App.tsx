@@ -362,14 +362,12 @@ function App() {
     const parsed = stored ? safeJsonParse<Record<ProviderId, string>>(stored, {} as Record<ProviderId, string>) : {} as Record<ProviderId, string>
     const legacyAnthropic = import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || ''
     return {
-      // User-entered key takes priority; hardcoded key is the fallback.
-      // ⚠️ DO NOT REMOVE HARDCODED FALLBACKS UNLESS CRISTIAN EXPLICITLY SAYS TO.
-      anthropic:  parsed.anthropic  || legacyAnthropic || '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',
-      deepseek:   parsed.deepseek   || 'sk-c47d7b43ab38441087f6ad259ccf340f',
-      mistral:    parsed.mistral    || 'Ile5nNCCMWmVOnx3jtJH8T1TshigIU3I',
-      groq:       parsed.groq       || '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',
-      kimi:       parsed.kimi       || 'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
-      kimi_code:  parsed.kimi_code  || 'sk-kimi-QOdJ76fX4oSFji50oK2n2tmxZe2NIjdVBQ13ib3TktK7beBnVXLwlXIQ7RS7aO2l',
+      anthropic:  parsed.anthropic  || legacyAnthropic || '',
+      deepseek:   parsed.deepseek   || '',
+      mistral:    parsed.mistral    || '',
+      groq:       parsed.groq       || '',
+      kimi:       parsed.kimi       || '',
+      kimi_code:  parsed.kimi_code  || '',
       ollama:     '',
       openrouter: parsed.openrouter || '',
     }
