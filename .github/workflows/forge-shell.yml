@@ -1,0 +1,29 @@
+name: ForgeClaw Shell Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'Shell command to execute'
+        required: true
+        type: string
+      session_id:
+        description: 'ForgeClaw session identifier'
+        required: true
+        type: string
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Execute Command
+        env:
+          FORGE_COMMAND: ${{ inputs.command }}
+        run: |
+          echo "=== FORGECLAW SHELL ==="
+          echo "Session: ${{ inputs.session_id }}"
+          echo "==========================="
+          eval "$FORGE_COMMAND" 2>&1
+        shell: bash

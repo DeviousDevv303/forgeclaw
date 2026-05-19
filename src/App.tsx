@@ -279,6 +279,8 @@ function App() {
   const { state: forgeState, emit: emitForge } = useForgeOps()
   const [currentPlan, setCurrentPlan] = useState<string | undefined>()
   const monitor = useSystemMonitor()
+  // Stable per-session ID for shell_exec audit trail — resets on page reload
+  const sessionIdRef = useRef(`fc-${Date.now().toString(36)}`)
 
   // War Room: read gh_token from localStorage (prototype scope — Phase 2 lifts to proper context)
   const warRoomToken = safeGetItem('gh_token') || ''
@@ -331,6 +333,7 @@ function App() {
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
+  const [testKeyError, setTestKeyError] = useState('')
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [showGhToken, setShowGhToken] = useState(false)
@@ -365,6 +368,7 @@ function App() {
       mistral:    parsed.mistral    || 'Ile5nNCCMWmVOnx3jtJH8T1TshigIU3I',
       groq:       parsed.groq       || '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',
       kimi:       parsed.kimi       || 'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
+      kimi_code:  parsed.kimi_code  || 'sk-kimi-QOdJ76fX4oSFji50oK2n2tmxZe2NIjdVBQ13ib3TktK7beBnVXLwlXIQ7RS7aO2l',
       ollama:     '',
       openrouter: parsed.openrouter || '',
     }
@@ -564,7 +568,11 @@ function App() {
     if (!promptText.trim()) return
 
     const displayContent = imageUrl
-      ? promptText.replace(/data:[^;]+;base64,[A-Za-z0-9+/=\n]+/g, '').replace(/\n{3,}/g, '\n').trim()
+      ? promptText
+          .replace(/data:[^;]+;base64,[A-Za-z0-9+/=\n]+/g, '')
+          .replace(/\[(?:File|Image):[^\]]*\]\n*/g, '')
+          .replace(/\n{3,}/g, '\n')
+          .trim()
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
@@ -644,6 +652,7 @@ function App() {
 
       const toolCtx = {
         ...loadToolContext(),
+        sessionId: sessionIdRef.current,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
           runSubAgent(systemPrompt, task, tools, activeProvider, activeModel, apiKey, FORGE_TOOLS, loadToolContext()),
       }
@@ -855,12 +864,17 @@ function App() {
     let imageUrl: string | undefined
     if (attachedFile) {
       const isImage = attachedFile.content.startsWith('data:image')
-      if (isImage) imageUrl = attachedFile.content
-      const maxFileSize = 50000 // ~50KB of text
-      const fileContent = attachedFile.content.length > maxFileSize
-        ? attachedFile.content.slice(0, maxFileSize) + '\n\n[File truncated — too large for API]'
-        : attachedFile.content
-      promptText = `[File: ${attachedFile.name}]\n\n${fileContent}\n\n${input || 'Analyze this file.'}`
+      if (isImage) {
+        imageUrl = attachedFile.content
+        // API gets the raw base64; display strips it cleanly in sendPrompt
+        promptText = input.trim() ? `${attachedFile.content}\n\n${input.trim()}` : attachedFile.content
+      } else {
+        const maxFileSize = 50000 // ~50KB of text
+        const fileContent = attachedFile.content.length > maxFileSize
+          ? attachedFile.content.slice(0, maxFileSize) + '\n\n[File truncated — too large for API]'
+          : attachedFile.content
+        promptText = `[File: ${attachedFile.name}]\n\n${fileContent}\n\n${input || 'Analyze this file.'}`
+      }
     }
 
     setInput('')
@@ -1018,14 +1032,18 @@ function App() {
   }
 
   const testApiKey = async () => {
-    if (!apiKey.trim()) { setApiKeyStatus('invalid'); return }
+    if (!apiKey.trim()) { setApiKeyStatus('invalid'); setTestKeyError('No key entered'); return }
     setTestingKey(true)
+    setTestKeyError('')
     try {
       await testProviderKey(activeProvider, activeModel, apiKey)
       setApiKeyStatus('valid')
     } catch (err) {
-      const msg = err instanceof Error ? err.message : ''
-      setApiKeyStatus(msg.includes('401') || msg.toLowerCase().includes('invalid') ? 'invalid' : 'unverified')
+      const msg = err instanceof Error ? err.message : String(err)
+      setTestKeyError(msg)
+      // Only mark invalid for real auth rejections — not model errors, quota, etc.
+      const isAuthReject = msg.includes('401') || /unauthorized|invalid.*(api.?key|token|auth)/i.test(msg)
+      setApiKeyStatus(isAuthReject ? 'invalid' : 'unverified')
     } finally {
       setTestingKey(false)
     }
@@ -1116,7 +1134,7 @@ function App() {
             {/* Per-provider credential dots */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               {PROVIDER_ORDER.map(pid => {
-                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : pid === 'openrouter' ? 'OR' : 'O'
+                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : pid === 'kimi_code' ? 'KC' : pid === 'openrouter' ? 'OR' : 'O'
                 const hasKey = pid === 'ollama' ? true : !!providerKeys[pid]
                 const isActive = pid === activeProvider
                 const hasFailed = failedProviders.has(pid)
@@ -1311,7 +1329,7 @@ function App() {
                     {showApiKey ? '🙈' : '👁'}
                   </button>
                 </div>
-                {apiKeyStatus === 'invalid' && <div style={{ color: '#ef4444', fontSize: '10px', marginTop: '4px' }}>API rejected this key</div>}
+                {testKeyError && <div style={{ color: apiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
               </div>
 
               <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
@@ -1328,8 +1346,25 @@ function App() {
                 {!apiKey && <span style={{ color: '#666' }}>Enter your {PROVIDERS[activeProvider].name} API key above</span>}
                 {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#eab308' }}>🟡 Key not tested yet</span>}
                 {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 Key valid — {PROVIDERS[activeProvider].name}</span>}
-                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Invalid key</span>}
+                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Auth rejected</span>}
               </div>
+
+              {/* Kimi Code URL override — endpoint varies by key origin */}
+              {activeProvider === 'kimi_code' && (
+                <div style={{ marginTop: '10px', padding: '8px', background: '#0a0800', border: '1px solid #2a1a00', borderRadius: '4px' }}>
+                  <label style={{ display: 'block', color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>KIMI CODE API ENDPOINT</label>
+                  <input
+                    type="text"
+                    placeholder="https://api.moonshot.cn/v1/chat/completions"
+                    defaultValue={safeGetItem('fc_kimi_code_url') || ''}
+                    onChange={e => safeSetItem('fc_kimi_code_url', e.target.value.trim())}
+                    style={{ width: '100%', background: '#080808', color: '#ccc', border: '1px solid #333', borderRadius: '4px', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                  />
+                  <div style={{ color: '#444', fontSize: '10px', marginTop: '4px' }}>
+                    Default: api.moonshot.cn. Also try: api.moonshot.ai
+                  </div>
+                </div>
+              )}
 
               {/* Corpus Memory Progress */}
               <div style={{ marginTop: '12px', borderTop: '1px solid #1a1a1a', paddingTop: '12px' }}>
@@ -1728,6 +1763,15 @@ function App() {
                   <div style={{ color: '#4ade80', fontSize: '11px', marginBottom: '6px' }}>
                     Tool: <span style={{ color: '#86efac' }}>{cs.toolName}</span>
                   </div>
+                  {cs.toolName === 'shell_exec' && typeof cs.toolInput.command === 'string' && (
+                    <div style={{ background: '#0d0800', border: '1px solid #c4762a55', borderRadius: '4px', padding: '8px', marginBottom: '8px' }}>
+                      <div style={{ color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>⚠ SHELL COMMAND</div>
+                      <div style={{ color: '#d4d0c8', fontSize: '10px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>$ {cs.toolInput.command}</div>
+                      {typeof cs.toolInput.reason === 'string' && (
+                        <div style={{ color: '#6b7280', fontSize: '9px', marginTop: '5px' }}>reason: {cs.toolInput.reason}</div>
+                      )}
+                    </div>
+                  )}
                   <div style={{ background: '#040904', border: '1px solid #1a2e1a', borderRadius: '4px', padding: '8px', marginBottom: '10px', maxHeight: '80px', overflowY: 'auto' }}>
                     <div style={{ color: '#4a7a3a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>REASONING SNAPSHOT</div>
                     <div style={{ color: '#4a7a3a', fontSize: '10px', lineHeight: '1.5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{cs.reasoning.slice(0, 300)}{cs.reasoning.length > 300 ? '…' : ''}</div>
@@ -1831,12 +1875,9 @@ function App() {
         {/* ── Coach Tab ── */}
         {activeTab === 'coach' && (
           <StrategicCoach
-            agentId={coachAgentId}
-            apiKey={providerKeys.anthropic}
-            onAgentIdSave={(id) => {
-              setCoachAgentId(id)
-              safeSetItem('fc_coach_agent_id', id)
-            }}
+            provider={activeProvider}
+            model={activeModel}
+            apiKey={apiKey}
           />
         )}
 
