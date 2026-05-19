@@ -362,6 +362,7 @@ function App() {
     const parsed = stored ? safeJsonParse<Record<ProviderId, string>>(stored, {} as Record<ProviderId, string>) : {} as Record<ProviderId, string>
     const legacyAnthropic = import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || ''
     return {
+      openai:     parsed.openai     || '',
       anthropic:  parsed.anthropic  || legacyAnthropic || '',
       deepseek:   parsed.deepseek   || '',
       mistral:    parsed.mistral    || '',
@@ -1132,7 +1133,7 @@ function App() {
             {/* Per-provider credential dots */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               {PROVIDER_ORDER.map(pid => {
-                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : pid === 'kimi_code' ? 'KC' : pid === 'openrouter' ? 'OR' : 'O'
+                const initial = pid === 'openai' ? 'GPT' : pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : pid === 'kimi_code' ? 'KC' : pid === 'openrouter' ? 'OR' : 'O'
                 const hasKey = pid === 'ollama' ? true : !!providerKeys[pid]
                 const isActive = pid === activeProvider
                 const hasFailed = failedProviders.has(pid)
