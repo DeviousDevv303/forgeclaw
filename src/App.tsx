@@ -363,7 +363,7 @@ function App() {
       mistral:    parsed.mistral    || 'Ile5nNCCMWmVOnx3jtJH8T1TshigIU3I',
       groq:       parsed.groq       || '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',
       kimi:       parsed.kimi       || 'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
-      kimi_code:  parsed.kimi_code  || '',
+      kimi_code:  parsed.kimi_code  || 'sk-kimi-QOdJ76fX4oSFji50oK2n2tmxZe2NIjdVBQ13ib3TktK7beBnVXLwlXIQ7RS7aO2l',
       ollama:     '',
       openrouter: parsed.openrouter || '',
     }
@@ -562,7 +562,11 @@ function App() {
     if (!promptText.trim()) return
 
     const displayContent = imageUrl
-      ? promptText.replace(/data:[^;]+;base64,[A-Za-z0-9+/=\n]+/g, '').replace(/\n{3,}/g, '\n').trim()
+      ? promptText
+          .replace(/data:[^;]+;base64,[A-Za-z0-9+/=\n]+/g, '')
+          .replace(/\[(?:File|Image):[^\]]*\]\n*/g, '')
+          .replace(/\n{3,}/g, '\n')
+          .trim()
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
@@ -854,12 +858,17 @@ function App() {
     let imageUrl: string | undefined
     if (attachedFile) {
       const isImage = attachedFile.content.startsWith('data:image')
-      if (isImage) imageUrl = attachedFile.content
-      const maxFileSize = 50000 // ~50KB of text
-      const fileContent = attachedFile.content.length > maxFileSize
-        ? attachedFile.content.slice(0, maxFileSize) + '\n\n[File truncated — too large for API]'
-        : attachedFile.content
-      promptText = `[File: ${attachedFile.name}]\n\n${fileContent}\n\n${input || 'Analyze this file.'}`
+      if (isImage) {
+        imageUrl = attachedFile.content
+        // API gets the raw base64; display strips it cleanly in sendPrompt
+        promptText = input.trim() ? `${attachedFile.content}\n\n${input.trim()}` : attachedFile.content
+      } else {
+        const maxFileSize = 50000 // ~50KB of text
+        const fileContent = attachedFile.content.length > maxFileSize
+          ? attachedFile.content.slice(0, maxFileSize) + '\n\n[File truncated — too large for API]'
+          : attachedFile.content
+        promptText = `[File: ${attachedFile.name}]\n\n${fileContent}\n\n${input || 'Analyze this file.'}`
+      }
     }
 
     setInput('')

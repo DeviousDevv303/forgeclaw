@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import { L } from './palette'
 import { CognitiveMap } from './CognitiveMap'
 import { ProcessTrace } from './ProcessTrace'
@@ -12,6 +13,8 @@ interface Props {
   isActive: boolean
   currentPlan?: string
 }
+
+type LatticePhase = 'collapsed' | 'entering' | 'open' | 'fading'
 
 function CoherenceChip({ pct }: { pct: number }) {
   const color = pct >= 72 ? L.active : pct >= 55 ? L.guard : L.anomaly
@@ -48,9 +51,67 @@ const hasBottomContent = (plan: string | undefined, paths: ForgeOpsState['collap
   !!plan || paths.length > 0
 
 export function SyncognitiveLattice({ state, isActive, currentPlan }: Props) {
-  if (!isActive && state.events.length === 0) return null
+  const [phase, setPhase] = useState<LatticePhase>('collapsed')
+  const phaseRef = useRef<LatticePhase>('collapsed')
+  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const setPhaseSync = (p: LatticePhase) => {
+    phaseRef.current = p
+    setPhase(p)
+  }
+
+  useEffect(() => {
+    if (isActive) {
+      if (fadeTimer.current) clearTimeout(fadeTimer.current)
+      if (collapseTimer.current) clearTimeout(collapseTimer.current)
+      setPhaseSync('entering')
+      // Double-RAF so the DOM paints opacity:0 before we set opacity:1
+      requestAnimationFrame(() => requestAnimationFrame(() => setPhaseSync('open')))
+    } else {
+      // Only fade if currently visible
+      if (phaseRef.current === 'open' || phaseRef.current === 'entering') {
+        fadeTimer.current = setTimeout(() => {
+          setPhaseSync('fading')
+          collapseTimer.current = setTimeout(() => setPhaseSync('collapsed'), 700)
+        }, 2500)
+      }
+    }
+    return () => {
+      if (fadeTimer.current) clearTimeout(fadeTimer.current)
+      if (collapseTimer.current) clearTimeout(collapseTimer.current)
+    }
+  }, [isActive]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const pct = Math.round(state.confidence * 100)
+
+  // Nothing to show yet
+  if (phase === 'collapsed' && state.events.length === 0) return null
+
+  // Collapsed summary strip — tap to re-expand
+  if (phase === 'collapsed') {
+    return (
+      <div
+        onClick={() => {
+          setPhaseSync('entering')
+          requestAnimationFrame(() => requestAnimationFrame(() => setPhaseSync('open')))
+        }}
+        style={{
+          cursor: 'pointer', padding: '6px 14px', marginBottom: '8px',
+          background: L.surface, border: `1px solid ${L.border}`, borderRadius: '4px',
+          display: 'flex', alignItems: 'center', gap: '10px', opacity: 0.65,
+          transition: 'opacity 0.2s', fontFamily: L.mono,
+        }}
+      >
+        <span style={{ color: L.active, fontSize: '9px' }}>◆</span>
+        <span style={{ color: L.textDim, fontSize: '8px', letterSpacing: '1.5px' }}>
+          {state.stage} · {pct}% COHERENCE · tap to review
+        </span>
+      </div>
+    )
+  }
+
+  const opacity = phase === 'open' ? 1 : 0
   const showBottom = hasBottomContent(currentPlan, state.collapsedPaths)
   const bottomCols = currentPlan && state.collapsedPaths.length > 0 ? '1fr 1fr' : '1fr'
 
@@ -58,6 +119,7 @@ export function SyncognitiveLattice({ state, isActive, currentPlan }: Props) {
     <div style={{
       background: L.bg, border: `1px solid ${L.border}`, borderRadius: '4px',
       marginBottom: '10px', fontFamily: L.mono, overflow: 'hidden',
+      opacity, transition: 'opacity 0.6s ease',
     }}>
 
       {/* ── Header ────────────────────────────────────────────── */}
