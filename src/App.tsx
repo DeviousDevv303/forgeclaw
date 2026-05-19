@@ -44,6 +44,8 @@ import { SyncognitiveLattice } from './components/lattice/SyncognitiveLattice'
 import { Planner, parsePlanText } from './components/Planner'
 import { MissionLog } from './components/MissionLog'
 import type { AgentPhase } from './types/forgeOps'
+import { useProviderHeartbeat } from './hooks/useProviderHeartbeat'
+import { ProviderStatusBadge } from './components/ProviderStatusBadge'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -376,6 +378,7 @@ function App() {
 
   // Convenience: active provider's key
   const apiKey = providerKeys[activeProvider]
+  const heartbeat = useProviderHeartbeat(activeProvider, apiKey, activeModel)
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
     return safeJsonParse(saved, [])
@@ -818,6 +821,7 @@ function App() {
       ))
       // Clear any prior auth failure mark for this provider on successful call
       if (failedProviders.has(activeProvider)) setFailedProviders(prev => { const n = new Set(prev); n.delete(activeProvider); return n })
+      heartbeat.reportSuccess()
       resolveTask(taskId)
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : 'Unknown error'
@@ -1186,6 +1190,13 @@ function App() {
               >WA</span>
             </div>
             <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
+            <ProviderStatusBadge
+              status={heartbeat.status}
+              lastSuccessAt={heartbeat.lastSuccessAt}
+              lastError={heartbeat.lastError}
+              checking={heartbeat.checking}
+              onPing={heartbeat.ping}
+            />
           </div>
           <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>WIPE</button>
           <button onClick={handleExportCorpus} style={headerBtnStyle}>EXPORT</button>
