@@ -150,7 +150,7 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
 
 export const PROVIDER_ORDER: ProviderId[] = ['groq', 'anthropic', 'deepseek', 'mistral', 'kimi', 'kimi_code', 'openrouter', 'ollama']
 
-export const DEFAULT_PROVIDER: ProviderId = 'groq'
+export const DEFAULT_PROVIDER: ProviderId = 'mistral'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
   anthropic:   'claude-haiku-4-5-20251001',
   deepseek:    'deepseek-chat',
