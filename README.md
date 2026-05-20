@@ -2,6 +2,9 @@
 
 > **Multi-agent governance shell with autonomous GitHub operations, browser automation, and integrity enforcement.**
 >
+> **Current runtime:** OpenAI-only (GPT-4o / GPT-4o-mini).  
+> **Architecture:** Multi-provider ready — Anthropic, Kimi, Groq, Ollama adapters preserved for future re-enablement.  
+>
 > *"Truth → Function → Clarity → Efficiency"*
 
 ---
@@ -21,6 +24,16 @@ ForgeClaw is a browser-based control surface for orchestrating multiple AI agent
 
 ```
 src/
+├── lib/ai/
+│   ├── providerRouter.ts        # Single-provider router — OpenAI only at runtime
+│   ├── types.ts                 # AIError classification, shared types
+│   └── providers/               # Dormant adapter layer (preserved for future)
+│       ├── openaiProvider.ts    # ← ACTIVE — GPT-4o, GPT-4o-mini, GPT-4-turbo
+│       ├── anthropicProvider.ts # Dormant — Claude adapter ready
+│       ├── kimiProvider.ts      # Dormant — Kimi/Moonshot adapter ready
+│       ├── groqProvider.ts      # Dormant — Groq/Llama adapter ready
+│       ├── ollamaProvider.ts    # Dormant — local model adapter ready
+│       └── openrouterProvider.ts# Dormant — multi-model gateway ready
 ├── core/
 │   └── autonomyEngine.ts          # Guardian evaluation kernel (6-rule trace)
 ├── components/
@@ -36,6 +49,7 @@ src/
 │   └── useErrorBus.ts             # Centralized failure emission
 ├── lib/
 │   ├── github.ts                  # Full GitHub REST wrapper with Guardian gate
+│   ├── modelProviders.ts          # Provider registry (all types preserved)
 │   └── supabase.ts                # Client init (reserved for future backend)
 ├── types/
 │   ├── autonomy.ts                # GuardianDecision, GuardianTrace, GuardianContext
@@ -74,10 +88,32 @@ pnpm run lint     # ESLint
 
 ForgeClaw uses a **settings modal** for API key entry (no env vars required):
 
+### OpenAI (Required — Current Runtime)
+
 1. Click the ⚙ gear icon in the header
-2. Enter your Claude API key (`sk-ant-...`) in the settings panel
+2. Enter your OpenAI API key (`sk-...` or `sk-proj-...`) in the settings panel
 3. Click **TEST KEY** to verify
 4. Key is stored in `localStorage` — persists across sessions
+
+> **Error if missing:** *"OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)"*
+
+### Future Providers (Dormant)
+
+The following provider adapters are preserved in `src/lib/ai/providers/` for future re-enablement:
+
+| Provider | Adapter File | Status |
+|----------|-------------|--------|
+| Anthropic | `anthropicProvider.ts` | Dormant |
+| Kimi (Moonshot) | `kimiProvider.ts` | Dormant |
+| Groq | `groqProvider.ts` | Dormant |
+| Ollama (Local) | `ollamaProvider.ts` | Dormant |
+| OpenRouter | `openrouterProvider.ts` | Dormant |
+
+To re-enable a provider:
+1. Uncomment its selector button in `src/App.tsx` Settings panel
+2. Restore its branch in `sendPrompt()` logic
+3. Add its API key input field to Settings
+4. Update `DEFAULT_PROVIDER` in `src/lib/modelProviders.ts` if changing default
 
 ### GitHub Token (Optional)
 
