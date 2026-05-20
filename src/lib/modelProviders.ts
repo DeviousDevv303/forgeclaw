@@ -4,7 +4,7 @@
 // ForgeMind routes cloud calls through this module.
 // Safety governance lives in ForgeClaw's architecture, not the LLM layer.
 
-export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi' | 'kimi_code' | 'ollama' | 'openrouter'
+export type ProviderId = 'anthropic' | 'deepseek' | 'mistral' | 'groq' | 'kimi' | 'kimi_code' | 'ollama' | 'openrouter' | 'openai'
 
 function kimiCodeUrl(): string {
   try {
@@ -30,6 +30,20 @@ export interface ProviderConfig {
 }
 
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
+  openai: {
+    id: 'openai',
+    name: 'OpenAI',
+    url: 'https://api.openai.com/v1/chat/completions',
+    models: [
+      { id: 'gpt-4o',        label: 'GPT-4o',        contextK: 128, note: 'Flagship' },
+      { id: 'gpt-4o-mini',   label: 'GPT-4o Mini',   contextK: 128, note: 'Fast & cheap' },
+      { id: 'gpt-4-turbo',   label: 'GPT-4 Turbo',   contextK: 128 },
+      { id: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo', contextK: 16,  note: 'Legacy' },
+    ],
+    keyPlaceholder: 'sk-...',
+    keyPrefix: 'sk-',
+  },
+
   anthropic: {
     id: 'anthropic',
     name: 'Anthropic',
@@ -148,10 +162,11 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['groq', 'anthropic', 'deepseek', 'mistral', 'kimi', 'kimi_code', 'openrouter', 'ollama']
+export const PROVIDER_ORDER: ProviderId[] = ['openai', 'groq', 'anthropic', 'deepseek', 'mistral', 'kimi', 'kimi_code', 'openrouter', 'ollama']
 
-export const DEFAULT_PROVIDER: ProviderId = 'groq'
+export const DEFAULT_PROVIDER: ProviderId = 'openai'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
+  openai:      'gpt-4o',
   anthropic:   'claude-haiku-4-5-20251001',
   deepseek:    'deepseek-chat',
   mistral:     'mistral-large-latest',
