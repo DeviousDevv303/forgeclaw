@@ -390,7 +390,7 @@ function App() {
     lastRequestStatus: 'none',
     lastError: null,
     lastLatencyMs: null,
-    buildVersion: 'dev',
+    buildVersion: '6a022f9',
   })
 
   interface PendingCoSign {
@@ -1251,20 +1251,21 @@ function App() {
                 </div>
               </div>
 
-              {/* Ollama local model scaffold */}
-              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Local Ollama Model <span style={{ color: '#333', textTransform: 'none' }}>(used first, cloud fallback)</span>
+              {/* Ollama local model scaffold (DORMANT — runtime is OpenAI-only) */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px', opacity: 0.4 }}>
+                <label style={{ display: 'block', color: '#555', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Local Ollama Model <span style={{ color: '#333', textTransform: 'none' }}>(dormant — re-enable in future multi-provider phase)</span>
                 </label>
                 <input
                   type="text"
                   placeholder="qwen2.5:1.8b"
                   defaultValue={safeGetItem('fc_ollama_model') || 'qwen2.5:1.8b'}
                   onChange={e => safeSetItem('fc_ollama_model', e.target.value)}
-                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                  disabled
+                  style={{ width: '100%', background: '#0a0a0a', color: '#555', border: '1px solid #1a1a1a', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', cursor: 'not-allowed' }}
                 />
-                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
-                  Any model installed via <code style={{ color: '#555' }}>ollama pull</code>. Leave blank to always use cloud.
+                <div style={{ color: '#222', fontSize: '10px', marginTop: '4px' }}>
+                  Any model installed via <code style={{ color: '#333' }}>ollama pull</code>. Currently disabled — runtime is OpenAI-only.
                 </div>
               </div>
 
