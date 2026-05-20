@@ -77,6 +77,10 @@ interface CorpusEntry {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
+const RUNTIME_PROVIDER: ProviderId = 'openai'
+const OPENAI_SUPPORTED_MODEL_IDS = new Set(['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'])
+const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
+const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 // STANDING RULE: The line below must never be removed or modified.
@@ -332,10 +336,17 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [testKeyError, setTestKeyError] = useState('')
-  // OpenAI-only provider state
-  const [activeProvider] = useState<ProviderId>('openai')
-  const [activeModel, setActiveModel] = useState<string>(() => safeGetItem('fm_openai_model') || 'gpt-4o')
-  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openai_key') || '')
+  // OpenAI-only runtime state. Dormant provider adapters stay registered for future re-enable,
+  // but active execution is intentionally deterministic and does not auto-fallback.
+  const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
+  const [activeModel, setActiveModel] = useState<string>(() => {
+    const savedModel = safeGetItem('fm_openai_model') || safeGetItem('fm_model')
+    return savedModel && OPENAI_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'gpt-4o'
+  })
+  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openai_key') || safeGetItem('fm_api_key') || '')
+  const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
+  const [lastRequestError, setLastRequestError] = useState('')
+  const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null)
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [showGhToken, setShowGhToken] = useState(false)
@@ -390,7 +401,7 @@ function App() {
     lastRequestStatus: 'none',
     lastError: null,
     lastLatencyMs: null,
-    buildVersion: '6a022f9',
+    buildVersion: BUILD_COMMIT,
   })
 
   interface PendingCoSign {
@@ -430,12 +441,21 @@ function App() {
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
   useEffect(() => { safeSetItem('fm_openai_key', apiKey) }, [apiKey])
-  useEffect(() => { safeSetItem('fm_openai_model', activeModel) }, [activeModel])
+  useEffect(() => { safeSetItem('fm_provider', RUNTIME_PROVIDER) }, [])
+  useEffect(() => {
+    if (!OPENAI_SUPPORTED_MODEL_IDS.has(activeModel)) {
+      setActiveModel('gpt-4o')
+      return
+    }
+    safeSetItem('fm_openai_model', activeModel)
+  }, [activeModel])
   useEffect(() => {
     setDiagnostics(prev => ({
       ...prev,
+      provider: RUNTIME_PROVIDER,
       model: activeModel,
       keyPresent: !!apiKey && apiKey.length > 20,
+      buildVersion: BUILD_COMMIT,
     }))
   }, [activeModel, apiKey])
 
@@ -529,12 +549,17 @@ function App() {
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
     if (!apiKey) {
+      const missingKeyMessage = 'OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)'
+      setRequestStatus('blocked')
+      setLastRequestError(missingKeyMessage)
+      setLastRequestLatencyMs(null)
+      setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'error', lastError: missingKeyMessage, lastLatencyMs: null }))
       setMessages(prev => [...prev, userMsg, {
         id: (Date.now() + 1).toString(), role: 'assistant',
-        content: 'OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)',
+        content: missingKeyMessage,
         timestamp: Date.now(), source: 'local' as const,
       }])
-      emitFailure({ source: 'forgemind', severity: 'warning', message: 'OpenAI: no API key configured' })
+      emitFailure({ source: 'forgemind', severity: 'warning', message: missingKeyMessage })
       return
     }
 
@@ -572,7 +597,11 @@ function App() {
       : FORGEMIND_SYSTEM_PROMPT
 
     try {
+      const requestStartedAt = performance.now()
       setLoading(true)
+      setRequestStatus('running')
+      setLastRequestError('')
+      setLastRequestLatencyMs(null)
 
       // ── Cloud agentic loop (tool calling, up to 15 iterations) ────────────
       source = 'cloud'
@@ -734,11 +763,16 @@ function App() {
         ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenAI', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
+      setRequestStatus('success')
+      setLastRequestError('')
+      setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
       resolveTask(taskId)
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : 'Unknown error'
       const msg = rawMsg
-      emitFailure({ source: 'openai', severity: 'error', message: rawMsg, context: { promptLength: promptText.length } })
+      setRequestStatus('error')
+      setLastRequestError(msg)
+      emitFailure({ source: activeProvider, severity: 'error', message: rawMsg, context: { promptLength: promptText.length } })
       if (cloudMsgId) {
         setMessages(prev => prev.map(m => {
           if (m.id !== cloudMsgId) return m
@@ -748,7 +782,8 @@ function App() {
       } else {
         setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
       }
-      // Auth failure: show readable error, no auto-switch
+      // Auth/runtime failures are surfaced to the operator. No hidden provider fallback
+      // occurs while the runtime is locked to OpenAI.
       const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)
       if (isAuthError) {
         setApiKeyStatus('invalid')
@@ -997,11 +1032,11 @@ function App() {
 
   const getStatusIndicator = () => {
     const modelLabel = openaiProvider.models.find(m => m.id === activeModel)?.label ?? activeModel
-    if (!apiKey) return <span style={{ color: '#ef4444' }}>🔴 No API Key</span>
-    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>🔴 Invalid Key</span>
-    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>🟡 OpenAI</span>
-    if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>● {modelLabel}</span>
-    return <span style={{ color: '#6b6b6b' }}>● {modelLabel}</span>
+    if (!apiKey) return <span style={{ color: '#ef4444' }}>OpenAI: no API key</span>
+    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>OpenAI: invalid key</span>
+    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>OpenAI: key unverified</span>
+    if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>{modelLabel}</span>
+    return <span style={{ color: '#6b6b6b' }}>{modelLabel}</span>
   }
 
   const TABS: { id: Tab; label: string; badge?: string }[] = [
@@ -1031,20 +1066,20 @@ function App() {
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            {/* OpenAI credential dot */}
+            {/* OpenAI runtime credential indicator */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               <span
-                title={`OpenAI: ${apiKey ? (apiKeyStatus === 'invalid' ? 'auth failed' : 'key set') : 'no key'} — click to open Settings`}
+                title={`OpenAI runtime: ${apiKey ? 'key set' : 'no key'} — click to open Settings`}
                 onClick={() => setActiveTab('settings')}
                 style={{
-                  width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
-                  background: apiKeyStatus === 'invalid' ? '#ef4444' : apiKey ? '#22c55e' : '#333',
-                  display: 'inline-block',
-                  fontSize: '8px', color: '#000', textAlign: 'center', lineHeight: '14px', fontWeight: 'bold',
-                  border: '1px solid #111',
+                  width: '28px', height: '14px', borderRadius: '3px', cursor: 'pointer',
+                  background: apiKey ? '#22c55e22' : '#1a1a1a',
+                  border: `1px solid ${apiKey ? '#22c55e' : '#333'}`,
+                  color: apiKey ? '#22c55e' : '#444',
+                  fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
-              >G</span>
-              <span style={{ color: '#666', fontSize: '9px', fontFamily: 'monospace' }}>GPT</span>
+              >OAI</span>
             </div>
             {/* GitHub token dot */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
@@ -1141,7 +1176,7 @@ function App() {
 
               {/* Provider — OpenAI only */}
               <div style={{ marginBottom: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>AI Provider</label>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Runtime Provider</label>
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>OpenAI</span>
@@ -1173,7 +1208,7 @@ function App() {
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder="sk-..."
+                    placeholder="sk-... or sk-proj-..."
                     value={apiKey}
                     onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }}
                     style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
@@ -1195,11 +1230,31 @@ function App() {
                 </button>
               </div>
 
-              <div style={{ textAlign: 'center', fontSize: '11px' }}>
-                {!apiKey && <span style={{ color: '#666' }}>Enter your OpenAI API key above</span>}
-                {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#eab308' }}>🟡 Key not tested yet</span>}
-                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 Key valid — OpenAI</span>}
-                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Auth rejected</span>}
+              <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
+                {!apiKey && <span style={{ color: '#ef4444' }}>OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)</span>}
+                {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Key to verify</span>}
+                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>OpenAI key verified</span>}
+                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>{testKeyError || 'OpenAI key invalid'}</span>}
+              </div>
+
+              {/* Operator diagnostics */}
+              <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
+                <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
+                {[
+                  ['runtime provider', 'OpenAI'],
+                  ['active model', activeModel],
+                  ['auth state', apiKey ? 'present' : 'missing'],
+                  ['request status', requestStatus],
+                  ['last error', lastRequestError || diagnostics.lastError || 'none'],
+                  ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
+                  ['build commit', BUILD_COMMIT],
+                  ['build time', BUILD_TIME],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '3px 0', borderBottom: '1px solid #111' }}>
+                    <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>{label}</span>
+                    <span style={{ color: '#ccc', fontSize: '10px', fontFamily: 'monospace', textAlign: 'right', overflowWrap: 'anywhere' }}>{value}</span>
+                  </div>
+                ))}
               </div>
 
               {/* Kimi Code URL override — disabled, OpenAI only */}
