@@ -21,11 +21,8 @@ import type { CristianDecision } from './types/warRoom'
 import { collectMockEvents } from './lib/reasoningMock'
 import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
-import {
-  PROVIDERS, PROVIDER_ORDER, DEFAULT_PROVIDER, DEFAULT_MODEL,
-  callProvider, testProviderKey, modelSupportsTools,
-} from './lib/modelProviders'
 import type { ProviderId, ChatMessage as ProviderMessage } from './lib/modelProviders'
+import { sendViaRouter, testProviderKey, openaiProvider } from './lib/ai/providerRouter'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
@@ -268,7 +265,7 @@ const CORPUS_MAX = 10_000
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'coach' | 'agents'
+type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'coach' | 'agents' | 'diagnostics'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -333,8 +330,12 @@ function App() {
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
-  const [apiKeyStatus, setApiKeyStatus] = useState<'none' | 'unverified' | 'valid' | 'invalid'>('none')
+  const [apiKeyStatus, setApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [testKeyError, setTestKeyError] = useState('')
+  // OpenAI-only provider state
+  const [activeProvider] = useState<ProviderId>('openai')
+  const [activeModel, setActiveModel] = useState<string>(() => safeGetItem('fm_openai_model') || 'gpt-4o')
+  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openai_key') || '')
   const [testingKey, setTestingKey] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
   const [showGhToken, setShowGhToken] = useState(false)
@@ -342,41 +343,6 @@ function App() {
   const [ghToken, setGhToken] = useState(() => safeGetItem('gh_token') || '')
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
-
-  // Multi-provider state
-  const [activeProvider, setActiveProvider] = useState<ProviderId>(() => {
-    const saved = safeGetItem('fm_provider') as ProviderId | null
-    return saved || DEFAULT_PROVIDER
-  })
-  const [activeModel, setActiveModel] = useState<string>(() => {
-    const savedProvider = (safeGetItem('fm_provider') as ProviderId | null) || DEFAULT_PROVIDER
-    const savedModel = safeGetItem('fm_model')
-    // If saved model belongs to saved provider, use it; otherwise use provider default
-    const providerModels = PROVIDERS[savedProvider]?.models.map(m => m.id) || []
-    if (savedModel && providerModels.includes(savedModel)) return savedModel
-    return DEFAULT_MODEL[savedProvider]
-  })
-  // One key slot per provider; migrate existing fm_api_key into anthropic slot
-  const [providerKeys, setProviderKeys] = useState<Record<ProviderId, string>>(() => {
-    const stored = safeGetItem('fm_provider_keys')
-    const parsed = stored ? safeJsonParse<Record<ProviderId, string>>(stored, {} as Record<ProviderId, string>) : {} as Record<ProviderId, string>
-    const legacyAnthropic = import.meta.env.VITE_ANTHROPIC_API_KEY || safeGetItem('fm_api_key') || ''
-    return {
-      // User-entered key takes priority; hardcoded key is the fallback.
-      // ⚠️ DO NOT REMOVE HARDCODED FALLBACKS UNLESS CRISTIAN EXPLICITLY SAYS TO.
-      anthropic:  parsed.anthropic  || legacyAnthropic || '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',
-      deepseek:   parsed.deepseek   || 'sk-c47d7b43ab38441087f6ad259ccf340f',
-      mistral:    parsed.mistral    || 'Ile5nNCCMWmVOnx3jtJH8T1TshigIU3I',
-      groq:       parsed.groq       || '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',
-      kimi:       parsed.kimi       || 'sk-kimi-y7ligg0j8hVYhrvlXaZlW5hohHehPJh3jQBj03ZfuBgpvsNX57iXXfRqRVFw8h0h',
-      kimi_code:  parsed.kimi_code  || 'sk-kimi-QOdJ76fX4oSFji50oK2n2tmxZe2NIjdVBQ13ib3TktK7beBnVXLwlXIQ7RS7aO2l',
-      ollama:     '',
-      openrouter: parsed.openrouter || '',
-    }
-  })
-
-  // Convenience: active provider's key
-  const apiKey = providerKeys[activeProvider]
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
     return safeJsonParse(saved, [])
@@ -392,7 +358,6 @@ function App() {
   const [elVoiceId, setElVoiceId] = useState<string>(() => safeGetItem('fc_el_voice_id') || '')
   const elAudioRef = useRef<HTMLAudioElement | null>(null)
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
-  const [failedProviders, setFailedProviders] = useState<Set<ProviderId>>(new Set())
   const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
   const [showConnectors, setShowConnectors] = useState(false)
   const [coachAgentId, setCoachAgentId] = useState<string>(() => safeGetItem('fc_coach_agent_id') || '')
@@ -408,6 +373,26 @@ function App() {
   }
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
 
+  // Diagnostics — operator visibility panel
+  interface DiagnosticsState {
+    provider: string
+    model: string
+    keyPresent: boolean
+    lastRequestStatus: 'none' | 'success' | 'error'
+    lastError: string | null
+    lastLatencyMs: number | null
+    buildVersion: string
+  }
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
+    provider: 'openai',
+    model: activeModel,
+    keyPresent: !!apiKey,
+    lastRequestStatus: 'none',
+    lastError: null,
+    lastLatencyMs: null,
+    buildVersion: 'dev',
+  })
+
   interface PendingCoSign {
     id: string
     toolName: string
@@ -418,32 +403,6 @@ function App() {
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
   const [tier1Active, setTier1Active] = useState(false)
 
-  // Ollama live model discovery
-  interface OllamaModel { id: string; label: string; size: string }
-  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
-  const [ollamaOnline, setOllamaOnline] = useState<boolean | null>(null)
-
-  const fetchOllamaModels = useCallback(async () => {
-    try {
-      const res = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(3000) })
-      if (!res.ok) throw new Error('offline')
-      type Tag = { name: string; size: number; details?: { parameter_size?: string } }
-      const data = await res.json() as { models: Tag[] }
-      const discovered: OllamaModel[] = (data.models || []).map(m => ({
-        id: m.name,
-        label: m.name,
-        size: m.details?.parameter_size ?? (m.size ? `${(m.size / 1e9).toFixed(1)}GB` : ''),
-      }))
-      setOllamaModels(discovered)
-      setOllamaOnline(true)
-      // Auto-select first discovered model if current activeModel isn't in the list
-      if (discovered.length && !discovered.find(m => m.id === activeModel)) {
-        setActiveModel(discovered[0].id)
-      }
-    } catch {
-      setOllamaOnline(false)
-    }
-  }, [activeModel])
   const [listening, setListening] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState('')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -470,22 +429,15 @@ function App() {
   useEffect(() => { scrollToBottom() }, [messages])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
-  useEffect(() => { safeSetItem('fm_api_key', providerKeys.anthropic) }, [providerKeys.anthropic])
-  useEffect(() => { safeSetItem('fm_provider', activeProvider) }, [activeProvider])
-  useEffect(() => { safeSetItem('fm_model', activeModel) }, [activeModel])
-  useEffect(() => { safeSetItem('fm_provider_keys', JSON.stringify(providerKeys)) }, [providerKeys])
-  // Auto-discover Ollama models on mount and whenever Ollama becomes the active provider
-  useEffect(() => { if (activeProvider === 'ollama') fetchOllamaModels() }, [activeProvider, fetchOllamaModels])
-
-  // On mount: if active provider has no key, auto-switch to first one that does
-  // Ollama is always considered "has key" since it runs locally with no auth
+  useEffect(() => { safeSetItem('fm_openai_key', apiKey) }, [apiKey])
+  useEffect(() => { safeSetItem('fm_openai_model', activeModel) }, [activeModel])
   useEffect(() => {
-    const hasKey = (pid: ProviderId) => pid === 'ollama' || !!providerKeys[pid]
-    if (!hasKey(activeProvider)) {
-      const fallback = PROVIDER_ORDER.find(pid => hasKey(pid))
-      if (fallback) { setActiveProvider(fallback); setActiveModel(DEFAULT_MODEL[fallback]) }
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    setDiagnostics(prev => ({
+      ...prev,
+      model: activeModel,
+      keyPresent: !!apiKey && apiKey.length > 20,
+    }))
+  }, [activeModel, apiKey])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -576,13 +528,13 @@ function App() {
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
-    if (!apiKey && activeProvider !== 'ollama') {
+    if (!apiKey) {
       setMessages(prev => [...prev, userMsg, {
         id: (Date.now() + 1).toString(), role: 'assistant',
-        content: `No API key for ${PROVIDERS[activeProvider].name}. Open Settings and switch to a provider with a configured key.`,
+        content: 'OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)',
         timestamp: Date.now(), source: 'local' as const,
       }])
-      emitFailure({ source: 'forgemind', severity: 'warning', message: `No API key for ${PROVIDERS[activeProvider].name}` })
+      emitFailure({ source: 'forgemind', severity: 'warning', message: 'OpenAI: no API key configured' })
       return
     }
 
@@ -621,26 +573,6 @@ function App() {
 
     try {
       setLoading(true)
-      // ── Ollama local path (only when selected as active provider) ──────────
-      let ollamaOk = false
-      if (activeProvider === 'ollama') {
-        try {
-          const r = await fetch('http://localhost:11434/api/generate', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model: activeModel, system: activeSystemPrompt, prompt: promptText, stream: false }),
-            signal: AbortSignal.timeout(2000),
-          })
-          if (r.ok) {
-            const d = await r.json() as { response: string }
-            const { cleanText, tagsFound, thinking, answerText, plan, agentPhase } = parseAndExecuteTags(d.response || '', promptText, `ollama:${activeModel}`)
-            source = 'local'; setLastSource('local'); ollamaOk = true
-            logToCorpus(promptText, answerText, `ollama:${activeModel}`)
-            setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: cleanText, plan, agentPhase, timestamp: Date.now(), source, provider: 'ollama', model: activeModel, activeTags: tagsFound, thinking, showReasoning: false }])
-            resolveTask(taskId)
-          }
-        } catch { /* fall through to cloud */ }
-        if (ollamaOk) { setLoading(false); return }
-      }
 
       // ── Cloud agentic loop (tool calling, up to 15 iterations) ────────────
       source = 'cloud'
@@ -665,7 +597,7 @@ function App() {
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
       // Some models (e.g. OpenRouter free-tier) don't support function calling at all
-      const supportsTools = modelSupportsTools(activeProvider, activeModel)
+      const supportsTools = true
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -682,25 +614,25 @@ function App() {
         const noMoreTools = isLastIter || !supportsTools
         let streamBuffer = ''
 
-        const result = await callProvider(
-          activeProvider, activeModel, activeSystemPrompt,
-          conversationMessages, apiKey,
-          {
-            tools: noMoreTools ? undefined : FORGE_TOOLS,
-            // Stream ONLY on iterations without tools. When tools are passed,
-            // streaming SSE cannot capture tool_call events — they arrive as delta
-            // chunks that our parser ignores, causing the loop to see no toolCalls
-            // and break with an empty finalText. Non-streaming returns the full
-            // JSON response so toolCalls are populated correctly.
-            onToken: noMoreTools ? (token: string) => {
-              streamBuffer += token
-              // Hide everything from [FM:THINK] onwards while streaming — prevents
-              // the reasoning trace from flashing as visible text mid-stream
-              const displayText = streamBuffer.split(/\[FM:THINK\]/i)[0]
-              setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: cleanOutput(displayText), streaming: true } : m))
-            } : undefined,
-          }
-        )
+        const reqStart = performance.now()
+        const routerResult = await sendViaRouter({
+          model: activeModel,
+          systemPrompt: activeSystemPrompt,
+          messages: conversationMessages as any,
+          tools: noMoreTools ? undefined : FORGE_TOOLS,
+          onToken: noMoreTools ? (token: string) => {
+            streamBuffer += token
+            const displayText = streamBuffer.split(/\[FM:THINK\]/i)[0]
+            setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: cleanOutput(displayText), streaming: true } : m))
+          } : undefined,
+        }, apiKey)
+        const latency = Math.round(performance.now() - reqStart)
+        if (!routerResult.success) {
+          setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'error', lastError: routerResult.error.message, lastLatencyMs: latency }))
+          throw new Error(routerResult.error.message)
+        }
+        setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'success', lastError: null, lastLatencyMs: latency }))
+        const result = routerResult.response
 
         // No tool calls → final answer
         if (!result.toolCalls?.length) {
@@ -780,29 +712,14 @@ function App() {
         // Show progress in the streaming message
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
 
-        // Build next turn for Anthropic (multi-part content) vs OpenAI-compat
-        if (activeProvider === 'anthropic') {
-          conversationMessages.push({
-            role: 'assistant',
-            content: [
-              ...(result.text ? [{ type: 'text' as const, text: result.text }] : []),
-              ...result.toolCalls.map(tc => ({ type: 'tool_use' as const, id: tc.id, name: tc.name, input: tc.input })),
-            ],
-          })
-          conversationMessages.push({
-            role: 'user',
-            content: iterResults.map(r => ({ type: 'tool_result' as const, tool_use_id: r.toolCallId, content: r.output })),
-          })
-        } else {
-          // OpenAI-compat tool result format
-          conversationMessages.push({
-            role: 'assistant',
-            content: result.text || '',
-            tool_calls: result.toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.name, arguments: JSON.stringify(tc.input) } })),
-          })
-          for (const r of iterResults) {
-            conversationMessages.push({ role: 'tool', content: r.output, tool_call_id: r.toolCallId })
-          }
+        // Build next turn — OpenAI-compat tool result format
+        conversationMessages.push({
+          role: 'assistant',
+          content: result.text || '',
+          tool_calls: result.toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.name, arguments: JSON.stringify(tc.input) } })),
+        })
+        for (const r of iterResults) {
+          conversationMessages.push({ role: 'tool', content: r.output, tool_call_id: r.toolCallId })
         }
       }
 
@@ -814,19 +731,14 @@ function App() {
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${PROVIDERS[activeProvider].name}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenAI', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
-      // Clear any prior auth failure mark for this provider on successful call
-      if (failedProviders.has(activeProvider)) setFailedProviders(prev => { const n = new Set(prev); n.delete(activeProvider); return n })
       resolveTask(taskId)
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : 'Unknown error'
-      const isOllamaFetch = activeProvider === 'ollama' && /failed to fetch|networkerror|net::err/i.test(rawMsg)
-      const msg = isOllamaFetch
-        ? 'Ollama requires a local server running at localhost:11434 — not reachable from this device. Switch to a cloud provider in the selector above.'
-        : rawMsg
-      emitFailure({ source: activeProvider, severity: 'error', message: rawMsg, context: { promptLength: promptText.length } })
+      const msg = rawMsg
+      emitFailure({ source: 'openai', severity: 'error', message: rawMsg, context: { promptLength: promptText.length } })
       if (cloudMsgId) {
         setMessages(prev => prev.map(m => {
           if (m.id !== cloudMsgId) return m
@@ -836,26 +748,18 @@ function App() {
       } else {
         setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
       }
-      // Auth failure: mark provider red and auto-switch to next working one
+      // Auth failure: show readable error, no auto-switch
       const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)
-      if (isAuthError || isOllamaFetch) {
-        const newFailed = new Set([...failedProviders, activeProvider])
-        setFailedProviders(newFailed)
-        const next = PROVIDER_ORDER.find(pid => pid !== activeProvider && pid !== 'ollama' && providerKeys[pid] && !newFailed.has(pid))
-        if (next) {
-          setActiveProvider(next)
-          setActiveModel(DEFAULT_MODEL[next])
-          setMessages(prev => [...prev, {
-            id: (Date.now() + 2).toString(), role: 'assistant',
-            content: isOllamaFetch
-              ? `Ollama (local) not reachable — auto-switched to ${PROVIDERS[next].name}. Resend your message.`
-              : `Auth failed on ${PROVIDERS[activeProvider].name}. Switched to ${PROVIDERS[next].name}. Please resend your message.`,
-            timestamp: Date.now(), source: 'local' as const,
-          }])
-        }
+      if (isAuthError) {
+        setApiKeyStatus('invalid')
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 2).toString(), role: 'assistant',
+          content: 'OpenAI auth failed. Check your API key in Settings. Keys start with sk- or sk-proj-.',
+          timestamp: Date.now(), source: 'local' as const,
+        }])
       }
     } finally { setLoading(false) }
-  }, [apiKey, activeProvider, activeModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiKey, activeModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -1036,7 +940,7 @@ function App() {
     setTestingKey(true)
     setTestKeyError('')
     try {
-      await testProviderKey(activeProvider, activeModel, apiKey)
+      await testProviderKey(apiKey)
       setApiKeyStatus('valid')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1092,15 +996,10 @@ function App() {
   }
 
   const getStatusIndicator = () => {
-    const modelLabel = PROVIDERS[activeProvider].models.find(m => m.id === activeModel)?.label ?? activeModel
-    // Ollama is local — no key needed, skip auth checks
-    if (activeProvider === 'ollama') {
-      return <span style={{ color: '#10b981', fontWeight: 'bold' }}>● {modelLabel}</span>
-    }
+    const modelLabel = openaiProvider.models.find(m => m.id === activeModel)?.label ?? activeModel
     if (!apiKey) return <span style={{ color: '#ef4444' }}>🔴 No API Key</span>
     if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>🔴 Invalid Key</span>
-    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>🟡 {PROVIDERS[activeProvider].name}</span>
-    if (lastSource === 'local') return <span style={{ color: '#10b981', fontWeight: 'bold' }}>● Local</span>
+    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>🟡 OpenAI</span>
     if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>● {modelLabel}</span>
     return <span style={{ color: '#6b6b6b' }}>● {modelLabel}</span>
   }
@@ -1113,6 +1012,7 @@ function App() {
     { id: 'whatsapp',    label: 'WHATSAPP' },
     { id: 'failures',    label: 'FAILURES', badge: unresolvedCount > 0 ? String(unresolvedCount) : undefined },
     { id: 'activity',    label: 'ACTIVITY', badge: activityLog.filter(e => e.status === 'running').length > 0 ? '●' : undefined },
+    { id: 'diagnostics', label: 'HEALTH' },
     { id: 'settings',    label: 'SETTINGS' },
   ]
 
@@ -1131,35 +1031,23 @@ function App() {
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            {/* Per-provider credential dots */}
+            {/* OpenAI credential dot */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
-              {PROVIDER_ORDER.map(pid => {
-                const initial = pid === 'anthropic' ? 'A' : pid === 'deepseek' ? 'D' : pid === 'mistral' ? 'M' : pid === 'groq' ? 'G' : pid === 'kimi' ? 'K' : pid === 'kimi_code' ? 'KC' : pid === 'openrouter' ? 'OR' : 'O'
-                const hasKey = pid === 'ollama' ? true : !!providerKeys[pid]
-                const isActive = pid === activeProvider
-                const hasFailed = failedProviders.has(pid)
-                const dotColor = hasFailed ? '#ef4444' : (hasKey ? '#22c55e' : '#333')
-                const bgColor = hasFailed ? '#ef444422' : (hasKey ? '#22c55e22' : '#1a1a1a')
-                const titleText = hasFailed
-                  ? `${PROVIDERS[pid].name}: auth failed — click Settings to update key`
-                  : `${PROVIDERS[pid].name}: ${pid === 'ollama' ? 'local (no key needed)' : (hasKey ? 'key set' : 'no key')} — click to open Settings`
-                return (
-                  <span
-                    key={pid}
-                    title={titleText}
-                    onClick={() => setActiveTab('settings')}
-                    style={{
-                      width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
-                      background: bgColor,
-                      border: `1px solid ${isActive ? '#f97316' : dotColor}`,
-                      color: hasFailed ? '#ef4444' : (hasKey ? '#22c55e' : '#444'),
-                      fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}
-                  >{initial}</span>
-                )
-              })}
-              {/* GitHub token dot */}
+              <span
+                title={`OpenAI: ${apiKey ? (apiKeyStatus === 'invalid' ? 'auth failed' : 'key set') : 'no key'} — click to open Settings`}
+                onClick={() => setActiveTab('settings')}
+                style={{
+                  width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
+                  background: apiKeyStatus === 'invalid' ? '#ef4444' : apiKey ? '#22c55e' : '#333',
+                  display: 'inline-block',
+                  fontSize: '8px', color: '#000', textAlign: 'center', lineHeight: '14px', fontWeight: 'bold',
+                  border: '1px solid #111',
+                }}
+              >G</span>
+              <span style={{ color: '#666', fontSize: '9px', fontFamily: 'monospace' }}>GPT</span>
+            </div>
+            {/* GitHub token dot */}
+            <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               <span
                 title={`GitHub token: ${safeGetItem('gh_token') ? 'set' : 'not set'} — click to open Settings`}
                 onClick={() => setActiveTab('settings')}
@@ -1240,9 +1128,9 @@ function App() {
       {/* Main Content */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 2, isolation: 'isolate', overflow: 'hidden' }}>
 
-        {!apiKey && activeProvider !== 'ollama' && (
+        {!apiKey && (
           <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginBottom: '12px', textAlign: 'center' }}>
-            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 No API Key configured. Click ⚙ to add your {PROVIDERS[activeProvider].name} key.</span>
+            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)</span>
           </div>
         )}
 
@@ -1251,19 +1139,13 @@ function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
 
-              {/* Provider selector */}
+              {/* Provider — OpenAI only */}
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>AI Provider</label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px' }}>
-                  {PROVIDER_ORDER.map(pid => (
-                    <button
-                      key={pid}
-                      onClick={() => { setActiveProvider(pid); setActiveModel(DEFAULT_MODEL[pid]); setApiKeyStatus('unverified') }}
-                      style={{ background: activeProvider === pid ? '#f97316' : '#1a1a1a', color: activeProvider === pid ? '#000' : '#888', border: `1px solid ${activeProvider === pid ? '#f97316' : '#333'}`, borderRadius: '4px', padding: '7px 8px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', fontFamily: 'monospace' }}
-                    >
-                      {PROVIDERS[pid].name}
-                    </button>
-                  ))}
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>OpenAI</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>GPT models only</span>
                 </div>
               </div>
 
@@ -1271,58 +1153,29 @@ function App() {
               <div style={{ marginBottom: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                   <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
-                  {activeProvider === 'ollama' && (
-                    <>
-                      <span style={{ fontSize: '9px', color: ollamaOnline === true ? '#22c55e' : ollamaOnline === false ? '#ef4444' : '#555', fontFamily: 'monospace' }}>
-                        {ollamaOnline === true ? `● ${ollamaModels.length} installed` : ollamaOnline === false ? '● offline' : '● …'}
-                      </span>
-                      <button onClick={fetchOllamaModels} style={{ background: 'none', border: '1px solid #222', color: '#555', borderRadius: '3px', padding: '1px 6px', fontSize: '9px', cursor: 'pointer', fontFamily: 'monospace' }}>↺</button>
-                    </>
-                  )}
                 </div>
                 <select
                   value={activeModel}
                   onChange={e => setActiveModel(e.target.value)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
-                  {activeProvider === 'ollama'
-                    ? ollamaModels.length > 0
-                      ? ollamaModels.map(m => (
-                          <option key={m.id} value={m.id} style={{ background: '#111' }}>
-                            {m.label}{m.size ? ` (${m.size})` : ''}
-                          </option>
-                        ))
-                      : PROVIDERS['ollama'].models.map(m => (
-                          <option key={m.id} value={m.id} style={{ background: '#111' }}>
-                            {m.label} ({m.contextK}K ctx)
-                          </option>
-                        ))
-                    : PROVIDERS[activeProvider].models.map(m => (
-                        <option key={m.id} value={m.id} style={{ background: '#111' }}>
-                          {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx)
-                        </option>
-                      ))
-                  }
+                  {openaiProvider.models.map(m => (
+                    <option key={m.id} value={m.id} style={{ background: '#111' }}>
+                      {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx)
+                    </option>
+                  ))}
                 </select>
               </div>
 
-              {/* API key for active provider */}
+              {/* API key for OpenAI */}
               <div style={{ marginBottom: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{PROVIDERS[activeProvider].name} API Key</label>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OpenAI API Key</label>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder={PROVIDERS[activeProvider].keyPlaceholder}
-                    value={providerKeys[activeProvider]}
-                    onChange={e => {
-                      const val = e.target.value
-                      setProviderKeys(prev => {
-                        const next = { ...prev, [activeProvider]: val }
-                        safeSetItem('fm_provider_keys', JSON.stringify(next))  // sync write — survives immediate refresh
-                        return next
-                      })
-                      setApiKeyStatus('unverified')
-                    }}
+                    placeholder="sk-..."
+                    value={apiKey}
+                    onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }}
                     style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                   />
                   <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
@@ -1343,28 +1196,13 @@ function App() {
               </div>
 
               <div style={{ textAlign: 'center', fontSize: '11px' }}>
-                {!apiKey && <span style={{ color: '#666' }}>Enter your {PROVIDERS[activeProvider].name} API key above</span>}
+                {!apiKey && <span style={{ color: '#666' }}>Enter your OpenAI API key above</span>}
                 {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#eab308' }}>🟡 Key not tested yet</span>}
-                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 Key valid — {PROVIDERS[activeProvider].name}</span>}
+                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>🟢 Key valid — OpenAI</span>}
                 {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>🔴 Auth rejected</span>}
               </div>
 
-              {/* Kimi Code URL override — endpoint varies by key origin */}
-              {activeProvider === 'kimi_code' && (
-                <div style={{ marginTop: '10px', padding: '8px', background: '#0a0800', border: '1px solid #2a1a00', borderRadius: '4px' }}>
-                  <label style={{ display: 'block', color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>KIMI CODE API ENDPOINT</label>
-                  <input
-                    type="text"
-                    placeholder="https://api.moonshot.cn/v1/chat/completions"
-                    defaultValue={safeGetItem('fc_kimi_code_url') || ''}
-                    onChange={e => safeSetItem('fc_kimi_code_url', e.target.value.trim())}
-                    style={{ width: '100%', background: '#080808', color: '#ccc', border: '1px solid #333', borderRadius: '4px', padding: '6px 8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
-                  />
-                  <div style={{ color: '#444', fontSize: '10px', marginTop: '4px' }}>
-                    Default: api.moonshot.cn. Also try: api.moonshot.ai
-                  </div>
-                </div>
-              )}
+              {/* Kimi Code URL override — disabled, OpenAI only */}
 
               {/* Corpus Memory Progress */}
               <div style={{ marginTop: '12px', borderTop: '1px solid #1a1a1a', paddingTop: '12px' }}>
@@ -1395,25 +1233,7 @@ function App() {
                 </div>
               </div>
 
-              {/* OpenRouter custom model ID */}
-              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  OpenRouter — Custom Model ID
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. google/gemma-4-27b-it or meta-llama/llama-3.3-70b-instruct"
-                  defaultValue={safeGetItem('fc_openrouter_model') || ''}
-                  onChange={e => {
-                    safeSetItem('fc_openrouter_model', e.target.value)
-                    if (activeProvider === 'openrouter' && e.target.value.trim()) setActiveModel(e.target.value.trim())
-                  }}
-                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
-                />
-                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
-                  Find exact IDs at openrouter.ai/models — paste the full path, e.g. <span style={{ color: '#444' }}>google/gemma-4-27b-it</span>
-                </div>
-              </div>
+              {/* OpenRouter custom model ID — disabled, OpenAI only */}
 
               {/* Corpus training stats */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
@@ -1829,7 +1649,7 @@ function App() {
                       { name: 'Calendar', icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: 'Web Search', icon: '🔍', key: 'fc_brave_key', connected: !!safeGetItem('fc_brave_key') },
                       { name: 'ElevenLabs', icon: '🔊', key: 'fc_el_api_key', connected: !!elApiKey },
-                      { name: 'Ollama', icon: '🦙', key: 'fc_ollama_url', connected: ollamaOnline === true },
+                      { name: 'Ollama', icon: '🦙', key: 'fc_ollama_url', connected: false },
                       { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
@@ -2094,6 +1914,78 @@ function App() {
             </div>
           )
         })()}
+
+        {/* ── Diagnostics / Health Tab ── */}
+        {activeTab === 'diagnostics' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace" }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
+              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>OPERATOR HEALTH</span>
+              <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>RUNTIME DIAGNOSTICS</span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', maxWidth: '600px' }}>
+              {/* Provider */}
+              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
+                <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● OpenAI</div>
+                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked — single provider</div>
+              </div>
+
+              {/* Model */}
+              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>MODEL</div>
+                <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{openaiProvider.models.find(m => m.id === activeModel)?.label ?? activeModel}</div>
+                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{activeModel}</div>
+              </div>
+
+              {/* API Key */}
+              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>API KEY</div>
+                <div style={{ color: diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
+                  {diagnostics.keyPresent ? '● PRESENT' : '● MISSING'}
+                </div>
+                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
+                  {diagnostics.keyPresent ? 'Key format valid' : 'Enter key in Settings'}
+                </div>
+              </div>
+
+              {/* Last Request */}
+              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST REQUEST</div>
+                <div style={{
+                  color: diagnostics.lastRequestStatus === 'success' ? '#22c55e' : diagnostics.lastRequestStatus === 'error' ? '#ef4444' : '#555',
+                  fontSize: '14px', fontWeight: 'bold'
+                }}>
+                  {diagnostics.lastRequestStatus === 'success' ? '● OK' : diagnostics.lastRequestStatus === 'error' ? '● FAILED' : '—'}
+                </div>
+                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
+                  {diagnostics.lastLatencyMs !== null ? `${diagnostics.lastLatencyMs}ms` : 'No requests yet'}
+                </div>
+              </div>
+
+              {/* Last Error */}
+              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
+                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST ERROR</div>
+                <div style={{
+                  color: diagnostics.lastError ? '#ef4444' : '#333',
+                  fontSize: '12px',
+                  fontFamily: 'monospace',
+                  wordBreak: 'break-word'
+                }}>
+                  {diagnostics.lastError ?? 'None recorded'}
+                </div>
+              </div>
+
+              {/* Build Version */}
+              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
+                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>BUILD</div>
+                <div style={{ color: '#888', fontSize: '12px', fontFamily: 'monospace' }}>
+                  {diagnostics.buildVersion}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Footer signature */}
