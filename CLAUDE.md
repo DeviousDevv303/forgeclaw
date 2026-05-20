@@ -1,21 +1,12 @@
 # ForgeClaw — Standing Rules for AI Agents
 
-## HARDCODED API KEYS — DO NOT REMOVE
+## API KEYS — Settings only, no hardcoding
 
-Cristian has explicitly hardcoded all provider API keys in `src/App.tsx` inside
-`providerKeys` state. These must never be removed, replaced, or moved to env vars
-without Cristian's explicit instruction.
+All provider API keys are entered by the user via the Settings tab and stored
+in localStorage (`fm_provider_keys`). No keys are hardcoded in source.
 
-Keys currently hardcoded (as of 2026-05-15):
-- `anthropic` — sk-ant-api03-...
-- `deepseek`  — sk-c47d7b...
-- `mistral`   — Ile5nNC...
-- `groq`      — gsk_V0RYY...
-- `kimi`      — sk-kimi-y7li...
-- `ollama`    — (empty string, local)
-
-If a key appears expired or invalid: **flag it in your report, do not replace it.**
-Only Cristian can authorize key changes.
+Do not hardcode any API key in `src/App.tsx` or any other file.
+Keys belong in localStorage only — never in committed code.
 
 ---
 
