@@ -2,8 +2,8 @@
 
 > **Multi-agent governance shell with autonomous GitHub operations, browser automation, and integrity enforcement.**
 >
-> **Current runtime:** OpenAI-only (GPT-4o / GPT-4o-mini).  
-> **Architecture:** Multi-provider ready — Anthropic, Kimi, Groq, Ollama adapters preserved for future re-enablement.  
+> **Current runtime:** Ollama (local) primary, Claude (Anthropic) cloud fallback.  
+> **Architecture:** Multi-provider ready — Kimi, Groq, OpenRouter adapters preserved for future activation.  
 >
 > *"Truth → Function → Clarity → Efficiency"*
 
@@ -25,14 +25,13 @@ ForgeClaw is a browser-based control surface for orchestrating multiple AI agent
 ```
 src/
 ├── lib/ai/
-│   ├── providerRouter.ts        # Single-provider router — OpenAI only at runtime
+│   ├── providerRouter.ts        # Multi-provider router — Ollama primary, Claude cloud fallback
 │   ├── types.ts                 # AIError classification, shared types
-│   └── providers/               # Dormant adapter layer (preserved for future)
-│       ├── openaiProvider.ts    # ← ACTIVE — GPT-4o, GPT-4o-mini, GPT-4-turbo
-│       ├── anthropicProvider.ts # Dormant — Claude adapter ready
+│   └── providers/               # Active + dormant adapter layer
+│       ├── claudeProvider.ts    # ACTIVE — Claude Sonnet/Opus/Haiku (sk-ant-... keys)
+│       ├── ollamaProvider.ts    # ACTIVE — Local models on :11434 (no key needed)
 │       ├── kimiProvider.ts      # Dormant — Kimi/Moonshot adapter ready
 │       ├── groqProvider.ts      # Dormant — Groq/Llama adapter ready
-│       ├── ollamaProvider.ts    # Dormant — local model adapter ready
 │       └── openrouterProvider.ts# Dormant — multi-model gateway ready
 ├── core/
 │   └── autonomyEngine.ts          # Guardian evaluation kernel (6-rule trace)
@@ -88,31 +87,41 @@ pnpm run lint     # ESLint
 
 ForgeClaw uses a **settings modal** for API key entry (no env vars required):
 
-### OpenAI (Required — Current Runtime)
+### Ollama (Local — Primary, No Key Needed)
 
-1. Click the ⚙ gear icon in the header
-2. Enter your OpenAI API key (`sk-...` or `sk-proj-...`) in the settings panel
-3. Click **TEST KEY** to verify
-4. Key is stored in `localStorage` — persists across sessions
+1. Install Ollama: https://ollama.com
+2. Pull a model: `ollama pull qwen2.5:1.8b` (or any model you prefer)
+3. Start Ollama: `ollama serve` (runs on `localhost:11434`)
+4. ForgeClaw auto-detects Ollama — no key entry needed
+5. Select "Ollama" in the Settings panel model dropdown
 
-> **Error if missing:** *"OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)"*
+> **Error if missing:** *"Ollama not running. Start it with: ollama serve"*
+
+### Claude (Anthropic — Cloud Fallback)
+
+1. Get a Claude API key from https://console.anthropic.com/ (`sk-ant-...` format)
+2. Click the ⚙ gear icon in the header
+3. Enter your Claude API key in the settings panel
+4. Click **TEST KEY** to verify
+5. Key is stored in `localStorage` — persists across sessions
+6. Select "Claude" in the Settings panel model dropdown
+
+> **Error if missing:** *"Claude: no API key — paste one in Settings (sk-ant-...)"*
 
 ### Future Providers (Dormant)
 
-The following provider adapters are preserved in `src/lib/ai/providers/` for future re-enablement:
+The following provider adapters are preserved in `src/lib/ai/providers/` for future activation:
 
-| Provider | Adapter File | Status |
-|----------|-------------|--------|
-| Anthropic | `anthropicProvider.ts` | Dormant |
-| Kimi (Moonshot) | `kimiProvider.ts` | Dormant |
-| Groq | `groqProvider.ts` | Dormant |
-| Ollama (Local) | `ollamaProvider.ts` | Dormant |
-| OpenRouter | `openrouterProvider.ts` | Dormant |
+| Provider | Adapter File | Status | Key Format |
+|----------|-------------|--------|-----------|
+| Kimi (Moonshot) | `kimiProvider.ts` | Dormant | `sk-...` (Kimi API) |
+| Groq | `groqProvider.ts` | Dormant | `gsk-...` (Groq API) |
+| OpenRouter | `openrouterProvider.ts` | Dormant | `sk-or-...` (OpenRouter) |
 
-To re-enable a provider:
-1. Uncomment its selector button in `src/App.tsx` Settings panel
-2. Restore its branch in `sendPrompt()` logic
-3. Add its API key input field to Settings
+To activate a provider:
+1. Wire its adapter into `providerRouter.ts`
+2. Add its key validation to `isConfigured()`
+3. Add its model selector to the Settings panel
 4. Update `DEFAULT_PROVIDER` in `src/lib/modelProviders.ts` if changing default
 
 ### GitHub Token (Optional)
