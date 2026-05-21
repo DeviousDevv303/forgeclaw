@@ -43,7 +43,7 @@ export const openrouterProvider: AIProvider = {
     return typeof apiKey === 'string' && apiKey.startsWith('sk-or-') && apiKey.length > 20
   },
 
-  supportsTools(_modelId: string): boolean {
+  supportsTools(): boolean {
     // Most OpenRouter models support tools, but free tier may not
     return true
   },

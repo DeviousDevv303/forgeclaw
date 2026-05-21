@@ -4,6 +4,7 @@ import type { ToolDef, ToolCall, ToolContext } from './forgeTools'
 import { executeTool } from './forgeTools'
 import { callProvider } from './modelProviders'
 import type { ProviderId } from './modelProviders'
+import type { ChatMessage } from './modelProviders'
 
 // ─── Sub-agent runner ─────────────────────────────────────────────────────────
 // Runs a mini agentic loop (max 8 iterations) with a custom system prompt.
@@ -23,13 +24,12 @@ export async function runSubAgent(
     ? allTools.filter(t => allowedTools.includes(t.name))
     : allTools
 
-  type Msg = { role: 'user' | 'assistant'; content: unknown }
-  const messages: Msg[] = [{ role: 'user', content: task }]
+  const messages: ChatMessage[] = [{ role: 'user', content: task }]
   const MAX_ITERS = 8
 
   for (let i = 0; i < MAX_ITERS; i++) {
     const isLast = i === MAX_ITERS - 1
-    const result = await callProvider(provider, model, systemPrompt, messages as Parameters<typeof callProvider>[3], apiKey, {
+    const result = await callProvider(provider, model, systemPrompt, messages, apiKey, {
       tools: isLast ? undefined : tools,
     })
 
@@ -54,13 +54,13 @@ export async function runSubAgent(
         type: 'function',
         function: { name: tc.name, arguments: JSON.stringify(tc.input) },
       })),
-    } as any)
+    })
     for (const r of iterResults) {
       messages.push({
         role: 'tool',
         content: r.output,
         tool_call_id: r.toolCallId,
-      } as any)
+      })
     }
   }
 

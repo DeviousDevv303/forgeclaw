@@ -9,7 +9,6 @@ import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/s
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { WhatsAppConnector } from './components/WhatsAppConnector'
-import { StrategicCoach } from './components/StrategicCoach'
 import { AgentsPanel } from './components/AgentsPanel'
 import { ReasoningChainComponent } from './components/reasoning/ReasoningChain'
 import { SystemMonitor } from './components/monitor/SystemMonitor'
@@ -273,7 +272,7 @@ const CORPUS_MAX = 10_000
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'coach' | 'agents' | 'diagnostics'
+type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'agents' | 'diagnostics'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -375,7 +374,6 @@ function App() {
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
   const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
   const [showConnectors, setShowConnectors] = useState(false)
-  const [coachAgentId, setCoachAgentId] = useState<string>(() => safeGetItem('fc_coach_agent_id') || '')
 
   // Activity log — Manus-like live view of tool calls
   interface ActivityEntry {
@@ -1049,7 +1047,6 @@ function App() {
 
   const TABS: { id: Tab; label: string; badge?: string }[] = [
     { id: 'forgemind',   label: 'FORGE' },
-    { id: 'coach',       label: 'COACH' },
     { id: 'agents',      label: 'AGENTS' },
     { id: 'voice',       label: 'VOICE' },
     { id: 'whatsapp',    label: 'WHATSAPP' },
@@ -1450,26 +1447,6 @@ function App() {
                 </div>
               </div>
 
-              {/* Strategic Coach Agent ID */}
-              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Strategic Coach — Managed Agent ID
-                </label>
-                <input
-                  type="text"
-                  placeholder="agent_xxxxxxxxxx"
-                  value={coachAgentId}
-                  onChange={e => {
-                    setCoachAgentId(e.target.value)
-                    safeSetItem('fc_coach_agent_id', e.target.value)
-                  }}
-                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
-                />
-                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
-                  Anthropic Managed Agent ID. Required to use the COACH tab.
-                </div>
-              </div>
-
             </div>
           </div>
         )}
@@ -1742,15 +1719,6 @@ function App() {
                 )}
               </div>
           </>
-        )}
-
-        {/* ── Coach Tab ── */}
-        {activeTab === 'coach' && (
-          <StrategicCoach
-            provider={activeProvider}
-            model={activeModel}
-            apiKey={apiKey}
-          />
         )}
 
         {/* ── Failures Tab ── */}
