@@ -1,93 +1,73 @@
-// ForgeClaw - Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-// Claude-only runtime. Other adapters remain dormant for future re-enable.
+// ─── Provider Router ───────────────────────────────────────────────────────────
+// Ollama primary (local), Claude secondary (cloud). Multi-provider architecture ready.
 
-import type { AIError, AIRequest, AIResponse } from './types'
+import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
 import { claudeProvider } from './providers/claudeProvider'
+import { ollamaProvider } from './providers/ollamaProvider'
 
-export const ACTIVE_PROVIDER = claudeProvider
-export const PROVIDER_ORDER = [claudeProvider.id] as const
+// ─── Registry ─────────────────────────────────────────────────────────────────
 
-export type ProviderRuntimeState =
-  | 'ANTHROPIC_ONLINE'
-  | 'ANTHROPIC_ERROR'
-  | 'NO_PROVIDER_CONFIGURED'
+export const ACTIVE_PROVIDER = ollamaProvider
+export const CLOUD_PROVIDER = claudeProvider
 
-export interface ProviderCredentials {
-  anthropicKey: string
-}
+export const PROVIDER_CONFIG = {
+  primary: ollamaProvider,
+  cloud: claudeProvider,
+} as const
 
-type RuntimeResult =
-  | { success: true; response: AIResponse; state: ProviderRuntimeState }
-  | { success: false; error: AIError; state: ProviderRuntimeState }
-
-function noClaudeKeyError(): AIError {
-  return {
-    class: 'UNKNOWN',
-    message: 'Claude: no API key - paste your Claude API key starting with sk-ant-',
-    provider: claudeProvider.id,
-    retryable: false,
-  }
-}
-
-function claudeError(err: unknown): AIError {
-  const classified = classifyError(err, claudeProvider.id)
-  let message = classified.message
-
-  if (classified.class === 'AUTH_FAILURE') {
-    message = 'Claude authentication failed. Check your Claude API key in Settings.'
-  } else if (classified.class === 'RATE_LIMIT') {
-    message = 'Claude rate limit or quota hit.'
-  } else if (classified.class === 'NETWORK_FAILURE') {
-    message = 'Claude unreachable. Check your connection.'
-  } else if (classified.class === 'INSUFFICIENT_FUNDS') {
-    message = 'Claude account has insufficient quota. Check Claude API billing.'
-  }
-
-  return { ...classified, message }
-}
+// ─── Router ───────────────────────────────────────────────────────────────────
 
 export async function sendViaRouter(
   request: AIRequest,
-  credentials: ProviderCredentials,
-): Promise<RuntimeResult> {
-  if (!claudeProvider.isConfigured(credentials.anthropicKey)) {
-    return {
-      success: false,
-      error: noClaudeKeyError(),
-      state: 'NO_PROVIDER_CONFIGURED',
-    }
-  }
-
+  apiKey: string,
+): Promise<{ success: true; response: AIResponse } | { success: false; error: AIError }> {
+  // 1. Try Ollama first (local, no key needed)
   try {
-    const response = await claudeProvider.send(
-      { ...request, model: request.model || claudeProvider.models[0].id },
-      credentials.anthropicKey,
-    )
-    return { success: true, response, state: 'ANTHROPIC_ONLINE' }
-  } catch (err) {
+    const response = await ollamaProvider.send(request, apiKey)
+    return { success: true, response }
+  } catch (ollamaErr) {
+    // Ollama failed — try Claude if key is configured
+    if (claudeProvider.isConfigured(apiKey)) {
+      try {
+        const response = await claudeProvider.send(request, apiKey)
+        return { success: true, response }
+      } catch (claudeErr) {
+        const classified = classifyError(claudeErr, claudeProvider.id)
+        return { success: false, error: classified }
+      }
+    }
+    
+    // Neither provider available
+    const classified = classifyError(ollamaErr, ollamaProvider.id)
     return {
       success: false,
-      error: claudeError(err),
-      state: 'ANTHROPIC_ERROR',
+      error: {
+        ...classified,
+        message: 'Ollama not running. Start it with: ollama serve',
+      },
     }
   }
 }
 
-export function isProviderConfigured(apiKey: string): boolean {
-  return claudeProvider.isConfigured(apiKey)
+// ─── Convenience ────────────────────────────────────────────────────────────
+
+export function isProviderConfigured(apiKey: string = ''): boolean {
+  return ollamaProvider.isConfigured() || (apiKey ? claudeProvider.isConfigured(apiKey) : false)
 }
 
 export function providerSupportsTools(_modelId: string): boolean {
-  return ACTIVE_PROVIDER.supportsTools(_modelId)
+  return claudeProvider.supportsTools(_modelId)
 }
 
-export async function testProviderKey(apiKey: string): Promise<void> {
-  if (!claudeProvider.isConfigured(apiKey)) {
-    throw new Error('Claude: no API key - paste your Claude API key starting with sk-ant-')
+export async function testProviderKey(apiKey: string = ''): Promise<void> {
+  if (apiKey && claudeProvider.isConfigured(apiKey)) {
+    await claudeProvider.test(apiKey)
+  } else {
+    await ollamaProvider.test()
   }
-  await claudeProvider.test(apiKey)
 }
 
-export { claudeProvider }
+export { claudeProvider, ollamaProvider }
