@@ -6,8 +6,8 @@ import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '.
 
 // Verified against https://openrouter.ai/api/v1/models on 2026-05-21.
 export const OPENROUTER_MODELS = [
-  { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
   { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B A4B', contextK: 262, note: 'Free' },
+  { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
   { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', contextK: 262, note: 'Free' },
   { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', contextK: 1024, note: 'Free coding model' },
   { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 131, note: 'Free' },

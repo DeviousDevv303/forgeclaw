@@ -82,6 +82,8 @@ const RUNTIME_PROVIDER: ProviderId = 'openrouter'
 const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'deepseek/deepseek-v4-flash:free'
 const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
 const LEGACY_MODEL_MARKERS = ['cl' + 'aude', 'anth' + 'ropic', 'op' + 'enai', 'gpt-', 'oll' + 'ama']
+const OPENROUTER_MODEL_STORAGE_VERSION = 'gemma-4-26b-default'
+const PREVIOUS_OPENROUTER_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash:free'
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -216,6 +218,15 @@ function readOpenRouterKey(): string {
   return openrouterProvider.isConfigured(fallbackKey) ? fallbackKey : ''
 }
 
+function readOpenRouterModel(): string {
+  const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
+  const storageVersion = safeGetItem('fm_openrouter_model_version')
+  if (storageVersion !== OPENROUTER_MODEL_STORAGE_VERSION && savedModel === PREVIOUS_OPENROUTER_DEFAULT_MODEL) {
+    return DEFAULT_OPENROUTER_MODEL
+  }
+  return normalizeOpenRouterModel(savedModel)
+}
+
 function purgeLegacyRuntimeStorage(): void {
   for (const key of ['fm_openrouter_model', 'fm_model']) {
     if (!isValidOpenRouterModel(safeGetItem(key))) {
@@ -226,6 +237,8 @@ function purgeLegacyRuntimeStorage(): void {
   if (safeGetItem('fm_provider') !== RUNTIME_PROVIDER) {
     safeSetItem('fm_provider', RUNTIME_PROVIDER)
   }
+
+  safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
 }
 
 // Render message text — splits on fenced code blocks and styles them
@@ -376,10 +389,7 @@ function App() {
   const [testKeyError, setTestKeyError] = useState('')
   // OpenRouter-only runtime state. Active execution is deterministic and does not auto-fallback.
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
-  const [activeModel, setActiveModel] = useState<string>(() => {
-    const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
-    return normalizeOpenRouterModel(savedModel)
-  })
+  const [activeModel, setActiveModel] = useState<string>(readOpenRouterModel)
   const normalizedActiveModel = normalizeOpenRouterModel(activeModel)
   const activeModelLabel = openrouterProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
   const [apiKey, setApiKey] = useState<string>(readOpenRouterKey)
@@ -492,6 +502,7 @@ function App() {
     }
     safeSetItem('fm_openrouter_model', normalizedModel)
     safeSetItem('fm_model', normalizedModel)
+    safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
   }, [activeModel])
   useEffect(() => {
     setDiagnostics(prev => ({
