@@ -273,7 +273,7 @@ const CORPUS_MAX = 10_000
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'agents' | 'diagnostics'
+type Tab = 'forgemind' | 'activity' | 'voice' | 'agents' | 'settings'
 type ActivityView = 'log' | 'failures'
 
 function App() {
@@ -1055,9 +1055,7 @@ function App() {
     { id: 'forgemind',   label: 'FORGE' },
     { id: 'agents',      label: 'AGENTS' },
     { id: 'voice',       label: 'VOICE' },
-    { id: 'whatsapp',    label: 'WHATSAPP' },
     { id: 'activity',    label: 'ACTIVITY', badge: unresolvedCount > 0 ? String(unresolvedCount) : activityLog.some(e => e.status === 'running') ? '•' : undefined },
-    { id: 'diagnostics', label: 'HEALTH' },
     { id: 'settings',    label: 'SETTINGS' },
   ]
 
@@ -1127,8 +1125,8 @@ function App() {
       </header>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #1a1a1a', background: '#0a0a0a', padding: '0 4px' }}>
-        {TABS.map(tab => {
+      <div style={{ display: 'flex', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0' }}>
+        {TABS.map((tab) => {
           const isActive = activeTab === tab.id
           const isAlert = tab.id === 'activity' && unresolvedCount > 0
           return (
@@ -1137,21 +1135,37 @@ function App() {
               onClick={() => setActiveTab(tab.id)}
               style={{
                 position: 'relative',
-                background: 'transparent', border: 'none',
+                background: isActive ? 'rgba(249, 115, 22, 0.08)' : 'transparent',
+                border: 'none',
                 borderBottom: isActive ? '2px solid #f97316' : '2px solid transparent',
-                color: isActive ? '#f97316' : (isAlert ? '#eab308' : '#444'),
-                padding: '7px 14px', cursor: 'pointer', fontSize: '9px', fontWeight: 'bold',
-                letterSpacing: '2px', textTransform: 'uppercase', fontFamily: 'monospace',
-                transition: 'color 0.15s',
+                color: isActive ? '#f97316' : (isAlert ? '#eab308' : '#555'),
+                padding: '10px 16px',
+                cursor: 'pointer',
+                fontSize: '9px',
+                fontWeight: 'bold',
+                letterSpacing: '2px',
+                textTransform: 'uppercase',
+                fontFamily: 'monospace',
+                transition: 'all 0.2s ease',
               }}
             >
               {tab.label}
               {tab.badge && (
                 <span style={{
-                  position: 'absolute', top: '4px', right: '4px',
-                  background: '#ef4444', color: '#fff',
-                  fontSize: '7px', fontWeight: 'bold', borderRadius: '50%',
-                  width: '12px', height: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  position: 'absolute',
+                  top: '6px',
+                  right: '6px',
+                  background: '#ef4444',
+                  color: '#fff',
+                  fontSize: '7px',
+                  fontWeight: 'bold',
+                  borderRadius: '50%',
+                  width: '14px',
+                  height: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 0 8px rgba(239, 68, 68, 0.5)',
                 }}>
                   {tab.badge}
                 </span>
@@ -1434,6 +1448,77 @@ function App() {
                 </div>
               </div>
 
+              {/* WhatsApp Connector */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <WhatsAppConnector />
+              </div>
+
+              {/* Operator Health / Diagnostics */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <div style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold', marginBottom: '12px' }}>OPERATOR HEALTH</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  {/* Provider */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
+                    <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● OpenRouter</div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked to OpenRouter</div>
+                  </div>
+
+                  {/* Model */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>MODEL</div>
+                    <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{openrouterProvider.models.find(m => m.id === activeModel)?.label ?? activeModel}</div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{activeModel}</div>
+                  </div>
+
+                  {/* API Key */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>API KEY</div>
+                    <div style={{ color: diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
+                      {diagnostics.keyPresent ? '● PRESENT' : '● MISSING'}
+                    </div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
+                      {diagnostics.keyPresent ? 'Key format valid' : 'Enter key above'}
+                    </div>
+                  </div>
+
+                  {/* Last Request */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST REQUEST</div>
+                    <div style={{
+                      color: diagnostics.lastRequestStatus === 'success' ? '#22c55e' : diagnostics.lastRequestStatus === 'error' ? '#ef4444' : '#555',
+                      fontSize: '14px', fontWeight: 'bold'
+                    }}>
+                      {diagnostics.lastRequestStatus === 'success' ? '● OK' : diagnostics.lastRequestStatus === 'error' ? '● FAILED' : '—'}
+                    </div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
+                      {diagnostics.lastLatencyMs !== null ? `${diagnostics.lastLatencyMs}ms` : 'No requests yet'}
+                    </div>
+                  </div>
+
+                  {/* Last Error */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST ERROR</div>
+                    <div style={{
+                      color: diagnostics.lastError ? '#ef4444' : '#333',
+                      fontSize: '12px',
+                      fontFamily: 'monospace',
+                      wordBreak: 'break-word'
+                    }}>
+                      {diagnostics.lastError ?? 'None recorded'}
+                    </div>
+                  </div>
+
+                  {/* Build Version */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>BUILD</div>
+                    <div style={{ color: '#888', fontSize: '12px', fontFamily: 'monospace' }}>
+                      {diagnostics.buildVersion}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
             </div>
           </div>
         )}
@@ -1708,12 +1793,7 @@ function App() {
           </>
         )}
 
-        {/* ── WhatsApp Tab ── */}
-        {activeTab === 'whatsapp' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <WhatsAppConnector />
-          </div>
-        )}
+
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
@@ -1931,77 +2011,7 @@ function App() {
           )
         })()}
 
-        {/* ── Diagnostics / Health Tab ── */}
-        {activeTab === 'diagnostics' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace" }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
-              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>OPERATOR HEALTH</span>
-              <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>RUNTIME DIAGNOSTICS</span>
-            </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', maxWidth: '600px' }}>
-              {/* Provider */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
-                <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● OpenRouter</div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked to OpenRouter</div>
-              </div>
-
-              {/* Model */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>MODEL</div>
-                <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{openrouterProvider.models.find(m => m.id === activeModel)?.label ?? activeModel}</div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{activeModel}</div>
-              </div>
-
-              {/* API Key */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>API KEY</div>
-                <div style={{ color: diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
-                  {diagnostics.keyPresent ? '● PRESENT' : '● MISSING'}
-                </div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                  {diagnostics.keyPresent ? 'Key format valid' : 'Enter key in Settings'}
-                </div>
-              </div>
-
-              {/* Last Request */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST REQUEST</div>
-                <div style={{
-                  color: diagnostics.lastRequestStatus === 'success' ? '#22c55e' : diagnostics.lastRequestStatus === 'error' ? '#ef4444' : '#555',
-                  fontSize: '14px', fontWeight: 'bold'
-                }}>
-                  {diagnostics.lastRequestStatus === 'success' ? '● OK' : diagnostics.lastRequestStatus === 'error' ? '● FAILED' : '—'}
-                </div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                  {diagnostics.lastLatencyMs !== null ? `${diagnostics.lastLatencyMs}ms` : 'No requests yet'}
-                </div>
-              </div>
-
-              {/* Last Error */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST ERROR</div>
-                <div style={{
-                  color: diagnostics.lastError ? '#ef4444' : '#333',
-                  fontSize: '12px',
-                  fontFamily: 'monospace',
-                  wordBreak: 'break-word'
-                }}>
-                  {diagnostics.lastError ?? 'None recorded'}
-                </div>
-              </div>
-
-              {/* Build Version */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>BUILD</div>
-                <div style={{ color: '#888', fontSize: '12px', fontFamily: 'monospace' }}>
-                  {diagnostics.buildVersion}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </main>
 
       {/* Footer signature */}
