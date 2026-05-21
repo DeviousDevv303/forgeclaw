@@ -78,8 +78,8 @@ interface CorpusEntry {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
-const RUNTIME_PROVIDER: ProviderId = 'openai'
-const CLAUDE_SUPPORTED_MODEL_IDS = new Set(['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'])
+const RUNTIME_PROVIDER: ProviderId = 'openrouter'
+const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(['google/gemma-4-27b-it:free', 'google/gemma-4-9b-it:free', 'meta-llama/llama-3.3-70b-instruct:free', 'meta-llama/llama-3.1-405b-instruct:free', 'nousresearch/hermes-3-llama-3.1-405b:free', 'deepseek/deepseek-r1:free', 'mistralai/mistral-large:free'])
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -343,10 +343,10 @@ function App() {
   // but active execution is intentionally deterministic and does not auto-fallback.
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
   const [activeModel, setActiveModel] = useState<string>(() => {
-    const savedModel = safeGetItem('fm_openai_model') || safeGetItem('fm_model')
-    return savedModel && CLAUDE_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'claude-haiku-4-5-20251001'
+    const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
+    return savedModel && OPENROUTER_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'google/gemma-4-27b-it:free'
   })
-  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openai_key') || safeGetItem('fm_api_key') || '')
+  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openrouter_key') || safeGetItem('fm_api_key') || '')
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
   const [lastRequestError, setLastRequestError] = useState('')
   const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null)
@@ -442,14 +442,14 @@ function App() {
   useEffect(() => { scrollToBottom() }, [messages])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
-  useEffect(() => { safeSetItem('fm_openai_key', apiKey) }, [apiKey])
+  useEffect(() => { safeSetItem('fm_openrouter_key', apiKey) }, [apiKey])
   useEffect(() => { safeSetItem('fm_provider', RUNTIME_PROVIDER) }, [])
   useEffect(() => {
-    if (!CLAUDE_SUPPORTED_MODEL_IDS.has(activeModel)) {
-      setActiveModel('claude-haiku-4-5-20251001')
+    if (!OPENROUTER_SUPPORTED_MODEL_IDS.has(activeModel)) {
+      setActiveModel('google/gemma-4-27b-it:free')
       return
     }
-    safeSetItem('fm_openai_model', activeModel)
+    safeSetItem('fm_openrouter_model', activeModel)
   }, [activeModel])
   useEffect(() => {
     setDiagnostics(prev => ({
@@ -551,7 +551,7 @@ function App() {
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
     if (!apiKey) {
-      const missingKeyMessage = 'Claude: no API key — paste one in Settings (sk-ant-...)'
+      const missingKeyMessage = 'OpenRouter: no API key — paste one in Settings (sk-or-...)'
       setRequestStatus('blocked')
       setLastRequestError(missingKeyMessage)
       setLastRequestLatencyMs(null)
@@ -766,7 +766,7 @@ function App() {
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via Claude', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
       setRequestStatus('success')
@@ -795,7 +795,7 @@ function App() {
         setApiKeyStatus('invalid')
         setMessages(prev => [...prev, {
           id: (Date.now() + 2).toString(), role: 'assistant',
-          content: 'Claude auth failed. Check your API key in Settings. Keys start with sk-ant-.',
+          content: 'OpenRouter auth failed. Check your API key in Settings. Keys start with sk-or-...',
           timestamp: Date.now(), source: 'local' as const,
         }])
       }
@@ -1038,9 +1038,9 @@ function App() {
 
   const getStatusIndicator = () => {
     const modelLabel = openrouterProvider.models.find(m => m.id === activeModel)?.label ?? activeModel
-    if (!apiKey) return <span style={{ color: '#ef4444' }}>Claude: no API key</span>
-    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>Claude: invalid key</span>
-    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>Claude: key unverified</span>
+    if (!apiKey) return <span style={{ color: '#ef4444' }}>OpenRouter: no API key</span>
+    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>OpenRouter: invalid key</span>
+    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>OpenRouter: key unverified</span>
     if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>{modelLabel}</span>
     return <span style={{ color: '#6b6b6b' }}>{modelLabel}</span>
   }
@@ -1071,10 +1071,10 @@ function App() {
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            {/* Claude runtime credential indicator */}
+            {/* OpenRouter runtime credential indicator */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               <span
-                title={`Claude runtime: ${apiKey ? 'key set' : 'no key'} — click to open Settings`}
+                title={`OpenRouter runtime: ${apiKey ? 'key set' : 'no key'} — click to open Settings`}
                 onClick={() => setActiveTab('settings')}
                 style={{
                   width: '28px', height: '14px', borderRadius: '3px', cursor: 'pointer',
@@ -1084,7 +1084,7 @@ function App() {
                   fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
-              >OAI</span>
+              >OR</span>
             </div>
             {/* GitHub token dot */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
@@ -1170,7 +1170,7 @@ function App() {
 
         {!apiKey && (
           <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginBottom: '12px', textAlign: 'center' }}>
-            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 Claude: no API key — paste one in Settings (sk-ant-...)</span>
+            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 OpenRouter: no API key — paste one in Settings (sk-or-...)</span>
           </div>
         )}
 
@@ -1213,7 +1213,7 @@ function App() {
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder="sk-ant-..."
+                    placeholder="sk-or-..."
                     value={apiKey}
                     onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }}
                     style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
@@ -1236,7 +1236,7 @@ function App() {
               </div>
 
               <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
-                {!apiKey && <span style={{ color: '#ef4444' }}>Claude: no API key — paste one in Settings (sk-ant-...)</span>}
+                {!apiKey && <span style={{ color: '#ef4444' }}>OpenRouter: no API key — paste one in Settings (sk-or-...)</span>}
                 {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Key to verify</span>}
                 {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>Claude key verified</span>}
                 {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>{testKeyError || 'Claude key invalid'}</span>}
