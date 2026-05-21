@@ -57,10 +57,30 @@ src/
 
 ```bash
 npm install
+npm run setup:hooks
 npm run dev
 npm run build
 npm run lint
 ```
+
+## Commit Contract
+
+Every agent commit must use the repo template and local hook:
+
+```bash
+npm run setup:hooks
+```
+
+The hook requires:
+
+- `type(scope): subject`
+- `WHY:` section
+- `FILES:` section
+- `VALIDATION:` section
+- `Contract: v1.1, override by Cristian`
+- `Co-authored-by: Cristian <towerslutz@gmail.com>`
+
+The hook also blocks staged legacy provider text and verifies the runtime stays locked to OpenRouter when `src/lib/ai/providerRouter.ts` or `src/App.tsx` changes.
 
 ## OpenRouter Setup
 
