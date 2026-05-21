@@ -2,7 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import type { ToolDef, ToolCall, ToolContext } from './forgeTools'
 import { executeTool } from './forgeTools'
-import { callProvider } from './modelProviders'
+import { callProvider, modelSupportsTools } from './modelProviders'
 import type { ProviderId } from './modelProviders'
 import type { ChatMessage } from './modelProviders'
 
@@ -30,7 +30,7 @@ export async function runSubAgent(
   for (let i = 0; i < MAX_ITERS; i++) {
     const isLast = i === MAX_ITERS - 1
     const result = await callProvider(provider, model, systemPrompt, messages, apiKey, {
-      tools: isLast ? undefined : tools,
+      tools: isLast || !modelSupportsTools(provider, model) ? undefined : tools,
     })
 
     if (!result.toolCalls?.length) {

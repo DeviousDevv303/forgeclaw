@@ -146,24 +146,24 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     name: 'OpenRouter',
     url: 'https://openrouter.ai/api/v1/chat/completions',
     models: [
-      { id: 'google/gemma-4-26b-a4b-it:free',           label: 'Gemma 4 26B (free)',         contextK: 262, note: 'Top uncensored benchmark', noTools: true },
-      { id: 'google/gemma-3-27b-it:free',              label: 'Gemma 3 27B (free)',         contextK: 128, noTools: true },
-      { id: 'google/gemma-2-27b-it',                    label: 'Gemma 2 27B',               contextK: 128 },
-      { id: 'google/gemma-2-9b-it',                     label: 'Gemma 2 9B (fast)',          contextK: 32  },
-      { id: 'meta-llama/llama-3.3-70b-instruct',        label: 'Llama 3.3 70B',             contextK: 128 },
-      { id: 'meta-llama/llama-3.1-8b-instruct',         label: 'Llama 3.1 8B (fast)',        contextK: 128 },
-      { id: 'nousresearch/hermes-3-llama-3.1-405b',     label: 'Hermes 3 405B (uncensored)', contextK: 128, note: 'Fully uncensored' },
-      { id: 'deepseek/deepseek-r1',                     label: 'DeepSeek R1',                contextK: 128 },
-      { id: 'mistralai/mistral-large',                  label: 'Mistral Large',              contextK: 128 },
+      { id: 'deepseek/deepseek-v4-flash:free',                              label: 'DeepSeek V4 Flash (free)',       contextK: 1024, note: 'Large context', noTools: true },
+      { id: 'google/gemma-4-26b-a4b-it:free',                               label: 'Gemma 4 26B A4B (free)',        contextK: 262,  noTools: true },
+      { id: 'google/gemma-4-31b-it:free',                                    label: 'Gemma 4 31B (free)',            contextK: 262,  noTools: true },
+      { id: 'qwen/qwen3-coder:free',                                         label: 'Qwen3 Coder 480B (free)',       contextK: 1024, note: 'Coding', noTools: true },
+      { id: 'meta-llama/llama-3.3-70b-instruct:free',                        label: 'Llama 3.3 70B (free)',          contextK: 131,  noTools: true },
+      { id: 'nousresearch/hermes-3-llama-3.1-405b:free',                     label: 'Hermes 3 405B (free)',          contextK: 131,  noTools: true },
+      { id: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', label: 'Venice Uncensored 24B (free)',  contextK: 32,   noTools: true },
+      { id: 'openai/gpt-oss-120b:free',                                      label: 'GPT OSS 120B (free)',           contextK: 131,  noTools: true },
+      { id: 'qwen/qwen3-next-80b-a3b-instruct:free',                         label: 'Qwen3 Next 80B (free)',         contextK: 262,  noTools: true },
     ],
     keyPlaceholder: 'sk-or-...',
     keyPrefix: 'sk-or-',
   },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['openai', 'groq', 'anthropic', 'deepseek', 'mistral', 'kimi', 'kimi_code', 'openrouter', 'ollama']
+export const PROVIDER_ORDER: ProviderId[] = ['openrouter', 'openai', 'groq', 'anthropic', 'deepseek', 'mistral', 'kimi', 'kimi_code', 'ollama']
 
-export const DEFAULT_PROVIDER: ProviderId = 'openai'
+export const DEFAULT_PROVIDER: ProviderId = 'openrouter'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
   openai:      'gpt-4o',
   anthropic:   'claude-haiku-4-5-20251001',
@@ -173,7 +173,7 @@ export const DEFAULT_MODEL: Record<ProviderId, string> = {
   kimi:        'kimi-k2.6',
   kimi_code:   'moonshot-v1-8k',
   ollama:      'llama3.2:3b',
-  openrouter:  'google/gemma-4-26b-a4b-it:free',
+  openrouter:  'deepseek/deepseek-v4-flash:free',
 }
 
 // ─── Call ─────────────────────────────────────────────────────────────────────
@@ -300,7 +300,7 @@ export async function callProvider(
   // ── OpenAI-compatible: DeepSeek / Mistral / Groq / Kimi / Ollama ────────
   const oaiMessages = [{ role: 'system', content: systemPrompt }, ...messages]
   const body: Record<string, unknown> = { model, max_tokens: maxTokens, messages: oaiMessages, stream: streaming }
-  if (tools?.length) body.tools = toOpenAITools(tools)
+  if (tools?.length && modelSupportsTools(providerId, model)) body.tools = toOpenAITools(tools)
 
   const oaiHeaders: Record<string, string> = { 'Content-Type': 'application/json' }
   // Ollama runs locally — no auth header needed

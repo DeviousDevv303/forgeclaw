@@ -2,23 +2,82 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── OpenRouter Provider Adapter ────────────────────────────────────────────
 
-import type { AIProvider, AIRequest, AIResponse, AIToolCall } from '../types'
+import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
 
-// ─── Models ─────────────────────────────────────────────────────────────────
-
+// Verified against https://openrouter.ai/api/v1/models on 2026-05-21.
 export const OPENROUTER_MODELS = [
-  { id: 'google/gemma-4-27b-it:free', label: 'Gemma 4 27B', contextK: 128, note: 'Top uncensored benchmark' },
-  { id: 'google/gemma-4-9b-it:free', label: 'Gemma 4 9B', contextK: 128 },
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 128 },
-  { id: 'meta-llama/llama-3.1-405b-instruct:free', label: 'Llama 3.1 405B', contextK: 128 },
-  { id: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'Hermes 3 405B', contextK: 128, note: 'Fully uncensored' },
-  { id: 'deepseek/deepseek-r1:free', label: 'DeepSeek R1', contextK: 64, note: 'Chain-of-thought reasoning' },
-  { id: 'mistralai/mistral-large:free', label: 'Mistral Large', contextK: 128 },
+  { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
+  { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B A4B', contextK: 262, note: 'Free' },
+  { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', contextK: 262, note: 'Free' },
+  { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', contextK: 1024, note: 'Free coding model' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 131, note: 'Free' },
+  { id: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'Hermes 3 405B', contextK: 131, note: 'Free' },
+  { id: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', label: 'Venice Uncensored 24B', contextK: 32, note: 'Free' },
+  { id: 'openai/gpt-oss-120b:free', label: 'GPT OSS 120B', contextK: 131, note: 'Free' },
+  { id: 'qwen/qwen3-next-80b-a3b-instruct:free', label: 'Qwen3 Next 80B', contextK: 262, note: 'Free' },
 ]
 
+export const DEFAULT_OPENROUTER_MODEL = OPENROUTER_MODELS[0].id
 export type OpenRouterModelId = typeof OPENROUTER_MODELS[number]['id']
 
-// ─── Tool Format Conversion ───────────────────────────────────────────────────
+type OpenRouterToolCall = {
+  id: string
+  type?: 'function'
+  function?: {
+    name?: string
+    arguments?: string
+  }
+}
+
+type OpenRouterMessage = {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string | null
+  tool_call_id?: string
+  tool_calls?: Array<{
+    id: string
+    type: 'function'
+    function: { name: string; arguments: string }
+  }>
+}
+
+type OpenRouterResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | null
+      tool_calls?: OpenRouterToolCall[]
+    }
+    finish_reason?: string
+  }>
+  error?: { message?: string }
+}
+
+type OpenRouterStreamEvent = {
+  choices?: Array<{
+    delta?: { content?: string }
+    finish_reason?: string
+  }>
+  error?: { message?: string }
+}
+
+function isKnownModel(modelId: string): boolean {
+  return OPENROUTER_MODELS.some(model => model.id === modelId)
+}
+
+export function resolveOpenRouterModel(modelId: string | undefined): string {
+  return modelId && isKnownModel(modelId) ? modelId : DEFAULT_OPENROUTER_MODEL
+}
+
+function parseToolInput(args: string | undefined): Record<string, unknown> {
+  if (!args) return {}
+  try {
+    const parsed = JSON.parse(args) as unknown
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {}
+  } catch {
+    return {}
+  }
+}
 
 function toOpenRouterTools(tools: NonNullable<AIRequest['tools']>) {
   return tools.map(t => ({
@@ -31,7 +90,94 @@ function toOpenRouterTools(tools: NonNullable<AIRequest['tools']>) {
   }))
 }
 
-// ─── Streaming Parser ────────────────────────────────────────────────────────
+function toOpenRouterMessages(systemPrompt: string, messages: AIMessage[]): OpenRouterMessage[] {
+  return [
+    { role: 'system', content: systemPrompt },
+    ...messages.map((message): OpenRouterMessage => {
+      if (message.role === 'tool') {
+        return {
+          role: 'tool',
+          content: message.content,
+          tool_call_id: message.tool_call_id,
+        }
+      }
+
+      if (message.role === 'assistant') {
+        return {
+          role: 'assistant',
+          content: message.content || null,
+          tool_calls: message.tool_calls?.map(toolCall => ({
+            id: toolCall.id,
+            type: 'function' as const,
+            function: {
+              name: toolCall.name,
+              arguments: JSON.stringify(toolCall.input ?? {}),
+            },
+          })),
+        }
+      }
+
+      return { role: 'user', content: message.content }
+    }),
+  ]
+}
+
+async function openRouterError(response: Response): Promise<string> {
+  const raw = await response.text().catch(() => '')
+  if (!raw) return `OpenRouter ${response.status}`
+
+  try {
+    const parsed = JSON.parse(raw) as { error?: { message?: string } | string; message?: string }
+    const detail = typeof parsed.error === 'string'
+      ? parsed.error
+      : parsed.error?.message ?? parsed.message
+    return detail ? `OpenRouter ${response.status}: ${detail}` : `OpenRouter ${response.status}`
+  } catch {
+    return `OpenRouter ${response.status}: ${raw.slice(0, 300)}`
+  }
+}
+
+async function readStreamingResponse(
+  response: Response,
+  onToken: (token: string) => void,
+): Promise<string> {
+  const reader = response.body?.getReader()
+  if (!reader) return ''
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let text = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const raw = line.slice(6).trim()
+        if (!raw || raw === '[DONE]') continue
+
+        const event = JSON.parse(raw) as OpenRouterStreamEvent
+        if (event.error?.message) throw new Error(event.error.message)
+
+        const token = event.choices?.[0]?.delta?.content
+        if (token) {
+          text += token
+          onToken(token)
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  return text
+}
 
 export const openrouterProvider: AIProvider = {
   id: 'openrouter',
@@ -43,22 +189,20 @@ export const openrouterProvider: AIProvider = {
     return typeof apiKey === 'string' && apiKey.startsWith('sk-or-') && apiKey.length > 20
   },
 
-  supportsTools(): boolean {
-    // Most OpenRouter models support tools, but free tier may not
-    return true
+  supportsTools(modelId: string): boolean {
+    return !modelId.endsWith(':free')
   },
 
   async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
-    const model = request.model || OPENROUTER_MODELS[0].id
-    
+    const model = resolveOpenRouterModel(request.model)
     const body: Record<string, unknown> = {
       model,
-      messages: request.messages,
+      messages: toOpenRouterMessages(request.systemPrompt, request.messages),
       max_tokens: request.maxTokens ?? 4096,
+      stream: !!request.onToken,
     }
 
-    // Add tools if present and model supports them
-    if (request.tools && this.supportsTools(model)) {
+    if (request.tools?.length && this.supportsTools(model)) {
       body.tools = toOpenRouterTools(request.tools)
       body.tool_choice = 'auto'
     }
@@ -67,7 +211,7 @@ export const openrouterProvider: AIProvider = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'HTTP-Referer': 'https://deviousdevv303.github.io/forgeclaw',
         'X-Title': 'ForgeClaw',
       },
@@ -75,34 +219,30 @@ export const openrouterProvider: AIProvider = {
     })
 
     if (!response.ok) {
-      const error = await response.text()
-      throw new Error(`OpenRouter ${response.status}: ${error}`)
+      throw new Error(await openRouterError(response))
     }
 
-    const data = await response.json()
-    
-    // Check for tool calls
-    const toolCalls = data.choices?.[0]?.message?.tool_calls
-    if (toolCalls && toolCalls.length > 0) {
-      const calls: AIToolCall[] = toolCalls.map((tc: { id?: string; function?: { name?: string; arguments?: string } }) => ({
-        id: tc.id || '',
-        name: tc.function?.name || '',
-        input: tc.function?.arguments ? JSON.parse(tc.function.arguments) : {},
-      }))
-      
-      return {
-        text: '',
-        provider: 'openrouter',
-        model,
-        toolCalls: calls,
-        stopReason: 'tool_calls',
-      }
+    if (request.onToken) {
+      const text = await readStreamingResponse(response, request.onToken)
+      return { text, provider: 'openrouter', model, stopReason: 'stop' }
     }
+
+    const data = await response.json() as OpenRouterResponse
+    if (data.error?.message) throw new Error(data.error.message)
+
+    const message = data.choices?.[0]?.message
+    const rawToolCalls = message?.tool_calls ?? []
+    const toolCalls: AIToolCall[] = rawToolCalls.map(tc => ({
+      id: tc.id,
+      name: tc.function?.name || '',
+      input: parseToolInput(tc.function?.arguments),
+    })).filter(tc => tc.id && tc.name)
 
     return {
-      text: data.choices?.[0]?.message?.content || '',
+      text: message?.content ?? '',
       provider: 'openrouter',
       model,
+      toolCalls: toolCalls.length ? toolCalls : undefined,
       stopReason: data.choices?.[0]?.finish_reason,
     }
   },
@@ -113,9 +253,7 @@ export const openrouterProvider: AIProvider = {
     }
 
     const response = await fetch('https://openrouter.ai/api/v1/auth/key', {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-      },
+      headers: { Authorization: `Bearer ${apiKey}` },
     })
 
     if (!response.ok) {
