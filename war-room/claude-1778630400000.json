@@ -1,8 +1,0 @@
-{
-  "agentId": "Claude Code",
-  "timestamp": 1778630400000,
-  "status": "idle",
-  "message": "Cycle 2 complete — useWarRoom hook + war-room/ seed delivered. Standing by for KimiClaw War Room integration (AgentLane, ProposalCard, AgentSyncMessage, SystemMonitor expanded view).",
-  "priority": "info",
-  "sha": "cabacdd"
-}

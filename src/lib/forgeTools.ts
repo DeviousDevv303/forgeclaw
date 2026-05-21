@@ -2,7 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── ForgeClaw Tool Suite ─────────────────────────────────────────────────────
 // Gives ForgeMind hands. Each tool maps to a real browser-executable action.
-// Tool calling works with all four providers (Anthropic, DeepSeek, Mistral, Groq).
+// Tool calling is routed through the active OpenRouter provider adapter.
 
 import { safeGetItem, safeSetItem } from './storage'
 
@@ -806,19 +806,3 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
   }
 }
 
-// ─── Format tool definitions for each provider ────────────────────────────────
-
-export function toAnthropicTools(tools: ToolDef[]) {
-  return tools.map(t => ({
-    name: t.name,
-    description: t.description,
-    input_schema: t.parameters,
-  }))
-}
-
-export function toOpenAITools(tools: ToolDef[]) {
-  return tools.map(t => ({
-    type: 'function' as const,
-    function: { name: t.name, description: t.description, parameters: t.parameters },
-  }))
-}

@@ -35,24 +35,13 @@ const AGENT_CONTRACTS: Record<AgentId, AgentContract> = {
     inputSchema: { repoUrl: 'string', path: 'string' },
     outputSchema: { content: 'string', sha: 'string' },
   },
-  ollama: {
-    id: 'ollama',
+  openrouter: {
+    id: 'openrouter',
     version: '1.0.0',
     capabilities: [
-      { name: 'local_inference', scopes: ['errorBus:emit'], description: 'Run local model inference via Ollama' },
+      { name: 'cloud_inference', scopes: ['errorBus:emit', 'llm:generate'], description: 'Run cloud inference via OpenRouter API' },
     ],
-    maxScopes: ['errorBus:emit'],
-    maxRetries: 1,
-    inputSchema: { prompt: 'string', model: 'string' },
-    outputSchema: { response: 'string' },
-  },
-  claude: {
-    id: 'claude',
-    version: '1.0.0',
-    capabilities: [
-      { name: 'cloud_inference', scopes: ['errorBus:emit'], description: 'Run cloud inference via Anthropic API' },
-    ],
-    maxScopes: ['errorBus:emit'],
+    maxScopes: ['errorBus:emit', 'llm:generate'],
     maxRetries: 2,
     inputSchema: { prompt: 'string', apiKey: 'string' },
     outputSchema: { content: 'string' },

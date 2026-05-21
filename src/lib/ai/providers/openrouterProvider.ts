@@ -13,7 +13,6 @@ export const OPENROUTER_MODELS = [
   { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 131, note: 'Free' },
   { id: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'Hermes 3 405B', contextK: 131, note: 'Free' },
   { id: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', label: 'Venice Uncensored 24B', contextK: 32, note: 'Free' },
-  { id: 'openai/gpt-oss-120b:free', label: 'GPT OSS 120B', contextK: 131, note: 'Free' },
   { id: 'qwen/qwen3-next-80b-a3b-instruct:free', label: 'Qwen3 Next 80B', contextK: 262, note: 'Free' },
 ]
 
@@ -61,6 +60,10 @@ type OpenRouterStreamEvent = {
 
 function isKnownModel(modelId: string): boolean {
   return OPENROUTER_MODELS.some(model => model.id === modelId)
+}
+
+function cleanApiKey(apiKey: string): string {
+  return apiKey.trim()
 }
 
 export function resolveOpenRouterModel(modelId: string | undefined): string {
@@ -186,7 +189,8 @@ export const openrouterProvider: AIProvider = {
   models: OPENROUTER_MODELS,
 
   isConfigured(apiKey: string): boolean {
-    return typeof apiKey === 'string' && apiKey.startsWith('sk-or-') && apiKey.length > 20
+    const key = cleanApiKey(apiKey)
+    return key.startsWith('sk-or-') && key.length > 20
   },
 
   supportsTools(modelId: string): boolean {
@@ -194,6 +198,7 @@ export const openrouterProvider: AIProvider = {
   },
 
   async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
+    const key = cleanApiKey(apiKey)
     const model = resolveOpenRouterModel(request.model)
     const body: Record<string, unknown> = {
       model,
@@ -211,7 +216,7 @@ export const openrouterProvider: AIProvider = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${key}`,
         'HTTP-Referer': 'https://deviousdevv303.github.io/forgeclaw',
         'X-Title': 'ForgeClaw',
       },
@@ -248,12 +253,13 @@ export const openrouterProvider: AIProvider = {
   },
 
   async test(apiKey: string): Promise<void> {
-    if (!this.isConfigured(apiKey)) {
+    const key = cleanApiKey(apiKey)
+    if (!this.isConfigured(key)) {
       throw new Error('Invalid OpenRouter API key format. Expected sk-or-...')
     }
 
     const response = await fetch('https://openrouter.ai/api/v1/auth/key', {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { Authorization: `Bearer ${key}` },
     })
 
     if (!response.ok) {

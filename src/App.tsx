@@ -22,7 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, openrouterProvider } from './lib/ai/providerRouter'
+import { sendViaRouter, testProviderKey, openrouterProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
@@ -71,7 +71,7 @@ interface Message {
 interface CorpusEntry {
   prompt: string
   response: string
-  source: string  // provider:model, e.g. 'anthropic:claude-sonnet-4-6' or 'ollama'
+  source: string  // provider:model, e.g. 'openrouter:deepseek/deepseek-v4-flash:free'
   timestamp: string
 }
 
@@ -79,7 +79,8 @@ interface CorpusEntry {
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const RUNTIME_PROVIDER: ProviderId = 'openrouter'
-const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(['deepseek/deepseek-v4-flash:free', 'google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free', 'qwen/qwen3-coder:free', 'meta-llama/llama-3.3-70b-instruct:free', 'nousresearch/hermes-3-llama-3.1-405b:free', 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', 'openai/gpt-oss-120b:free', 'qwen/qwen3-next-80b-a3b-instruct:free'])
+const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'deepseek/deepseek-v4-flash:free'
+const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -272,7 +273,8 @@ const CORPUS_MAX = 10_000
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'agents' | 'diagnostics'
+type Tab = 'forgemind' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'agents' | 'diagnostics'
+type ActivityView = 'log' | 'failures'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -330,6 +332,7 @@ function App() {
   }, [addEvent])
 
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
+  const [activityView, setActivityView] = useState<ActivityView>('log')
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = safeGetItem('forgemind_history')
     return safeJsonParse(saved, [])
@@ -339,12 +342,11 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [testKeyError, setTestKeyError] = useState('')
-  // OpenRouter-only runtime state. Dormant provider adapters stay registered for future re-enable,
-  // but active execution is intentionally deterministic and does not auto-fallback.
+  // OpenRouter-only runtime state. Active execution is deterministic and does not auto-fallback.
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
   const [activeModel, setActiveModel] = useState<string>(() => {
     const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
-    return savedModel && OPENROUTER_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'deepseek/deepseek-v4-flash:free'
+    return savedModel && OPENROUTER_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : DEFAULT_OPENROUTER_MODEL
   })
   const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openrouter_key') || safeGetItem('fm_api_key') || '')
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
@@ -397,7 +399,7 @@ function App() {
     buildVersion: string
   }
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
-    provider: 'openai',
+    provider: RUNTIME_PROVIDER,
     model: activeModel,
     keyPresent: !!apiKey,
     lastRequestStatus: 'none',
@@ -442,14 +444,18 @@ function App() {
   useEffect(() => { scrollToBottom() }, [messages])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
-  useEffect(() => { safeSetItem('fm_openrouter_key', apiKey) }, [apiKey])
+  useEffect(() => {
+    safeSetItem('fm_openrouter_key', apiKey)
+    safeSetItem('fm_api_key', apiKey)
+  }, [apiKey])
   useEffect(() => { safeSetItem('fm_provider', RUNTIME_PROVIDER) }, [])
   useEffect(() => {
     if (!OPENROUTER_SUPPORTED_MODEL_IDS.has(activeModel)) {
-      setActiveModel('google/gemma-4-27b-it:free')
+      setActiveModel(DEFAULT_OPENROUTER_MODEL)
       return
     }
     safeSetItem('fm_openrouter_model', activeModel)
+    safeSetItem('fm_model', activeModel)
   }, [activeModel])
   useEffect(() => {
     setDiagnostics(prev => ({
@@ -579,7 +585,7 @@ function App() {
     if (!admitted) {
       setMessages(prev => [...prev, userMsg, {
         id: (Date.now() + 1).toString(), role: 'assistant',
-        content: `⚠️ Task blocked by Guardian. Check the ⚠️ Failures tab.`,
+        content: `⚠️ Task blocked by Guardian. Check Activity → Failures.`,
         timestamp: Date.now(), source: 'local' as const,
       }])
       emitFailure({ source: 'forgemind', severity: 'warning', message: 'Guardian blocked this task.', context: { taskId } })
@@ -632,7 +638,7 @@ function App() {
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
       // Some models (e.g. OpenRouter free-tier) don't support function calling at all
-      const supportsTools = true
+      const supportsTools = providerSupportsTools(activeModel)
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -1050,8 +1056,7 @@ function App() {
     { id: 'agents',      label: 'AGENTS' },
     { id: 'voice',       label: 'VOICE' },
     { id: 'whatsapp',    label: 'WHATSAPP' },
-    { id: 'failures',    label: 'FAILURES', badge: unresolvedCount > 0 ? String(unresolvedCount) : undefined },
-    { id: 'activity',    label: 'ACTIVITY', badge: activityLog.filter(e => e.status === 'running').length > 0 ? '●' : undefined },
+    { id: 'activity',    label: 'ACTIVITY', badge: unresolvedCount > 0 ? String(unresolvedCount) : activityLog.some(e => e.status === 'running') ? '•' : undefined },
     { id: 'diagnostics', label: 'HEALTH' },
     { id: 'settings',    label: 'SETTINGS' },
   ]
@@ -1125,7 +1130,7 @@ function App() {
       <div style={{ display: 'flex', borderBottom: '1px solid #1a1a1a', background: '#0a0a0a', padding: '0 4px' }}>
         {TABS.map(tab => {
           const isActive = activeTab === tab.id
-          const isAlert = tab.id === 'failures' && unresolvedCount > 0
+          const isAlert = tab.id === 'activity' && unresolvedCount > 0
           return (
             <button
               key={tab.id}
@@ -1246,7 +1251,7 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', 'Ollama (Local)'],
+                  ['runtime provider', 'OpenRouter'],
                   ['active model', activeModel],
                   ['auth state', apiKey ? 'present' : 'missing'],
                   ['request status', requestStatus],
@@ -1308,24 +1313,6 @@ function App() {
                 </div>
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '6px' }}>
                   Every interaction is captured automatically. Oldest entries roll off at {CORPUS_MAX.toLocaleString()}. Used as context on similar future queries.
-                </div>
-              </div>
-
-              {/* Ollama local model scaffold (ACTIVE — primary provider) */}
-              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px', opacity: 0.4 }}>
-                <label style={{ display: 'block', color: '#555', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Local Ollama Model <span style={{ color: '#22c55e', textTransform: 'none' }}>(active — primary provider)</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="qwen2.5:1.8b"
-                  defaultValue={safeGetItem('fc_ollama_model') || 'qwen2.5:1.8b'}
-                  onChange={e => safeSetItem('fc_ollama_model', e.target.value)}
-                  disabled
-                  style={{ width: '100%', background: '#0a0a0a', color: '#555', border: '1px solid #1a1a1a', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', cursor: 'not-allowed' }}
-                />
-                <div style={{ color: '#222', fontSize: '10px', marginTop: '4px' }}>
-                  Any model installed via <code style={{ color: '#555' }}>ollama pull</code>. Active as primary provider. OpenRouter available as cloud fallback.
                 </div>
               </div>
 
@@ -1690,7 +1677,7 @@ function App() {
                       { name: 'Calendar', icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: 'Web Search', icon: '🔍', key: 'fc_brave_key', connected: !!safeGetItem('fc_brave_key') },
                       { name: 'ElevenLabs', icon: '🔊', key: 'fc_el_api_key', connected: !!elApiKey },
-                      { name: 'Ollama', icon: '🦙', key: 'fc_ollama_url', connected: true },
+                      { name: 'OpenRouter', icon: 'OR', key: 'fm_openrouter_key', connected: !!apiKey },
                       { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
@@ -1721,17 +1708,6 @@ function App() {
           </>
         )}
 
-        {/* ── Failures Tab ── */}
-        {activeTab === 'failures' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <FailureDashboard
-              ledger={ledger}
-              onResolve={resolveFailure}
-              onClearResolved={clearResolved}
-            />
-          </div>
-        )}
-
         {/* ── WhatsApp Tab ── */}
         {activeTab === 'whatsapp' && (
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -1748,17 +1724,25 @@ function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
-              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>EXECUTION LOG</span>
+              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>{activityView === 'failures' ? 'FAILURES' : 'EXECUTION LOG'}</span>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                {activityLog.length > 0 && (
+                <button onClick={() => setActivityView('log')} style={{ background: activityView === 'log' ? '#1a1a1a' : 'none', border: '1px solid #222', color: activityView === 'log' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>LOG</button>
+                <button onClick={() => setActivityView('failures')} style={{ background: activityView === 'failures' ? '#1a1a1a' : 'none', border: unresolvedCount > 0 ? '1px solid #7f1d1d' : '1px solid #222', color: unresolvedCount > 0 ? '#ef4444' : activityView === 'failures' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>FAILURES{unresolvedCount > 0 ? ` ${unresolvedCount}` : ''}</button>
+                {activityView === 'log' && activityLog.length > 0 && (
                   <button onClick={() => setActivityLog([])} style={{ background: 'none', border: '1px solid #222', color: '#444', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>CLEAR</button>
                 )}
                 <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{messages.filter(m => m.role === 'assistant').length} RESPONSES · {messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0)} TOOL CALLS</span>
               </div>
             </div>
 
+            {activityView === 'failures' && (
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <FailureDashboard ledger={ledger} onResolve={resolveFailure} onClearResolved={clearResolved} />
+              </div>
+            )}
+
             {/* ── Mission Log — Manus-style live work log ── */}
-            {activityLog.length > 0 && (
+            {activityView === 'log' && activityLog.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
                 <MissionLog
                   tasks={activityLog.map(e => {
@@ -1794,11 +1778,11 @@ function App() {
               </div>
             )}
 
-            {messages.length === 0 && activityLog.length === 0 && (
+            {activityView === 'log' && messages.length === 0 && activityLog.length === 0 && (
               <div style={{ color: '#333', fontSize: '10px', textAlign: 'center', marginTop: '40px', letterSpacing: '2px' }}>NO ACTIVITY YET</div>
             )}
 
-            {messages.map((msg) => {
+            {activityView === 'log' && messages.map((msg) => {
               const ts = new Date(msg.timestamp)
               const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
               const dateStr = ts.toLocaleDateString([], { month: 'short', day: 'numeric' })
@@ -1959,8 +1943,8 @@ function App() {
               {/* Provider */}
               <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
                 <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
-                <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● Ollama (Local)</div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked — single provider</div>
+                <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● OpenRouter</div>
+                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked to OpenRouter</div>
               </div>
 
               {/* Model */}

@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ───────────────────────────────────────────────────────────
-// OpenRouter primary (cloud). Multi-provider architecture ready.
+// OpenRouter-only runtime. No fallback provider is registered.
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
