@@ -45,23 +45,22 @@ export async function runSubAgent(
       }))
     )
 
-    if (provider === 'anthropic') {
+    // OpenAI-compatible tool format for OpenRouter/Ollama
+    messages.push({
+      role: 'assistant',
+      content: result.text || '',
+      tool_calls: result.toolCalls.map((tc: ToolCall) => ({
+        id: tc.id,
+        type: 'function',
+        function: { name: tc.name, arguments: JSON.stringify(tc.input) },
+      })),
+    } as any)
+    for (const r of iterResults) {
       messages.push({
-        role: 'assistant',
-        content: [
-          ...(result.text ? [{ type: 'text', text: result.text }] : []),
-          ...result.toolCalls.map((tc: ToolCall) => ({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.input })),
-        ],
-      })
-      messages.push({
-        role: 'user',
-        content: iterResults.map(r => ({ type: 'tool_result', tool_use_id: r.toolCallId, content: r.output })),
-      })
-    } else {
-      messages.push({ role: 'assistant', content: result.text || '' })
-      for (const r of iterResults) {
-        messages.push({ role: 'user', content: `[Tool: ${r.name}] ${r.output}` })
-      }
+        role: 'tool',
+        content: r.output,
+        tool_call_id: r.toolCallId,
+      } as any)
     }
   }
 
