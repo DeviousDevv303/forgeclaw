@@ -55,7 +55,7 @@ export async function sendViaRouter(
 // ─── Convenience ────────────────────────────────────────────────────────────
 
 export function isProviderConfigured(apiKey: string = ''): boolean {
-  return ollamaProvider.isConfigured() || (apiKey ? claudeProvider.isConfigured(apiKey) : false)
+  return ollamaProvider.isConfigured('') || (apiKey ? claudeProvider.isConfigured(apiKey) : false)
 }
 
 export function providerSupportsTools(_modelId: string): boolean {
@@ -66,7 +66,7 @@ export async function testProviderKey(apiKey: string = ''): Promise<void> {
   if (apiKey && claudeProvider.isConfigured(apiKey)) {
     await claudeProvider.test(apiKey)
   } else {
-    await ollamaProvider.test()
+    await ollamaProvider.test('')
   }
 }
 

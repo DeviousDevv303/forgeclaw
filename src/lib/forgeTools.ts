@@ -5,7 +5,6 @@
 // Tool calling works with all four providers (Anthropic, DeepSeek, Mistral, Groq).
 
 import { safeGetItem, safeSetItem } from './storage'
-import { dispatchShellCommand } from './shellDispatch'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -797,15 +796,6 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const toolsStr     = input.tools         as string | undefined
         const tools        = toolsStr ? toolsStr.split(',').map(s => s.trim()).filter(Boolean) : undefined
         return await ctx.spawnAgent(systemPrompt, task, tools)
-      }
-
-      // ── Shell execution via GitHub Actions dispatch ───────────────────────────
-      case 'shell_exec': {
-        const command   = input.command as string
-        const sessionId = ctx.sessionId ?? `fc-${Date.now().toString(36)}`
-        const result    = await dispatchShellCommand(command, sessionId, token, owner, repo)
-        if (!result.success) throw new Error(result.output)
-        return `[SHELL RUN #${result.runId ?? 'N/A'} — ${(result.conclusion ?? 'done').toUpperCase()}]\n${result.output}`
       }
 
       default:

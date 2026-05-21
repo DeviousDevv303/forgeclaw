@@ -28,16 +28,18 @@ export function useLiveTyping({ text, speed = 35, instant = false }: Options) {
   const [done, setDone] = useState(instant || prefersReducedMotion())
 
   useEffect(() => {
+    let doneTimer = 0
+
     if (instant || prefersReducedMotion()) {
       if (spanRef.current) spanRef.current.textContent = text
-      setDone(true)
-      return
+      doneTimer = window.setTimeout(() => setDone(true), 0)
+      return () => window.clearTimeout(doneTimer)
     }
 
     indexRef.current = 0
     lastTimeRef.current = 0
     if (spanRef.current) spanRef.current.textContent = ''
-    setDone(false)
+    doneTimer = window.setTimeout(() => setDone(false), 0)
 
     function tick(ts: number) {
       if (!spanRef.current) return
@@ -49,12 +51,15 @@ export function useLiveTyping({ text, speed = 35, instant = false }: Options) {
       if (indexRef.current < text.length) {
         rafRef.current = requestAnimationFrame(tick)
       } else {
-        setDone(true)
+        doneTimer = window.setTimeout(() => setDone(true), 0)
       }
     }
 
     rafRef.current = requestAnimationFrame(tick)
-    return () => { cancelAnimationFrame(rafRef.current) }
+    return () => {
+      window.clearTimeout(doneTimer)
+      cancelAnimationFrame(rafRef.current)
+    }
   }, [text, speed, instant])
 
   return { spanRef, done }

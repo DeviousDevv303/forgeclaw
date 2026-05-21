@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { L } from './palette'
 import { CognitiveMap } from './CognitiveMap'
 import { ProcessTrace } from './ProcessTrace'
@@ -56,18 +56,23 @@ export function SyncognitiveLattice({ state, isActive, currentPlan }: Props) {
   const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const collapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const setPhaseSync = (p: LatticePhase) => {
+  const setPhaseSync = useCallback((p: LatticePhase) => {
     phaseRef.current = p
     setPhase(p)
-  }
+  }, [])
 
   useEffect(() => {
+    let enterFrame = 0
+    let openFrame = 0
+
     if (isActive) {
       if (fadeTimer.current) clearTimeout(fadeTimer.current)
       if (collapseTimer.current) clearTimeout(collapseTimer.current)
-      setPhaseSync('entering')
-      // Double-RAF so the DOM paints opacity:0 before we set opacity:1
-      requestAnimationFrame(() => requestAnimationFrame(() => setPhaseSync('open')))
+      enterFrame = requestAnimationFrame(() => {
+        setPhaseSync('entering')
+        // One more RAF lets the DOM paint opacity:0 before opacity:1.
+        openFrame = requestAnimationFrame(() => setPhaseSync('open'))
+      })
     } else {
       // Only fade if currently visible
       if (phaseRef.current === 'open' || phaseRef.current === 'entering') {
@@ -78,10 +83,12 @@ export function SyncognitiveLattice({ state, isActive, currentPlan }: Props) {
       }
     }
     return () => {
+      if (enterFrame) cancelAnimationFrame(enterFrame)
+      if (openFrame) cancelAnimationFrame(openFrame)
       if (fadeTimer.current) clearTimeout(fadeTimer.current)
       if (collapseTimer.current) clearTimeout(collapseTimer.current)
     }
-  }, [isActive]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isActive, setPhaseSync])
 
   const pct = Math.round(state.confidence * 100)
 

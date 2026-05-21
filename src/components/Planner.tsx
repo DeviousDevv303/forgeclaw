@@ -1,65 +1,13 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useState } from 'react'
+import type { PlanStep } from './Planner.parse'
 
-export interface PlanStep {
-  id: string
-  title: string
-  status: 'pending' | 'active' | 'done'
-  description?: string
-}
+export type { PlanStep } from './Planner.parse'
 
 interface PlannerProps {
   steps: PlanStep[]
   title?: string
-}
-
-function parsePlanText(planText: string): PlanStep[] {
-  const lines = planText.split('\n').filter(l => l.trim())
-  const steps: PlanStep[] = []
-  let idx = 0
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    // Match numbered steps: "1. Do something" or "Step 1: Do something"
-    const numMatch = trimmed.match(/^(?:Step\s*)?(\d+)[\.:\)\-]\s*(.+)$/i)
-    if (numMatch) {
-      steps.push({
-        id: `plan-step-${idx}`,
-        title: numMatch[2].trim(),
-        status: 'pending',
-      })
-      idx++
-      continue
-    }
-    // Match bullet steps: "- Do something" or "* Do something"
-    const bulletMatch = trimmed.match(/^[\*\-\+•]\s*(.+)$/)
-    if (bulletMatch) {
-      steps.push({
-        id: `plan-step-${idx}`,
-        title: bulletMatch[1].trim(),
-        status: 'pending',
-      })
-      idx++
-      continue
-    }
-    // If no match but previous step exists, append as description
-    if (steps.length > 0 && !trimmed.match(/^(?:Step\s*)?\d+[\.:\)\-]/i) && !trimmed.match(/^[\*\-\+•]/)) {
-      const last = steps[steps.length - 1]
-      last.description = last.description ? `${last.description}\n${trimmed}` : trimmed
-    }
-  }
-
-  // If no structured steps found, treat each line as a step
-  if (steps.length === 0) {
-    return lines.map((line, i) => ({
-      id: `plan-step-${i}`,
-      title: line.trim(),
-      status: 'pending' as const,
-    }))
-  }
-
-  return steps
 }
 
 export function Planner({ steps: rawSteps, title = 'Planner' }: PlannerProps) {
@@ -68,7 +16,11 @@ export function Planner({ steps: rawSteps, title = 'Planner' }: PlannerProps) {
   const toggleExpanded = (id: string) => {
     setExpandedIds(prev => {
       const n = new Set(prev)
-      n.has(id) ? n.delete(id) : n.add(id)
+      if (n.has(id)) {
+        n.delete(id)
+      } else {
+        n.add(id)
+      }
       return n
     })
   }
@@ -250,5 +202,3 @@ export function Planner({ steps: rawSteps, title = 'Planner' }: PlannerProps) {
     </div>
   )
 }
-
-export { parsePlanText }

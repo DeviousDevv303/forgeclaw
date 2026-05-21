@@ -29,7 +29,10 @@ export function useProviderHeartbeat(
 
   const hbRef = useRef<ProviderHeartbeat | null>(null)
   const latestRef = useRef({ providerId, apiKey, model })
-  latestRef.current = { providerId, apiKey, model }
+
+  useEffect(() => {
+    latestRef.current = { providerId, apiKey, model }
+  }, [providerId, apiKey, model])
 
   useEffect(() => {
     const hb = new ProviderHeartbeat(r => {

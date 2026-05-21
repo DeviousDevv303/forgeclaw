@@ -144,6 +144,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    const timeouts = timeoutsRef.current;
     
     const resize = () => initNetwork();
     
@@ -153,8 +154,8 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
     return () => {
       window.removeEventListener('resize', resize);
       cancelAnimationFrame(animationRef.current);
-      timeoutsRef.current.forEach(t => clearTimeout(t));
-      timeoutsRef.current.clear();
+      timeouts.forEach(t => clearTimeout(t));
+      timeouts.clear();
     };
   }, [initNetwork]);
 
@@ -182,6 +183,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
     try {
       const canvas = canvasRef.current;
       if (!canvas) return;
+      const timeouts = timeoutsRef.current;
       const ctx = canvas.getContext('2d');
       if (!ctx) {
         console.warn('[ForgeClaw] Canvas 2D context unavailable — skipping neural background');
@@ -476,8 +478,8 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         (motionQuery as MediaQueryList).removeListener(handleMotionChange);
       }
       cancelAnimationFrame(animationRef.current);
-      timeoutsRef.current.forEach(t => clearTimeout(t));
-      timeoutsRef.current.clear();
+      timeouts.forEach(t => clearTimeout(t));
+      timeouts.clear();
     };
   } catch (err) {
     console.warn('[ForgeClaw] NeuralNetworkBackground init failed:', err);

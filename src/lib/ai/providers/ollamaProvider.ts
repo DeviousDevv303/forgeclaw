@@ -20,12 +20,12 @@ export const ollamaProvider: AIProvider = {
     return true
   },
 
-  supportsTools(_modelId: string): boolean {
+  supportsTools(): boolean {
     // Most small local models don't support tools well
     return false
   },
 
-  async send(request: AIRequest, _apiKey?: string): Promise<{ text: string; provider: string; model: string; toolCalls?: AIToolCall[]; stopReason?: string }> {
+  async send(request: AIRequest): Promise<{ text: string; provider: string; model: string; toolCalls?: AIToolCall[]; stopReason?: string }> {
     const { systemPrompt, messages, model, maxTokens = 4096, onToken } = request
 
     const ollamaUrl = localStorage.getItem('fc_ollama_url') || 'http://localhost:11434'

@@ -376,7 +376,6 @@ export const DEFAULT_BUDGETS: ActionBudgets = {
 
 export function requiresGuardianApproval(
   check: GuardianCheck,
-  _budgets: ActionBudgets = DEFAULT_BUDGETS,
   threshold: number = AGENT_CONFIDENCE_THRESHOLD,
 ): { approved: boolean; reason?: string } {
   if (check.confidence < threshold) {

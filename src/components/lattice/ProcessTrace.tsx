@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { AgentEvent, ForgeStage } from '../../types/forgeOps'
 import { L } from './palette'
 import { TypingText } from './TypingText'
@@ -91,14 +91,25 @@ function TraceRow({ ev, isNew }: TraceRowProps) {
 
 export function ProcessTrace({ events }: Props) {
   // Seed with all events present on first render so they appear instantly.
-  // Events arriving after mount will have timestamps not in the set → they type in.
-  const seenRef = useRef<Set<number> | null>(null)
-  if (seenRef.current === null) {
-    seenRef.current = new Set(events.map(e => e.timestamp))
-  }
+  // Events arriving after mount will have timestamps not in the set and type in.
+  const [seenTimestamps, setSeenTimestamps] = useState<Set<number>>(() => new Set(events.map(e => e.timestamp)))
 
   useEffect(() => {
-    events.forEach(ev => seenRef.current!.add(ev.timestamp))
+    const timer = window.setTimeout(() => {
+      setSeenTimestamps(prev => {
+        let changed = false
+        const next = new Set(prev)
+        events.forEach(ev => {
+          if (!next.has(ev.timestamp)) {
+            next.add(ev.timestamp)
+            changed = true
+          }
+        })
+        return changed ? next : prev
+      })
+    }, 0)
+
+    return () => window.clearTimeout(timer)
   }, [events])
 
   const reversed = [...events].reverse()
@@ -115,7 +126,7 @@ export function ProcessTrace({ events }: Props) {
               <TraceRow
                 key={ev.timestamp}
                 ev={ev}
-                isNew={!seenRef.current!.has(ev.timestamp)}
+                isNew={!seenTimestamps.has(ev.timestamp)}
               />
             ))
         }

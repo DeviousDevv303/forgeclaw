@@ -1,6 +1,6 @@
+#!/usr/bin/env ts-node
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-#!/usr/bin/env ts-node
 /**
  * ciIdentityScanner.ts
  *

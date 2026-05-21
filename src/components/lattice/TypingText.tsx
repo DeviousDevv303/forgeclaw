@@ -21,7 +21,8 @@ export function TypingText({ text, color, speed, instant, cursorMode = 'typing-o
     const el = cursorRef.current
     let visible = true
     const id = setInterval(() => {
-      el.style.opacity = (visible = !visible) ? '1' : '0'
+      visible = !visible
+      el.style.opacity = visible ? '1' : '0'
     }, 530)
     return () => { clearInterval(id) }
   }, [done, cursorMode])

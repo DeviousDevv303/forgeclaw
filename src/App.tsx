@@ -21,7 +21,8 @@ import type { CristianDecision } from './types/warRoom'
 import { collectMockEvents } from './lib/reasoningMock'
 import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
-import type { ProviderId, ChatMessage as ProviderMessage } from './lib/modelProviders'
+import type { ProviderId } from './lib/modelProviders'
+import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, claudeProvider } from './lib/ai/providerRouter'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
@@ -38,7 +39,8 @@ import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
 import { useForgeOps } from './hooks/useForgeOps'
 import { SyncognitiveLattice } from './components/lattice/SyncognitiveLattice'
-import { Planner, parsePlanText } from './components/Planner'
+import { Planner } from './components/Planner'
+import { parsePlanText } from './components/Planner.parse'
 import { MissionLog } from './components/MissionLog'
 import type { AgentPhase } from './types/forgeOps'
 
@@ -171,9 +173,11 @@ Never start with [FM:THINK]. Structured response first. Always.`
 function cleanOutput(text: string): string {
   // Preserve fenced code blocks — extract them, clean the rest, reinsert
   const codeBlocks: string[] = []
+  const placeholderPrefix = String.fromCharCode(0)
+  const codePlaceholderPattern = new RegExp(`${placeholderPrefix}CODE(\\d+)${placeholderPrefix}`, 'g')
   const withPlaceholders = text.replace(/```[\s\S]*?```/g, (match) => {
     codeBlocks.push(match)
-    return `\x00CODE${codeBlocks.length - 1}\x00`
+    return `${placeholderPrefix}CODE${codeBlocks.length - 1}${placeholderPrefix}`
   })
   const cleaned = withPlaceholders
     .replace(/\[FM:[A-Z_0-9]+\][\s\S]*?\[FM:[A-Z_0-9]+_END\]/gi, '')
@@ -189,7 +193,7 @@ function cleanOutput(text: string): string {
     .replace(/\s+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-  return cleaned.replace(/\x00CODE(\d+)\x00/g, (_, i) => codeBlocks[parseInt(i)])
+  return cleaned.replace(codePlaceholderPattern, (_, i) => codeBlocks[parseInt(i)])
 }
 
 // Render message text — splits on fenced code blocks and styles them
@@ -282,7 +286,7 @@ function App() {
   const [currentPlan, setCurrentPlan] = useState<string | undefined>()
   const monitor = useSystemMonitor()
   // Stable per-session ID for shell_exec audit trail — resets on page reload
-  const sessionIdRef = useRef(`fc-${Date.now().toString(36)}`)
+  const [sessionId] = useState(() => `fc-${Date.now().toString(36)}`)
 
   // War Room: read gh_token from localStorage (prototype scope — Phase 2 lifts to proper context)
   const warRoomToken = safeGetItem('gh_token') || ''
@@ -613,13 +617,17 @@ function App() {
 
       const toolCtx = {
         ...loadToolContext(),
-        sessionId: sessionIdRef.current,
+        sessionId,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
           runSubAgent(systemPrompt, task, tools, activeProvider, activeModel, apiKey, FORGE_TOOLS, loadToolContext()),
       }
 
-      const historyMessages: ProviderMessage[] = messages.slice(-12).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
-      const conversationMessages: ProviderMessage[] = [...historyMessages, { role: 'user', content: promptText }]
+      const historyMessages: AIMessage[] = messages.slice(-12).flatMap(m =>
+        m.role === 'user' || m.role === 'assistant'
+          ? [{ role: m.role, content: m.content }]
+          : []
+      )
+      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: promptText }]
       const allToolResults: ToolResult[] = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
       const chainStartedAt = new Date().toISOString()
@@ -647,7 +655,7 @@ function App() {
         const routerResult = await sendViaRouter({
           model: activeModel,
           systemPrompt: activeSystemPrompt,
-          messages: conversationMessages as any,
+          messages: conversationMessages,
           tools: noMoreTools ? undefined : FORGE_TOOLS,
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
@@ -745,7 +753,7 @@ function App() {
         conversationMessages.push({
           role: 'assistant',
           content: result.text || '',
-          tool_calls: result.toolCalls.map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.name, arguments: JSON.stringify(tc.input) } })),
+          tool_calls: result.toolCalls.map(tc => ({ id: tc.id, name: tc.name, input: tc.input })),
         })
         for (const r of iterResults) {
           conversationMessages.push({ role: 'tool', content: r.output, tool_call_id: r.toolCallId })
