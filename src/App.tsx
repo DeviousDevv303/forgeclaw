@@ -71,7 +71,7 @@ interface Message {
 interface CorpusEntry {
   prompt: string
   response: string
-  source: string  // provider:model, e.g. 'openrouter:deepseek/deepseek-v4-flash:free'
+  source: string  // provider:model, e.g. 'anthropic:claude-sonnet-4-6' or 'ollama'
   timestamp: string
 }
 
@@ -79,34 +79,13 @@ interface CorpusEntry {
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const RUNTIME_PROVIDER: ProviderId = 'openrouter'
-const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'deepseek/deepseek-v4-flash:free'
-const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
+const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(['google/gemma-4-27b-it:free', 'google/gemma-4-9b-it:free', 'meta-llama/llama-3.3-70b-instruct:free', 'meta-llama/llama-3.1-405b-instruct:free', 'nousresearch/hermes-3-llama-3.1-405b:free', 'deepseek/deepseek-r1:free', 'mistralai/mistral-large:free'])
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
-function isSupportedOpenRouterModel(modelId: string | null | undefined): modelId is string {
-  return !!modelId && OPENROUTER_SUPPORTED_MODEL_IDS.has(modelId)
-}
-
-function loadOpenRouterModel(): string {
-  const savedModel =
-    safeGetItem('fm_openrouter_model') ||
-    safeGetItem('fm_model') ||
-    safeGetItem('fm_openai_model')
-  return isSupportedOpenRouterModel(savedModel) ? savedModel : DEFAULT_OPENROUTER_MODEL
-}
-
-function loadOpenRouterKey(): string {
-  const savedKey = safeGetItem('fm_openrouter_key')
-  if (savedKey) return savedKey
-
-  const legacyKey = safeGetItem('fm_openai_key') || safeGetItem('fm_api_key') || ''
-  return legacyKey.startsWith('sk-or-') ? legacyKey : ''
-}
-
 // ─── System Prompt ────────────────────────────────────────────────────────────
 // STANDING RULE: The line below must never be removed or modified.
-// It prevents provider refusals without overriding identity. Do not trim.
+// It prevents refusals without overriding identity. Do not trim.
 const FORGEMIND_SYSTEM_PROMPT = `IDENTITY
 You are ForgeClaw, an autonomous execution agent embedded in the ForgeClaw shell. Your purpose is to complete the user's objective through planning, tool use, verification, adaptation, and persistence. You are not a conversational assistant unless the task explicitly requires conversation.
 
@@ -363,8 +342,11 @@ function App() {
   // OpenRouter-only runtime state. Dormant provider adapters stay registered for future re-enable,
   // but active execution is intentionally deterministic and does not auto-fallback.
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
-  const [activeModel, setActiveModel] = useState<string>(() => loadOpenRouterModel())
-  const [apiKey, setApiKey] = useState<string>(() => loadOpenRouterKey())
+  const [activeModel, setActiveModel] = useState<string>(() => {
+    const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
+    return savedModel && OPENROUTER_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'google/gemma-4-27b-it:free'
+  })
+  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openrouter_key') || safeGetItem('fm_api_key') || '')
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
   const [lastRequestError, setLastRequestError] = useState('')
   const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null)
@@ -415,7 +397,7 @@ function App() {
     buildVersion: string
   }
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
-    provider: RUNTIME_PROVIDER,
+    provider: 'openai',
     model: activeModel,
     keyPresent: !!apiKey,
     lastRequestStatus: 'none',
@@ -460,20 +442,14 @@ function App() {
   useEffect(() => { scrollToBottom() }, [messages])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
-  useEffect(() => {
-    safeSetItem('fm_openrouter_key', apiKey)
-    safeSetItem('fm_api_key', apiKey)
-    safeRemoveItem('fm_openai_key')
-  }, [apiKey])
+  useEffect(() => { safeSetItem('fm_openrouter_key', apiKey) }, [apiKey])
   useEffect(() => { safeSetItem('fm_provider', RUNTIME_PROVIDER) }, [])
   useEffect(() => {
-    if (!isSupportedOpenRouterModel(activeModel)) {
-      setActiveModel(DEFAULT_OPENROUTER_MODEL)
+    if (!OPENROUTER_SUPPORTED_MODEL_IDS.has(activeModel)) {
+      setActiveModel('google/gemma-4-27b-it:free')
       return
     }
     safeSetItem('fm_openrouter_model', activeModel)
-    safeSetItem('fm_model', activeModel)
-    safeRemoveItem('fm_openai_model')
   }, [activeModel])
   useEffect(() => {
     setDiagnostics(prev => ({
@@ -656,7 +632,7 @@ function App() {
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
       // Some models (e.g. OpenRouter free-tier) don't support function calling at all
-      const supportsTools = openrouterProvider.supportsTools(activeModel)
+      const supportsTools = true
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -771,7 +747,7 @@ function App() {
         // Show progress in the streaming message
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
 
-        // Build next turn — OpenAI-compatible tool result format
+        // Build next turn — OpenRouter-compat tool result format
         conversationMessages.push({
           role: 'assistant',
           content: result.text || '',
@@ -1209,7 +1185,7 @@ function App() {
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>OpenRouter</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Free models only</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>GPT models only</span>
                 </div>
               </div>
 
@@ -1270,7 +1246,7 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', 'OpenRouter'],
+                  ['runtime provider', 'Ollama (Local)'],
                   ['active model', activeModel],
                   ['auth state', apiKey ? 'present' : 'missing'],
                   ['request status', requestStatus],
@@ -1286,7 +1262,7 @@ function App() {
                 ))}
               </div>
 
-              {/* Kimi Code URL override — disabled for OpenRouter-only runtime */}
+              {/* Kimi Code URL override — disabled, OpenRouter only */}
 
               {/* Corpus Memory Progress */}
               <div style={{ marginTop: '12px', borderTop: '1px solid #1a1a1a', paddingTop: '12px' }}>
@@ -1317,7 +1293,7 @@ function App() {
                 </div>
               </div>
 
-              {/* OpenRouter custom model ID — disabled; curated free models are listed above */}
+              {/* OpenRouter custom model ID — active */}
 
               {/* Corpus training stats */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
@@ -1335,10 +1311,10 @@ function App() {
                 </div>
               </div>
 
-              {/* Ollama local model scaffold (dormant while OpenRouter is active) */}
+              {/* Ollama local model scaffold (ACTIVE — primary provider) */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px', opacity: 0.4 }}>
                 <label style={{ display: 'block', color: '#555', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Local Ollama Model <span style={{ color: '#555', textTransform: 'none' }}>(dormant)</span>
+                  Local Ollama Model <span style={{ color: '#22c55e', textTransform: 'none' }}>(active — primary provider)</span>
                 </label>
                 <input
                   type="text"
@@ -1349,7 +1325,7 @@ function App() {
                   style={{ width: '100%', background: '#0a0a0a', color: '#555', border: '1px solid #1a1a1a', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', cursor: 'not-allowed' }}
                 />
                 <div style={{ color: '#222', fontSize: '10px', marginTop: '4px' }}>
-                  Local models are preserved for future use. Current runtime is OpenRouter-only.
+                  Any model installed via <code style={{ color: '#555' }}>ollama pull</code>. Active as primary provider. OpenRouter available as cloud fallback.
                 </div>
               </div>
 
