@@ -78,7 +78,7 @@ interface CorpusEntry {
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const RUNTIME_PROVIDER: ProviderId = 'openai'
-const OPENAI_SUPPORTED_MODEL_IDS = new Set(['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'])
+const CLAUDE_SUPPORTED_MODEL_IDS = new Set(['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'])
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -341,7 +341,7 @@ function App() {
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
   const [activeModel, setActiveModel] = useState<string>(() => {
     const savedModel = safeGetItem('fm_openai_model') || safeGetItem('fm_model')
-    return savedModel && OPENAI_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'gpt-4o'
+    return savedModel && CLAUDE_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'claude-haiku-4-5-20251001'
   })
   const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openai_key') || safeGetItem('fm_api_key') || '')
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
@@ -443,8 +443,8 @@ function App() {
   useEffect(() => { safeSetItem('fm_openai_key', apiKey) }, [apiKey])
   useEffect(() => { safeSetItem('fm_provider', RUNTIME_PROVIDER) }, [])
   useEffect(() => {
-    if (!OPENAI_SUPPORTED_MODEL_IDS.has(activeModel)) {
-      setActiveModel('gpt-4o')
+    if (!CLAUDE_SUPPORTED_MODEL_IDS.has(activeModel)) {
+      setActiveModel('claude-haiku-4-5-20251001')
       return
     }
     safeSetItem('fm_openai_model', activeModel)
@@ -1202,7 +1202,7 @@ function App() {
                 </select>
               </div>
 
-              {/* API key for OpenAI */}
+              {/* API key for Claude */}
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Claude API Key</label>
                 <div style={{ display: 'flex', gap: '8px' }}>
@@ -1241,7 +1241,7 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', 'OpenAI'],
+                  ['runtime provider', 'Claude'],
                   ['active model', activeModel],
                   ['auth state', apiKey ? 'present' : 'missing'],
                   ['request status', requestStatus],
@@ -1257,7 +1257,7 @@ function App() {
                 ))}
               </div>
 
-              {/* Kimi Code URL override — disabled, OpenAI only */}
+              {/* Kimi Code URL override — disabled, Claude only */}
 
               {/* Corpus Memory Progress */}
               <div style={{ marginTop: '12px', borderTop: '1px solid #1a1a1a', paddingTop: '12px' }}>
@@ -1288,7 +1288,7 @@ function App() {
                 </div>
               </div>
 
-              {/* OpenRouter custom model ID — disabled, OpenAI only */}
+              {/* OpenRouter custom model ID — disabled, Claude only */}
 
               {/* Corpus training stats */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
@@ -1306,7 +1306,7 @@ function App() {
                 </div>
               </div>
 
-              {/* Ollama local model scaffold (DORMANT — runtime is OpenAI-only) */}
+              {/* Ollama local model scaffold (DORMANT — runtime is Claude-only) */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px', opacity: 0.4 }}>
                 <label style={{ display: 'block', color: '#555', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   Local Ollama Model <span style={{ color: '#333', textTransform: 'none' }}>(dormant — re-enable in future multi-provider phase)</span>
@@ -1320,7 +1320,7 @@ function App() {
                   style={{ width: '100%', background: '#0a0a0a', color: '#555', border: '1px solid #1a1a1a', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', cursor: 'not-allowed' }}
                 />
                 <div style={{ color: '#222', fontSize: '10px', marginTop: '4px' }}>
-                  Any model installed via <code style={{ color: '#333' }}>ollama pull</code>. Currently disabled — runtime is OpenAI-only.
+                  Any model installed via <code style={{ color: '#333' }}>ollama pull</code>. Currently disabled — runtime is Claude-only.
                 </div>
               </div>
 
@@ -1983,7 +1983,7 @@ function App() {
               {/* Provider */}
               <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
                 <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
-                <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● OpenAI</div>
+                <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● Claude</div>
                 <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked — single provider</div>
               </div>
 
