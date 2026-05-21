@@ -6,6 +6,11 @@ import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '.
 
 // Verified against https://openrouter.ai/api/v1/models on 2026-05-21.
 export const OPENROUTER_MODELS = [
+  { id: 'poolside/laguna-xs.2:free', label: 'Laguna XS.2', contextK: 131, note: 'Free, fast streaming' },
+  { id: 'liquid/lfm-2.5-1.2b-instruct:free', label: 'Liquid LFM2.5 Instruct', contextK: 32, note: 'Free, fast fallback selection' },
+  { id: 'nvidia/nemotron-3-nano-30b-a3b:free', label: 'Nemotron 3 Nano 30B', contextK: 256, note: 'Free' },
+  { id: 'poolside/laguna-m.1:free', label: 'Laguna M.1', contextK: 131, note: 'Free' },
+  { id: 'z-ai/glm-4.5-air:free', label: 'GLM 4.5 Air', contextK: 131, note: 'Free' },
   { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B A4B', contextK: 262, note: 'Free' },
   { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
   { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', contextK: 262, note: 'Free' },

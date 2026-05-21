@@ -79,11 +79,14 @@ interface CorpusEntry {
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const RUNTIME_PROVIDER: ProviderId = 'openrouter'
-const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'deepseek/deepseek-v4-flash:free'
+const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'poolside/laguna-xs.2:free'
 const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
 const LEGACY_MODEL_MARKERS = ['cl' + 'aude', 'anth' + 'ropic', 'op' + 'enai', 'gpt-', 'oll' + 'ama']
-const OPENROUTER_MODEL_STORAGE_VERSION = 'gemma-4-26b-default'
-const PREVIOUS_OPENROUTER_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash:free'
+const OPENROUTER_MODEL_STORAGE_VERSION = 'laguna-xs-default'
+const PREVIOUS_OPENROUTER_DEFAULT_MODELS = new Set([
+  'deepseek/deepseek-v4-flash:free',
+  'google/gemma-4-26b-a4b-it:free',
+])
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -221,7 +224,7 @@ function readOpenRouterKey(): string {
 function readOpenRouterModel(): string {
   const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
   const storageVersion = safeGetItem('fm_openrouter_model_version')
-  if (storageVersion !== OPENROUTER_MODEL_STORAGE_VERSION && savedModel === PREVIOUS_OPENROUTER_DEFAULT_MODEL) {
+  if (storageVersion !== OPENROUTER_MODEL_STORAGE_VERSION && savedModel && PREVIOUS_OPENROUTER_DEFAULT_MODELS.has(savedModel)) {
     return DEFAULT_OPENROUTER_MODEL
   }
   return normalizeOpenRouterModel(savedModel)
