@@ -1,69 +1,82 @@
-// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// ForgeClaw - Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-// ─── Provider Router ───────────────────────────────────────────────────────────
-// Claude primary, multi-provider architecture ready for future expansion.
+// Claude-only runtime. Other adapters remain dormant for future re-enable.
 
-import type { AIRequest, AIResponse, AIError } from './types'
+import type { AIError, AIRequest, AIResponse } from './types'
 import { classifyError } from './types'
 import { claudeProvider } from './providers/claudeProvider'
 
-// ─── Registry ─────────────────────────────────────────────────────────────────
-
 export const ACTIVE_PROVIDER = claudeProvider
+export const PROVIDER_ORDER = [claudeProvider.id] as const
 
-export const PROVIDER_CONFIG = {
-  primary: claudeProvider,
-} as const
+export type ProviderRuntimeState =
+  | 'ANTHROPIC_ONLINE'
+  | 'ANTHROPIC_ERROR'
+  | 'NO_PROVIDER_CONFIGURED'
 
-// ─── Router ───────────────────────────────────────────────────────────────────
+export interface ProviderCredentials {
+  anthropicKey: string
+}
+
+type RuntimeResult =
+  | { success: true; response: AIResponse; state: ProviderRuntimeState }
+  | { success: false; error: AIError; state: ProviderRuntimeState }
+
+function noClaudeKeyError(): AIError {
+  return {
+    class: 'UNKNOWN',
+    message: 'Claude: no API key - paste your Claude API key starting with sk-ant-',
+    provider: claudeProvider.id,
+    retryable: false,
+  }
+}
+
+function claudeError(err: unknown): AIError {
+  const classified = classifyError(err, claudeProvider.id)
+  let message = classified.message
+
+  if (classified.class === 'AUTH_FAILURE') {
+    message = 'Claude authentication failed. Check your Claude API key in Settings.'
+  } else if (classified.class === 'RATE_LIMIT') {
+    message = 'Claude rate limit or quota hit.'
+  } else if (classified.class === 'NETWORK_FAILURE') {
+    message = 'Claude unreachable. Check your connection.'
+  } else if (classified.class === 'INSUFFICIENT_FUNDS') {
+    message = 'Claude account has insufficient quota. Check Claude API billing.'
+  }
+
+  return { ...classified, message }
+}
 
 export async function sendViaRouter(
   request: AIRequest,
-  apiKey: string,
-): Promise<{ success: true; response: AIResponse } | { success: false; error: AIError }> {
-  // 1. Key check
-  if (!ACTIVE_PROVIDER.isConfigured(apiKey)) {
+  credentials: ProviderCredentials,
+): Promise<RuntimeResult> {
+  if (!claudeProvider.isConfigured(credentials.anthropicKey)) {
     return {
       success: false,
-      error: {
-        class: 'AUTH_FAILURE',
-        message: 'Claude: no API key — paste one in Settings (sk-ant-...)',
-        provider: ACTIVE_PROVIDER.id,
-        retryable: false,
-      },
+      error: noClaudeKeyError(),
+      state: 'NO_PROVIDER_CONFIGURED',
     }
   }
 
-  // 2. Send
   try {
-    const response = await ACTIVE_PROVIDER.send(request, apiKey)
-    return { success: true, response }
+    const response = await claudeProvider.send(
+      { ...request, model: request.model || claudeProvider.models[0].id },
+      credentials.anthropicKey,
+    )
+    return { success: true, response, state: 'ANTHROPIC_ONLINE' }
   } catch (err) {
-    const classified = classifyError(err, ACTIVE_PROVIDER.id)
-
-    // Enhance message for user readability
-    let message = classified.message
-    if (classified.class === 'AUTH_FAILURE') {
-      message = `${ACTIVE_PROVIDER.label} authentication failed. Check your API key in Settings.`
-    } else if (classified.class === 'RATE_LIMIT') {
-      message = `${ACTIVE_PROVIDER.label} rate limit hit. Wait a moment and retry.`
-    } else if (classified.class === 'NETWORK_FAILURE') {
-      message = `${ACTIVE_PROVIDER.label} unreachable. Check your connection.`
-    } else if (classified.class === 'INSUFFICIENT_FUNDS') {
-      message = `${ACTIVE_PROVIDER.label} account has insufficient quota. Add billing or switch model.`
-    }
-
     return {
       success: false,
-      error: { ...classified, message },
+      error: claudeError(err),
+      state: 'ANTHROPIC_ERROR',
     }
   }
 }
 
-// ─── Convenience ────────────────────────────────────────────────────────────
-
 export function isProviderConfigured(apiKey: string): boolean {
-  return ACTIVE_PROVIDER.isConfigured(apiKey)
+  return claudeProvider.isConfigured(apiKey)
 }
 
 export function providerSupportsTools(_modelId: string): boolean {
@@ -71,10 +84,10 @@ export function providerSupportsTools(_modelId: string): boolean {
 }
 
 export async function testProviderKey(apiKey: string): Promise<void> {
-  if (!ACTIVE_PROVIDER.isConfigured(apiKey)) {
-    throw new Error('API key not configured')
+  if (!claudeProvider.isConfigured(apiKey)) {
+    throw new Error('Claude: no API key - paste your Claude API key starting with sk-ant-')
   }
-  await ACTIVE_PROVIDER.test(apiKey)
+  await claudeProvider.test(apiKey)
 }
 
 export { claudeProvider }
