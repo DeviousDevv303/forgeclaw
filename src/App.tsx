@@ -79,8 +79,8 @@ interface CorpusEntry {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
-const RUNTIME_PROVIDER: ProviderId = 'openrouter'
-const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(['google/gemma-4-26b-a4b-it:free', 'google/gemma-3-27b-it:free', 'google/gemma-2-27b-it', 'meta-llama/llama-3.3-70b-instruct', 'deepseek/deepseek-r1', 'mistralai/mistral-large'])
+const RUNTIME_PROVIDER: ProviderId = 'openai'
+const CLAUDE_SUPPORTED_MODEL_IDS = new Set(['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'])
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -344,10 +344,10 @@ function App() {
   // but active execution is intentionally deterministic and does not auto-fallback.
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
   const [activeModel, setActiveModel] = useState<string>(() => {
-    const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
-    return savedModel && OPENROUTER_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'google/gemma-4-26b-a4b-it:free'
+    const savedModel = safeGetItem('fm_openai_model') || safeGetItem('fm_model')
+    return savedModel && CLAUDE_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'claude-haiku-4-5-20251001'
   })
-  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openrouter_key') || safeGetItem('fm_api_key') || '')
+  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openai_key') || safeGetItem('fm_api_key') || '')
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
   const [lastRequestError, setLastRequestError] = useState('')
   const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null)
@@ -447,11 +447,11 @@ function App() {
   useEffect(() => { safeSetItem('fm_openai_key', apiKey) }, [apiKey])
   useEffect(() => { safeSetItem('fm_provider', RUNTIME_PROVIDER) }, [])
   useEffect(() => {
-    if (!OPENROUTER_SUPPORTED_MODEL_IDS.has(activeModel)) {
-      setActiveModel('google/gemma-4-26b-a4b-it:free')
+    if (!CLAUDE_SUPPORTED_MODEL_IDS.has(activeModel)) {
+      setActiveModel('claude-haiku-4-5-20251001')
       return
     }
-    safeSetItem('fm_openrouter_model', activeModel)
+    safeSetItem('fm_openai_model', activeModel)
   }, [activeModel])
   useEffect(() => {
     setDiagnostics(prev => ({
@@ -553,7 +553,7 @@ function App() {
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
     if (!apiKey) {
-      const missingKeyMessage = 'OpenRouter: no API key — paste one in Settings (sk-or-...)'
+      const missingKeyMessage = 'Claude: no API key — paste one in Settings (sk-ant-...)'
       setRequestStatus('blocked')
       setLastRequestError(missingKeyMessage)
       setLastRequestLatencyMs(null)
@@ -768,7 +768,7 @@ function App() {
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via Claude', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
       setRequestStatus('success')
@@ -1040,9 +1040,9 @@ function App() {
 
   const getStatusIndicator = () => {
     const modelLabel = openrouterProvider.models.find(m => m.id === activeModel)?.label ?? activeModel
-    if (!apiKey) return <span style={{ color: '#ef4444' }}>OpenRouter: no API key</span>
-    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>OpenRouter: invalid key</span>
-    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>OpenRouter: key unverified</span>
+    if (!apiKey) return <span style={{ color: '#ef4444' }}>Claude: no API key</span>
+    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>Claude: invalid key</span>
+    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>Claude: key unverified</span>
     if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>{modelLabel}</span>
     return <span style={{ color: '#6b6b6b' }}>{modelLabel}</span>
   }
@@ -1077,7 +1077,7 @@ function App() {
             {/* Claude runtime credential indicator */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               <span
-                title={`OpenRouter runtime: ${apiKey ? 'key set' : 'no key'} — click to open Settings`}
+                title={`Claude runtime: ${apiKey ? 'key set' : 'no key'} — click to open Settings`}
                 onClick={() => setActiveTab('settings')}
                 style={{
                   width: '28px', height: '14px', borderRadius: '3px', cursor: 'pointer',
@@ -1087,7 +1087,7 @@ function App() {
                   fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
-              >OR</span>
+              >OAI</span>
             </div>
             {/* GitHub token dot */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
@@ -1173,7 +1173,7 @@ function App() {
 
         {!apiKey && (
           <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginBottom: '12px', textAlign: 'center' }}>
-            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 OpenRouter: no API key — paste one in Settings (sk-or-...)</span>
+            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 Claude: no API key — paste one in Settings (sk-ant-...)</span>
           </div>
         )}
 
@@ -1182,13 +1182,13 @@ function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
 
-              {/* Provider — OpenRouter */}
+              {/* Provider — Claude */}
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Runtime Provider</label>
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
-                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>OpenRouter</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Unified API</span>
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Claude</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>GPT models only</span>
                 </div>
               </div>
 
@@ -1210,13 +1210,13 @@ function App() {
                 </select>
               </div>
 
-              {/* API key for OpenRouter */}
+              {/* API key for Claude */}
               <div style={{ marginBottom: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OpenRouter API Key</label>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Claude API Key</label>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder="sk-or-..."
+                    placeholder="sk-ant-..."
                     value={apiKey}
                     onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }}
                     style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
@@ -1239,21 +1239,21 @@ function App() {
               </div>
 
               <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
-                {!apiKey && <span style={{ color: '#ef4444' }}>OpenRouter: no API key — paste one in Settings (sk-or-...)</span>}
+                {!apiKey && <span style={{ color: '#ef4444' }}>Claude: no API key — paste one in Settings (sk-ant-...)</span>}
                 {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Key to verify</span>}
-                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>OpenRouter key verified</span>}
-                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>{testKeyError || 'OpenRouter key invalid'}</span>}
+                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>Claude key verified</span>}
+                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>{testKeyError || 'Claude key invalid'}</span>}
               </div>
 
               {/* Operator diagnostics */}
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-	                  ['runtime provider', 'OpenRouter'],
-	                  ['active model', activeModel],
-	                  ['auth state', apiKey ? 'present' : 'missing'],
-	                  ['request status', requestStatus],
-	                  ['last error', lastRequestError || diagnostics.lastError || 'none'],
+                  ['runtime provider', 'Ollama (Local)'],
+                  ['active model', activeModel],
+                  ['auth state', apiKey ? 'present' : 'missing'],
+                  ['request status', requestStatus],
+                  ['last error', lastRequestError || diagnostics.lastError || 'none'],
                   ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
                   ['build commit', BUILD_COMMIT],
                   ['build time', BUILD_TIME],
@@ -1991,8 +1991,8 @@ function App() {
               {/* Provider */}
               <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
                 <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
-                <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● OpenRouter</div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked — OpenRouter provider</div>
+                <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● Ollama (Local)</div>
+                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked — single provider</div>
               </div>
 
               {/* Model */}

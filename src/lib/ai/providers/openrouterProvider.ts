@@ -1,16 +1,37 @@
-// ForgeClaw - Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+// ─── OpenRouter Provider Adapter ────────────────────────────────────────────
 
-import type { AIProvider } from '../types'
+import type { AIProvider, AIRequest, AIResponse, AIToolCall } from '../types'
+
+// ─── Models ─────────────────────────────────────────────────────────────────
 
 export const OPENROUTER_MODELS = [
-  { id: 'google/gemma-4-26b-a4b-it:free',           label: 'Gemma 4 26B (free)',         contextK: 262 },
-  { id: 'google/gemma-3-27b-it:free',              label: 'Gemma 3 27B (free)',         contextK: 128 },
-  { id: 'google/gemma-2-27b-it',                    label: 'Gemma 2 27B',               contextK: 128 },
-  { id: 'meta-llama/llama-3.3-70b-instruct',        label: 'Llama 3.3 70B',             contextK: 128 },
-  { id: 'deepseek/deepseek-r1',                     label: 'DeepSeek R1',                contextK: 128 },
-  { id: 'mistralai/mistral-large',                  label: 'Mistral Large',              contextK: 128 },
+  { id: 'google/gemma-4-27b-it:free', label: 'Gemma 4 27B', contextK: 128, note: 'Top uncensored benchmark' },
+  { id: 'google/gemma-4-9b-it:free', label: 'Gemma 4 9B', contextK: 128 },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 128 },
+  { id: 'meta-llama/llama-3.1-405b-instruct:free', label: 'Llama 3.1 405B', contextK: 128 },
+  { id: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'Hermes 3 405B', contextK: 128, note: 'Fully uncensored' },
+  { id: 'deepseek/deepseek-r1:free', label: 'DeepSeek R1', contextK: 64, note: 'Chain-of-thought reasoning' },
+  { id: 'mistralai/mistral-large:free', label: 'Mistral Large', contextK: 128 },
 ]
+
+export type OpenRouterModelId = typeof OPENROUTER_MODELS[number]['id']
+
+// ─── Tool Format Conversion ───────────────────────────────────────────────────
+
+function toOpenRouterTools(tools: NonNullable<AIRequest['tools']>) {
+  return tools.map(t => ({
+    type: 'function' as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
+  }))
+}
+
+// ─── Streaming Parser ────────────────────────────────────────────────────────
 
 export const openrouterProvider: AIProvider = {
   id: 'openrouter',
@@ -18,119 +39,87 @@ export const openrouterProvider: AIProvider = {
   requiresKey: true,
   models: OPENROUTER_MODELS,
 
-  isConfigured(apiKey: string) {
+  isConfigured(apiKey: string): boolean {
     return typeof apiKey === 'string' && apiKey.startsWith('sk-or-') && apiKey.length > 20
   },
 
-  supportsTools() {
-    // OpenRouter models vary, but we'll assume yes for the ones we list unless explicitly free/no-tools
+  supportsTools(_modelId: string): boolean {
+    // Most OpenRouter models support tools, but free tier may not
     return true
   },
 
-  async send(request, apiKey) {
-    const { systemPrompt, messages, model, maxTokens = 4096, tools, onToken } = request
-    const streaming = !!onToken
-
-    const oaiMessages = [{ role: 'system', content: systemPrompt }, ...messages]
+  async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
+    const model = request.model || OPENROUTER_MODELS[0].id
+    
     const body: Record<string, unknown> = {
       model,
-      max_tokens: maxTokens,
-      messages: oaiMessages,
-      stream: streaming,
+      messages: request.messages,
+      max_tokens: request.maxTokens ?? 4096,
     }
 
-    if (tools?.length) {
-      body.tools = tools.map(t => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
-      }))
+    // Add tools if present and model supports them
+    if (request.tools && this.supportsTools(model)) {
+      body.tools = toOpenRouterTools(request.tools)
+      body.tool_choice = 'auto'
     }
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-      'HTTP-Referer': 'https://deviousdevv303.github.io/forgeclaw',
-      'X-Title': 'ForgeClaw',
-    }
-
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': 'https://deviousdevv303.github.io/forgeclaw',
+        'X-Title': 'ForgeClaw',
+      },
       body: JSON.stringify(body),
     })
 
-    if (!res.ok) {
-      const raw = await res.text().catch(() => '')
-      throw new Error(`OpenRouter ${res.status}: ${raw.slice(0, 200)}`)
+    if (!response.ok) {
+      const error = await response.text()
+      throw new Error(`OpenRouter ${response.status}: ${error}`)
     }
 
-    if (streaming && res.body) {
-      let fullText = ''
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buf = ''
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buf += decoder.decode(value, { stream: true })
-          const lines = buf.split('\n')
-          buf = lines.pop() ?? ''
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ') || line.includes('[DONE]')) continue
-            try {
-              const evt = JSON.parse(line.slice(6))
-              const delta = evt.choices?.[0]?.delta
-              if (delta?.content) {
-                fullText += delta.content
-                onToken(delta.content)
-              }
-            } catch { continue }
-          }
-        }
-      } finally {
-        reader.releaseLock()
-      }
-
+    const data = await response.json()
+    
+    // Check for tool calls
+    const toolCalls = data.choices?.[0]?.message?.tool_calls
+    if (toolCalls && toolCalls.length > 0) {
+      const calls: AIToolCall[] = toolCalls.map((tc: { id?: string; function?: { name?: string; arguments?: string } }) => ({
+        id: tc.id || '',
+        name: tc.function?.name || '',
+        input: tc.function?.arguments ? JSON.parse(tc.function.arguments) : {},
+      }))
+      
       return {
-        text: fullText,
+        text: '',
         provider: 'openrouter',
         model,
+        toolCalls: calls,
+        stopReason: 'tool_calls',
       }
     }
 
-    const data = await res.json()
-    const choice = data.choices?.[0]
-    const toolCalls = choice?.message?.tool_calls?.map((tc: any) => ({
-      id: tc.id,
-      name: tc.function.name,
-      input: JSON.parse(tc.function.arguments),
-    }))
-
     return {
-      text: choice?.message?.content || '',
+      text: data.choices?.[0]?.message?.content || '',
       provider: 'openrouter',
       model,
-      toolCalls,
-      stopReason: choice?.finish_reason,
+      stopReason: data.choices?.[0]?.finish_reason,
     }
   },
 
-  async test(apiKey) {
-    await this.send(
-      {
-        systemPrompt: 'Test',
-        messages: [{ role: 'user', content: 'ping' }],
-        model: OPENROUTER_MODELS[0].id,
-        maxTokens: 1,
+  async test(apiKey: string): Promise<void> {
+    if (!this.isConfigured(apiKey)) {
+      throw new Error('Invalid OpenRouter API key format. Expected sk-or-...')
+    }
+
+    const response = await fetch('https://openrouter.ai/api/v1/auth/key', {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
       },
-      apiKey,
-    )
+    })
+
+    if (!response.ok) {
+      throw new Error(`OpenRouter key validation failed: ${response.status}`)
+    }
   },
 }
