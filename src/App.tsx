@@ -22,7 +22,7 @@ import { collectMockEvents } from './lib/reasoningMock'
 import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId, ChatMessage as ProviderMessage } from './lib/modelProviders'
-import { sendViaRouter, testProviderKey, openaiProvider } from './lib/ai/providerRouter'
+import { sendViaRouter, testProviderKey, claudeProvider } from './lib/ai/providerRouter'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
@@ -336,7 +336,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [testKeyError, setTestKeyError] = useState('')
-  // OpenAI-only runtime state. Dormant provider adapters stay registered for future re-enable,
+  // Claude-only runtime state. Dormant provider adapters stay registered for future re-enable,
   // but active execution is intentionally deterministic and does not auto-fallback.
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
   const [activeModel, setActiveModel] = useState<string>(() => {
@@ -549,7 +549,7 @@ function App() {
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
     if (!apiKey) {
-      const missingKeyMessage = 'OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)'
+      const missingKeyMessage = 'Claude: no API key — paste one in Settings (sk-ant-...)'
       setRequestStatus('blocked')
       setLastRequestError(missingKeyMessage)
       setLastRequestLatencyMs(null)
@@ -741,7 +741,7 @@ function App() {
         // Show progress in the streaming message
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
 
-        // Build next turn — OpenAI-compat tool result format
+        // Build next turn — Claude-compat tool result format
         conversationMessages.push({
           role: 'assistant',
           content: result.text || '',
@@ -760,7 +760,7 @@ function App() {
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenAI', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via Claude', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
       setRequestStatus('success')
@@ -783,13 +783,13 @@ function App() {
         setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
       }
       // Auth/runtime failures are surfaced to the operator. No hidden provider fallback
-      // occurs while the runtime is locked to OpenAI.
+      // occurs while the runtime is locked to Claude.
       const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)
       if (isAuthError) {
         setApiKeyStatus('invalid')
         setMessages(prev => [...prev, {
           id: (Date.now() + 2).toString(), role: 'assistant',
-          content: 'OpenAI auth failed. Check your API key in Settings. Keys start with sk- or sk-proj-.',
+          content: 'Claude auth failed. Check your API key in Settings. Keys start with sk-ant-.',
           timestamp: Date.now(), source: 'local' as const,
         }])
       }
@@ -1031,10 +1031,10 @@ function App() {
   }
 
   const getStatusIndicator = () => {
-    const modelLabel = openaiProvider.models.find(m => m.id === activeModel)?.label ?? activeModel
-    if (!apiKey) return <span style={{ color: '#ef4444' }}>OpenAI: no API key</span>
-    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>OpenAI: invalid key</span>
-    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>OpenAI: key unverified</span>
+    const modelLabel = claudeProvider.models.find(m => m.id === activeModel)?.label ?? activeModel
+    if (!apiKey) return <span style={{ color: '#ef4444' }}>Claude: no API key</span>
+    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>Claude: invalid key</span>
+    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>Claude: key unverified</span>
     if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>{modelLabel}</span>
     return <span style={{ color: '#6b6b6b' }}>{modelLabel}</span>
   }
@@ -1066,10 +1066,10 @@ function App() {
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            {/* OpenAI runtime credential indicator */}
+            {/* Claude runtime credential indicator */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               <span
-                title={`OpenAI runtime: ${apiKey ? 'key set' : 'no key'} — click to open Settings`}
+                title={`Claude runtime: ${apiKey ? 'key set' : 'no key'} — click to open Settings`}
                 onClick={() => setActiveTab('settings')}
                 style={{
                   width: '28px', height: '14px', borderRadius: '3px', cursor: 'pointer',
@@ -1165,7 +1165,7 @@ function App() {
 
         {!apiKey && (
           <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginBottom: '12px', textAlign: 'center' }}>
-            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)</span>
+            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 Claude: no API key — paste one in Settings (sk-ant-...)</span>
           </div>
         )}
 
@@ -1174,12 +1174,12 @@ function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
 
-              {/* Provider — OpenAI only */}
+              {/* Provider — Claude */}
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Runtime Provider</label>
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
-                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>OpenAI</span>
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Claude</span>
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>GPT models only</span>
                 </div>
               </div>
@@ -1194,7 +1194,7 @@ function App() {
                   onChange={e => setActiveModel(e.target.value)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
-                  {openaiProvider.models.map(m => (
+                  {claudeProvider.models.map(m => (
                     <option key={m.id} value={m.id} style={{ background: '#111' }}>
                       {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx)
                     </option>
@@ -1204,11 +1204,11 @@ function App() {
 
               {/* API key for OpenAI */}
               <div style={{ marginBottom: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OpenAI API Key</label>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Claude API Key</label>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type={showApiKey ? 'text' : 'password'}
-                    placeholder="sk-... or sk-proj-..."
+                    placeholder="sk-ant-..."
                     value={apiKey}
                     onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }}
                     style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
@@ -1231,10 +1231,10 @@ function App() {
               </div>
 
               <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
-                {!apiKey && <span style={{ color: '#ef4444' }}>OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)</span>}
+                {!apiKey && <span style={{ color: '#ef4444' }}>Claude: no API key — paste one in Settings (sk-ant-...)</span>}
                 {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Key to verify</span>}
-                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>OpenAI key verified</span>}
-                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>{testKeyError || 'OpenAI key invalid'}</span>}
+                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>Claude key verified</span>}
+                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>{testKeyError || 'Claude key invalid'}</span>}
               </div>
 
               {/* Operator diagnostics */}
@@ -1990,7 +1990,7 @@ function App() {
               {/* Model */}
               <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
                 <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>MODEL</div>
-                <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{openaiProvider.models.find(m => m.id === activeModel)?.label ?? activeModel}</div>
+                <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{claudeProvider.models.find(m => m.id === activeModel)?.label ?? activeModel}</div>
                 <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{activeModel}</div>
               </div>
 

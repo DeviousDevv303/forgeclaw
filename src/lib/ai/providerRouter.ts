@@ -1,18 +1,18 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ───────────────────────────────────────────────────────────
-// One provider, no fallback, no silent failures.
+// Claude primary, multi-provider architecture ready for future expansion.
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
-import { openaiProvider } from './providers/openaiProvider'
+import { claudeProvider } from './providers/claudeProvider'
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
-export const ACTIVE_PROVIDER = openaiProvider
+export const ACTIVE_PROVIDER = claudeProvider
 
 export const PROVIDER_CONFIG = {
-  primary: openaiProvider,
+  primary: claudeProvider,
 } as const
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -27,7 +27,7 @@ export async function sendViaRouter(
       success: false,
       error: {
         class: 'AUTH_FAILURE',
-        message: 'OpenAI: no API key — paste one in Settings (sk-... or sk-proj-...)',
+        message: 'Claude: no API key — paste one in Settings (sk-ant-...)',
         provider: ACTIVE_PROVIDER.id,
         retryable: false,
       },
@@ -77,4 +77,4 @@ export async function testProviderKey(apiKey: string): Promise<void> {
   await ACTIVE_PROVIDER.test(apiKey)
 }
 
-export { openaiProvider }
+export { claudeProvider }
