@@ -79,7 +79,7 @@ interface CorpusEntry {
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const RUNTIME_PROVIDER: ProviderId = 'openrouter'
-const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(['google/gemma-4-27b-it:free', 'google/gemma-4-9b-it:free', 'meta-llama/llama-3.3-70b-instruct:free', 'meta-llama/llama-3.1-405b-instruct:free', 'nousresearch/hermes-3-llama-3.1-405b:free', 'deepseek/deepseek-r1:free', 'mistralai/mistral-large:free'])
+const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(['deepseek/deepseek-v4-flash:free', 'google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free', 'qwen/qwen3-coder:free', 'meta-llama/llama-3.3-70b-instruct:free', 'nousresearch/hermes-3-llama-3.1-405b:free', 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', 'openai/gpt-oss-120b:free', 'qwen/qwen3-next-80b-a3b-instruct:free'])
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -344,7 +344,7 @@ function App() {
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
   const [activeModel, setActiveModel] = useState<string>(() => {
     const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
-    return savedModel && OPENROUTER_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'google/gemma-4-27b-it:free'
+    return savedModel && OPENROUTER_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'deepseek/deepseek-v4-flash:free'
   })
   const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openrouter_key') || safeGetItem('fm_api_key') || '')
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
