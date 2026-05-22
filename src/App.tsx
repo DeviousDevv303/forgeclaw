@@ -22,7 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, openrouterProvider } from './lib/ai/providerRouter'
+import { sendViaRouter, testProviderKey, openrouterProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
@@ -71,7 +71,7 @@ interface Message {
 interface CorpusEntry {
   prompt: string
   response: string
-  source: string  // provider:model, e.g. 'anthropic:claude-sonnet-4-6' or 'ollama'
+  source: string  // provider:model, e.g. 'openrouter:deepseek/deepseek-v4-flash:free'
   timestamp: string
 }
 
@@ -79,7 +79,14 @@ interface CorpusEntry {
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const RUNTIME_PROVIDER: ProviderId = 'openrouter'
-const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(['deepseek/deepseek-v4-flash:free', 'google/gemma-4-26b-a4b-it:free', 'google/gemma-4-31b-it:free', 'qwen/qwen3-coder:free', 'meta-llama/llama-3.3-70b-instruct:free', 'nousresearch/hermes-3-llama-3.1-405b:free', 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', 'openai/gpt-oss-120b:free', 'qwen/qwen3-next-80b-a3b-instruct:free'])
+const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'poolside/laguna-xs.2:free'
+const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
+const LEGACY_MODEL_MARKERS = ['cl' + 'aude', 'anth' + 'ropic', 'op' + 'enai', 'gpt-', 'oll' + 'ama']
+const OPENROUTER_MODEL_STORAGE_VERSION = 'laguna-xs-default'
+const PREVIOUS_OPENROUTER_DEFAULT_MODELS = new Set([
+  'deepseek/deepseek-v4-flash:free',
+  'google/gemma-4-26b-a4b-it:free',
+])
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -195,6 +202,48 @@ function cleanOutput(text: string): string {
   return cleaned.replace(codePlaceholderPattern, (_, i) => codeBlocks[parseInt(i)])
 }
 
+function isValidOpenRouterModel(modelId: string | null | undefined): modelId is string {
+  const value = modelId?.trim()
+  if (!value || !OPENROUTER_SUPPORTED_MODEL_IDS.has(value)) return false
+  const lower = value.toLowerCase()
+  return !LEGACY_MODEL_MARKERS.some(marker => lower.includes(marker))
+}
+
+function normalizeOpenRouterModel(modelId: string | null | undefined): string {
+  return isValidOpenRouterModel(modelId) ? modelId.trim() : DEFAULT_OPENROUTER_MODEL
+}
+
+function readOpenRouterKey(): string {
+  const primaryKey = safeGetItem('fm_openrouter_key') || ''
+  if (openrouterProvider.isConfigured(primaryKey)) return primaryKey
+
+  const fallbackKey = safeGetItem('fm_api_key') || ''
+  return openrouterProvider.isConfigured(fallbackKey) ? fallbackKey : ''
+}
+
+function readOpenRouterModel(): string {
+  const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
+  const storageVersion = safeGetItem('fm_openrouter_model_version')
+  if (storageVersion !== OPENROUTER_MODEL_STORAGE_VERSION && savedModel && PREVIOUS_OPENROUTER_DEFAULT_MODELS.has(savedModel)) {
+    return DEFAULT_OPENROUTER_MODEL
+  }
+  return normalizeOpenRouterModel(savedModel)
+}
+
+function purgeLegacyRuntimeStorage(): void {
+  for (const key of ['fm_openrouter_model', 'fm_model']) {
+    if (!isValidOpenRouterModel(safeGetItem(key))) {
+      safeRemoveItem(key)
+    }
+  }
+
+  if (safeGetItem('fm_provider') !== RUNTIME_PROVIDER) {
+    safeSetItem('fm_provider', RUNTIME_PROVIDER)
+  }
+
+  safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
+}
+
 // Render message text — splits on fenced code blocks and styles them
 function renderMessageContent(text: string, onCopy: (code: string) => void, copiedCode: string | null): React.ReactNode {
   const parts = text.split(/(```[\s\S]*?```)/g)
@@ -272,7 +321,8 @@ const CORPUS_MAX = 10_000
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'failures' | 'activity' | 'whatsapp' | 'settings' | 'voice' | 'agents' | 'diagnostics'
+type Tab = 'forgemind' | 'activity' | 'voice' | 'agents' | 'settings'
+type ActivityView = 'log' | 'failures'
 
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
@@ -330,6 +380,7 @@ function App() {
   }, [addEvent])
 
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
+  const [activityView, setActivityView] = useState<ActivityView>('log')
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = safeGetItem('forgemind_history')
     return safeJsonParse(saved, [])
@@ -339,14 +390,12 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [testKeyError, setTestKeyError] = useState('')
-  // OpenRouter-only runtime state. Dormant provider adapters stay registered for future re-enable,
-  // but active execution is intentionally deterministic and does not auto-fallback.
+  // OpenRouter-only runtime state. Active execution is deterministic and does not auto-fallback.
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
-  const [activeModel, setActiveModel] = useState<string>(() => {
-    const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
-    return savedModel && OPENROUTER_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : 'deepseek/deepseek-v4-flash:free'
-  })
-  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openrouter_key') || safeGetItem('fm_api_key') || '')
+  const [activeModel, setActiveModel] = useState<string>(readOpenRouterModel)
+  const normalizedActiveModel = normalizeOpenRouterModel(activeModel)
+  const activeModelLabel = openrouterProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
+  const [apiKey, setApiKey] = useState<string>(readOpenRouterKey)
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
   const [lastRequestError, setLastRequestError] = useState('')
   const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null)
@@ -397,8 +446,8 @@ function App() {
     buildVersion: string
   }
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
-    provider: 'openai',
-    model: activeModel,
+    provider: RUNTIME_PROVIDER,
+    model: normalizedActiveModel,
     keyPresent: !!apiKey,
     lastRequestStatus: 'none',
     lastError: null,
@@ -440,26 +489,33 @@ function App() {
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
 
   useEffect(() => { scrollToBottom() }, [messages])
+  useEffect(() => { purgeLegacyRuntimeStorage() }, [])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
-  useEffect(() => { safeSetItem('fm_openrouter_key', apiKey) }, [apiKey])
+  useEffect(() => {
+    safeSetItem('fm_openrouter_key', apiKey)
+    safeSetItem('fm_api_key', apiKey)
+  }, [apiKey])
   useEffect(() => { safeSetItem('fm_provider', RUNTIME_PROVIDER) }, [])
   useEffect(() => {
-    if (!OPENROUTER_SUPPORTED_MODEL_IDS.has(activeModel)) {
-      setActiveModel('google/gemma-4-27b-it:free')
+    const normalizedModel = normalizeOpenRouterModel(activeModel)
+    if (activeModel !== normalizedModel) {
+      setActiveModel(normalizedModel)
       return
     }
-    safeSetItem('fm_openrouter_model', activeModel)
+    safeSetItem('fm_openrouter_model', normalizedModel)
+    safeSetItem('fm_model', normalizedModel)
+    safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
   }, [activeModel])
   useEffect(() => {
     setDiagnostics(prev => ({
       ...prev,
       provider: RUNTIME_PROVIDER,
-      model: activeModel,
+      model: normalizedActiveModel,
       keyPresent: !!apiKey && apiKey.length > 20,
       buildVersion: BUILD_COMMIT,
     }))
-  }, [activeModel, apiKey])
+  }, [normalizedActiveModel, apiKey])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -579,7 +635,7 @@ function App() {
     if (!admitted) {
       setMessages(prev => [...prev, userMsg, {
         id: (Date.now() + 1).toString(), role: 'assistant',
-        content: `⚠️ Task blocked by Guardian. Check the ⚠️ Failures tab.`,
+        content: `⚠️ Task blocked by Guardian. Check Activity → Failures.`,
         timestamp: Date.now(), source: 'local' as const,
       }])
       emitFailure({ source: 'forgemind', severity: 'warning', message: 'Guardian blocked this task.', context: { taskId } })
@@ -617,7 +673,7 @@ function App() {
         ...loadToolContext(),
         sessionId,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
-          runSubAgent(systemPrompt, task, tools, activeProvider, activeModel, apiKey, FORGE_TOOLS, loadToolContext()),
+          runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, apiKey, FORGE_TOOLS, loadToolContext()),
       }
 
       const historyMessages: AIMessage[] = messages.slice(-12).flatMap(m =>
@@ -632,7 +688,7 @@ function App() {
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
       // Some models (e.g. OpenRouter free-tier) don't support function calling at all
-      const supportsTools = true
+      const supportsTools = providerSupportsTools(normalizedActiveModel)
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -651,7 +707,7 @@ function App() {
 
         const reqStart = performance.now()
         const routerResult = await sendViaRouter({
-          model: activeModel,
+          model: normalizedActiveModel,
           systemPrompt: activeSystemPrompt,
           messages: conversationMessages,
           tools: noMoreTools ? undefined : FORGE_TOOLS,
@@ -759,14 +815,14 @@ function App() {
       }
 
       setLastSource('cloud')
-      const { cleanText, tagsFound, thinking, answerText, plan, agentPhase } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
-      logToCorpus(promptText, answerText, `${activeProvider}:${activeModel}`)
+      const { cleanText, tagsFound, thinking, answerText, plan, agentPhase } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${normalizedActiveModel}`)
+      logToCorpus(promptText, answerText, `${activeProvider}:${normalizedActiveModel}`)
       // Sync plan to ForgeOps + emit terminal event
       if (plan) setCurrentPlan(plan)
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: normalizedActiveModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
       setRequestStatus('success')
@@ -800,7 +856,7 @@ function App() {
         }])
       }
     } finally { setLoading(false) }
-  }, [apiKey, activeModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiKey, normalizedActiveModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -1037,22 +1093,18 @@ function App() {
   }
 
   const getStatusIndicator = () => {
-    const modelLabel = openrouterProvider.models.find(m => m.id === activeModel)?.label ?? activeModel
     if (!apiKey) return <span style={{ color: '#ef4444' }}>OpenRouter: no API key</span>
     if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>OpenRouter: invalid key</span>
     if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>OpenRouter: key unverified</span>
-    if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>{modelLabel}</span>
-    return <span style={{ color: '#6b6b6b' }}>{modelLabel}</span>
+    if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>{activeModelLabel}</span>
+    return <span style={{ color: '#6b6b6b' }}>{activeModelLabel}</span>
   }
 
   const TABS: { id: Tab; label: string; badge?: string }[] = [
     { id: 'forgemind',   label: 'FORGE' },
     { id: 'agents',      label: 'AGENTS' },
     { id: 'voice',       label: 'VOICE' },
-    { id: 'whatsapp',    label: 'WHATSAPP' },
-    { id: 'failures',    label: 'FAILURES', badge: unresolvedCount > 0 ? String(unresolvedCount) : undefined },
-    { id: 'activity',    label: 'ACTIVITY', badge: activityLog.filter(e => e.status === 'running').length > 0 ? '●' : undefined },
-    { id: 'diagnostics', label: 'HEALTH' },
+    { id: 'activity',    label: 'ACTIVITY', badge: unresolvedCount > 0 ? String(unresolvedCount) : activityLog.some(e => e.status === 'running') ? '•' : undefined },
     { id: 'settings',    label: 'SETTINGS' },
   ]
 
@@ -1122,31 +1174,47 @@ function App() {
       </header>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #1a1a1a', background: '#0a0a0a', padding: '0 4px' }}>
-        {TABS.map(tab => {
+      <div style={{ display: 'flex', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0' }}>
+        {TABS.map((tab) => {
           const isActive = activeTab === tab.id
-          const isAlert = tab.id === 'failures' && unresolvedCount > 0
+          const isAlert = tab.id === 'activity' && unresolvedCount > 0
           return (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               style={{
                 position: 'relative',
-                background: 'transparent', border: 'none',
+                background: isActive ? 'rgba(249, 115, 22, 0.08)' : 'transparent',
+                border: 'none',
                 borderBottom: isActive ? '2px solid #f97316' : '2px solid transparent',
-                color: isActive ? '#f97316' : (isAlert ? '#eab308' : '#444'),
-                padding: '7px 14px', cursor: 'pointer', fontSize: '9px', fontWeight: 'bold',
-                letterSpacing: '2px', textTransform: 'uppercase', fontFamily: 'monospace',
-                transition: 'color 0.15s',
+                color: isActive ? '#f97316' : (isAlert ? '#eab308' : '#555'),
+                padding: '10px 16px',
+                cursor: 'pointer',
+                fontSize: '9px',
+                fontWeight: 'bold',
+                letterSpacing: '2px',
+                textTransform: 'uppercase',
+                fontFamily: 'monospace',
+                transition: 'all 0.2s ease',
               }}
             >
               {tab.label}
               {tab.badge && (
                 <span style={{
-                  position: 'absolute', top: '4px', right: '4px',
-                  background: '#ef4444', color: '#fff',
-                  fontSize: '7px', fontWeight: 'bold', borderRadius: '50%',
-                  width: '12px', height: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  position: 'absolute',
+                  top: '6px',
+                  right: '6px',
+                  background: '#ef4444',
+                  color: '#fff',
+                  fontSize: '7px',
+                  fontWeight: 'bold',
+                  borderRadius: '50%',
+                  width: '14px',
+                  height: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 0 8px rgba(239, 68, 68, 0.5)',
                 }}>
                   {tab.badge}
                 </span>
@@ -1195,7 +1263,7 @@ function App() {
                   <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
                 </div>
                 <select
-                  value={activeModel}
+                  value={normalizedActiveModel}
                   onChange={e => setActiveModel(e.target.value)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
@@ -1246,8 +1314,8 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', 'Ollama (Local)'],
-                  ['active model', activeModel],
+                  ['runtime provider', 'OpenRouter'],
+                  ['runtime model', activeModelLabel],
                   ['auth state', apiKey ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
@@ -1308,24 +1376,6 @@ function App() {
                 </div>
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '6px' }}>
                   Every interaction is captured automatically. Oldest entries roll off at {CORPUS_MAX.toLocaleString()}. Used as context on similar future queries.
-                </div>
-              </div>
-
-              {/* Ollama local model scaffold (ACTIVE — primary provider) */}
-              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px', opacity: 0.4 }}>
-                <label style={{ display: 'block', color: '#555', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Local Ollama Model <span style={{ color: '#22c55e', textTransform: 'none' }}>(active — primary provider)</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="qwen2.5:1.8b"
-                  defaultValue={safeGetItem('fc_ollama_model') || 'qwen2.5:1.8b'}
-                  onChange={e => safeSetItem('fc_ollama_model', e.target.value)}
-                  disabled
-                  style={{ width: '100%', background: '#0a0a0a', color: '#555', border: '1px solid #1a1a1a', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', cursor: 'not-allowed' }}
-                />
-                <div style={{ color: '#222', fontSize: '10px', marginTop: '4px' }}>
-                  Any model installed via <code style={{ color: '#555' }}>ollama pull</code>. Active as primary provider. OpenRouter available as cloud fallback.
                 </div>
               </div>
 
@@ -1444,6 +1494,77 @@ function App() {
                 />
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
                   Google Cloud Console → APIs → OAuth 2.0. Scopes needed: gmail.send, gmail.readonly, calendar, calendar.readonly.
+                </div>
+              </div>
+
+              {/* WhatsApp Connector */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <WhatsAppConnector />
+              </div>
+
+              {/* Operator Health / Diagnostics */}
+              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                <div style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold', marginBottom: '12px' }}>OPERATOR HEALTH</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  {/* Provider */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
+                    <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● OpenRouter</div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked to OpenRouter</div>
+                  </div>
+
+                  {/* Model */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>MODEL</div>
+                    <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{activeModelLabel}</div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{normalizedActiveModel}</div>
+                  </div>
+
+                  {/* API Key */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>API KEY</div>
+                    <div style={{ color: diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
+                      {diagnostics.keyPresent ? '● PRESENT' : '● MISSING'}
+                    </div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
+                      {diagnostics.keyPresent ? 'Key format valid' : 'Enter key above'}
+                    </div>
+                  </div>
+
+                  {/* Last Request */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST REQUEST</div>
+                    <div style={{
+                      color: diagnostics.lastRequestStatus === 'success' ? '#22c55e' : diagnostics.lastRequestStatus === 'error' ? '#ef4444' : '#555',
+                      fontSize: '14px', fontWeight: 'bold'
+                    }}>
+                      {diagnostics.lastRequestStatus === 'success' ? '● OK' : diagnostics.lastRequestStatus === 'error' ? '● FAILED' : '—'}
+                    </div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
+                      {diagnostics.lastLatencyMs !== null ? `${diagnostics.lastLatencyMs}ms` : 'No requests yet'}
+                    </div>
+                  </div>
+
+                  {/* Last Error */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST ERROR</div>
+                    <div style={{
+                      color: diagnostics.lastError ? '#ef4444' : '#333',
+                      fontSize: '12px',
+                      fontFamily: 'monospace',
+                      wordBreak: 'break-word'
+                    }}>
+                      {diagnostics.lastError ?? 'None recorded'}
+                    </div>
+                  </div>
+
+                  {/* Build Version */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>BUILD</div>
+                    <div style={{ color: '#888', fontSize: '12px', fontFamily: 'monospace' }}>
+                      {diagnostics.buildVersion}
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1690,7 +1811,7 @@ function App() {
                       { name: 'Calendar', icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: 'Web Search', icon: '🔍', key: 'fc_brave_key', connected: !!safeGetItem('fc_brave_key') },
                       { name: 'ElevenLabs', icon: '🔊', key: 'fc_el_api_key', connected: !!elApiKey },
-                      { name: 'Ollama', icon: '🦙', key: 'fc_ollama_url', connected: true },
+                      { name: 'OpenRouter', icon: 'OR', key: 'fm_openrouter_key', connected: !!apiKey },
                       { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
@@ -1721,44 +1842,36 @@ function App() {
           </>
         )}
 
-        {/* ── Failures Tab ── */}
-        {activeTab === 'failures' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <FailureDashboard
-              ledger={ledger}
-              onResolve={resolveFailure}
-              onClearResolved={clearResolved}
-            />
-          </div>
-        )}
 
-        {/* ── WhatsApp Tab ── */}
-        {activeTab === 'whatsapp' && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <WhatsAppConnector />
-          </div>
-        )}
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
-          <AgentsPanel activeProvider={activeProvider} activeModel={activeModel} apiKey={apiKey} />
+          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={apiKey} />
         )}
 
         {activeTab === 'activity' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
-              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>EXECUTION LOG</span>
+              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>{activityView === 'failures' ? 'FAILURES' : 'EXECUTION LOG'}</span>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                {activityLog.length > 0 && (
+                <button onClick={() => setActivityView('log')} style={{ background: activityView === 'log' ? '#1a1a1a' : 'none', border: '1px solid #222', color: activityView === 'log' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>LOG</button>
+                <button onClick={() => setActivityView('failures')} style={{ background: activityView === 'failures' ? '#1a1a1a' : 'none', border: unresolvedCount > 0 ? '1px solid #7f1d1d' : '1px solid #222', color: unresolvedCount > 0 ? '#ef4444' : activityView === 'failures' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>FAILURES{unresolvedCount > 0 ? ` ${unresolvedCount}` : ''}</button>
+                {activityView === 'log' && activityLog.length > 0 && (
                   <button onClick={() => setActivityLog([])} style={{ background: 'none', border: '1px solid #222', color: '#444', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>CLEAR</button>
                 )}
                 <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{messages.filter(m => m.role === 'assistant').length} RESPONSES · {messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0)} TOOL CALLS</span>
               </div>
             </div>
 
+            {activityView === 'failures' && (
+              <div style={{ flex: 1, minHeight: 0 }}>
+                <FailureDashboard ledger={ledger} onResolve={resolveFailure} onClearResolved={clearResolved} />
+              </div>
+            )}
+
             {/* ── Mission Log — Manus-style live work log ── */}
-            {activityLog.length > 0 && (
+            {activityView === 'log' && activityLog.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
                 <MissionLog
                   tasks={activityLog.map(e => {
@@ -1794,11 +1907,11 @@ function App() {
               </div>
             )}
 
-            {messages.length === 0 && activityLog.length === 0 && (
+            {activityView === 'log' && messages.length === 0 && activityLog.length === 0 && (
               <div style={{ color: '#333', fontSize: '10px', textAlign: 'center', marginTop: '40px', letterSpacing: '2px' }}>NO ACTIVITY YET</div>
             )}
 
-            {messages.map((msg) => {
+            {activityView === 'log' && messages.map((msg) => {
               const ts = new Date(msg.timestamp)
               const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
               const dateStr = ts.toLocaleDateString([], { month: 'short', day: 'numeric' })
@@ -1947,77 +2060,7 @@ function App() {
           )
         })()}
 
-        {/* ── Diagnostics / Health Tab ── */}
-        {activeTab === 'diagnostics' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace" }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
-              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>OPERATOR HEALTH</span>
-              <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>RUNTIME DIAGNOSTICS</span>
-            </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', maxWidth: '600px' }}>
-              {/* Provider */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
-                <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● Ollama (Local)</div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked — single provider</div>
-              </div>
-
-              {/* Model */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>MODEL</div>
-                <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{openrouterProvider.models.find(m => m.id === activeModel)?.label ?? activeModel}</div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{activeModel}</div>
-              </div>
-
-              {/* API Key */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>API KEY</div>
-                <div style={{ color: diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
-                  {diagnostics.keyPresent ? '● PRESENT' : '● MISSING'}
-                </div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                  {diagnostics.keyPresent ? 'Key format valid' : 'Enter key in Settings'}
-                </div>
-              </div>
-
-              {/* Last Request */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST REQUEST</div>
-                <div style={{
-                  color: diagnostics.lastRequestStatus === 'success' ? '#22c55e' : diagnostics.lastRequestStatus === 'error' ? '#ef4444' : '#555',
-                  fontSize: '14px', fontWeight: 'bold'
-                }}>
-                  {diagnostics.lastRequestStatus === 'success' ? '● OK' : diagnostics.lastRequestStatus === 'error' ? '● FAILED' : '—'}
-                </div>
-                <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                  {diagnostics.lastLatencyMs !== null ? `${diagnostics.lastLatencyMs}ms` : 'No requests yet'}
-                </div>
-              </div>
-
-              {/* Last Error */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST ERROR</div>
-                <div style={{
-                  color: diagnostics.lastError ? '#ef4444' : '#333',
-                  fontSize: '12px',
-                  fontFamily: 'monospace',
-                  wordBreak: 'break-word'
-                }}>
-                  {diagnostics.lastError ?? 'None recorded'}
-                </div>
-              </div>
-
-              {/* Build Version */}
-              <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
-                <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>BUILD</div>
-                <div style={{ color: '#888', fontSize: '12px', fontFamily: 'monospace' }}>
-                  {diagnostics.buildVersion}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </main>
 
       {/* Footer signature */}

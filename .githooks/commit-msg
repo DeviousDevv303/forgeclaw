@@ -1,0 +1,57 @@
+#!/usr/bin/env sh
+set -eu
+
+msg_file="$1"
+subject="$(sed -n '1p' "$msg_file")"
+
+fail() {
+  printf '%s\n' "Commit rejected: $1" >&2
+  printf '%s\n' "Use the repo commit template and include WHY, FILES, VALIDATION, Contract, and Co-authored-by lines." >&2
+  exit 1
+}
+
+case "$subject" in
+  merge*|Merge*|revert*|Revert*) exit 0 ;;
+esac
+
+printf '%s\n' "$subject" | grep -Eq '^(feat|fix|docs|chore|refactor|test|build|ci|perf|style)\([a-z0-9._-]+\): .{8,}$' \
+  || fail "subject must be '<type>(<scope>): <subject>' with a real scope and subject."
+
+grep -Eq '^WHY:' "$msg_file" || fail "missing WHY section."
+grep -Eq '^FILES:' "$msg_file" || fail "missing FILES section."
+grep -Eq '^VALIDATION:' "$msg_file" || fail "missing VALIDATION section."
+grep -Eq '^Contract: v1\.1, override by Cristian$' "$msg_file" || fail "missing contract line."
+grep -Eq '^Co-authored-by: Cristian <towerslutz@gmail\.com>$' "$msg_file" || fail "missing Cristian co-author line."
+
+provider_router="src/lib/ai/providerRouter.ts"
+app_file="src/App.tsx"
+
+if git diff --cached --name-only -- "$provider_router" | grep -q .; then
+  grep -Eq "ACTIVE_PROVIDER = openrouterProvider" "$provider_router" \
+    || fail "providerRouter must keep ACTIVE_PROVIDER on openrouterProvider."
+  grep -Eq "import \{ openrouterProvider \}" "$provider_router" \
+    || fail "providerRouter must import openrouterProvider directly."
+fi
+
+if git diff --cached --name-only -- "$app_file" | grep -q .; then
+  grep -Eq "RUNTIME_PROVIDER: ProviderId = 'openrouter'" "$app_file" \
+    || fail "App.tsx must keep RUNTIME_PROVIDER set to openrouter."
+fi
+
+added_lines="$(git diff --cached -U0 -- ':(exclude).githooks/commit-msg' | grep -E '^\+[^+]' || true)"
+
+bad_a="cl""aude"
+bad_b="anth""ropic"
+bad_c="Open""AI"
+bad_d="open""ai"
+bad_e="Oll""ama"
+bad_f="oll""ama"
+bad_g="sk-""ant"
+
+for blocked in "$bad_a" "$bad_b" "$bad_c" "$bad_d" "$bad_e" "$bad_f" "$bad_g"; do
+  if printf '%s\n' "$added_lines" | grep -Fq "$blocked"; then
+    fail "staged diff adds blocked legacy provider text: $blocked"
+  fi
+done
+
+exit 0

@@ -99,7 +99,7 @@ export function useWarRoom({
           const parsed = JSON.parse(atob(file.content.replace(/\n/g, ''))) as unknown
           const baseName = entry.name.slice(0, -5) // strip .json
 
-          if (/^(kimiclaw|claude)-\d+$/.test(baseName)) {
+          if (/^(kimiclaw|openrouter)-\d+$/.test(baseName)) {
             const snap = parsed as AgentSnapshot
             const prev = latestByAgent.current.get(snap.agentId)
             if (!prev || snap.timestamp > prev.timestamp) {

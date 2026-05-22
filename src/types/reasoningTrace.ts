@@ -16,7 +16,7 @@ export type ReasoningPhase = typeof ReasoningPhase[keyof typeof ReasoningPhase]
 export interface ReasoningTrace {
   traceId: string
   timestamp: string              // ISO 8601 ms precision
-  agent: string                  // 'Claude' | 'KimiClaw' | 'Guardian' | etc.
+  agent: string                  // 'ForgeClaw' | 'KimiClaw' | 'Guardian' | etc.
   status: 'thinking' | 'done' | 'error' | 'blocked'
 
   thought: string                // Raw natural language — no phase labels, no headers

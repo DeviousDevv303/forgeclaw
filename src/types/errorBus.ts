@@ -9,9 +9,9 @@ export type FailureSeverity = 'info' | 'warning' | 'error' | 'critical'
 // info: contextual logging, state transitions, audit trails
 
 export type FailureSource =
-  | 'forgemind' | 'repoagent' | 'ollama' | 'claude' | 'github'
+  | 'forgemind' | 'repoagent' | 'github'
   | 'orchestrator'  // authority layer telemetry
-  | 'openai' | 'deepseek' | 'mistral' | 'groq' | 'anthropic' | 'kimi' | 'kimi_code' | 'openrouter'  // pluggable LLM providers
+  | 'openrouter'
 
 export interface FailureEvent {
   id: string

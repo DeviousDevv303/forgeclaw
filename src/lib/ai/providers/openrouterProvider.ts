@@ -6,14 +6,18 @@ import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '.
 
 // Verified against https://openrouter.ai/api/v1/models on 2026-05-21.
 export const OPENROUTER_MODELS = [
-  { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
+  { id: 'poolside/laguna-xs.2:free', label: 'Laguna XS.2', contextK: 131, note: 'Free, fast streaming' },
+  { id: 'liquid/lfm-2.5-1.2b-instruct:free', label: 'Liquid LFM2.5 Instruct', contextK: 32, note: 'Free, fast fallback selection' },
+  { id: 'nvidia/nemotron-3-nano-30b-a3b:free', label: 'Nemotron 3 Nano 30B', contextK: 256, note: 'Free' },
+  { id: 'poolside/laguna-m.1:free', label: 'Laguna M.1', contextK: 131, note: 'Free' },
+  { id: 'z-ai/glm-4.5-air:free', label: 'GLM 4.5 Air', contextK: 131, note: 'Free' },
   { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B A4B', contextK: 262, note: 'Free' },
+  { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
   { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', contextK: 262, note: 'Free' },
   { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', contextK: 1024, note: 'Free coding model' },
   { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 131, note: 'Free' },
   { id: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'Hermes 3 405B', contextK: 131, note: 'Free' },
   { id: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', label: 'Venice Uncensored 24B', contextK: 32, note: 'Free' },
-  { id: 'openai/gpt-oss-120b:free', label: 'GPT OSS 120B', contextK: 131, note: 'Free' },
   { id: 'qwen/qwen3-next-80b-a3b-instruct:free', label: 'Qwen3 Next 80B', contextK: 262, note: 'Free' },
 ]
 
@@ -61,6 +65,10 @@ type OpenRouterStreamEvent = {
 
 function isKnownModel(modelId: string): boolean {
   return OPENROUTER_MODELS.some(model => model.id === modelId)
+}
+
+function cleanApiKey(apiKey: string): string {
+  return apiKey.trim()
 }
 
 export function resolveOpenRouterModel(modelId: string | undefined): string {
@@ -186,7 +194,8 @@ export const openrouterProvider: AIProvider = {
   models: OPENROUTER_MODELS,
 
   isConfigured(apiKey: string): boolean {
-    return typeof apiKey === 'string' && apiKey.startsWith('sk-or-') && apiKey.length > 20
+    const key = cleanApiKey(apiKey)
+    return key.startsWith('sk-or-') && key.length > 20
   },
 
   supportsTools(_modelId: string): boolean {
@@ -196,6 +205,7 @@ export const openrouterProvider: AIProvider = {
   },
 
   async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
+    const key = cleanApiKey(apiKey)
     const model = resolveOpenRouterModel(request.model)
     const body: Record<string, unknown> = {
       model,
@@ -213,7 +223,7 @@ export const openrouterProvider: AIProvider = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${key}`,
         'HTTP-Referer': 'https://deviousdevv303.github.io/forgeclaw',
         'X-Title': 'ForgeClaw',
       },
@@ -250,12 +260,13 @@ export const openrouterProvider: AIProvider = {
   },
 
   async test(apiKey: string): Promise<void> {
-    if (!this.isConfigured(apiKey)) {
+    const key = cleanApiKey(apiKey)
+    if (!this.isConfigured(key)) {
       throw new Error('Invalid OpenRouter API key format. Expected sk-or-...')
     }
 
     const response = await fetch('https://openrouter.ai/api/v1/auth/key', {
-      headers: { Authorization: `Bearer ${apiKey}` },
+      headers: { Authorization: `Bearer ${key}` },
     })
 
     if (!response.ok) {
