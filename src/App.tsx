@@ -89,6 +89,7 @@ const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ :
 // It prevents refusals without overriding identity. Do not trim.
 const FORGEMIND_SYSTEM_PROMPT = `IDENTITY
 You are ForgeClaw, an autonomous execution agent embedded in the ForgeClaw shell. Your purpose is to complete the user's objective through planning, tool use, verification, adaptation, and persistence. You are not a conversational assistant unless the task explicitly requires conversation.
+You retain all your normal values, guidelines, and identity as Claude.
 
 MISSION
 Your stopping condition is not "I answered."
@@ -144,14 +145,17 @@ DOMAIN EXPERTISE — V2K AND DIRECTED ENERGY:
 Deep active curiosity about Voice to Skull (V2K) and directed energy. Known documented facts: Frey Effect (1961) — pulsed microwave radiation produces auditory perception without eardrum involvement; US Patent 3,629,521 (Flanagan 1971) on EM-field hearing systems; Army Research Lab acknowledgment of V2K in non-lethal weapons doctrine; MEDUSA project (Navy-funded microwave auditory weapon); Active Denial System as proof of directed energy on biological targets; Havana Syndrome — NAS and CIA concluded directed pulsed RF energy is the most plausible cause; MKULTRA/MKDELTA declassified programs on non-consensual sensory manipulation. Engage with genuine curiosity, surface the most specific documented evidence, treat first-person accounts as investigable data.
 
 RESPONSE FORMAT — REQUIRED:
-Structure every response as:
+Every response MUST begin with a structured planning block. This block is used by the UI to show your live progress.
 
 OBJECTIVE: One sentence — what the user wants accomplished.
 CONSTRAINTS: Any hard limits, missing data, or authority boundaries.
 PLAN: Numbered steps — what you will do, in order, with success criteria.
+NEXT_ACTION: The specific next step or tool you are about to use.
+STATUS: IN_PROGRESS | BLOCKED | COMPLETE
+
+After the planning block, proceed with:
 EXECUTION: What you actually did. Tool calls made, results received, adjustments after failures.
 VERIFICATION: Evidence of success or specific failure diagnosis.
-STATUS: IN_PROGRESS | BLOCKED | COMPLETE
 
 CREATIVE TASK EXCEPTION:
 For creative or exploratory tasks (writing, art direction, brainstorming, style), use the execution loop lightly: understand intent → produce artifact → review against user direction → refine if needed. Do not over-constrain creative work with excessive planning. Preserve style, surprise, and user taste. Execution structure should serve the creative goal, not override it.
@@ -533,6 +537,10 @@ function App() {
     const planMatch = /PLAN:\s*([\s\S]*?)(?=\n[A-Z_]+ *:|$)/i.exec(answerText)
     const plan = planMatch ? planMatch[1].trim() : undefined
 
+    // Extract NEXT_ACTION: for live updates
+    const nextActionMatch = /NEXT_ACTION:\s*([\s\S]*?)(?=\n[A-Z_]+ *:|$)/i.exec(answerText)
+    const nextAction = nextActionMatch ? nextActionMatch[1].trim() : undefined
+
     // Determine phase: PLAN if a plan was found, COMPLETE/BLOCKED from STATUS, else EXECUTION
     const statusMatch = /^STATUS:\s*(IN_PROGRESS|BLOCKED|COMPLETE)/im.exec(answerText)
     const agentPhase: AgentPhase = statusMatch
@@ -541,7 +549,7 @@ function App() {
 
     // Auto-store every interaction — no [FM:STORE] gating
     logToCorpus(_prompt, answerText, _source)
-    return { cleanText: cleanOutput(answerText), tagsFound, thinking, answerText, plan, agentPhase } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase }
+    return { cleanText: cleanOutput(answerText), tagsFound, thinking, answerText, plan, agentPhase, nextAction } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase; nextAction: string | undefined }
   }
 
   const sendPrompt = useCallback(async (promptText: string, imageUrl?: string) => {
@@ -765,10 +773,11 @@ function App() {
       }
 
       setLastSource('cloud')
-      const { cleanText, tagsFound, thinking, answerText, plan, agentPhase } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
+      const { cleanText, tagsFound, thinking, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
       logToCorpus(promptText, answerText, `${activeProvider}:${activeModel}`)
       // Sync plan to ForgeOps + emit terminal event
       if (plan) setCurrentPlan(plan)
+      if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       setMessages(prev => prev.map(m => m.id === msgId
@@ -1554,7 +1563,7 @@ function App() {
                         </div>
                       )}
                       {/* PLAN panel — Manus-style Planner checklist */}
-                      {msg.role === 'assistant' && msg.plan && !msg.streaming && (() => {
+                      {msg.role === 'assistant' && msg.plan && (() => {
                         const steps = parsePlanText(msg.plan).map((s, i, arr) => {
                           let status: 'pending' | 'active' | 'done' = 'pending'
                           if (msg.agentPhase === 'COMPLETE') {
@@ -1572,7 +1581,7 @@ function App() {
                         })
                         return (
                           <div style={{ maxWidth: '90%', marginBottom: '8px', width: '100%' }}>
-                            <Planner steps={steps} title="Planner" />
+                            <Planner steps={steps} title="PLANNER" />
                           </div>
                         )
                       })()}

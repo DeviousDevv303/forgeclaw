@@ -31,40 +31,60 @@ export function Planner({ steps: rawSteps, title = 'Planner' }: PlannerProps) {
 
   return (
     <div style={{
-      border: '1px solid #1a1a1a',
-      borderRadius: '10px',
+      border: '1px solid #222',
+      borderRadius: '12px',
       overflow: 'hidden',
-      background: '#0a0a0a',
+      background: 'rgba(10, 10, 10, 0.95)',
       marginBottom: '16px',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
     }}>
       {/* Header */}
       <div style={{
-        padding: '10px 14px',
-        background: '#0d0d0d',
-        borderBottom: '1px solid #1a1a1a',
+        padding: '12px 16px',
+        background: 'rgba(20, 20, 20, 0.8)',
+        borderBottom: '1px solid #222',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '16px' }}>🎯</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ 
+            width: '20px', 
+            height: '20px', 
+            borderRadius: '50%', 
+            background: 'rgba(249, 115, 22, 0.15)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            border: '1px solid rgba(249, 115, 22, 0.3)'
+          }}>
+            <span style={{ fontSize: '11px' }}>🎯</span>
+          </div>
           <span style={{
-            color: '#ccc',
-            fontSize: '13px',
-            fontWeight: 600,
-            letterSpacing: '0.3px',
+            color: '#f97316',
+            fontSize: '11px',
+            fontWeight: 800,
+            letterSpacing: '1.5px',
+            textTransform: 'uppercase',
+            fontFamily: 'monospace',
           }}>
             {title}
           </span>
         </div>
-        <span style={{
-          color: '#555',
-          fontSize: '11px',
-          fontFamily: 'monospace',
-          letterSpacing: '1px',
-        }}>
-          {progressText}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{
+            color: '#555',
+            fontSize: '10px',
+            fontFamily: 'monospace',
+            letterSpacing: '1px',
+            background: '#111',
+            padding: '2px 6px',
+            borderRadius: '4px',
+            border: '1px solid #1a1a1a'
+          }}>
+            {progressText}
+          </span>
+        </div>
       </div>
 
       {/* Steps */}
@@ -97,8 +117,9 @@ export function Planner({ steps: rawSteps, title = 'Planner' }: PlannerProps) {
                   ? 'none'
                   : step.status === 'active'
                   ? '2px solid #f97316'
-                  : '2px solid #333',
+                  : '2px solid #222',
                 background: step.status === 'done' ? '#22c55e' : 'transparent',
+                boxShadow: step.status === 'active' ? '0 0 8px rgba(249, 115, 22, 0.4)' : 'none',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
