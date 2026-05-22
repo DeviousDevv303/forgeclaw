@@ -189,8 +189,10 @@ export const openrouterProvider: AIProvider = {
     return typeof apiKey === 'string' && apiKey.startsWith('sk-or-') && apiKey.length > 20
   },
 
-  supportsTools(modelId: string): boolean {
-    return !modelId.endsWith(':free')
+  supportsTools(_modelId: string): boolean {
+    // Free-tier models support tools on OpenRouter, but may rate-limit.
+    // We send tools for all models and handle 429s gracefully.
+    return true
   },
 
   async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
