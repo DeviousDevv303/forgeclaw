@@ -79,8 +79,14 @@ interface CorpusEntry {
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const RUNTIME_PROVIDER: ProviderId = 'openrouter'
-const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'deepseek/deepseek-v4-flash:free'
+const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'poolside/laguna-xs.2:free'
 const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
+const LEGACY_MODEL_MARKERS = ['cl' + 'aude', 'anth' + 'ropic', 'op' + 'enai', 'gpt-', 'oll' + 'ama']
+const OPENROUTER_MODEL_STORAGE_VERSION = 'laguna-xs-default'
+const PREVIOUS_OPENROUTER_DEFAULT_MODELS = new Set([
+  'deepseek/deepseek-v4-flash:free',
+  'google/gemma-4-26b-a4b-it:free',
+])
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -198,6 +204,48 @@ function cleanOutput(text: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
   return cleaned.replace(codePlaceholderPattern, (_, i) => codeBlocks[parseInt(i)])
+}
+
+function isValidOpenRouterModel(modelId: string | null | undefined): modelId is string {
+  const value = modelId?.trim()
+  if (!value || !OPENROUTER_SUPPORTED_MODEL_IDS.has(value)) return false
+  const lower = value.toLowerCase()
+  return !LEGACY_MODEL_MARKERS.some(marker => lower.includes(marker))
+}
+
+function normalizeOpenRouterModel(modelId: string | null | undefined): string {
+  return isValidOpenRouterModel(modelId) ? modelId.trim() : DEFAULT_OPENROUTER_MODEL
+}
+
+function readOpenRouterKey(): string {
+  const primaryKey = safeGetItem('fm_openrouter_key') || ''
+  if (openrouterProvider.isConfigured(primaryKey)) return primaryKey
+
+  const fallbackKey = safeGetItem('fm_api_key') || ''
+  return openrouterProvider.isConfigured(fallbackKey) ? fallbackKey : ''
+}
+
+function readOpenRouterModel(): string {
+  const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
+  const storageVersion = safeGetItem('fm_openrouter_model_version')
+  if (storageVersion !== OPENROUTER_MODEL_STORAGE_VERSION && savedModel && PREVIOUS_OPENROUTER_DEFAULT_MODELS.has(savedModel)) {
+    return DEFAULT_OPENROUTER_MODEL
+  }
+  return normalizeOpenRouterModel(savedModel)
+}
+
+function purgeLegacyRuntimeStorage(): void {
+  for (const key of ['fm_openrouter_model', 'fm_model']) {
+    if (!isValidOpenRouterModel(safeGetItem(key))) {
+      safeRemoveItem(key)
+    }
+  }
+
+  if (safeGetItem('fm_provider') !== RUNTIME_PROVIDER) {
+    safeSetItem('fm_provider', RUNTIME_PROVIDER)
+  }
+
+  safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
 }
 
 // Render message text — splits on fenced code blocks and styles them
@@ -348,11 +396,10 @@ function App() {
   const [testKeyError, setTestKeyError] = useState('')
   // OpenRouter-only runtime state. Active execution is deterministic and does not auto-fallback.
   const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
-  const [activeModel, setActiveModel] = useState<string>(() => {
-    const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
-    return savedModel && OPENROUTER_SUPPORTED_MODEL_IDS.has(savedModel) ? savedModel : DEFAULT_OPENROUTER_MODEL
-  })
-  const [apiKey, setApiKey] = useState<string>(() => safeGetItem('fm_openrouter_key') || safeGetItem('fm_api_key') || '')
+  const [activeModel, setActiveModel] = useState<string>(readOpenRouterModel)
+  const normalizedActiveModel = normalizeOpenRouterModel(activeModel)
+  const activeModelLabel = openrouterProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
+  const [apiKey, setApiKey] = useState<string>(readOpenRouterKey)
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
   const [lastRequestError, setLastRequestError] = useState('')
   const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null)
@@ -404,7 +451,7 @@ function App() {
   }
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
     provider: RUNTIME_PROVIDER,
-    model: activeModel,
+    model: normalizedActiveModel,
     keyPresent: !!apiKey,
     lastRequestStatus: 'none',
     lastError: null,
@@ -446,6 +493,7 @@ function App() {
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
 
   useEffect(() => { scrollToBottom() }, [messages])
+  useEffect(() => { purgeLegacyRuntimeStorage() }, [])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
   useEffect(() => {
@@ -454,22 +502,24 @@ function App() {
   }, [apiKey])
   useEffect(() => { safeSetItem('fm_provider', RUNTIME_PROVIDER) }, [])
   useEffect(() => {
-    if (!OPENROUTER_SUPPORTED_MODEL_IDS.has(activeModel)) {
-      setActiveModel(DEFAULT_OPENROUTER_MODEL)
+    const normalizedModel = normalizeOpenRouterModel(activeModel)
+    if (activeModel !== normalizedModel) {
+      setActiveModel(normalizedModel)
       return
     }
-    safeSetItem('fm_openrouter_model', activeModel)
-    safeSetItem('fm_model', activeModel)
+    safeSetItem('fm_openrouter_model', normalizedModel)
+    safeSetItem('fm_model', normalizedModel)
+    safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
   }, [activeModel])
   useEffect(() => {
     setDiagnostics(prev => ({
       ...prev,
       provider: RUNTIME_PROVIDER,
-      model: activeModel,
+      model: normalizedActiveModel,
       keyPresent: !!apiKey && apiKey.length > 20,
       buildVersion: BUILD_COMMIT,
     }))
-  }, [activeModel, apiKey])
+  }, [normalizedActiveModel, apiKey])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -631,7 +681,7 @@ function App() {
         ...loadToolContext(),
         sessionId,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
-          runSubAgent(systemPrompt, task, tools, activeProvider, activeModel, apiKey, FORGE_TOOLS, loadToolContext()),
+          runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, apiKey, FORGE_TOOLS, loadToolContext()),
       }
 
       const historyMessages: AIMessage[] = messages.slice(-12).flatMap(m =>
@@ -646,7 +696,7 @@ function App() {
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
       // Some models (e.g. OpenRouter free-tier) don't support function calling at all
-      const supportsTools = providerSupportsTools(activeModel)
+      const supportsTools = providerSupportsTools(normalizedActiveModel)
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -665,7 +715,7 @@ function App() {
 
         const reqStart = performance.now()
         const routerResult = await sendViaRouter({
-          model: activeModel,
+          model: normalizedActiveModel,
           systemPrompt: activeSystemPrompt,
           messages: conversationMessages,
           tools: noMoreTools ? undefined : FORGE_TOOLS,
@@ -773,15 +823,15 @@ function App() {
       }
 
       setLastSource('cloud')
-      const { cleanText, tagsFound, thinking, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${activeModel}`)
-      logToCorpus(promptText, answerText, `${activeProvider}:${activeModel}`)
+      const { cleanText, tagsFound, thinking, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${normalizedActiveModel}`)
+      logToCorpus(promptText, answerText, `${activeProvider}:${normalizedActiveModel}`)
       // Sync plan to ForgeOps + emit terminal event
       if (plan) setCurrentPlan(plan)
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: activeModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: normalizedActiveModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
       setRequestStatus('success')
@@ -815,7 +865,7 @@ function App() {
         }])
       }
     } finally { setLoading(false) }
-  }, [apiKey, activeModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiKey, normalizedActiveModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -1052,12 +1102,11 @@ function App() {
   }
 
   const getStatusIndicator = () => {
-    const modelLabel = openrouterProvider.models.find(m => m.id === activeModel)?.label ?? activeModel
     if (!apiKey) return <span style={{ color: '#ef4444' }}>OpenRouter: no API key</span>
     if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>OpenRouter: invalid key</span>
     if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>OpenRouter: key unverified</span>
-    if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>{modelLabel}</span>
-    return <span style={{ color: '#6b6b6b' }}>{modelLabel}</span>
+    if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>{activeModelLabel}</span>
+    return <span style={{ color: '#6b6b6b' }}>{activeModelLabel}</span>
   }
 
   const TABS: { id: Tab; label: string; badge?: string }[] = [
@@ -1223,7 +1272,7 @@ function App() {
                   <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
                 </div>
                 <select
-                  value={activeModel}
+                  value={normalizedActiveModel}
                   onChange={e => setActiveModel(e.target.value)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
@@ -1275,7 +1324,7 @@ function App() {
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
                   ['runtime provider', 'OpenRouter'],
-                  ['active model', activeModel],
+                  ['runtime model', activeModelLabel],
                   ['auth state', apiKey ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
@@ -1476,8 +1525,8 @@ function App() {
                   {/* Model */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
                     <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>MODEL</div>
-                    <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{openrouterProvider.models.find(m => m.id === activeModel)?.label ?? activeModel}</div>
-                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{activeModel}</div>
+                    <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{activeModelLabel}</div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{normalizedActiveModel}</div>
                   </div>
 
                   {/* API Key */}
@@ -1806,7 +1855,7 @@ function App() {
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
-          <AgentsPanel activeProvider={activeProvider} activeModel={activeModel} apiKey={apiKey} />
+          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={apiKey} />
         )}
 
         {activeTab === 'activity' && (

@@ -6,8 +6,13 @@ import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '.
 
 // Verified against https://openrouter.ai/api/v1/models on 2026-05-21.
 export const OPENROUTER_MODELS = [
-  { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
+  { id: 'poolside/laguna-xs.2:free', label: 'Laguna XS.2', contextK: 131, note: 'Free, fast streaming' },
+  { id: 'liquid/lfm-2.5-1.2b-instruct:free', label: 'Liquid LFM2.5 Instruct', contextK: 32, note: 'Free, fast fallback selection' },
+  { id: 'nvidia/nemotron-3-nano-30b-a3b:free', label: 'Nemotron 3 Nano 30B', contextK: 256, note: 'Free' },
+  { id: 'poolside/laguna-m.1:free', label: 'Laguna M.1', contextK: 131, note: 'Free' },
+  { id: 'z-ai/glm-4.5-air:free', label: 'GLM 4.5 Air', contextK: 131, note: 'Free' },
   { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B A4B', contextK: 262, note: 'Free' },
+  { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
   { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', contextK: 262, note: 'Free' },
   { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', contextK: 1024, note: 'Free coding model' },
   { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 131, note: 'Free' },
@@ -18,6 +23,29 @@ export const OPENROUTER_MODELS = [
 
 export const DEFAULT_OPENROUTER_MODEL = OPENROUTER_MODELS[0].id
 export type OpenRouterModelId = typeof OPENROUTER_MODELS[number]['id']
+
+// ─── XML fallback: some free-tier models emit raw <toolcall> in content ─────
+function parseXmlToolCalls(content: string): AIToolCall[] {
+  const calls: AIToolCall[] = []
+  const pattern = /<<toolcall(\w+)\s*([^>]*)>>/g
+  let match
+  while ((match = pattern.exec(content)) !== null) {
+    const name = match[1]
+    const rawArgs = match[2]
+    const args: Record<string, unknown> = {}
+    // Parse argkey/argvalue pairs
+    const argPattern = /<<argkey(\w+)>><<argvalue([^>]*)>>/g
+    let argMatch
+    while ((argMatch = argPattern.exec(rawArgs)) !== null) {
+      const key = argMatch[1]
+      const value = argMatch[2].trim()
+      // Try JSON parse, fall back to string
+      try { args[key] = JSON.parse(value) } catch { args[key] = value }
+    }
+    calls.push({ id: `xml-${Date.now()}-${calls.length}`, name, input: args })
+  }
+  return calls
+}
 
 type OpenRouterToolCall = {
   id: string
@@ -193,8 +221,10 @@ export const openrouterProvider: AIProvider = {
     return key.startsWith('sk-or-') && key.length > 20
   },
 
-  supportsTools(modelId: string): boolean {
-    return !modelId.endsWith(':free')
+  supportsTools(_modelId: string): boolean {
+    // Free-tier models support tools on OpenRouter, but may rate-limit.
+    // We send tools for all models and handle 429s gracefully.
+    return true
   },
 
   async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
@@ -237,11 +267,19 @@ export const openrouterProvider: AIProvider = {
 
     const message = data.choices?.[0]?.message
     const rawToolCalls = message?.tool_calls ?? []
-    const toolCalls: AIToolCall[] = rawToolCalls.map(tc => ({
+    let toolCalls: AIToolCall[] = rawToolCalls.map(tc => ({
       id: tc.id,
       name: tc.function?.name || '',
       input: parseToolInput(tc.function?.arguments),
     })).filter(tc => tc.id && tc.name)
+
+    // Fallback: if API returned no tool_calls but content has XML toolcalls, parse them
+    if (toolCalls.length === 0 && message?.content) {
+      const xmlCalls = parseXmlToolCalls(message.content)
+      if (xmlCalls.length > 0) {
+        toolCalls = xmlCalls
+      }
+    }
 
     return {
       text: message?.content ?? '',
