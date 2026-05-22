@@ -24,6 +24,29 @@ export const OPENROUTER_MODELS = [
 export const DEFAULT_OPENROUTER_MODEL = OPENROUTER_MODELS[0].id
 export type OpenRouterModelId = typeof OPENROUTER_MODELS[number]['id']
 
+// ─── XML fallback: some free-tier models emit raw <toolcall> in content ─────
+function parseXmlToolCalls(content: string): AIToolCall[] {
+  const calls: AIToolCall[] = []
+  const pattern = /<<toolcall(\w+)\s*([^>]*)>>/g
+  let match
+  while ((match = pattern.exec(content)) !== null) {
+    const name = match[1]
+    const rawArgs = match[2]
+    const args: Record<string, unknown> = {}
+    // Parse argkey/argvalue pairs
+    const argPattern = /<<argkey(\w+)>><<argvalue([^>]*)>>/g
+    let argMatch
+    while ((argMatch = argPattern.exec(rawArgs)) !== null) {
+      const key = argMatch[1]
+      const value = argMatch[2].trim()
+      // Try JSON parse, fall back to string
+      try { args[key] = JSON.parse(value) } catch { args[key] = value }
+    }
+    calls.push({ id: `xml-${Date.now()}-${calls.length}`, name, input: args })
+  }
+  return calls
+}
+
 type OpenRouterToolCall = {
   id: string
   type?: 'function'
@@ -244,11 +267,19 @@ export const openrouterProvider: AIProvider = {
 
     const message = data.choices?.[0]?.message
     const rawToolCalls = message?.tool_calls ?? []
-    const toolCalls: AIToolCall[] = rawToolCalls.map(tc => ({
+    let toolCalls: AIToolCall[] = rawToolCalls.map(tc => ({
       id: tc.id,
       name: tc.function?.name || '',
       input: parseToolInput(tc.function?.arguments),
     })).filter(tc => tc.id && tc.name)
+
+    // Fallback: if API returned no tool_calls but content has XML toolcalls, parse them
+    if (toolCalls.length === 0 && message?.content) {
+      const xmlCalls = parseXmlToolCalls(message.content)
+      if (xmlCalls.length > 0) {
+        toolCalls = xmlCalls
+      }
+    }
 
     return {
       text: message?.content ?? '',
