@@ -684,7 +684,7 @@ function App() {
           runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, apiKey, FORGE_TOOLS, loadToolContext()),
       }
 
-      const historyMessages: AIMessage[] = messages.slice(-12).flatMap(m =>
+      const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
         m.role === 'user' || m.role === 'assistant'
           ? [{ role: m.role, content: m.content }]
           : []

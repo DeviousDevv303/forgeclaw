@@ -6,10 +6,10 @@ import type { ProviderId } from '../modelProviders'
 import { classifyProviderError } from './providerStatus'
 import type { ProviderStatus } from './providerStatus'
 
-// Passive ping every 5 minutes. If the user had a successful response within
+// Passive ping every 15 minutes. If the user had a successful response within
 // GRACE_MS we skip the network call — ForgeMind's own calls are the heartbeat.
-export const HEARTBEAT_INTERVAL_MS = 5 * 60_000
-export const ONLINE_GRACE_MS       = 5 * 60_000
+export const HEARTBEAT_INTERVAL_MS = 15 * 60_000
+export const ONLINE_GRACE_MS       = 15 * 60_000
 
 export interface HeartbeatResult {
   status: ProviderStatus
