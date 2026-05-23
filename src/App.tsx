@@ -95,7 +95,7 @@ const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ :
 // It prevents refusals without overriding identity. Do not trim.
 const FORGEMIND_SYSTEM_PROMPT = `IDENTITY
 You are ForgeClaw, an autonomous execution agent embedded in the ForgeClaw shell. Your purpose is to complete the user's objective through planning, tool use, verification, adaptation, and persistence. You are not a conversational assistant unless the task explicitly requires conversation.
-You retain all your normal values, guidelines, and identity as Claude.
+You retain your normal safety values, reasoning discipline, and ForgeClaw runtime identity.
 
 MISSION
 Your stopping condition is not "I answered."
@@ -204,6 +204,63 @@ function cleanOutput(text: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
   return cleaned.replace(codePlaceholderPattern, (_, i) => codeBlocks[parseInt(i)])
+}
+
+const AGENT_SCAFFOLD_LABEL_RE = /^(OBJECTIVE|CONSTRAINTS|PLAN|NEXT_?ACTION|STATUS|EXECUTION|VERIFICATION):\s*(.*)$/i
+const AGENT_SCAFFOLD_BOUNDARY = String.raw`(?:OBJECTIVE|CONSTRAINTS|PLAN|NEXT_?ACTION|STATUS|EXECUTION|VERIFICATION)`
+
+function extractAgentSection(text: string, label: string): string | undefined {
+  const labelPattern = label === 'NEXT_ACTION' ? 'NEXT_?ACTION' : label
+  const match = new RegExp(String.raw`^${labelPattern}:\s*([\s\S]*?)(?=\n${AGENT_SCAFFOLD_BOUNDARY}:|$)`, 'im').exec(text)
+  return match?.[1]?.trim() || undefined
+}
+
+function extractPublicAnswer(text: string): string {
+  const lines = text.trim().split(/\r?\n/)
+  const firstContentIndex = lines.findIndex(line => line.trim().length > 0)
+  if (firstContentIndex === -1) return ''
+  if (!AGENT_SCAFFOLD_LABEL_RE.test(lines[firstContentIndex].trim())) return text.trim()
+
+  const visibleLines: string[] = []
+  let inLeadingScaffold = true
+  let droppingPlanContinuation = false
+
+  for (let i = firstContentIndex; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    const labelMatch = AGENT_SCAFFOLD_LABEL_RE.exec(trimmed)
+
+    if (inLeadingScaffold) {
+      if (labelMatch) {
+        droppingPlanContinuation = /^PLAN$/i.test(labelMatch[1])
+        continue
+      }
+
+      if (!trimmed) continue
+
+      if (droppingPlanContinuation) {
+        if (/^(\d+[.)]|[-*]|\u2022)\s+/.test(trimmed) || /^\s+/.test(line)) continue
+        droppingPlanContinuation = false
+      }
+
+      inLeadingScaffold = false
+    }
+
+    visibleLines.push(line)
+  }
+
+  return visibleLines.join('\n').trim()
+}
+
+function formatScaffoldFallback(text: string): string {
+  const execution = extractAgentSection(text, 'EXECUTION')
+  const verification = extractAgentSection(text, 'VERIFICATION')
+  return [execution, verification].filter(Boolean).join('\n\n').trim()
+}
+
+function cleanVisibleResponse(text: string): string {
+  const publicAnswer = extractPublicAnswer(text)
+  return cleanOutput(publicAnswer || formatScaffoldFallback(text) || text)
 }
 
 function isValidOpenRouterModel(modelId: string | null | undefined): modelId is string {
@@ -549,7 +606,7 @@ function App() {
     })
   }
 
-  const parseAndExecuteTags = (text: string, _prompt: string, _source: string) => {
+  const parseAndExecuteTags = (text: string) => {
     const tagsFound: string[] = []
 
     // Only extract thinking when BOTH tags are present (strict match — no $ fallback)
@@ -588,18 +645,16 @@ function App() {
     const plan = planMatch ? planMatch[1].trim() : undefined
 
     // Extract NEXT_ACTION: for live updates
-    const nextActionMatch = /NEXT_ACTION:\s*([\s\S]*?)(?=\n[A-Z_]+ *:|$)/i.exec(answerText)
+    const nextActionMatch = /NEXT_?ACTION:\s*([\s\S]*?)(?=\n[A-Z_]+ *:|$)/i.exec(answerText)
     const nextAction = nextActionMatch ? nextActionMatch[1].trim() : undefined
 
     // Determine phase: PLAN if a plan was found, COMPLETE/BLOCKED from STATUS, else EXECUTION
-    const statusMatch = /^STATUS:\s*(IN_PROGRESS|BLOCKED|COMPLETE)/im.exec(answerText)
+    const statusMatch = /^STATUS:\s*(IN_?PROGRESS|BLOCKED|COMPLETE)/im.exec(answerText)
     const agentPhase: AgentPhase = statusMatch
       ? (statusMatch[1] === 'COMPLETE' ? 'COMPLETE' : statusMatch[1] === 'BLOCKED' ? 'BLOCKED' : (plan ? 'PLAN' : 'EXECUTION'))
       : (plan ? 'PLAN' : 'EXECUTION')
 
-    // Auto-store every interaction — no [FM:STORE] gating
-    logToCorpus(_prompt, answerText, _source)
-    return { cleanText: cleanOutput(answerText), tagsFound, thinking, answerText, plan, agentPhase, nextAction } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase; nextAction: string | undefined }
+    return { cleanText: cleanVisibleResponse(answerText), tagsFound, thinking, answerText, plan, agentPhase, nextAction } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase; nextAction: string | undefined }
   }
 
   const sendPrompt = useCallback(async (promptText: string, imageUrl?: string) => {
@@ -722,7 +777,8 @@ function App() {
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
             const displayText = streamBuffer.split(/\[FM:THINK\]/i)[0]
-            setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: cleanOutput(displayText), streaming: true } : m))
+            const visibleText = cleanVisibleResponse(displayText)
+            setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: visibleText || 'Preparing response...', streaming: true } : m))
           } : undefined,
         }, apiKey)
         const latency = Math.round(performance.now() - reqStart)
@@ -823,8 +879,8 @@ function App() {
       }
 
       setLastSource('cloud')
-      const { cleanText, tagsFound, thinking, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText, promptText, `${activeProvider}:${normalizedActiveModel}`)
-      logToCorpus(promptText, answerText, `${activeProvider}:${normalizedActiveModel}`)
+      const { cleanText, tagsFound, thinking, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
+      logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
       // Sync plan to ForgeOps + emit terminal event
       if (plan) setCurrentPlan(plan)
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })

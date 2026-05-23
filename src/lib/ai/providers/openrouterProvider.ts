@@ -222,6 +222,7 @@ export const openrouterProvider: AIProvider = {
   },
 
   supportsTools(_modelId: string): boolean {
+    void _modelId
     // Free-tier models support tools on OpenRouter, but may rate-limit.
     // We send tools for all models and handle 429s gracefully.
     return true
