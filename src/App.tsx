@@ -222,28 +222,23 @@ function extractPublicAnswer(text: string): string {
   if (!AGENT_SCAFFOLD_LABEL_RE.test(lines[firstContentIndex].trim())) return text.trim()
 
   const visibleLines: string[] = []
-  let inLeadingScaffold = true
-  let droppingPlanContinuation = false
+  let currentScaffoldLabel: string | null = null
 
   for (let i = firstContentIndex; i < lines.length; i++) {
     const line = lines[i]
     const trimmed = line.trim()
     const labelMatch = AGENT_SCAFFOLD_LABEL_RE.exec(trimmed)
 
-    if (inLeadingScaffold) {
-      if (labelMatch) {
-        droppingPlanContinuation = /^PLAN$/i.test(labelMatch[1])
-        continue
-      }
+    if (labelMatch) {
+      currentScaffoldLabel = labelMatch[1].replace('_', '').toUpperCase()
+      continue
+    }
 
-      if (!trimmed) continue
+    if (!trimmed && currentScaffoldLabel) continue
 
-      if (droppingPlanContinuation) {
-        if (/^(\d+[.)]|[-*]|\u2022)\s+/.test(trimmed) || /^\s+/.test(line)) continue
-        droppingPlanContinuation = false
-      }
-
-      inLeadingScaffold = false
+    if (currentScaffoldLabel) {
+      if (['OBJECTIVE', 'CONSTRAINTS', 'PLAN', 'NEXTACTION', 'STATUS'].includes(currentScaffoldLabel)) continue
+      currentScaffoldLabel = null
     }
 
     visibleLines.push(line)
@@ -261,6 +256,16 @@ function formatScaffoldFallback(text: string): string {
 function cleanVisibleResponse(text: string): string {
   const publicAnswer = extractPublicAnswer(text)
   return cleanOutput(publicAnswer || formatScaffoldFallback(text) || text)
+}
+
+function cleanStoredMessage(message: Message): Message {
+  if (message.role !== 'assistant') return message
+  return { ...message, content: cleanVisibleResponse(message.content) }
+}
+
+function shouldShowPlanner(message: Message): boolean {
+  if (message.role !== 'assistant' || !message.plan) return false
+  return Boolean(message.streaming || message.toolResults?.length || message.reasoning || message.agentPhase === 'BLOCKED')
 }
 
 function isValidOpenRouterModel(modelId: string | null | undefined): modelId is string {
@@ -444,7 +449,7 @@ function App() {
   const [activityView, setActivityView] = useState<ActivityView>('log')
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = safeGetItem('forgemind_history')
-    return safeJsonParse(saved, [])
+    return safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage)
   })
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
@@ -1653,7 +1658,9 @@ function App() {
                   ))}
                 </div>
               ) : (
-                messages.map(msg => {
+                messages.map(rawMsg => {
+                  const displayContent = rawMsg.role === 'assistant' ? cleanVisibleResponse(rawMsg.content) : rawMsg.content
+                  const msg = rawMsg.role === 'assistant' ? { ...rawMsg, content: displayContent } : rawMsg
                   const reasoningOpen = openReasoningIds.has(msg.id)
                   return (
                     <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: '4px' }}>
@@ -1668,8 +1675,8 @@ function App() {
                         </div>
                       )}
                       {/* PLAN panel — Manus-style Planner checklist */}
-                      {msg.role === 'assistant' && msg.plan && (() => {
-                        const steps = parsePlanText(msg.plan).map((s, i, arr) => {
+                      {shouldShowPlanner(msg) && (() => {
+                        const steps = parsePlanText(msg.plan ?? '').map((s, i, arr) => {
                           let status: 'pending' | 'active' | 'done' = 'pending'
                           if (msg.agentPhase === 'COMPLETE') {
                             status = 'done'
@@ -1694,7 +1701,7 @@ function App() {
                       {/* Message bubble — clean response only */}
                       <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined }}>
                         {msg.imageUrl && (
-                          <img src={msg.imageUrl} alt="uploaded" style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: msg.content.trim() ? '8px' : 0, objectFit: 'contain' }} />
+                          <img src={msg.imageUrl} alt="uploaded" style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
                         )}
                         {msg.streaming ? (
                           <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
