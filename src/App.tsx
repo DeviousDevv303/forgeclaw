@@ -37,7 +37,7 @@ import {
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
 import { useForgeOps } from './hooks/useForgeOps'
-import { SyncognitiveLattice } from './components/lattice/SyncognitiveLattice'
+import { LiveExecution } from './components/LiveExecution'
 import { Planner } from './components/Planner'
 import { parsePlanText } from './components/Planner.parse'
 import { MissionLog } from './components/MissionLog'
@@ -1645,9 +1645,6 @@ function App() {
         {/* ── ForgeMind Tab ── */}
         {activeTab === 'forgemind' && (
           <>
-            {/* ForgeOps Mission Control — live execution theater */}
-            <SyncognitiveLattice state={forgeState} isActive={loading} currentPlan={currentPlan} />
-
             <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
               {messages.length === 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444', gap: '16px' }}>
@@ -1759,11 +1756,13 @@ function App() {
                   )
                 })
               )}
-              {loading && <div style={{ color: '#f97316', fontSize: '11px' }}><span className="pulse-text">EXECUTING COGNITIVE SCAFFOLD...</span></div>}
+              {loading && <div style={{ color: '#f97316', fontSize: '11px' }}><span className="pulse-text">LIVE EXECUTION...</span></div>}
               <div ref={messagesEndRef} />
             </div>
             
             {/* System Monitor — pinned above input */}
+            <LiveExecution state={forgeState} isActive={loading} currentPlan={currentPlan} />
+
             <SystemMonitor
               events={activityStream.events}
               isActive={monitor.state.isActive}
