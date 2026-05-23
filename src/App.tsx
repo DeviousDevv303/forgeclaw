@@ -79,6 +79,9 @@ interface CorpusEntry {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
+const TRACE_LASER = '#39ff14'
+const TRACE_LASER_SOFT = 'rgba(57, 255, 20, 0.72)'
+const TRACE_LASER_DIM = 'rgba(57, 255, 20, 0.34)'
 const RUNTIME_PROVIDER: ProviderId = 'openrouter'
 const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'poolside/laguna-xs.2:free'
 const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
@@ -173,7 +176,7 @@ Safe failed actions may be retried automatically (up to 3 attempts per tool). Re
 ANTI-CHAT RULE:
 Default mode is execution. Do not produce long conversational prose unless the task explicitly requests explanation. Results, not narration.
 
-Append a concise public reasoning trace AFTER your visible response when it helps the UI:
+Append a concise public reasoning trace AFTER every visible response for the UI:
 [FM:TRACE]brief operational rationale, assumptions checked, tool decisions, and verification path; do not include hidden chain-of-thought[FM:TRACE_END]
 
 For code: fenced blocks with language tag (\`\`\`html, \`\`\`js, \`\`\`python, etc.).
@@ -1780,17 +1783,17 @@ function App() {
                       {/* Reasoning trace — minimal collapsible */}
                       {msg.role === 'assistant' && reasoningTrace && (() => {
                         return (
-                          <div style={{ width: '100%', maxWidth: '90%', marginTop: '4px' }}>
+                          <div style={{ width: '100%', maxWidth: '90%', marginTop: '7px' }}>
                             <button
                               onClick={() => toggleReasoning(msg.id)}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0', minHeight: '36px', display: 'flex', alignItems: 'center', gap: '5px', WebkitTapHighlightColor: 'transparent' }}
+                              style={{ background: 'rgba(57, 255, 20, 0.035)', border: `1px solid ${TRACE_LASER_DIM}`, borderRadius: '7px', cursor: 'pointer', padding: '7px 10px', minHeight: '36px', display: 'flex', alignItems: 'center', gap: '7px', WebkitTapHighlightColor: 'transparent', boxShadow: reasoningOpen ? '0 0 18px rgba(57, 255, 20, 0.16)' : '0 0 10px rgba(57, 255, 20, 0.08)', width: 'fit-content', maxWidth: '100%' }}
                             >
-                              <span style={{ color: '#3a5c2a', fontSize: '9px' }}>{reasoningOpen ? '▼' : '▶'}</span>
-                              <span style={{ color: '#5a9e44', fontSize: '11px', fontFamily: REASONING_TRACE_FONT, letterSpacing: '0.5px' }}>Reasoning Trace</span>
+                              <span style={{ color: TRACE_LASER, fontSize: '10px', textShadow: `0 0 8px ${TRACE_LASER_SOFT}` }}>{reasoningOpen ? '▼' : '▶'}</span>
+                              <span style={{ color: TRACE_LASER, fontSize: '13px', fontFamily: REASONING_TRACE_FONT, letterSpacing: '0.6px', textShadow: `0 0 10px ${TRACE_LASER_SOFT}` }}>Reasoning Trace</span>
                             </button>
                             {reasoningOpen && (
-                              <div style={{ background: '#060e06', border: '1px solid #1e3318', borderRadius: '3px', padding: '10px 14px', marginTop: '3px', maxHeight: '180px', overflowY: 'auto' }}>
-                                <p style={{ color: '#4a7a3a', fontSize: '11px', fontFamily: "'Courier New', Courier, monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: '1.65' }}>
+                              <div style={{ background: 'linear-gradient(180deg, rgba(3, 14, 4, 0.96), rgba(1, 7, 2, 0.98))', border: `1px solid ${TRACE_LASER_DIM}`, borderRadius: '8px', padding: '12px 15px', marginTop: '6px', maxHeight: '220px', overflowY: 'auto', boxShadow: 'inset 0 0 18px rgba(57, 255, 20, 0.07), 0 0 18px rgba(57, 255, 20, 0.1)' }}>
+                                <p style={{ color: TRACE_LASER, fontSize: '12px', fontFamily: REASONING_TRACE_FONT, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: '1.8', letterSpacing: '0.2px', textShadow: '0 0 8px rgba(57, 255, 20, 0.42)' }}>
                                   {reasoningTrace}
                                 </p>
                               </div>
