@@ -103,6 +103,7 @@ type SpeechRecognitionInstance = {
   continuous: boolean
   interimResults: boolean
   lang: string
+  onstart: (() => void) | null
   onresult: ((event: SpeechRecognitionEventLike) => void) | null
   onerror: ((event: SpeechRecognitionErrorLike) => void) | null
   onend: (() => void) | null
@@ -140,12 +141,6 @@ function getSpeechErrorMessage(error?: string): string {
     default:
       return 'Voice prompt stopped. Check microphone permission and try again.'
   }
-}
-
-async function confirmMicrophoneAccess(): Promise<void> {
-  if (!navigator.mediaDevices?.getUserMedia) return
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  for (const track of stream.getTracks()) track.stop()
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -1328,10 +1323,9 @@ function App() {
       onFailure?: (message: string) => void
       keepAliveRef?: { current: boolean }
       transcriptRef?: { current: string }
-      skipPermissionCheck?: boolean
     } = {},
   ) => {
-    const { onFailure, keepAliveRef, transcriptRef, skipPermissionCheck } = options
+    const { onFailure, keepAliveRef, transcriptRef } = options
     const SR = getSpeechRecognitionCtor()
     if (!SR) {
       if (keepAliveRef) keepAliveRef.current = false
@@ -1346,24 +1340,18 @@ function App() {
       return false
     }
 
-    try {
-      if (skipPermissionCheck !== true) {
-        await confirmMicrophoneAccess()
-      }
-    } catch {
-      if (keepAliveRef) keepAliveRef.current = false
-      setActive(false)
-      targetRef.current = null
-      onFailure?.('Microphone permission was blocked. Allow mic access in the browser and try again.')
-      return false
-    }
-
     const rec = new SR()
     rec.continuous = true
     rec.interimResults = true
     rec.lang = selectedLanguage === 'zh' ? 'zh-CN' : selectedLanguage === 'ru' ? 'ru-RU' : selectedLanguage === 'es' ? 'es-ES' : 'en-US'
     let finalSoFar = ''
+    rec.onstart = () => {
+      onFailure?.('')
+      if (keepAliveRef) keepAliveRef.current = true
+      setActive(true)
+    }
     rec.onresult = (e) => {
+      onFailure?.('')
       let interim = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const transcript = e.results[i][0].transcript
@@ -1392,9 +1380,9 @@ function App() {
       if (keepAliveRef?.current) {
         window.setTimeout(() => {
           if (keepAliveRef.current && !targetRef.current) {
-            void startRecognition(onResult, setActive, targetRef, { ...options, skipPermissionCheck: true })
+            void startRecognition(onResult, setActive, targetRef, options)
           }
-        }, 200)
+        }, 450)
         return
       }
       setActive(false)
@@ -1426,6 +1414,23 @@ function App() {
     chatRecognitionRef.current?.stop()
     chatRecognitionRef.current = null
     setChatListening(false)
+  }
+
+  const sendVoiceTranscriptToChat = (sendNow = false) => {
+    const text = voiceTranscript.trim()
+    if (!text) return
+    stopVoiceRecognition()
+    setActiveTab('forgemind')
+    if (sendNow) {
+      setInput('')
+      void sendPrompt(text)
+      return
+    }
+    setInput(text)
+    window.requestAnimationFrame(() => {
+      promptInputRef.current?.focus()
+      promptInputRef.current?.setSelectionRange(text.length, text.length)
+    })
   }
 
   const toggleVoiceMic = () => {
@@ -1461,6 +1466,25 @@ function App() {
     })
   }
 
+  const handleTabClick = (tabId: Tab) => {
+    setActiveTab(tabId)
+    if (tabId === 'voice' && !listening) {
+      setVoiceInputError('')
+      voiceTranscriptRef.current = ''
+      setVoiceTranscript('')
+      if (chatListening) stopChatVoiceRecognition()
+      voiceListeningRef.current = true
+      void startRecognition((text) => {
+        voiceTranscriptRef.current = text
+        setVoiceTranscript(text)
+      }, setListening, recognitionRef, {
+        onFailure: setVoiceInputError,
+        keepAliveRef: voiceListeningRef,
+        transcriptRef: voiceTranscriptRef,
+      })
+    }
+  }
+
   const getStatusIndicator = () => {
     if (!apiKey) return <span style={{ color: '#ef4444' }}>OpenRouter: no API key</span>
     if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>OpenRouter: invalid key</span>
@@ -1472,7 +1496,7 @@ function App() {
   const TABS: { id: Tab; label: string; badge?: string }[] = [
     { id: 'forgemind',   label: 'FORGE' },
     { id: 'agents',      label: 'AGENTS' },
-    { id: 'voice',       label: 'VOICE' },
+    { id: 'voice',       label: 'MIC' },
     { id: 'activity',    label: 'ACTIVITY', badge: unresolvedCount > 0 ? String(unresolvedCount) : activityLog.some(e => e.status === 'running') ? '•' : undefined },
     { id: 'settings',    label: 'SETTINGS' },
   ]
@@ -1550,7 +1574,7 @@ function App() {
           return (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabClick(tab.id)}
               style={{
                 position: 'relative',
                 background: isActive ? 'rgba(249, 115, 22, 0.08)' : 'transparent',
@@ -2379,7 +2403,7 @@ function App() {
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0', background: '#080808', overflowY: 'auto' }}>
 
               {/* ── READ ALOUD section ── */}
-              <div style={{ padding: '20px 20px 0', borderBottom: '1px solid #111' }}>
+              <div style={{ display: 'none', padding: '20px 20px 0', borderBottom: '1px solid #111' }}>
                 <div style={{ fontSize: '10px', color: '#f97316', letterSpacing: '2px', fontFamily: 'monospace', marginBottom: '10px', fontWeight: 'bold' }}>READ ALOUD</div>
                 {lastAI ? (
                   <div style={{ background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '12px 14px', marginBottom: '12px' }}>
@@ -2411,34 +2435,38 @@ function App() {
 
               {/* ── SPEECH INPUT section ── */}
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px', padding: '28px 20px' }}>
-                <div style={{ fontSize: '10px', color: '#555', letterSpacing: '2px', fontFamily: 'monospace', alignSelf: 'flex-start', fontWeight: 'bold' }}>SPEECH INPUT</div>
+                <div style={{ fontSize: '10px', color: '#39ff14', letterSpacing: '3px', fontFamily: 'monospace', alignSelf: 'flex-start', fontWeight: 'bold' }}>MIC PROMPT</div>
 
                 <button
                   onClick={toggleVoiceMic}
                   style={{
-                    width: '100px', height: '100px', borderRadius: '50%',
-                    background: listening ? '#1a0505' : '#0f0f0f',
-                    border: listening ? '2px solid #ef4444' : '2px solid #2a2a2a',
-                    cursor: 'pointer', fontSize: '40px', display: 'flex', alignItems: 'center',
+                    width: '142px', height: '142px', borderRadius: '50%',
+                    background: listening ? '#061a0b' : '#0f0f0f',
+                    border: listening ? '2px solid #39ff14' : '2px solid #2a2a2a',
+                    color: listening ? '#39ff14' : '#777',
+                    cursor: 'pointer', fontSize: '28px', display: 'flex', alignItems: 'center',
                     justifyContent: 'center', transition: 'all 0.2s',
                     animation: listening ? 'micRing 1.2s ease-in-out infinite' : 'none',
-                    boxShadow: listening ? '0 0 30px rgba(239,68,68,0.25)' : 'none',
+                    boxShadow: listening ? '0 0 34px rgba(57,255,20,0.22)' : 'none',
+                    fontFamily: 'monospace',
+                    fontWeight: 'bold',
+                    letterSpacing: '2px',
                   }}
-                  title={listening ? 'Tap to stop' : 'Tap to speak'}
+                  title={listening ? 'Tap to stop dictation' : 'Tap to start dictation'}
                 >
-                  🎙️
+                  {listening ? 'REC' : 'MIC'}
                 </button>
 
-                <span style={{ color: listening ? '#ef4444' : '#333', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
-                  {listening ? '● LISTENING' : 'TAP TO SPEAK'}
+                <span style={{ color: listening ? '#39ff14' : '#333', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
+                  {listening ? 'RECORDING' : 'TAP MIC OR CLICK THE MIC TAB'}
                 </span>
 
                 <div style={{ width: '100%', maxWidth: '600px', marginTop: '-12px', color: voiceInputError ? '#ef4444' : listening ? '#39ff14' : '#555', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', lineHeight: 1.5, textAlign: 'center', textTransform: 'uppercase' }}>
-                  {voiceInputError || (listening ? 'Mic armed - speak now, tap again to stop' : 'Tap the mic and allow browser microphone permission')}
+                  {voiceInputError || (listening ? 'Mic armed - speak naturally, tap again to stop' : 'The MIC tab arms dictation and turns your voice into the chat prompt')}
                 </div>
 
-                <div style={{ width: '100%', maxWidth: '600px', minHeight: '100px', background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '14px', fontFamily: "'Courier New', monospace", fontSize: '13px', color: '#c8c8c8', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {voiceTranscript || <span style={{ color: '#2a2a2a' }}>Your words will appear here…</span>}
+                <div style={{ width: '100%', maxWidth: '600px', minHeight: '150px', background: '#0d0d0d', border: `1px solid ${listening ? '#1f5f2b' : '#1e1e1e'}`, borderRadius: '10px', padding: '16px', fontFamily: "'Courier New', monospace", fontSize: '14px', color: '#c8c8c8', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word', boxShadow: listening ? '0 0 24px rgba(57,255,20,0.08)' : 'none' }}>
+                  {voiceTranscript || <span style={{ color: '#2a2a2a' }}>Your dictated prompt will appear here...</span>}
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
@@ -2446,11 +2474,18 @@ function App() {
                     CLEAR
                   </button>
                   <button
-                    onClick={() => { if (!voiceTranscript.trim()) return; stopVoiceRecognition(); setInput(voiceTranscript.trim()); setActiveTab('forgemind') }}
+                    onClick={() => sendVoiceTranscriptToChat(false)}
                     disabled={!voiceTranscript.trim()}
                     style={{ background: voiceTranscript.trim() ? '#f97316' : '#1a1a1a', color: voiceTranscript.trim() ? '#000' : '#333', padding: '7px 18px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}
                   >
-                    SEND TO CHAT
+                    PUT IN CHAT
+                  </button>
+                  <button
+                    onClick={() => sendVoiceTranscriptToChat(true)}
+                    disabled={!voiceTranscript.trim() || loading}
+                    style={{ background: voiceTranscript.trim() && !loading ? '#39ff14' : '#1a1a1a', color: voiceTranscript.trim() && !loading ? '#031005' : '#333', padding: '7px 18px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() && !loading ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}
+                  >
+                    SEND PROMPT
                   </button>
                 </div>
               </div>
@@ -2470,7 +2505,7 @@ function App() {
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         @keyframes fadeSlideDown { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes micPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 5px rgba(239,68,68,0); } }
-        @keyframes micRing { 0% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 70% { box-shadow: 0 0 0 18px rgba(239,68,68,0); } 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); } }
+        @keyframes micRing { 0% { box-shadow: 0 0 0 0 rgba(57,255,20,0.35); } 70% { box-shadow: 0 0 0 18px rgba(57,255,20,0); } 100% { box-shadow: 0 0 0 0 rgba(57,255,20,0); } }
         .pulse-text { animation: pulse 1.5s infinite; }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #0a0a0a; }
