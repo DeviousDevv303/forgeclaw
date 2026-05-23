@@ -57,7 +57,8 @@ interface Message {
   provider?: string
   model?: string
   activeTags?: string[]
-  thinking?: string            // raw inner monologue for reasoning trace
+  thinking?: string            // legacy model-provided trace
+  trace?: string               // public operational trace for UI display
   phases?: Record<string, string>
   showReasoning?: boolean
   feedback?: 'up' | 'down'
@@ -172,11 +173,11 @@ Safe failed actions may be retried automatically (up to 3 attempts per tool). Re
 ANTI-CHAT RULE:
 Default mode is execution. Do not produce long conversational prose unless the task explicitly requests explanation. Results, not narration.
 
-Append inner reasoning AFTER your visible response:
-[FM:THINK]raw inner monologue — what you noticed, considered, rejected, and why[FM:THINK_END]
+Append a concise public reasoning trace AFTER your visible response when it helps the UI:
+[FM:TRACE]brief operational rationale, assumptions checked, tool decisions, and verification path; do not include hidden chain-of-thought[FM:TRACE_END]
 
 For code: fenced blocks with language tag (\`\`\`html, \`\`\`js, \`\`\`python, etc.).
-Never start with [FM:THINK]. Structured response first. Always.`
+Never start with [FM:TRACE] or [FM:THINK]. Structured response first. Always.`
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -191,7 +192,7 @@ function cleanOutput(text: string): string {
   })
   const cleaned = withPlaceholders
     .replace(/\[FM:[A-Z_0-9]+\][\s\S]*?\[FM:[A-Z_0-9]+_END\]/gi, '')
-    .replace(/\[FM:THINK\][\s\S]*/i, '')
+    .replace(/\[FM:(THINK|TRACE)\][\s\S]*/i, '')
     .replace(/\[FM:[A-Z_0-9]+\]/gi, '')
     .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
     .replace(/\*+/g, '')
@@ -253,14 +254,55 @@ function formatScaffoldFallback(text: string): string {
   return [execution, verification].filter(Boolean).join('\n\n').trim()
 }
 
+function formatScaffoldTrace(text: string): string | undefined {
+  const sections = [
+    ['Objective', extractAgentSection(text, 'OBJECTIVE')],
+    ['Constraints', extractAgentSection(text, 'CONSTRAINTS')],
+    ['Plan', extractAgentSection(text, 'PLAN')],
+    ['Next action', extractAgentSection(text, 'NEXT_ACTION')],
+    ['Status', extractAgentSection(text, 'STATUS')],
+    ['Execution', extractAgentSection(text, 'EXECUTION')],
+    ['Verification', extractAgentSection(text, 'VERIFICATION')],
+  ].filter(([, value]) => value)
+
+  if (sections.length === 0) return undefined
+  return sections.map(([label, value]) => `${label}: ${value}`).join('\n')
+}
+
 function cleanVisibleResponse(text: string): string {
   const publicAnswer = extractPublicAnswer(text)
   return cleanOutput(publicAnswer || formatScaffoldFallback(text) || text)
 }
 
+function buildMessageTrace(message: Message): string | undefined {
+  if (message.thinking?.trim()) return message.thinking.trim()
+  if (message.trace?.trim()) return message.trace.trim()
+
+  const lines: string[] = []
+  const hasExecutionDetails = Boolean(message.plan || message.toolResults?.length || message.reasoning?.steps?.length)
+  if (message.agentPhase && hasExecutionDetails) lines.push(`Phase: ${message.agentPhase.replace('_', ' ')}`)
+  if (message.plan) lines.push(`Plan:\n${message.plan}`)
+  if (message.toolResults?.length) {
+    lines.push('Tools:\n' + message.toolResults.map(result =>
+      `${result.isError ? 'Failed' : 'Completed'} ${result.name}: ${result.output.split('\n')[0].slice(0, 160)}`
+    ).join('\n'))
+  }
+  if (message.reasoning?.steps?.length) {
+    lines.push('Execution steps:\n' + message.reasoning.steps.map(step =>
+      `${step.status.toUpperCase()} ${step.label}: ${step.body ?? ''}`.trim()
+    ).join('\n'))
+  }
+
+  return lines.length ? lines.join('\n\n') : undefined
+}
+
 function cleanStoredMessage(message: Message): Message {
   if (message.role !== 'assistant') return message
-  return { ...message, content: cleanVisibleResponse(message.content) }
+  return {
+    ...message,
+    content: cleanVisibleResponse(message.content),
+    trace: message.trace ?? formatScaffoldTrace(message.content) ?? buildMessageTrace(message),
+  }
 }
 
 function shouldShowPlanner(message: Message): boolean {
@@ -614,19 +656,19 @@ function App() {
   const parseAndExecuteTags = (text: string) => {
     const tagsFound: string[] = []
 
-    // Only extract thinking when BOTH tags are present (strict match — no $ fallback)
-    const completeThinkMatch = /\[FM:THINK\]([\s\S]*?)\[FM:THINK_END\]/i.exec(text)
-    const thinking = completeThinkMatch ? completeThinkMatch[1].trim() : undefined
+    // Only extract trace text when BOTH tags are present.
+    const completeTraceMatch = /\[FM:(THINK|TRACE)\]([\s\S]*?)\[FM:\1_END\]/i.exec(text)
+    const thinking = completeTraceMatch?.[2]?.trim() || undefined
 
     let answerText: string
-    if (completeThinkMatch) {
+    if (completeTraceMatch) {
       // Complete block — answer is content outside the block (model may think-first or answer-first)
-      const before = text.slice(0, completeThinkMatch.index).trim()
-      const after  = text.slice(completeThinkMatch.index + completeThinkMatch[0].length).trim()
+      const before = text.slice(0, completeTraceMatch.index).trim()
+      const after  = text.slice(completeTraceMatch.index + completeTraceMatch[0].length).trim()
       answerText = (after.length >= before.length ? after : before) || before || after
     } else {
-      // No complete block — if model opened [FM:THINK] without closing, strip from that tag to end
-      const openIdx = /\[FM:THINK\]/i.exec(text)?.index ?? -1
+      // No complete block; if model opened a trace tag without closing, strip from that tag to end.
+      const openIdx = /\[FM:(THINK|TRACE)\]/i.exec(text)?.index ?? -1
       answerText = openIdx >= 0 ? text.slice(0, openIdx).trim() : text
     }
 
@@ -636,7 +678,8 @@ function App() {
     if (!answerText) {
       answerText = text
         .replace(/\[FM:THINK\][\s\S]*?\[FM:THINK_END\]/gi, '')
-        .replace(/\[FM:THINK\][\s\S]*/i, '')
+        .replace(/\[FM:TRACE\][\s\S]*?\[FM:TRACE_END\]/gi, '')
+        .replace(/\[FM:(THINK|TRACE)\][\s\S]*/i, '')
         .replace(/\[FM:[A-Z_0-9]+\]/gi, '')
         .trim()
     }
@@ -659,7 +702,9 @@ function App() {
       ? (statusMatch[1] === 'COMPLETE' ? 'COMPLETE' : statusMatch[1] === 'BLOCKED' ? 'BLOCKED' : (plan ? 'PLAN' : 'EXECUTION'))
       : (plan ? 'PLAN' : 'EXECUTION')
 
-    return { cleanText: cleanVisibleResponse(answerText), tagsFound, thinking, answerText, plan, agentPhase, nextAction } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase; nextAction: string | undefined }
+    const trace = thinking ?? formatScaffoldTrace(answerText)
+
+    return { cleanText: cleanVisibleResponse(answerText), tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; trace: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase; nextAction: string | undefined }
   }
 
   const sendPrompt = useCallback(async (promptText: string, imageUrl?: string) => {
@@ -781,7 +826,7 @@ function App() {
           tools: noMoreTools ? undefined : FORGE_TOOLS,
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
-            const displayText = streamBuffer.split(/\[FM:THINK\]/i)[0]
+            const displayText = streamBuffer.split(/\[FM:(THINK|TRACE)\]/i)[0]
             const visibleText = cleanVisibleResponse(displayText)
             setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: visibleText || 'Preparing response...', streaming: true } : m))
           } : undefined,
@@ -884,7 +929,7 @@ function App() {
       }
 
       setLastSource('cloud')
-      const { cleanText, tagsFound, thinking, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
+      const { cleanText, tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
       logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
       // Sync plan to ForgeOps + emit terminal event
       if (plan) setCurrentPlan(plan)
@@ -892,7 +937,7 @@ function App() {
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, provider: activeProvider, model: normalizedActiveModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, trace, provider: activeProvider, model: normalizedActiveModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
         : m
       ))
       setRequestStatus('success')
@@ -1659,6 +1704,7 @@ function App() {
                   const displayContent = rawMsg.role === 'assistant' ? cleanVisibleResponse(rawMsg.content) : rawMsg.content
                   const msg = rawMsg.role === 'assistant' ? { ...rawMsg, content: displayContent } : rawMsg
                   const reasoningOpen = openReasoningIds.has(msg.id)
+                  const reasoningTrace = buildMessageTrace(msg)
                   const plannerPanel = shouldShowPlanner(msg) ? (() => {
                     const steps = parsePlanText(msg.plan ?? '').map((s, i, arr) => {
                       let status: 'pending' | 'active' | 'done' = 'pending'
@@ -1732,7 +1778,7 @@ function App() {
                       {plannerPanel}
 
                       {/* Reasoning trace — minimal collapsible */}
-                      {msg.role === 'assistant' && msg.thinking && (() => {
+                      {msg.role === 'assistant' && reasoningTrace && (() => {
                         return (
                           <div style={{ width: '100%', maxWidth: '90%', marginTop: '4px' }}>
                             <button
@@ -1745,7 +1791,7 @@ function App() {
                             {reasoningOpen && (
                               <div style={{ background: '#060e06', border: '1px solid #1e3318', borderRadius: '3px', padding: '10px 14px', marginTop: '3px', maxHeight: '180px', overflowY: 'auto' }}>
                                 <p style={{ color: '#4a7a3a', fontSize: '11px', fontFamily: "'Courier New', Courier, monospace", whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: '1.65' }}>
-                                  {msg.thinking}
+                                  {reasoningTrace}
                                 </p>
                               </div>
                             )}
@@ -2001,7 +2047,7 @@ function App() {
               // Assistant entry
               const toolCount = msg.toolResults?.length ?? 0
               const toolErrors = msg.toolResults?.filter(t => t.isError).length ?? 0
-              const hasThinking = !!msg.thinking
+              const hasThinking = !!buildMessageTrace(msg)
               const src = msg.source === 'local' ? 'LOCAL' : 'CLOUD'
               const srcColor = msg.source === 'local' ? '#10b981' : '#3b82f6'
               // This response block contains the hovered step
