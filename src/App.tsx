@@ -41,6 +41,7 @@ import { LiveExecution } from './components/LiveExecution'
 import { Planner } from './components/Planner'
 import { parsePlanText } from './components/Planner.parse'
 import { MissionLog } from './components/MissionLog'
+import { ReasoningTrace } from './components/ReasoningTrace'
 import type { AgentPhase } from './types/forgeOps'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -79,9 +80,6 @@ interface CorpusEntry {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
-const TRACE_LASER = '#39ff14'
-const TRACE_LASER_SOFT = 'rgba(57, 255, 20, 0.72)'
-const TRACE_LASER_DIM = 'rgba(57, 255, 20, 0.34)'
 const RUNTIME_PROVIDER: ProviderId = 'openrouter'
 const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'poolside/laguna-xs.2:free'
 const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
@@ -297,6 +295,17 @@ function buildMessageTrace(message: Message): string | undefined {
   }
 
   return lines.length ? lines.join('\n\n') : undefined
+}
+
+function buildFallbackTrace(prompt: string, response: string, source: string): string {
+  const objective = prompt.trim().split('\n')[0]?.slice(0, 140) || 'Respond to the operator'
+  const responseSize = response.trim().length
+  return [
+    `Objective: ${objective}`,
+    `Path: Direct response through ${source}`,
+    'Tools: None required for this turn',
+    `Verification: Visible response generated and rendered (${responseSize} characters)`,
+  ].join('\n')
 }
 
 function cleanStoredMessage(message: Message): Message {
@@ -939,8 +948,14 @@ function App() {
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
+      const messageContent = cleanText || cleanOutput(finalText) || '(empty response)'
+      const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
+      const messageToolResults = allToolResults.length ? allToolResults : undefined
+      const messageTrace = trace
+        ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
+        ?? buildFallbackTrace(promptText, messageContent, `${activeProvider}:${normalizedActiveModel}`)
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: cleanText || cleanOutput(finalText) || '(empty response)', plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, trace, provider: activeProvider, model: normalizedActiveModel, toolResults: allToolResults.length ? allToolResults : undefined, showReasoning: false, reasoning: chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined }
+        ? { ...m, content: messageContent, plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: activeProvider, model: normalizedActiveModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
       setRequestStatus('success')
@@ -1781,26 +1796,13 @@ function App() {
                       {plannerPanel}
 
                       {/* Reasoning trace — minimal collapsible */}
-                      {msg.role === 'assistant' && reasoningTrace && (() => {
-                        return (
-                          <div style={{ width: '100%', maxWidth: '90%', marginTop: '7px' }}>
-                            <button
-                              onClick={() => toggleReasoning(msg.id)}
-                              style={{ background: 'rgba(57, 255, 20, 0.035)', border: `1px solid ${TRACE_LASER_DIM}`, borderRadius: '7px', cursor: 'pointer', padding: '7px 10px', minHeight: '36px', display: 'flex', alignItems: 'center', gap: '7px', WebkitTapHighlightColor: 'transparent', boxShadow: reasoningOpen ? '0 0 18px rgba(57, 255, 20, 0.16)' : '0 0 10px rgba(57, 255, 20, 0.08)', width: 'fit-content', maxWidth: '100%' }}
-                            >
-                              <span style={{ color: TRACE_LASER, fontSize: '10px', textShadow: `0 0 8px ${TRACE_LASER_SOFT}` }}>{reasoningOpen ? '▼' : '▶'}</span>
-                              <span style={{ color: TRACE_LASER, fontSize: '13px', fontFamily: REASONING_TRACE_FONT, letterSpacing: '0.6px', textShadow: `0 0 10px ${TRACE_LASER_SOFT}` }}>Reasoning Trace</span>
-                            </button>
-                            {reasoningOpen && (
-                              <div style={{ background: 'linear-gradient(180deg, rgba(3, 14, 4, 0.96), rgba(1, 7, 2, 0.98))', border: `1px solid ${TRACE_LASER_DIM}`, borderRadius: '8px', padding: '12px 15px', marginTop: '6px', maxHeight: '220px', overflowY: 'auto', boxShadow: 'inset 0 0 18px rgba(57, 255, 20, 0.07), 0 0 18px rgba(57, 255, 20, 0.1)' }}>
-                                <p style={{ color: TRACE_LASER, fontSize: '12px', fontFamily: REASONING_TRACE_FONT, whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, lineHeight: '1.8', letterSpacing: '0.2px', textShadow: '0 0 8px rgba(57, 255, 20, 0.42)' }}>
-                                  {reasoningTrace}
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })()}
+                      {msg.role === 'assistant' && reasoningTrace && (
+                        <ReasoningTrace
+                          trace={reasoningTrace}
+                          isOpen={reasoningOpen}
+                          onToggle={() => toggleReasoning(msg.id)}
+                        />
+                      )}
                     </div>
                   )
                 })
