@@ -37,11 +37,9 @@ import {
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
 import { useForgeOps } from './hooks/useForgeOps'
-import { LiveExecution } from './components/LiveExecution'
-import { Planner } from './components/Planner'
-import { parsePlanText } from './components/Planner.parse'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
+import { ChatLiveExecution } from './components/ChatLiveExecution'
 import type { AgentPhase } from './types/forgeOps'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -341,6 +339,13 @@ function buildFallbackTrace(prompt: string, response: string, source: string): s
   ].join('\n')
 }
 
+function findPreviousUserPrompt(messages: Message[], startIndex: number): string | undefined {
+  for (let i = startIndex - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return messages[i].content
+  }
+  return undefined
+}
+
 function cleanStoredMessage(message: Message): Message {
   if (message.role !== 'assistant') return message
   return {
@@ -348,11 +353,6 @@ function cleanStoredMessage(message: Message): Message {
     content: cleanVisibleResponse(message.content),
     trace: message.trace ?? formatScaffoldTrace(message.content) ?? buildMessageTrace(message),
   }
-}
-
-function shouldShowPlanner(message: Message): boolean {
-  if (message.role !== 'assistant' || !message.plan) return false
-  return Boolean(message.streaming || message.toolResults?.length || message.reasoning || message.agentPhase === 'BLOCKED')
 }
 
 function isValidOpenRouterModel(modelId: string | null | undefined): modelId is string {
@@ -484,8 +484,7 @@ function App() {
   // Activity stream is single source of truth
   const activityStream = useAgentActivityStream()
   const reasoning = useReasoningStream({ activityEvents: activityStream.events })
-  const { state: forgeState, emit: emitForge } = useForgeOps()
-  const [currentPlan, setCurrentPlan] = useState<string | undefined>()
+  const { emit: emitForge } = useForgeOps()
   const monitor = useSystemMonitor()
   // Stable per-session ID for shell_exec audit trail — resets on page reload
   const [sessionId] = useState(() => `fc-${Date.now().toString(36)}`)
@@ -629,6 +628,7 @@ function App() {
   const chatListeningRef = useRef(false)
   const voiceTranscriptRef = useRef('')
   const chatVoiceSpokenRef = useRef('')
+  const promptInputRef = useRef<HTMLTextAreaElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const utterancesRef = useRef<SpeechSynthesisUtterance[]>([])         // prevent Chrome GC of in-flight utterances
   const ttsResumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -795,7 +795,6 @@ function App() {
 
     // Emit forge objective
     emitForge({ type: 'OBJECTIVE_RECEIVED', objective: displayContent })
-    setCurrentPlan(undefined)
 
     // Orchestrator: admit forgemind chat task
     const taskId = `fm-${Date.now()}`
@@ -991,7 +990,6 @@ function App() {
       const { cleanText, tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
       logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
       // Sync plan to ForgeOps + emit terminal event
-      if (plan) setCurrentPlan(plan)
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
@@ -1242,6 +1240,26 @@ function App() {
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage() }
+  }
+
+  const handlePromptPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedText = e.clipboardData.getData('text')
+    if (!pastedText) return
+
+    if (chatListening) stopChatVoiceRecognition()
+    e.preventDefault()
+
+    const target = e.currentTarget
+    const start = target.selectionStart ?? input.length
+    const end = target.selectionEnd ?? start
+    const nextInput = `${input.slice(0, start)}${pastedText}${input.slice(end)}`
+    const nextCursor = start + pastedText.length
+
+    setInput(nextInput)
+    window.requestAnimationFrame(() => {
+      promptInputRef.current?.focus()
+      promptInputRef.current?.setSelectionRange(nextCursor, nextCursor)
+    })
   }
 
   const startRecognition = (
@@ -1860,33 +1878,12 @@ function App() {
                   ))}
                 </div>
               ) : (
-                messages.map(rawMsg => {
+                messages.map((rawMsg, messageIndex) => {
                   const displayContent = rawMsg.role === 'assistant' ? cleanVisibleResponse(rawMsg.content) : rawMsg.content
                   const msg = rawMsg.role === 'assistant' ? { ...rawMsg, content: displayContent } : rawMsg
                   const reasoningOpen = openReasoningIds.has(msg.id)
                   const reasoningTrace = buildMessageTrace(msg)
-                  const plannerPanel = shouldShowPlanner(msg) ? (() => {
-                    const steps = parsePlanText(msg.plan ?? '').map((s, i, arr) => {
-                      let status: 'pending' | 'active' | 'done' = 'pending'
-                      if (msg.agentPhase === 'COMPLETE') {
-                        status = 'done'
-                      } else if (msg.agentPhase === 'BLOCKED') {
-                        status = i === arr.length - 1 ? 'active' : i < arr.length - 1 ? 'done' : 'pending'
-                      } else if (msg.streaming || (!msg.agentPhase || msg.agentPhase === 'PLAN')) {
-                        status = i === 0 ? 'active' : 'pending'
-                      } else {
-                        // EXECUTE / VERIFY / ADAPT â€” mark roughly half as done, one active
-                        const activeIdx = Math.min(Math.floor(arr.length * 0.5), arr.length - 1)
-                        status = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending'
-                      }
-                      return { ...s, status }
-                    })
-                    return (
-                      <div style={{ maxWidth: '90%', marginTop: '8px', width: '100%' }}>
-                        <Planner steps={steps} title="PLANNER" />
-                      </div>
-                    )
-                  })() : null
+                  const promptContext = msg.role === 'assistant' ? findPreviousUserPrompt(messages, messageIndex) : undefined
                   return (
                     <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: '4px' }}>
                       {msg.role === 'assistant' && (
@@ -1934,8 +1931,22 @@ function App() {
                         )}
                       </div>
 
-                      {/* PLAN panel — bottom-side execution drawer */}
-                      {plannerPanel}
+                      {/* Live execution drawer - follows the assistant answer in the chat stream */}
+                      {msg.role === 'assistant' && (
+                        <div style={{ maxWidth: '90%', marginTop: '8px', width: '100%' }}>
+                          <ChatLiveExecution
+                            objective={promptContext}
+                            plan={msg.plan}
+                            phase={msg.agentPhase}
+                            streaming={msg.streaming}
+                            toolResults={msg.toolResults}
+                            trace={reasoningTrace}
+                            provider={msg.provider}
+                            model={msg.model}
+                            error={msg.content.startsWith('[ERROR]') || /no API key|auth failed/i.test(msg.content)}
+                          />
+                        </div>
+                      )}
 
                       {/* Reasoning trace — minimal collapsible */}
                       {msg.role === 'assistant' && reasoningTrace && (
@@ -1949,13 +1960,10 @@ function App() {
                   )
                 })
               )}
-              {loading && <div style={{ color: '#f97316', fontSize: '11px' }}><span className="pulse-text">LIVE EXECUTION...</span></div>}
               <div ref={messagesEndRef} />
             </div>
             
             {/* System Monitor — pinned above input */}
-            <LiveExecution state={forgeState} isActive={loading} currentPlan={currentPlan} />
-
             <SystemMonitor
               events={activityStream.events}
               isActive={monitor.state.isActive}
@@ -2095,7 +2103,7 @@ function App() {
                   >
                     {chatListening ? 'REC' : 'MIC'}
                   </button>
-                  <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} />
+                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
                   <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage} disabled={loading}>SEND</button>
                 </div>
                 {/* Connectors panel — quick-toggle sheet */}
