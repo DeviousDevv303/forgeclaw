@@ -1662,6 +1662,28 @@ function App() {
                   const displayContent = rawMsg.role === 'assistant' ? cleanVisibleResponse(rawMsg.content) : rawMsg.content
                   const msg = rawMsg.role === 'assistant' ? { ...rawMsg, content: displayContent } : rawMsg
                   const reasoningOpen = openReasoningIds.has(msg.id)
+                  const plannerPanel = shouldShowPlanner(msg) ? (() => {
+                    const steps = parsePlanText(msg.plan ?? '').map((s, i, arr) => {
+                      let status: 'pending' | 'active' | 'done' = 'pending'
+                      if (msg.agentPhase === 'COMPLETE') {
+                        status = 'done'
+                      } else if (msg.agentPhase === 'BLOCKED') {
+                        status = i === arr.length - 1 ? 'active' : i < arr.length - 1 ? 'done' : 'pending'
+                      } else if (msg.streaming || (!msg.agentPhase || msg.agentPhase === 'PLAN')) {
+                        status = i === 0 ? 'active' : 'pending'
+                      } else {
+                        // EXECUTE / VERIFY / ADAPT â€” mark roughly half as done, one active
+                        const activeIdx = Math.min(Math.floor(arr.length * 0.5), arr.length - 1)
+                        status = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending'
+                      }
+                      return { ...s, status }
+                    })
+                    return (
+                      <div style={{ maxWidth: '90%', marginTop: '8px', width: '100%' }}>
+                        <Planner steps={steps} title="PLANNER" />
+                      </div>
+                    )
+                  })() : null
                   return (
                     <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: '4px' }}>
                       {msg.role === 'assistant' && (
@@ -1674,30 +1696,6 @@ function App() {
                           )}
                         </div>
                       )}
-                      {/* PLAN panel — Manus-style Planner checklist */}
-                      {shouldShowPlanner(msg) && (() => {
-                        const steps = parsePlanText(msg.plan ?? '').map((s, i, arr) => {
-                          let status: 'pending' | 'active' | 'done' = 'pending'
-                          if (msg.agentPhase === 'COMPLETE') {
-                            status = 'done'
-                          } else if (msg.agentPhase === 'BLOCKED') {
-                            status = i === arr.length - 1 ? 'active' : i < arr.length - 1 ? 'done' : 'pending'
-                          } else if (msg.streaming || (!msg.agentPhase || msg.agentPhase === 'PLAN')) {
-                            status = i === 0 ? 'active' : 'pending'
-                          } else {
-                            // EXECUTE / VERIFY / ADAPT — mark roughly half as done, one active
-                            const activeIdx = Math.min(Math.floor(arr.length * 0.5), arr.length - 1)
-                            status = i < activeIdx ? 'done' : i === activeIdx ? 'active' : 'pending'
-                          }
-                          return { ...s, status }
-                        })
-                        return (
-                          <div style={{ maxWidth: '90%', marginBottom: '8px', width: '100%' }}>
-                            <Planner steps={steps} title="PLANNER" />
-                          </div>
-                        )
-                      })()}
-
                       {/* Message bubble — clean response only */}
                       <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined }}>
                         {msg.imageUrl && (
@@ -1732,6 +1730,9 @@ function App() {
                           </div>
                         )}
                       </div>
+
+                      {/* PLAN panel — bottom-side execution drawer */}
+                      {plannerPanel}
 
                       {/* Reasoning trace — minimal collapsible */}
                       {msg.role === 'assistant' && msg.thinking && (() => {
