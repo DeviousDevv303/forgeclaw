@@ -108,6 +108,37 @@ type SpeechRecognitionWindow = Window & {
   webkitSpeechRecognition?: SpeechRecognitionConstructor
 }
 
+function getSpeechRecognitionCtor(): SpeechRecognitionConstructor | undefined {
+  const win = window as SpeechRecognitionWindow
+  return win.SpeechRecognition || win.webkitSpeechRecognition
+}
+
+function getSpeechErrorMessage(error?: string): string {
+  switch (error) {
+    case 'not-allowed':
+    case 'service-not-allowed':
+      return 'Microphone permission was blocked. Allow mic access in the browser and try again.'
+    case 'audio-capture':
+      return 'No microphone was detected. Check your input device and try again.'
+    case 'network':
+      return 'Speech recognition needs browser network access. Check connection or browser speech settings.'
+    case 'no-speech':
+      return 'No speech was detected. Tap the mic again and speak after the browser permission prompt.'
+    case 'language-not-supported':
+      return 'This speech language is not supported by the browser.'
+    case 'aborted':
+      return 'Voice prompt stopped.'
+    default:
+      return 'Voice prompt stopped. Check microphone permission and try again.'
+  }
+}
+
+async function confirmMicrophoneAccess(): Promise<void> {
+  if (!navigator.mediaDevices?.getUserMedia) return
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+  for (const track of stream.getTracks()) track.stop()
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
@@ -1262,7 +1293,7 @@ function App() {
     })
   }
 
-  const startRecognition = (
+  const startRecognition = async (
     onResult: (text: string) => void,
     setActive: (active: boolean) => void,
     targetRef: { current: SpeechRecognitionInstance | null },
@@ -1270,17 +1301,36 @@ function App() {
       onFailure?: (message: string) => void
       keepAliveRef?: { current: boolean }
       transcriptRef?: { current: string }
+      skipPermissionCheck?: boolean
     } = {},
   ) => {
-    const { onFailure, keepAliveRef, transcriptRef } = options
-    const win = window as SpeechRecognitionWindow
-    const SR = win.SpeechRecognition || win.webkitSpeechRecognition
+    const { onFailure, keepAliveRef, transcriptRef, skipPermissionCheck } = options
+    const SR = getSpeechRecognitionCtor()
     if (!SR) {
       if (keepAliveRef) keepAliveRef.current = false
       setActive(false)
-      onFailure?.('Voice prompt is not available in this browser. Use Chrome or Edge over HTTPS.')
+      onFailure?.('Voice prompt is not available in this browser. Use Chrome/Edge, or enable browser speech recognition.')
       return false
     }
+    if (!window.isSecureContext && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+      if (keepAliveRef) keepAliveRef.current = false
+      setActive(false)
+      onFailure?.('Voice prompt needs HTTPS or localhost so the browser can access the microphone.')
+      return false
+    }
+
+    try {
+      if (skipPermissionCheck !== true) {
+        await confirmMicrophoneAccess()
+      }
+    } catch {
+      if (keepAliveRef) keepAliveRef.current = false
+      setActive(false)
+      targetRef.current = null
+      onFailure?.('Microphone permission was blocked. Allow mic access in the browser and try again.')
+      return false
+    }
+
     const rec = new SR()
     rec.continuous = true
     rec.interimResults = true
@@ -1304,19 +1354,18 @@ function App() {
     }
     rec.onerror = (event) => {
       if (keepAliveRef?.current && event.error === 'no-speech') return
+      const wasManualStop = !keepAliveRef?.current && event.error === 'aborted'
       if (keepAliveRef) keepAliveRef.current = false
       setActive(false)
       targetRef.current = null
-      onFailure?.(event.error === 'not-allowed'
-        ? 'Microphone permission was blocked. Allow mic access and try again.'
-        : 'Voice prompt stopped. Check microphone permission and try again.')
+      if (!wasManualStop) onFailure?.(getSpeechErrorMessage(event.error))
     }
     rec.onend = () => {
       targetRef.current = null
       if (keepAliveRef?.current) {
         window.setTimeout(() => {
           if (keepAliveRef.current && !targetRef.current) {
-            startRecognition(onResult, setActive, targetRef, options)
+            void startRecognition(onResult, setActive, targetRef, { ...options, skipPermissionCheck: true })
           }
         }, 200)
         return
@@ -2351,6 +2400,10 @@ function App() {
                 <span style={{ color: listening ? '#ef4444' : '#333', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
                   {listening ? '● LISTENING' : 'TAP TO SPEAK'}
                 </span>
+
+                <div style={{ width: '100%', maxWidth: '600px', marginTop: '-12px', color: voiceInputError ? '#ef4444' : listening ? '#39ff14' : '#555', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', lineHeight: 1.5, textAlign: 'center', textTransform: 'uppercase' }}>
+                  {voiceInputError || (listening ? 'Mic armed - speak now, tap again to stop' : 'Tap the mic and allow browser microphone permission')}
+                </div>
 
                 <div style={{ width: '100%', maxWidth: '600px', minHeight: '100px', background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '14px', fontFamily: "'Courier New', monospace", fontSize: '13px', color: '#c8c8c8', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                   {voiceTranscript || <span style={{ color: '#2a2a2a' }}>Your words will appear here…</span>}
