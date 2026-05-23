@@ -98,6 +98,19 @@ export function resolveOpenRouterModel(modelId: string | undefined): string {
   return modelId && isKnownModel(modelId) ? modelId : DEFAULT_OPENROUTER_MODEL
 }
 
+// OpenRouter does not expose native tool calling for the current free model set.
+// Keep this explicit so the UI and agent loop do not send tool schemas to models
+// that would otherwise 404 with "No endpoints found that support tool use".
+const TOOL_CAPABLE_OPENROUTER_MODELS = new Set<string>([])
+
+function supportsNativeToolUse(modelId: string): boolean {
+  return TOOL_CAPABLE_OPENROUTER_MODELS.has(resolveOpenRouterModel(modelId))
+}
+
+function isToolUseUnsupportedError(message: string): boolean {
+  return /no endpoints found that support tool use|support tool use|tool use/i.test(message)
+}
+
 function parseToolInput(args: string | undefined): Record<string, unknown> {
   if (!args) return {}
   try {
@@ -221,11 +234,8 @@ export const openrouterProvider: AIProvider = {
     return key.startsWith('sk-or-') && key.length > 20
   },
 
-  supportsTools(_modelId: string): boolean {
-    void _modelId
-    // Free-tier models support tools on OpenRouter, but may rate-limit.
-    // We send tools for all models and handle 429s gracefully.
-    return true
+  supportsTools(modelId: string): boolean {
+    return supportsNativeToolUse(modelId)
   },
 
   async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
@@ -243,7 +253,7 @@ export const openrouterProvider: AIProvider = {
       body.tool_choice = 'auto'
     }
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    let response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -255,7 +265,29 @@ export const openrouterProvider: AIProvider = {
     })
 
     if (!response.ok) {
-      throw new Error(await openRouterError(response))
+      const message = await openRouterError(response)
+      if (body.tools && isToolUseUnsupportedError(message)) {
+        const retryBody = { ...body }
+        delete retryBody.tools
+        delete retryBody.tool_choice
+
+        response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${key}`,
+            'HTTP-Referer': 'https://deviousdevv303.github.io/forgeclaw',
+            'X-Title': 'ForgeClaw',
+          },
+          body: JSON.stringify(retryBody),
+        })
+
+        if (!response.ok) {
+          throw new Error(await openRouterError(response))
+        }
+      } else {
+        throw new Error(message)
+      }
     }
 
     if (request.onToken) {

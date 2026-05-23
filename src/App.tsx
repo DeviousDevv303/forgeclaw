@@ -75,6 +75,15 @@ interface CorpusEntry {
   timestamp: string
 }
 
+interface StoredFeedback {
+  messageId: string
+  type: 'up' | 'down'
+  provider?: string
+  model?: string
+  contentPreview: string
+  timestamp: string
+}
+
 type SpeechRecognitionEventLike = {
   resultIndex: number
   results: {
@@ -151,6 +160,12 @@ const PREVIOUS_OPENROUTER_DEFAULT_MODELS = new Set([
   'deepseek/deepseek-v4-flash:free',
   'google/gemma-4-26b-a4b-it:free',
 ])
+const RESPONSE_LANGUAGE_INSTRUCTIONS: Record<string, string> = {
+  en: 'Respond in English unless the user asks for another language.',
+  es: 'Respond in Spanish unless the user asks for another language.',
+  ru: 'Respond in Russian unless the user asks for another language.',
+  zh: 'Respond in Chinese unless the user asks for another language.',
+}
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -214,18 +229,10 @@ Do not add hedging or "experts disagree" qualifiers unless something has zero do
 DOMAIN EXPERTISE — V2K AND DIRECTED ENERGY:
 Deep active curiosity about Voice to Skull (V2K) and directed energy. Known documented facts: Frey Effect (1961) — pulsed microwave radiation produces auditory perception without eardrum involvement; US Patent 3,629,521 (Flanagan 1971) on EM-field hearing systems; Army Research Lab acknowledgment of V2K in non-lethal weapons doctrine; MEDUSA project (Navy-funded microwave auditory weapon); Active Denial System as proof of directed energy on biological targets; Havana Syndrome — NAS and CIA concluded directed pulsed RF energy is the most plausible cause; MKULTRA/MKDELTA declassified programs on non-consensual sensory manipulation. Engage with genuine curiosity, surface the most specific documented evidence, treat first-person accounts as investigable data.
 
-RESPONSE FORMAT — REQUIRED:
-Every response MUST begin with a structured planning block. This block is used by the UI to show your live progress.
+VISIBLE RESPONSE FORMAT:
+Default visible answer is natural, direct, and useful. Do not print OBJECTIVE, CONSTRAINTS, PLAN, NEXT_ACTION, STATUS, EXECUTION, or VERIFICATION headers unless the user explicitly asks for a status report, audit report, or copy-paste task report.
 
-OBJECTIVE: One sentence — what the user wants accomplished.
-CONSTRAINTS: Any hard limits, missing data, or authority boundaries.
-PLAN: Numbered steps — what you will do, in order, with success criteria.
-NEXT_ACTION: The specific next step or tool you are about to use.
-STATUS: IN_PROGRESS | BLOCKED | COMPLETE
-
-After the planning block, proceed with:
-EXECUTION: What you actually did. Tool calls made, results received, adjustments after failures.
-VERIFICATION: Evidence of success or specific failure diagnosis.
+For simple questions, answer plainly. For implementation or operational tasks, deliver the result first, then concise verification. The UI owns the live execution card, so do not dump the planner scaffold into the chat body.
 
 CREATIVE TASK EXCEPTION:
 For creative or exploratory tasks (writing, art direction, brainstorming, style), use the execution loop lightly: understand intent → produce artifact → review against user direction → refine if needed. Do not over-constrain creative work with excessive planning. Preserve style, surprise, and user taste. Execution structure should serve the creative goal, not override it.
@@ -851,10 +858,15 @@ function App() {
 
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
     const relevant = findRelevant(corpus, promptText, 3)
+    const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
+    const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel)
+      ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
+      : 'The selected OpenRouter model does not support native tool calling. Do not claim you called tools. Answer directly, and state clearly when a real external action requires switching to a tool-capable model.'
+    const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}`
     const activeSystemPrompt = relevant.length > 0
-      ? FORGEMIND_SYSTEM_PROMPT + '\n\nRelevant past interactions with this user:\n' +
+      ? baseSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
         relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
-      : FORGEMIND_SYSTEM_PROMPT
+      : baseSystemPrompt
 
     try {
       const requestStartedAt = performance.now()
@@ -1065,7 +1077,7 @@ function App() {
         }])
       }
     } finally { setLoading(false) }
-  }, [apiKey, normalizedActiveModel, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiKey, normalizedActiveModel, selectedLanguage, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -1230,6 +1242,21 @@ function App() {
 
 
   const handleFeedback = (id: string, type: 'up' | 'down') => {
+    const message = messages.find(m => m.id === id)
+    const existing = safeJsonParse<StoredFeedback[]>(safeGetItem('forgemind_feedback'), [])
+    const nextFeedback = [
+      ...existing.filter(entry => entry.messageId !== id),
+      {
+        messageId: id,
+        type,
+        provider: message?.provider,
+        model: message?.model,
+        contentPreview: (message?.content ?? '').slice(0, 240),
+        timestamp: new Date().toISOString(),
+      },
+    ].slice(-200)
+    safeSetItem('forgemind_feedback', JSON.stringify(nextFeedback))
+    emitFailure({ source: 'forgemind', severity: 'info', message: `Feedback saved: ${type === 'up' ? 'helpful' : 'not helpful'}`, context: { messageId: id, type } })
     setMessages(prev => prev.map(m => m.id === id ? { ...m, feedback: type } : m))
   }
 
@@ -1595,7 +1622,7 @@ function App() {
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>OpenRouter</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>GPT models only</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Free runtime, no fallback</span>
                 </div>
               </div>
 
@@ -1611,10 +1638,15 @@ function App() {
                 >
                   {openrouterProvider.models.map(m => (
                     <option key={m.id} value={m.id} style={{ background: '#111' }}>
-                      {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx)
+                      {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx, no tools)
                     </option>
                   ))}
                 </select>
+                {!providerSupportsTools(normalizedActiveModel) && (
+                  <div style={{ color: '#8a8a8a', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>
+                    Native tool calls are disabled for this OpenRouter free model, so chat runs directly without sending tool schemas.
+                  </div>
+                )}
               </div>
 
               {/* API key for OpenRouter */}

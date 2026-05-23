@@ -325,18 +325,6 @@ export const FORGE_TOOLS: ToolDef[] = [
       required: ['system_prompt', 'task'],
     },
   },
-  {
-    name: 'shell_exec',
-    description: 'Execute a shell command via GitHub Actions workflow dispatch. Runs in a constrained Ubuntu runner with no repo secrets exposed. 5-minute hard timeout. Requires Guardian co-sign in Tier 1.',
-    parameters: {
-      type: 'object',
-      properties: {
-        command: { type: 'string', description: 'Shell command to execute (bash syntax)' },
-        reason:  { type: 'string', description: 'Why this command is necessary for the current objective — shown in Guardian co-sign prompt' },
-      },
-      required: ['command', 'reason'],
-    },
-  },
 ]
 
 // ─── Context loader ────────────────────────────────────────────────────────────

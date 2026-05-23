@@ -38,6 +38,19 @@ function trimLine(value: string | undefined, fallback: string, maxLength = 86): 
 
 function buildExecutionSteps(props: ChatLiveExecutionProps): ExecutionStep[] {
   const parsed = parsePlanText(props.plan ?? '')
+  const toolSteps = (props.toolResults ?? []).slice(-4).map((result, index) => ({
+    id: `tool-${result.toolCallId}-${index}`,
+    title: `${result.name}: ${result.output.split('\n')[0]}`,
+    status: result.isError ? 'error' as const : 'done' as const,
+  }))
+
+  if (toolSteps.length > 0) {
+    return [
+      { id: 'input', title: 'Understand the user request', status: 'done' as const },
+      ...toolSteps,
+      { id: 'render', title: 'Attach execution and reasoning trace', status: props.streaming ? 'active' as const : 'done' as const },
+    ].slice(0, 6)
+  }
 
   if (parsed.length > 0) {
     const activeIndex = props.error || props.phase === 'BLOCKED'
