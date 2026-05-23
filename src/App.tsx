@@ -77,6 +77,39 @@ interface CorpusEntry {
   timestamp: string
 }
 
+type SpeechRecognitionEventLike = {
+  resultIndex: number
+  results: {
+    length: number
+    [index: number]: {
+      isFinal: boolean
+      0: { transcript: string }
+    }
+  }
+}
+
+type SpeechRecognitionErrorLike = {
+  error?: string
+}
+
+type SpeechRecognitionInstance = {
+  continuous: boolean
+  interimResults: boolean
+  lang: string
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null
+  onerror: ((event: SpeechRecognitionErrorLike) => void) | null
+  onend: (() => void) | null
+  start: () => void
+  stop: () => void
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance
+
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: SpeechRecognitionConstructor
+  webkitSpeechRecognition?: SpeechRecognitionConstructor
+}
+
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
@@ -587,8 +620,15 @@ function App() {
 
   const [listening, setListening] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState('')
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null)
+  const [chatListening, setChatListening] = useState(false)
+  const [voiceInputError, setVoiceInputError] = useState('')
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
+  const chatRecognitionRef = useRef<SpeechRecognitionInstance | null>(null)
+  const chatVoiceBaseRef = useRef('')
+  const voiceListeningRef = useRef(false)
+  const chatListeningRef = useRef(false)
+  const voiceTranscriptRef = useRef('')
+  const chatVoiceSpokenRef = useRef('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const utterancesRef = useRef<SpeechSynthesisUtterance[]>([])         // prevent Chrome GC of in-flight utterances
   const ttsResumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -656,6 +696,13 @@ function App() {
       if (!window.speechSynthesis.speaking) window.speechSynthesis.resume()
     }, 10_000)
     return () => { if (ttsResumeIntervalRef.current) clearInterval(ttsResumeIntervalRef.current) }
+  }, [])
+
+  useEffect(() => () => {
+    voiceListeningRef.current = false
+    chatListeningRef.current = false
+    recognitionRef.current?.stop()
+    chatRecognitionRef.current?.stop()
   }, [])
 
   const logToCorpus = (prompt: string, response: string, source: string) => {
@@ -993,6 +1040,9 @@ function App() {
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
+    if (chatListening) {
+      stopChatVoiceRecognition()
+    }
 
     let promptText = input
     let imageUrl: string | undefined
@@ -1194,35 +1244,127 @@ function App() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage() }
   }
 
-  const startRecognition = (onResult: (text: string) => void) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const win = window as any
+  const startRecognition = (
+    onResult: (text: string) => void,
+    setActive: (active: boolean) => void,
+    targetRef: { current: SpeechRecognitionInstance | null },
+    options: {
+      onFailure?: (message: string) => void
+      keepAliveRef?: { current: boolean }
+      transcriptRef?: { current: string }
+    } = {},
+  ) => {
+    const { onFailure, keepAliveRef, transcriptRef } = options
+    const win = window as SpeechRecognitionWindow
     const SR = win.SpeechRecognition || win.webkitSpeechRecognition
-    if (!SR) return
+    if (!SR) {
+      if (keepAliveRef) keepAliveRef.current = false
+      setActive(false)
+      onFailure?.('Voice prompt is not available in this browser. Use Chrome or Edge over HTTPS.')
+      return false
+    }
     const rec = new SR()
     rec.continuous = true
     rec.interimResults = true
     rec.lang = selectedLanguage === 'zh' ? 'zh-CN' : selectedLanguage === 'ru' ? 'ru-RU' : selectedLanguage === 'es' ? 'es-ES' : 'en-US'
     let finalSoFar = ''
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rec.onresult = (e: any) => {
+    rec.onresult = (e) => {
       let interim = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) finalSoFar += e.results[i][0].transcript
-        else interim += e.results[i][0].transcript
+        const transcript = e.results[i][0].transcript
+        if (e.results[i].isFinal) {
+          if (transcriptRef) {
+            transcriptRef.current = [transcriptRef.current, transcript.trim()].filter(Boolean).join(' ')
+          } else {
+            finalSoFar += `${transcript} `
+          }
+        }
+        else interim += transcript
       }
-      onResult(finalSoFar + interim)
+      const committedText = transcriptRef?.current || finalSoFar.trim()
+      onResult([committedText, interim.trim()].filter(Boolean).join(' '))
     }
-    rec.onerror = () => { setListening(false) }
-    rec.onend = () => { setListening(false) }
-    recognitionRef.current = rec
-    rec.start()
-    setListening(true)
+    rec.onerror = (event) => {
+      if (keepAliveRef?.current && event.error === 'no-speech') return
+      if (keepAliveRef) keepAliveRef.current = false
+      setActive(false)
+      targetRef.current = null
+      onFailure?.(event.error === 'not-allowed'
+        ? 'Microphone permission was blocked. Allow mic access and try again.'
+        : 'Voice prompt stopped. Check microphone permission and try again.')
+    }
+    rec.onend = () => {
+      targetRef.current = null
+      if (keepAliveRef?.current) {
+        window.setTimeout(() => {
+          if (keepAliveRef.current && !targetRef.current) {
+            startRecognition(onResult, setActive, targetRef, options)
+          }
+        }, 200)
+        return
+      }
+      setActive(false)
+    }
+    targetRef.current = rec
+    try {
+      rec.start()
+      if (keepAliveRef) keepAliveRef.current = true
+      setActive(true)
+      return true
+    } catch {
+      targetRef.current = null
+      if (keepAliveRef) keepAliveRef.current = false
+      setActive(false)
+      onFailure?.('Voice prompt could not start. Check microphone permission and try again.')
+      return false
+    }
+  }
+
+  const stopVoiceRecognition = () => {
+    voiceListeningRef.current = false
+    recognitionRef.current?.stop()
+    recognitionRef.current = null
+    setListening(false)
+  }
+
+  const stopChatVoiceRecognition = () => {
+    chatListeningRef.current = false
+    chatRecognitionRef.current?.stop()
+    chatRecognitionRef.current = null
+    setChatListening(false)
   }
 
   const toggleVoiceMic = () => {
-    if (listening) { recognitionRef.current?.stop(); setListening(false); return }
-    startRecognition((text) => setVoiceTranscript(text))
+    if (listening) { stopVoiceRecognition(); return }
+    setVoiceInputError('')
+    if (chatListening) stopChatVoiceRecognition()
+    voiceListeningRef.current = true
+    startRecognition((text) => {
+      voiceTranscriptRef.current = text
+      setVoiceTranscript(text)
+    }, setListening, recognitionRef, {
+      onFailure: setVoiceInputError,
+      keepAliveRef: voiceListeningRef,
+      transcriptRef: voiceTranscriptRef,
+    })
+  }
+
+  const toggleChatVoicePrompt = () => {
+    if (chatListening) { stopChatVoiceRecognition(); return }
+    setVoiceInputError('')
+    if (listening) stopVoiceRecognition()
+    chatVoiceBaseRef.current = input.trim()
+    chatVoiceSpokenRef.current = ''
+    chatListeningRef.current = true
+    startRecognition((text) => {
+      const spokenText = text.trim()
+      const basePrompt = chatVoiceBaseRef.current
+      setInput(basePrompt && spokenText ? `${basePrompt} ${spokenText}` : spokenText || basePrompt)
+    }, setChatListening, chatRecognitionRef, {
+      onFailure: setVoiceInputError,
+      keepAliveRef: chatListeningRef,
+      transcriptRef: chatVoiceSpokenRef,
+    })
   }
 
   const getStatusIndicator = () => {
@@ -1592,7 +1734,7 @@ function App() {
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
                 />
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
-                  Get your key + Rick Sanchez voice ID from elevenlabs.io → Voice Library. Falls back to browser TTS if empty.
+                  Add an ElevenLabs key and custom Voice ID to read ForgeClaw replies aloud. Falls back to browser TTS if empty.
                 </div>
               </div>
 
@@ -1893,6 +2035,20 @@ function App() {
                     <button onClick={() => setAttachedFile(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '14px' }}>×</button>
                   </div>
                 )}
+                {(chatListening || voiceInputError) && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: chatListening ? '#39ff14' : '#ef4444', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', textTransform: 'uppercase' }}>
+                    <span style={{
+                      width: '7px',
+                      height: '7px',
+                      borderRadius: '50%',
+                      background: chatListening ? '#39ff14' : '#ef4444',
+                      boxShadow: chatListening ? '0 0 12px rgba(57,255,20,0.7)' : '0 0 10px rgba(239,68,68,0.45)',
+                      animation: chatListening ? 'pulse 1.2s infinite' : 'none',
+                      flexShrink: 0,
+                    }} />
+                    <span>{chatListening ? 'Listening - speak your prompt' : voiceInputError}</span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '6px 10px' }}>
                   <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={false} />
                   {/* Connector badge — Manus-style active tool indicator */}
@@ -1912,6 +2068,32 @@ function App() {
                         +{activityLog.filter(e => e.status === 'running').length || activityLog.length}
                       </span>
                     )}
+                  </button>
+                  <button
+                    onClick={toggleChatVoicePrompt}
+                    disabled={loading}
+                    title={chatListening ? 'Stop voice prompt' : 'Voice prompt'}
+                    aria-label={chatListening ? 'Stop voice prompt' : 'Start voice prompt'}
+                    style={{
+                      width: '42px',
+                      height: '32px',
+                      borderRadius: '6px',
+                      background: chatListening ? '#061a0b' : '#0d0d0d',
+                      border: `1px solid ${chatListening ? '#39ff14' : '#2a2a2a'}`,
+                      color: chatListening ? '#39ff14' : '#888',
+                      cursor: loading ? 'not-allowed' : 'pointer',
+                      fontSize: '10px',
+                      fontFamily: 'monospace',
+                      fontWeight: 'bold',
+                      letterSpacing: '1px',
+                      textTransform: 'uppercase',
+                      alignSelf: 'center',
+                      flexShrink: 0,
+                      boxShadow: chatListening ? '0 0 18px rgba(57,255,20,0.25)' : 'none',
+                      animation: chatListening ? 'micPulse 1.2s infinite' : 'none',
+                    }}
+                  >
+                    {chatListening ? 'REC' : 'MIC'}
                   </button>
                   <textarea style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onKeyDown={handleKeyPress} />
                   <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage} disabled={loading}>SEND</button>
@@ -2167,11 +2349,11 @@ function App() {
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
-                  <button onClick={() => setVoiceTranscript('')} style={{ background: 'none', border: '1px solid #2a2a2a', color: '#555', padding: '7px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px' }}>
+                  <button onClick={() => { voiceTranscriptRef.current = ''; setVoiceTranscript('') }} style={{ background: 'none', border: '1px solid #2a2a2a', color: '#555', padding: '7px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px' }}>
                     CLEAR
                   </button>
                   <button
-                    onClick={() => { if (!voiceTranscript.trim()) return; setInput(voiceTranscript.trim()); setActiveTab('forgemind') }}
+                    onClick={() => { if (!voiceTranscript.trim()) return; stopVoiceRecognition(); setInput(voiceTranscript.trim()); setActiveTab('forgemind') }}
                     disabled={!voiceTranscript.trim()}
                     style={{ background: voiceTranscript.trim() ? '#f97316' : '#1a1a1a', color: voiceTranscript.trim() ? '#000' : '#333', padding: '7px 18px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}
                   >
