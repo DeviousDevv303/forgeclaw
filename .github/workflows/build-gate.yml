@@ -16,6 +16,8 @@ jobs:
           node-version: 22
           cache: 'npm'
       - run: npm ci
+      - name: Check for merge conflict markers
+        run: npm run check:conflicts
       - run: npm run build
       - name: Verify build artifact exists
         run: test -d dist && echo "Build artifact confirmed" || exit 1
