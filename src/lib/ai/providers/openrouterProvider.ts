@@ -8,14 +8,14 @@ import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '.
 export const OPENROUTER_MODELS = [
   { id: 'poolside/laguna-xs.2:free', label: 'Laguna XS.2', contextK: 131, note: 'Free, fast streaming' },
   { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 131, note: 'Free, tool-capable' },
-  { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', contextK: 262, note: 'Free, high quality' },
-  { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', contextK: 1024, note: 'Free, expert coding' },
-  { id: 'liquid/lfm-2.5-1.2b-thinking:free', label: 'Liquid LFM2.5 Thinking', contextK: 32, note: 'Free, reasoning model' },
-  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label: 'Nemotron 3 Nano Reasoning', contextK: 256, note: 'Free, multimodal reasoning' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 131, note: 'Free' },
+  { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', contextK: 262, note: 'Free' },
+  { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', contextK: 1024, note: 'Free expert coding' },
+  { id: 'liquid/lfm-2.5-1.2b-thinking:free', label: 'Liquid LFM2.5 Thinking', contextK: 32, note: 'Free reasoning' },
+  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label: 'Nemotron 3 Nano Reasoning', contextK: 256, note: 'Free reasoning' },
   { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B (Paid)', contextK: 131, note: 'Reliable, tool-capable' },
-  { id: 'anthropic/claude-4-sonnet', label: 'Claude 4 Sonnet', contextK: 200, note: 'Premium, best for complex tasks' },
-  { id: 'openai/gpt-5-omni', label: 'GPT-5 Omni', contextK: 128, note: 'Premium, fast and capable' },
+  { id: 'anthropic/claude-4-sonnet', label: 'Claude 4 Sonnet', contextK: 200, note: 'Premium, tool-capable' },
+  { id: 'openai/gpt-5-omni', label: 'GPT-5 Omni', contextK: 128, note: 'Premium, tool-capable' },
   { id: 'deepseek/deepseek-v4', label: 'DeepSeek V4 (Paid)', contextK: 1024, note: 'High performance' },
 ]
 
@@ -73,7 +73,7 @@ type OpenRouterResponse = {
     }
     finish_reason?: string
   }>
-  error?: { message?: string; code?: number; metadata?: any }
+  error?: { message?: string; code?: number; metadata?: unknown }
 }
 
 type OpenRouterStreamEvent = {
@@ -93,22 +93,17 @@ function cleanApiKey(apiKey: string): string {
 }
 
 export function resolveOpenRouterModel(modelId: string | undefined): string {
-  // Allow unknown models if they look like OpenRouter model IDs (provider/name)
   if (modelId && modelId.includes('/')) return modelId
   return modelId && isKnownModel(modelId) ? modelId : DEFAULT_OPENROUTER_MODEL
 }
 
-// Models verified to support native tool calling on OpenRouter.
+// CRITICAL: Only paid models support native tool calling on OpenRouter.
+// Free models (:free) will 404 if tools are passed in the request.
 const TOOL_CAPABLE_OPENROUTER_MODELS = new Set<string>([
-  'meta-llama/llama-3.3-70b-instruct:free',
   'meta-llama/llama-3.3-70b-instruct',
-  'meta-llama/llama-3.2-3b-instruct:free',
-  'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free',
   'anthropic/claude-4-sonnet',
   'openai/gpt-5-omni',
   'deepseek/deepseek-v4',
-  'deepseek/deepseek-v4-flash:free',
 ])
 
 function supportsNativeToolUse(modelId: string): boolean {
