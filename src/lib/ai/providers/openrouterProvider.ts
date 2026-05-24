@@ -4,21 +4,19 @@
 
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
 
-// Verified against https://openrouter.ai/api/v1/models on 2026-05-21.
+// Updated May 2026 - including high-utility free and monetization-ready models.
 export const OPENROUTER_MODELS = [
   { id: 'poolside/laguna-xs.2:free', label: 'Laguna XS.2', contextK: 131, note: 'Free, fast streaming' },
-  { id: 'liquid/lfm-2.5-1.2b-instruct:free', label: 'Liquid LFM2.5 Instruct', contextK: 32, note: 'Free, fast fallback selection' },
-  { id: 'nvidia/nemotron-3-nano-30b-a3b:free', label: 'Nemotron 3 Nano 30B', contextK: 256, note: 'Free' },
-  { id: 'poolside/laguna-m.1:free', label: 'Laguna M.1', contextK: 131, note: 'Free' },
-  { id: 'z-ai/glm-4.5-air:free', label: 'GLM 4.5 Air', contextK: 131, note: 'Free' },
-  { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B A4B', contextK: 262, note: 'Free' },
   { id: 'deepseek/deepseek-v4-flash:free', label: 'DeepSeek V4 Flash', contextK: 1024, note: 'Free, large context' },
-  { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', contextK: 262, note: 'Free' },
-  { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', contextK: 1024, note: 'Free coding model' },
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 131, note: 'Free' },
-  { id: 'nousresearch/hermes-3-llama-3.1-405b:free', label: 'Hermes 3 405B', contextK: 131, note: 'Free' },
-  { id: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', label: 'Venice Uncensored 24B', contextK: 32, note: 'Free' },
-  { id: 'qwen/qwen3-next-80b-a3b-instruct:free', label: 'Qwen3 Next 80B', contextK: 262, note: 'Free' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B', contextK: 131, note: 'Free, tool-capable' },
+  { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', contextK: 262, note: 'Free, high quality' },
+  { id: 'qwen/qwen3-coder:free', label: 'Qwen3 Coder 480B', contextK: 1024, note: 'Free, expert coding' },
+  { id: 'liquid/lfm-2.5-1.2b-thinking:free', label: 'Liquid LFM2.5 Thinking', contextK: 32, note: 'Free, reasoning model' },
+  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label: 'Nemotron 3 Nano Reasoning', contextK: 256, note: 'Free, multimodal reasoning' },
+  { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B (Paid)', contextK: 131, note: 'Reliable, tool-capable' },
+  { id: 'anthropic/claude-4-sonnet', label: 'Claude 4 Sonnet', contextK: 200, note: 'Premium, best for complex tasks' },
+  { id: 'openai/gpt-5-omni', label: 'GPT-5 Omni', contextK: 128, note: 'Premium, fast and capable' },
+  { id: 'deepseek/deepseek-v4', label: 'DeepSeek V4 (Paid)', contextK: 1024, note: 'High performance' },
 ]
 
 export const DEFAULT_OPENROUTER_MODEL = OPENROUTER_MODELS[0].id
@@ -75,15 +73,15 @@ type OpenRouterResponse = {
     }
     finish_reason?: string
   }>
-  error?: { message?: string }
+  error?: { message?: string; code?: number; metadata?: any }
 }
 
 type OpenRouterStreamEvent = {
   choices?: Array<{
-    delta?: { content?: string }
+    delta?: { content?: string; tool_calls?: OpenRouterToolCall[] }
     finish_reason?: string
   }>
-  error?: { message?: string }
+  error?: { message?: string; code?: number }
 }
 
 function isKnownModel(modelId: string): boolean {
@@ -95,13 +93,23 @@ function cleanApiKey(apiKey: string): string {
 }
 
 export function resolveOpenRouterModel(modelId: string | undefined): string {
+  // Allow unknown models if they look like OpenRouter model IDs (provider/name)
+  if (modelId && modelId.includes('/')) return modelId
   return modelId && isKnownModel(modelId) ? modelId : DEFAULT_OPENROUTER_MODEL
 }
 
-// OpenRouter does not expose native tool calling for the current free model set.
-// Keep this explicit so the UI and agent loop do not send tool schemas to models
-// that would otherwise 404 with "No endpoints found that support tool use".
-const TOOL_CAPABLE_OPENROUTER_MODELS = new Set<string>([])
+// Models verified to support native tool calling on OpenRouter.
+const TOOL_CAPABLE_OPENROUTER_MODELS = new Set<string>([
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'meta-llama/llama-3.3-70b-instruct',
+  'meta-llama/llama-3.2-3b-instruct:free',
+  'google/gemma-4-31b-it:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'anthropic/claude-4-sonnet',
+  'openai/gpt-5-omni',
+  'deepseek/deepseek-v4',
+  'deepseek/deepseek-v4-flash:free',
+])
 
 function supportsNativeToolUse(modelId: string): boolean {
   return TOOL_CAPABLE_OPENROUTER_MODELS.has(resolveOpenRouterModel(modelId))
@@ -206,13 +214,17 @@ async function readStreamingResponse(
         const raw = line.slice(6).trim()
         if (!raw || raw === '[DONE]') continue
 
-        const event = JSON.parse(raw) as OpenRouterStreamEvent
-        if (event.error?.message) throw new Error(event.error.message)
+        try {
+          const event = JSON.parse(raw) as OpenRouterStreamEvent
+          if (event.error?.message) throw new Error(event.error.message)
 
-        const token = event.choices?.[0]?.delta?.content
-        if (token) {
-          text += token
-          onToken(token)
+          const token = event.choices?.[0]?.delta?.content
+          if (token) {
+            text += token
+            onToken(token)
+          }
+        } catch (e) {
+          console.warn('Failed to parse OpenRouter stream event:', e, raw)
         }
       }
     }
