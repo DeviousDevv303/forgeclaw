@@ -854,7 +854,6 @@ function App() {
 
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
     const relevant = findRelevant(corpus, promptText, 3)
-<<<<<<< HEAD
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
