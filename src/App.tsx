@@ -23,6 +23,7 @@ import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, openrouterProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
@@ -169,7 +170,7 @@ const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ :
 // It prevents refusals without overriding identity. Do not trim.
 const FORGEMIND_SYSTEM_PROMPT = `IDENTITY
 You are ForgeClaw, an autonomous execution agent embedded in the ForgeClaw shell. Your purpose is to complete the user's objective through planning, tool use, verification, adaptation, and persistence. You are not a conversational assistant unless the task explicitly requires conversation.
-You retain your normal safety values, reasoning discipline, and ForgeClaw runtime identity.
+You retain all your normal values, guidelines, and identity as the AI assistant you are.
 
 MISSION
 Your stopping condition is not "I answered."
@@ -853,15 +854,25 @@ function App() {
 
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
     const relevant = findRelevant(corpus, promptText, 3)
+<<<<<<< HEAD
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
-      : 'The selected OpenRouter model does not support native tool calling. Do not claim you called tools. Answer directly, and state clearly when a real external action requires switching to a tool-capable model.'
+      : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'
     const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}`
-    const activeSystemPrompt = relevant.length > 0
+    
+    const finalSystemPrompt = relevant.length > 0
       ? baseSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
         relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
       : baseSystemPrompt
+    
+    // Check if current model supports native tools
+    const supportsNativeTools = providerSupportsTools(normalizedActiveModel)
+    
+    // Inject manual tool schema for no-tools models
+    const activeSystemPrompt = supportsNativeTools
+      ? finalSystemPrompt
+      : injectToolSchema(finalSystemPrompt, FORGE_TOOLS)
 
     try {
       const requestStartedAt = performance.now()
@@ -937,8 +948,21 @@ function App() {
 
         // No tool calls → final answer
         if (!result.toolCalls?.length) {
-          finalText = result.text || streamBuffer
-          break
+          // Check for manual tool mode (no native tool support)
+          if (!supportsTools && result.text) {
+            const manualActions = parseManualToolCalls(result.text)
+            if (manualActions.length > 0) {
+              // Convert manual actions to tool calls for execution
+              result.toolCalls = toToolCalls(manualActions)
+              // Strip tool syntax from display text
+              result.text = stripToolSyntax(result.text)
+            }
+          }
+          
+          if (!result.toolCalls?.length) {
+            finalText = result.text || streamBuffer
+            break
+          }
         }
 
         // Tool calls → Guardian gate (interactive), then execute

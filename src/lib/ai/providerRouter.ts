@@ -1,20 +1,28 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ───────────────────────────────────────────────────────────
-// OpenRouter-only runtime. No fallback provider is registered.
+// Multi-provider runtime: OpenRouter + Moonshot (Kimi)
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
 import { openrouterProvider } from './providers/openrouterProvider'
+import { moonshotProvider } from './providers/moonshotProvider'
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
-export const ACTIVE_PROVIDER = openrouterProvider
-export const CLOUD_PROVIDER = openrouterProvider
+export const providers = {
+  openrouter: openrouterProvider,
+  moonshot: moonshotProvider,
+} as const
+
+export type ProviderId = keyof typeof providers
+
+export const ACTIVE_PROVIDER = providers.openrouter
+export const CLOUD_PROVIDER = providers.openrouter
 
 export const PROVIDER_CONFIG = {
-  primary: openrouterProvider,
-  cloud: openrouterProvider,
+  primary: providers.openrouter,
+  cloud: providers.openrouter,
 } as const
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -22,41 +30,55 @@ export const PROVIDER_CONFIG = {
 export async function sendViaRouter(
   request: AIRequest,
   apiKey: string,
+  providerId: ProviderId = 'openrouter',
 ): Promise<{ success: true; response: AIResponse } | { success: false; error: AIError }> {
-  // OpenRouter only
-  if (openrouterProvider.isConfigured(apiKey)) {
-    try {
-      const response = await openrouterProvider.send(request, apiKey)
-      return { success: true, response }
-    } catch (err) {
-      const classified = classifyError(err, openrouterProvider.id)
-      return { success: false, error: classified }
+  const provider = providers[providerId]
+  
+  if (!provider) {
+    return {
+      success: false,
+      error: {
+        class: 'UNKNOWN' as const,
+        message: `Unknown provider: ${providerId}`,
+        provider: providerId,
+        retryable: false,
+      },
     }
   }
   
-  return {
-    success: false,
-    error: {
-      class: 'AUTH_FAILURE' as const,
-      message: 'OpenRouter API key required. Get one at openrouter.ai (sk-or-... format)',
-      provider: openrouterProvider.id,
-      retryable: false,
-    },
+  if (!provider.isConfigured(apiKey)) {
+    return {
+      success: false,
+      error: {
+        class: 'AUTH_FAILURE' as const,
+        message: `${provider.label} API key required.`,
+        provider: providerId,
+        retryable: false,
+      },
+    }
+  }
+  
+  try {
+    const response = await provider.send(request, apiKey)
+    return { success: true, response }
+  } catch (err) {
+    const classified = classifyError(err, providerId)
+    return { success: false, error: classified }
   }
 }
 
 // ─── Convenience ────────────────────────────────────────────────────────────
 
-export function isProviderConfigured(apiKey: string = ''): boolean {
-  return openrouterProvider.isConfigured(apiKey)
+export function isProviderConfigured(apiKey: string = '', providerId: ProviderId = 'openrouter'): boolean {
+  return providers[providerId].isConfigured(apiKey)
 }
 
-export function providerSupportsTools(_modelId: string): boolean {
-  return openrouterProvider.supportsTools(_modelId)
+export function providerSupportsTools(modelId: string, providerId: ProviderId = 'openrouter'): boolean {
+  return providers[providerId].supportsTools(modelId)
 }
 
-export async function testProviderKey(apiKey: string = ''): Promise<void> {
-  await openrouterProvider.test(apiKey)
+export async function testProviderKey(apiKey: string = '', providerId: ProviderId = 'openrouter'): Promise<void> {
+  await providers[providerId].test(apiKey)
 }
 
-export { openrouterProvider }
+export { openrouterProvider, moonshotProvider }

@@ -26,16 +26,18 @@ grep -Eq '^Co-authored-by: Cristian <towerslutz@gmail\.com>$' "$msg_file" || fai
 provider_router="src/lib/ai/providerRouter.ts"
 app_file="src/App.tsx"
 
+# Check that providerRouter imports from providers/ directory, not hardcoded to one
+grep -Eq "import .* from '\./providers/'" "$provider_router" \
+  || fail "providerRouter must import from providers directory."
+
 if git diff --cached --name-only -- "$provider_router" | grep -q .; then
-  grep -Eq "ACTIVE_PROVIDER = openrouterProvider" "$provider_router" \
-    || fail "providerRouter must keep ACTIVE_PROVIDER on openrouterProvider."
-  grep -Eq "import \{ openrouterProvider \}" "$provider_router" \
-    || fail "providerRouter must import openrouterProvider directly."
+  grep -Eq "ACTIVE_PROVIDER = (openrouterProvider|moonshotProvider)" "$provider_router" \
+    || fail "providerRouter must keep ACTIVE_PROVIDER on openrouterProvider or moonshotProvider."
 fi
 
 if git diff --cached --name-only -- "$app_file" | grep -q .; then
-  grep -Eq "RUNTIME_PROVIDER: ProviderId = 'openrouter'" "$app_file" \
-    || fail "App.tsx must keep RUNTIME_PROVIDER set to openrouter."
+  grep -Eq "RUNTIME_PROVIDER: ProviderId = ('openrouter'|'moonshot')" "$app_file" \
+    || fail "App.tsx RUNTIME_PROVIDER must be openrouter or moonshot."
 fi
 
 added_lines="$(git diff --cached -U0 -- ':(exclude).githooks/commit-msg' | grep -E '^\+[^+]' || true)"
