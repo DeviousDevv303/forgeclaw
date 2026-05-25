@@ -3,8 +3,15 @@
 // ─── Moonshot (Kimi) Provider Adapter ───────────────────────────────────────
 // OpenAI-compatible API via https://api.moonshot.cn/v1
 // Supports native tool calling.
+// PROD NOTE: When hosted with ForgeMind engine, calls route through /api/moonshot
+// to keep the API key server-side. See engine/server.ts.
 
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
+
+const isDev = import.meta.env.DEV;
+const MOONSHOT_BASE_URL = isDev
+  ? 'https://api.moonshot.cn/v1'
+  : '/api/moonshot/v1';
 
 export const MOONSHOT_MODELS = [
   { id: 'moonshot-v1-8k', label: 'Kimi 8K', contextK: 8, note: 'Fast, lightweight' },
@@ -114,7 +121,7 @@ export const moonshotProvider: AIProvider = {
       body.tool_choice = 'auto'
     }
     
-    const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+    const response = await fetch(`${MOONSHOT_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -219,7 +226,7 @@ export const moonshotProvider: AIProvider = {
     }
     
     // Test with a minimal completion
-    const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+    const response = await fetch(`${MOONSHOT_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

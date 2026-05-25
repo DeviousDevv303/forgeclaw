@@ -6,6 +6,7 @@ import type { AIMessage } from './ai/types'
 import { DEFAULT_OPENROUTER_MODEL, openrouterProvider, resolveOpenRouterModel } from './ai/providers/openrouterProvider'
 import { DEFAULT_MOONSHOT_MODEL, moonshotProvider } from './ai/providers/moonshotProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
+import type { AIRequest } from './ai/types'
 
 export type ProviderId = 'openrouter' | 'moonshot'
 
@@ -82,8 +83,23 @@ export async function callProvider(
   apiKey: string,
   options: CallOptions = {},
 ): Promise<CallResult> {
-  if (providerId !== 'openrouter') {
-    throw new Error(`Unsupported provider: ${providerId}`)
+  if (providerId === 'moonshot') {
+    const response = await moonshotProvider.send({
+      systemPrompt,
+      messages,
+      model: model || DEFAULT_MOONSHOT_MODEL,
+      maxTokens: options.maxTokens,
+      tools: options.tools,
+      onToken: options.onToken,
+    } as AIRequest, apiKey)
+
+    return {
+      text: response.text,
+      provider: 'moonshot',
+      model: response.model,
+      toolCalls: response.toolCalls,
+      stopReason: response.stopReason,
+    }
   }
 
   const resolvedModel = resolveOpenRouterModel(model)
@@ -106,7 +122,10 @@ export async function callProvider(
 }
 
 export function modelSupportsTools(providerId: ProviderId, modelId: string): boolean {
-  return providerId === 'openrouter' && openrouterProvider.supportsTools(resolveOpenRouterModel(modelId))
+  if (providerId === 'moonshot') {
+    return moonshotProvider.supportsTools(modelId)
+  }
+  return openrouterProvider.supportsTools(resolveOpenRouterModel(modelId))
 }
 
 export async function testProviderKey(
@@ -114,8 +133,9 @@ export async function testProviderKey(
   _model: string,
   apiKey: string,
 ): Promise<void> {
-  if (providerId !== 'openrouter') {
-    throw new Error(`Unsupported provider: ${providerId}`)
+  if (providerId === 'moonshot') {
+    await moonshotProvider.test(apiKey)
+    return
   }
   await openrouterProvider.test(apiKey)
 }

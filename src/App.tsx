@@ -147,7 +147,6 @@ function getSpeechErrorMessage(error?: string): string {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
-const RUNTIME_PROVIDER: ProviderId = 'openrouter'
 const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'poolside/laguna-xs.2:free'
 const DEFAULT_MOONSHOT_MODEL = moonshotProvider.models[1]?.id ?? 'moonshot-v1-32k'
 const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
@@ -434,9 +433,8 @@ function purgeLegacyRuntimeStorage(): void {
     }
   }
 
-  if (safeGetItem('fm_provider') !== RUNTIME_PROVIDER) {
-    safeSetItem('fm_provider', RUNTIME_PROVIDER)
-  }
+  // Provider reset removed — user selection now persists across sessions
+  // Previously: forced reset to RUNTIME_PROVIDER on every load
 
   safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
 }
@@ -587,7 +585,10 @@ function App() {
   const [apiKeyStatus, setApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [testKeyError, setTestKeyError] = useState('')
   // OpenRouter-only runtime state. Active execution is deterministic and does not auto-fallback.
-  const [activeProvider, setActiveProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
+  // Initialize provider from localStorage, default to openrouter
+  const savedProvider = safeGetItem('fm_provider') as ProviderId | null
+  const initialProvider: ProviderId = savedProvider === 'moonshot' ? 'moonshot' : 'openrouter'
+  const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
   const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
   const [moonshotApiKeyStatus, setMoonshotApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
@@ -645,7 +646,7 @@ function App() {
     buildVersion: string
   }
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
-    provider: RUNTIME_PROVIDER,
+    provider: activeProvider,
     model: normalizedActiveModel,
     keyPresent: !!apiKey,
     lastRequestStatus: 'none',
@@ -704,7 +705,10 @@ function App() {
     safeSetItem('fm_api_key', apiKey)
   }, [apiKey])
   useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
-  useEffect(() => { safeSetItem('fm_provider', activeProvider) }, [activeProvider])
+  useEffect(() => {
+    safeSetItem('fm_provider', activeProvider)
+    setDiagnostics(prev => ({ ...prev, provider: activeProvider }))
+  }, [activeProvider])
   useEffect(() => {
     const normalizedModel = normalizeOpenRouterModel(activeModel)
     if (activeModel !== normalizedModel) {
