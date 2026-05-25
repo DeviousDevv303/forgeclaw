@@ -1856,9 +1856,9 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', 'OpenRouter'],
-                  ['runtime model', activeModelLabel],
-                  ['auth state', apiKey ? 'present' : 'missing'],
+                  ['runtime provider', activeProvider === 'moonshot' ? 'Moonshot' : 'OpenRouter'],
+                  ['runtime model', activeProvider === 'moonshot' ? moonshotProvider.models.find(m => m.id === moonshotModel)?.label ?? moonshotModel : activeModelLabel],
+                  ['auth state', (activeProvider === 'moonshot' ? moonshotApiKey : apiKey) ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
                   ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
