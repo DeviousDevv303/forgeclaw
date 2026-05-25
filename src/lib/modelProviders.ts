@@ -4,9 +4,10 @@
 
 import type { AIMessage } from './ai/types'
 import { DEFAULT_OPENROUTER_MODEL, openrouterProvider, resolveOpenRouterModel } from './ai/providers/openrouterProvider'
+import { DEFAULT_MOONSHOT_MODEL, moonshotProvider } from './ai/providers/moonshotProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
 
-export type ProviderId = 'openrouter'
+export type ProviderId = 'openrouter' | 'moonshot'
 
 export interface ModelOption {
   id: string
@@ -37,12 +38,24 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     keyPlaceholder: 'sk-or-...',
     keyPrefix: 'sk-or-',
   },
+  moonshot: {
+    id: 'moonshot',
+    name: 'Moonshot',
+    url: 'https://api.moonshot.cn/v1/chat/completions',
+    models: moonshotProvider.models.map(model => ({
+      ...model,
+      noTools: !moonshotProvider.supportsTools(model.id),
+    })),
+    keyPlaceholder: 'sk-...',
+    keyPrefix: 'sk-',
+  },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['openrouter']
+export const PROVIDER_ORDER: ProviderId[] = ['openrouter', 'moonshot']
 export const DEFAULT_PROVIDER: ProviderId = 'openrouter'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
   openrouter: DEFAULT_OPENROUTER_MODEL,
+  moonshot: DEFAULT_MOONSHOT_MODEL,
 }
 
 export type ChatMessage = AIMessage

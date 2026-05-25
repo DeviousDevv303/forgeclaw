@@ -12,6 +12,7 @@ export type FailureSource =
   | 'forgemind' | 'repoagent' | 'github'
   | 'orchestrator'  // authority layer telemetry
   | 'openrouter'
+  | 'moonshot'
 
 export interface FailureEvent {
   id: string

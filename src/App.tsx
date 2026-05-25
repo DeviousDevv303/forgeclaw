@@ -22,7 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, openrouterProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, testProviderKey, openrouterProvider, moonshotProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
@@ -149,6 +149,7 @@ function getSpeechErrorMessage(error?: string): string {
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const RUNTIME_PROVIDER: ProviderId = 'openrouter'
 const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'poolside/laguna-xs.2:free'
+const DEFAULT_MOONSHOT_MODEL = moonshotProvider.models[1]?.id ?? 'moonshot-v1-32k'
 const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
 const LEGACY_MODEL_MARKERS = ['cl' + 'aude', 'anth' + 'ropic', 'op' + 'enai', 'gpt-', 'oll' + 'ama']
 const OPENROUTER_MODEL_STORAGE_VERSION = 'laguna-xs-default'
@@ -408,6 +409,15 @@ function readOpenRouterKey(): string {
   return openrouterProvider.isConfigured(fallbackKey) ? fallbackKey : ''
 }
 
+function readMoonshotKey(): string {
+  const key = safeGetItem('fm_moonshot_key') || ''
+  return moonshotProvider.isConfigured(key) ? key : ''
+}
+
+function readMoonshotModel(): string {
+  return safeGetItem('fm_moonshot_model') || DEFAULT_MOONSHOT_MODEL
+}
+
 function readOpenRouterModel(): string {
   const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
   const storageVersion = safeGetItem('fm_openrouter_model_version')
@@ -577,7 +587,10 @@ function App() {
   const [apiKeyStatus, setApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [testKeyError, setTestKeyError] = useState('')
   // OpenRouter-only runtime state. Active execution is deterministic and does not auto-fallback.
-  const [activeProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
+  const [activeProvider, setActiveProvider] = useState<ProviderId>(RUNTIME_PROVIDER)
+  const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
+  const [moonshotApiKeyStatus, setMoonshotApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
+  const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
   const [activeModel, setActiveModel] = useState<string>(readOpenRouterModel)
   const normalizedActiveModel = normalizeOpenRouterModel(activeModel)
   const activeModelLabel = openrouterProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
@@ -690,7 +703,8 @@ function App() {
     safeSetItem('fm_openrouter_key', apiKey)
     safeSetItem('fm_api_key', apiKey)
   }, [apiKey])
-  useEffect(() => { safeSetItem('fm_provider', RUNTIME_PROVIDER) }, [])
+  useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
+  useEffect(() => { safeSetItem('fm_provider', activeProvider) }, [activeProvider])
   useEffect(() => {
     const normalizedModel = normalizeOpenRouterModel(activeModel)
     if (activeModel !== normalizedModel) {
@@ -704,12 +718,12 @@ function App() {
   useEffect(() => {
     setDiagnostics(prev => ({
       ...prev,
-      provider: RUNTIME_PROVIDER,
-      model: normalizedActiveModel,
-      keyPresent: !!apiKey && apiKey.length > 20,
+      provider: activeProvider,
+      model: activeProvider === 'openrouter' ? normalizedActiveModel : moonshotModel,
+      keyPresent: !!(activeProvider === 'openrouter' ? apiKey : moonshotApiKey),
       buildVersion: BUILD_COMMIT,
     }))
-  }, [normalizedActiveModel, apiKey])
+  }, [normalizedActiveModel, apiKey, moonshotModel, moonshotApiKey, activeProvider])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -812,8 +826,12 @@ function App() {
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
-    if (!apiKey) {
-      const missingKeyMessage = 'OpenRouter: no API key — paste one in Settings (sk-or-...)'
+    const currentApiKey = activeProvider === 'openrouter' ? apiKey : moonshotApiKey
+    const currentProviderLabel = activeProvider === 'openrouter' ? 'OpenRouter' : 'Moonshot'
+    const currentKeyFormat = activeProvider === 'openrouter' ? 'sk-or-...' : 'sk-...'
+
+    if (!currentApiKey) {
+      const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
       setRequestStatus('blocked')
       setLastRequestError(missingKeyMessage)
       setLastRequestLatencyMs(null)
@@ -925,8 +943,10 @@ function App() {
         let streamBuffer = ''
 
         const reqStart = performance.now()
+        const currentModel = activeProvider === 'openrouter' ? normalizedActiveModel : moonshotModel
+        const currentKey = activeProvider === 'openrouter' ? apiKey : moonshotApiKey
         const routerResult = await sendViaRouter({
-          model: normalizedActiveModel,
+          model: currentModel,
           systemPrompt: activeSystemPrompt,
           messages: conversationMessages,
           tools: noMoreTools ? undefined : FORGE_TOOLS,
@@ -936,7 +956,7 @@ function App() {
             const visibleText = cleanVisibleResponse(displayText)
             setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: visibleText || 'Preparing response...', streaming: true } : m))
           } : undefined,
-        }, apiKey)
+        }, currentKey, activeProvider)
         const latency = Math.round(performance.now() - reqStart)
         if (!routerResult.success) {
           setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'error', lastError: routerResult.error.message, lastLatencyMs: latency }))
@@ -1294,7 +1314,7 @@ function App() {
     setTestingKey(true)
     setTestKeyError('')
     try {
-      await testProviderKey(apiKey)
+      await testProviderKey(apiKey, 'openrouter')
       setApiKeyStatus('valid')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1302,6 +1322,21 @@ function App() {
       // Only mark invalid for real auth rejections — not model errors, quota, etc.
       const isAuthReject = msg.includes('401') || /unauthorized|invalid.*(api.?key|token|auth)/i.test(msg)
       setApiKeyStatus(isAuthReject ? 'invalid' : 'unverified')
+    } finally {
+      setTestingKey(false)
+    }
+  }
+
+  const testMoonshotKey = async () => {
+    if (!moonshotApiKey.trim()) { setMoonshotApiKeyStatus('invalid'); return }
+    setTestingKey(true)
+    try {
+      await testProviderKey(moonshotApiKey, 'moonshot')
+      setMoonshotApiKeyStatus('valid')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const isAuthReject = msg.includes('401') || /unauthorized|invalid.*(api.?key|token|auth)/i.test(msg)
+      setMoonshotApiKeyStatus(isAuthReject ? 'invalid' : 'unverified')
     } finally {
       setTestingKey(false)
     }
@@ -1663,73 +1698,155 @@ function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
 
-              {/* Provider — OpenRouter */}
+              {/* Provider Selector — OpenRouter + Moonshot */}
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Runtime Provider</label>
-                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <select
+                  value={activeProvider}
+                  onChange={e => setActiveProvider(e.target.value as ProviderId)}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
+                >
+                  <option value="openrouter" style={{ background: '#111' }}>OpenRouter</option>
+                  <option value="moonshot" style={{ background: '#111' }}>Moonshot (Kimi)</option>
+                </select>
+              </div>
+
+              {/* Provider-specific runtime info */}
+              {activeProvider === 'openrouter' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>OpenRouter</span>
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Free runtime, no fallback</span>
                 </div>
-              </div>
-
-              {/* Model selector */}
-              <div style={{ marginBottom: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                  <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
+              )}
+              {activeProvider === 'moonshot' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#3b82f6', display: 'inline-block' }} />
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Moonshot</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Kimi AI — native tool support</span>
                 </div>
-                <select
-                  value={normalizedActiveModel}
-                  onChange={e => setActiveModel(e.target.value)}
-                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
-                >
-                  {openrouterProvider.models.map(m => (
-                    <option key={m.id} value={m.id} style={{ background: '#111' }}>
-                      {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx, no tools)
-                    </option>
-                  ))}
-                </select>
-                {!providerSupportsTools(normalizedActiveModel) && (
-                  <div style={{ color: '#8a8a8a', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>
-                    Native tool calls are disabled for this OpenRouter free model, so chat runs directly without sending tool schemas.
+              )}
+
+              {/* Model selector — provider-specific */}
+              {activeProvider === 'openrouter' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                    <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
                   </div>
-                )}
-              </div>
-
-              {/* API key for OpenRouter */}
-              <div style={{ marginBottom: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OpenRouter API Key</label>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    type={showApiKey ? 'text' : 'password'}
-                    placeholder="sk-or-..."
-                    value={apiKey}
-                    onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }}
-                    style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
-                  />
-                  <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
-                    {showApiKey ? '🙈' : '👁'}
-                  </button>
+                  <select
+                    value={normalizedActiveModel}
+                    onChange={e => setActiveModel(e.target.value)}
+                    style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
+                  >
+                    {openrouterProvider.models.map(m => (
+                      <option key={m.id} value={m.id} style={{ background: '#111' }}>
+                        {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx, no tools)
+                      </option>
+                    ))}
+                  </select>
+                  {!providerSupportsTools(normalizedActiveModel) && (
+                    <div style={{ color: '#8a8a8a', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>
+                      Native tool calls are disabled for this OpenRouter free model, so chat runs directly without sending tool schemas.
+                    </div>
+                  )}
                 </div>
-                {testKeyError && <div style={{ color: apiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
-              </div>
+              )}
+              {activeProvider === 'moonshot' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                    <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
+                  </div>
+                  <select
+                    value={moonshotModel}
+                    onChange={e => { setMoonshotModel(e.target.value); safeSetItem('fm_moonshot_model', e.target.value) }}
+                    style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
+                  >
+                    {moonshotProvider.models.map(m => (
+                      <option key={m.id} value={m.id} style={{ background: '#111' }}>
+                        {m.label} — {m.note} ({m.contextK}K ctx, native tools)
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ color: '#3b82f6', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>
+                    Moonshot supports native tool calling. All tools available.
+                  </div>
+                </div>
+              )}
 
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                <button
-                  onClick={testApiKey}
-                  disabled={testingKey || !apiKey}
-                  style={{ flex: 1, background: testingKey ? '#333' : '#f97316', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                >
-                  {testingKey ? 'Testing...' : 'TEST KEY'}
-                </button>
-              </div>
+              {/* API key — provider-specific */}
+              {activeProvider === 'openrouter' && (
+                <>
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OpenRouter API Key</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type={showApiKey ? 'text' : 'password'}
+                        placeholder="sk-or-..."
+                        value={apiKey}
+                        onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }}
+                        style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
+                      />
+                      <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
+                        {showApiKey ? '🙈' : '👁'}
+                      </button>
+                    </div>
+                    {testKeyError && <div style={{ color: apiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  </div>
 
-              <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
-                {!apiKey && <span style={{ color: '#ef4444' }}>OpenRouter: no API key — paste one in Settings (sk-or-...)</span>}
-                {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Key to verify</span>}
-                {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>OpenRouter key verified</span>}
-                {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>{testKeyError || 'OpenRouter key invalid'}</span>}
-              </div>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                    <button
+                      onClick={testApiKey}
+                      disabled={testingKey || !apiKey}
+                      style={{ flex: 1, background: testingKey ? '#333' : '#f97316', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                    >
+                      {testingKey ? 'Testing...' : 'TEST KEY'}
+                    </button>
+                  </div>
+
+                  <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
+                    {!apiKey && <span style={{ color: '#ef4444' }}>OpenRouter: no API key — paste one in Settings (sk-or-...)</span>}
+                    {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Key to verify</span>}
+                    {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>OpenRouter key verified</span>}
+                    {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>{testKeyError || 'OpenRouter key invalid'}</span>}
+                  </div>
+                </>
+              )}
+              {activeProvider === 'moonshot' && (
+                <>
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Moonshot API Key</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type={showApiKey ? 'text' : 'password'}
+                        placeholder="sk-..."
+                        value={moonshotApiKey}
+                        onChange={e => { setMoonshotApiKey(e.target.value); setMoonshotApiKeyStatus('unverified') }}
+                        style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${moonshotApiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
+                      />
+                      <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
+                        {showApiKey ? '🙈' : '👁'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                    <button
+                      onClick={testMoonshotKey}
+                      disabled={testingKey || !moonshotApiKey}
+                      style={{ flex: 1, background: testingKey ? '#333' : '#3b82f6', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
+                    >
+                      {testingKey ? 'Testing...' : 'TEST MOONSHOT KEY'}
+                    </button>
+                  </div>
+
+                  <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
+                    {!moonshotApiKey && <span style={{ color: '#ef4444' }}>Moonshot: no API key — get one at platform.moonshot.cn</span>}
+                    {moonshotApiKey && moonshotApiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Key to verify</span>}
+                    {moonshotApiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>Moonshot key verified</span>}
+                    {moonshotApiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>Moonshot key invalid</span>}
+                  </div>
+                </>
+              )}
 
               {/* Operator diagnostics */}
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
