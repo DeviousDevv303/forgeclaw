@@ -81,8 +81,8 @@ export function providerSupportsTools(modelId: string, providerId: ProviderId = 
   return providers[providerId].supportsTools(modelId)
 }
 
-export async function testProviderKey(apiKey: string = '', providerId: ProviderId = 'openrouter'): Promise<void> {
-  await providers[providerId].test(apiKey)
+export async function testProviderKey(apiKey: string = '', providerId: ProviderId = 'openrouter', workspaceId?: string): Promise<void> {
+  await providers[providerId].test(apiKey, workspaceId)
 }
 
 export { openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider }

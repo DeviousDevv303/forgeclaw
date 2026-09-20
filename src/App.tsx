@@ -420,6 +420,9 @@ function readAnthropicKey(): string {
 function readAnthropicModel(): string {
   return safeGetItem('fm_anthropic_model') || DEFAULT_ANTHROPIC_MODEL
 }
+function readAnthropicWorkspaceId(): string {
+  return safeGetItem('fm_anthropic_workspace_id') || ''
+}
 
 function readMoonshotModel(): string {
   return safeGetItem('fm_moonshot_model') || DEFAULT_MOONSHOT_MODEL
@@ -601,6 +604,7 @@ function App() {
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>(() => readAnthropicKey())
   const [anthropicApiKeyStatus, setAnthropicApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [anthropicModel, setAnthropicModel] = useState<string>(() => readAnthropicModel())
+  const [anthropicWorkspaceId, setAnthropicWorkspaceId] = useState<string>(() => readAnthropicWorkspaceId())
   const [moonshotApiKeyStatus, setMoonshotApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
   const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
@@ -732,6 +736,7 @@ function App() {
   useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
   useEffect(() => { safeSetItem('fm_anthropic_model', anthropicModel) }, [anthropicModel])
+  useEffect(() => { safeSetItem('fm_anthropic_workspace_id', anthropicWorkspaceId) }, [anthropicWorkspaceId])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
     setDiagnostics(prev => ({ ...prev, provider: activeProvider }))
@@ -981,6 +986,7 @@ function App() {
           model: currentModel,
           systemPrompt: activeSystemPrompt,
           messages: conversationMessages,
+          workspaceId: activeProvider === 'anthropic' ? (anthropicWorkspaceId.trim() || undefined) : undefined,
           tools: noMoreTools ? undefined : FORGE_TOOLS,
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
@@ -1147,7 +1153,7 @@ function App() {
         }])
       }
     } finally { setLoading(false) }
-  }, [apiKey, normalizedActiveModel, localEndpoint, selectedLanguage, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -1364,7 +1370,7 @@ function App() {
     setTestingKey(true)
     setTestKeyError('')
     try {
-      await testProviderKey(anthropicApiKey, 'anthropic')
+      await testProviderKey(anthropicApiKey, 'anthropic', anthropicWorkspaceId)
       setAnthropicApiKeyStatus('valid')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -1878,6 +1884,11 @@ function App() {
                       <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>{showApiKey ? '🙈' : '👁'}</button>
                     </div>
                     {testKeyError && <div style={{ color: anthropicApiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  </div>
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Anthropic Workspace ID (if required)</label>
+                    <input type="text" placeholder="wrkspc_..." value={anthropicWorkspaceId} onChange={e => setAnthropicWorkspaceId(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                    <div style={{ color: '#666', fontSize: '10px', marginTop: '5px', fontFamily: 'monospace', lineHeight: 1.5 }}>Sent only as the anthropic-workspace-id header. Find it in Claude Console → Settings → Workspaces.</div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                     <button onClick={testAnthropicKey} disabled={testingKey || !anthropicApiKey} style={{ flex: 1, background: testingKey ? '#333' : '#d97757', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST CLAUDE KEY'}</button>

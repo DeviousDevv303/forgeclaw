@@ -87,14 +87,16 @@ async function anthropicError(response: Response): Promise<string> {
   }
 }
 
-function headers(apiKey: string): HeadersInit {
-  return {
+function headers(apiKey: string, workspaceId?: string): HeadersInit {
+  const result: Record<string, string> = {
     'Content-Type': 'application/json',
     'x-api-key': cleanApiKey(apiKey),
     'anthropic-version': ANTHROPIC_VERSION,
     // Anthropic requires this opt-in for direct browser requests.
     'anthropic-dangerous-direct-browser-access': 'true',
   }
+  if (workspaceId?.trim()) result['anthropic-workspace-id'] = workspaceId.trim()
+  return result
 }
 
 async function readStream(response: Response, onToken: (token: string) => void): Promise<{ text: string; stopReason?: string }> {
@@ -159,7 +161,7 @@ export const anthropicProvider: AIProvider = {
 
     const response = await fetch(ANTHROPIC_BASE_URL, {
       method: 'POST',
-      headers: headers(apiKey),
+      headers: headers(apiKey, request.workspaceId),
       body: JSON.stringify(body),
     })
     if (!response.ok) throw new Error(await anthropicError(response))
@@ -186,11 +188,11 @@ export const anthropicProvider: AIProvider = {
     }
   },
 
-  async test(apiKey: string): Promise<void> {
+  async test(apiKey: string, workspaceId?: string): Promise<void> {
     if (!isConfigured(apiKey)) throw new Error('Invalid Anthropic API key format. Expected sk-ant-...')
     const response = await fetch(ANTHROPIC_BASE_URL, {
       method: 'POST',
-      headers: headers(apiKey),
+      headers: headers(apiKey, workspaceId),
       body: JSON.stringify({
         model: DEFAULT_ANTHROPIC_MODEL,
         max_tokens: 1,

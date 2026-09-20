@@ -9,6 +9,7 @@ export interface AIRequest {
   maxTokens?: number
   tools?: AIToolDef[]
   onToken?: (token: string) => void
+  workspaceId?: string
 }
 
 export interface AIMessage {
@@ -46,7 +47,7 @@ export interface AIProvider {
   isConfigured(apiKey: string): boolean
   supportsTools(modelId: string): boolean
   send(request: AIRequest, apiKey: string): Promise<AIResponse>
-  test(apiKey: string): Promise<void>
+  test(apiKey: string, workspaceId?: string): Promise<void>
 }
 
 export type AIErrorClass =
