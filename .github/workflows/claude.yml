@@ -30,11 +30,37 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Verify Anthropic API credential
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPICAPIKEY }}
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /tmp/anthropic-models.json --write-out '%{http_code}' \
+            --request GET \
+            --header "x-api-key: ${ANTHROPIC_API_KEY}" \
+            --header 'anthropic-version: 2023-06-01' \
+            https://api.anthropic.com/v1/models)"
+          echo "Anthropic API HTTP status: ${status}"
+          if [[ "${status}" != 2* ]]; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              payload = json.loads(Path('/tmp/anthropic-models.json').read_text())
+              error = payload.get('error', {})
+              print(f"Anthropic API error: {error.get('type', 'unknown')}: {error.get('message', 'no message')}")
+          except Exception:
+              print('Anthropic API returned a non-JSON error response.')
+          PY
+            exit 1
+          fi
+
       - name: Run Claude Code
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPICAPIKEY }}
+          show_full_output: true
 
           # Optional: Customize the trigger phrase (default: @claude)
           # trigger_phrase: "/claude"

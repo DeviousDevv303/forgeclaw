@@ -22,7 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, openrouterProvider, moonshotProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
@@ -149,6 +149,7 @@ function getSpeechErrorMessage(error?: string): string {
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'poolside/laguna-xs.2:free'
 const DEFAULT_MOONSHOT_MODEL = moonshotProvider.models[1]?.id ?? 'moonshot-v1-32k'
+const DEFAULT_ANTHROPIC_MODEL = anthropicProvider.models[0]?.id ?? 'claude-3-5-haiku-latest'
 const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
 const LEGACY_MODEL_MARKERS = ['cl' + 'aude', 'anth' + 'ropic', 'op' + 'enai', 'gpt-', 'oll' + 'ama']
 const OPENROUTER_MODEL_STORAGE_VERSION = 'laguna-xs-default'
@@ -412,6 +413,13 @@ function readMoonshotKey(): string {
   const key = safeGetItem('fm_moonshot_key') || ''
   return moonshotProvider.isConfigured(key) ? key : ''
 }
+function readAnthropicKey(): string {
+  const key = safeGetItem('fm_anthropic_key') || ''
+  return anthropicProvider.isConfigured(key) ? key : ''
+}
+function readAnthropicModel(): string {
+  return safeGetItem('fm_anthropic_model') || DEFAULT_ANTHROPIC_MODEL
+}
 
 function readMoonshotModel(): string {
   return safeGetItem('fm_moonshot_model') || DEFAULT_MOONSHOT_MODEL
@@ -584,17 +592,34 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [apiKeyStatus, setApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [testKeyError, setTestKeyError] = useState('')
-  // OpenRouter-only runtime state. Active execution is deterministic and does not auto-fallback.
-  // Initialize provider from localStorage, default to openrouter
+  // Active execution is deterministic and does not auto-fallback. Local Mode is
+  // the default so OpenRouter is optional rather than a boot requirement.
   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
-  const initialProvider: ProviderId = savedProvider === 'moonshot' ? 'moonshot' : 'openrouter'
+  const initialProvider: ProviderId = savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'openrouter' || savedProvider === 'local' ? savedProvider : 'local'
   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
   const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
+  const [anthropicApiKey, setAnthropicApiKey] = useState<string>(() => readAnthropicKey())
+  const [anthropicApiKeyStatus, setAnthropicApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
+  const [anthropicModel, setAnthropicModel] = useState<string>(() => readAnthropicModel())
   const [moonshotApiKeyStatus, setMoonshotApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
+  const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
+  const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
   const [activeModel, setActiveModel] = useState<string>(readOpenRouterModel)
-  const normalizedActiveModel = normalizeOpenRouterModel(activeModel)
-  const activeModelLabel = openrouterProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
+  const normalizedActiveModel = activeProvider === 'local'
+    ? localModel
+    : activeProvider === 'anthropic'
+      ? anthropicModel
+      : activeProvider === 'moonshot'
+        ? moonshotModel
+        : normalizeOpenRouterModel(activeModel)
+  const activeModelLabel = activeProvider === 'local'
+    ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
+    : activeProvider === 'anthropic'
+      ? anthropicProvider.models.find(m => m.id === anthropicModel)?.label ?? anthropicModel
+      : activeProvider === 'moonshot'
+        ? moonshotProvider.models.find(m => m.id === moonshotModel)?.label ?? moonshotModel
+        : openrouterProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
   const [apiKey, setApiKey] = useState<string>(readOpenRouterKey)
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
   const [lastRequestError, setLastRequestError] = useState('')
@@ -705,11 +730,14 @@ function App() {
     safeSetItem('fm_api_key', apiKey)
   }, [apiKey])
   useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
+  useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
+  useEffect(() => { safeSetItem('fm_anthropic_model', anthropicModel) }, [anthropicModel])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
     setDiagnostics(prev => ({ ...prev, provider: activeProvider }))
   }, [activeProvider])
   useEffect(() => {
+    if (activeProvider !== 'openrouter') return
     const normalizedModel = normalizeOpenRouterModel(activeModel)
     if (activeModel !== normalizedModel) {
       setActiveModel(normalizedModel)
@@ -718,16 +746,16 @@ function App() {
     safeSetItem('fm_openrouter_model', normalizedModel)
     safeSetItem('fm_model', normalizedModel)
     safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
-  }, [activeModel])
+  }, [activeModel, activeProvider])
   useEffect(() => {
     setDiagnostics(prev => ({
       ...prev,
       provider: activeProvider,
-      model: activeProvider === 'openrouter' ? normalizedActiveModel : moonshotModel,
-      keyPresent: !!(activeProvider === 'openrouter' ? apiKey : moonshotApiKey),
+      model: normalizedActiveModel,
+      keyPresent: activeProvider === 'local' ? !!localEndpoint : !!(activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey),
       buildVersion: BUILD_COMMIT,
     }))
-  }, [normalizedActiveModel, apiKey, moonshotModel, moonshotApiKey, activeProvider])
+  }, [normalizedActiveModel, apiKey, moonshotModel, moonshotApiKey, anthropicApiKey, localEndpoint, activeProvider])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -830,9 +858,9 @@ function App() {
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
-    const currentApiKey = activeProvider === 'openrouter' ? apiKey : moonshotApiKey
-    const currentProviderLabel = activeProvider === 'openrouter' ? 'OpenRouter' : 'Moonshot'
-    const currentKeyFormat = activeProvider === 'openrouter' ? 'sk-or-...' : 'sk-...'
+    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
+    const currentProviderLabel = activeProvider === 'local' ? 'Local inference' : activeProvider === 'openrouter' ? 'OpenRouter' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
+    const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'openrouter' ? 'sk-or-...' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
 
     if (!currentApiKey) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
@@ -877,7 +905,7 @@ function App() {
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
     const relevant = findRelevant(corpus, promptText, 3)
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
-    const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel)
+    const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'
     const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}`
@@ -888,7 +916,7 @@ function App() {
       : baseSystemPrompt
     
     // Check if current model supports native tools
-    const supportsNativeTools = providerSupportsTools(normalizedActiveModel)
+    const supportsNativeTools = providerSupportsTools(normalizedActiveModel, activeProvider)
     
     // Inject manual tool schema for no-tools models
     const activeSystemPrompt = supportsNativeTools
@@ -914,7 +942,7 @@ function App() {
         ...loadToolContext(),
         sessionId,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
-          runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, apiKey, FORGE_TOOLS, loadToolContext()),
+          runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, currentApiKey, FORGE_TOOLS, loadToolContext()),
       }
 
       const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
@@ -929,7 +957,7 @@ function App() {
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
       // Some models (e.g. OpenRouter free-tier) don't support function calling at all
-      const supportsTools = providerSupportsTools(normalizedActiveModel)
+      const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -947,8 +975,8 @@ function App() {
         let streamBuffer = ''
 
         const reqStart = performance.now()
-        const currentModel = activeProvider === 'openrouter' ? normalizedActiveModel : moonshotModel
-        const currentKey = activeProvider === 'openrouter' ? apiKey : moonshotApiKey
+        const currentModel = normalizedActiveModel
+        const currentKey = currentApiKey
         const routerResult = await sendViaRouter({
           model: currentModel,
           systemPrompt: activeSystemPrompt,
@@ -1097,7 +1125,7 @@ function App() {
       const msg = rawMsg
       setRequestStatus('error')
       setLastRequestError(msg)
-      emitFailure({ source: activeProvider, severity: 'error', message: rawMsg, context: { promptLength: promptText.length } })
+      emitFailure({ source: 'forgemind', severity: 'error', message: rawMsg, context: { provider: activeProvider, promptLength: promptText.length } })
       if (cloudMsgId) {
         setMessages(prev => prev.map(m => {
           if (m.id !== cloudMsgId) return m
@@ -1119,7 +1147,7 @@ function App() {
         }])
       }
     } finally { setLoading(false) }
-  }, [apiKey, normalizedActiveModel, selectedLanguage, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [apiKey, normalizedActiveModel, localEndpoint, selectedLanguage, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -1331,6 +1359,23 @@ function App() {
     }
   }
 
+  const testAnthropicKey = async () => {
+    if (!anthropicApiKey.trim()) { setAnthropicApiKeyStatus('invalid'); setTestKeyError('No Anthropic key entered'); return }
+    setTestingKey(true)
+    setTestKeyError('')
+    try {
+      await testProviderKey(anthropicApiKey, 'anthropic')
+      setAnthropicApiKeyStatus('valid')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setTestKeyError(msg)
+      const isAuthReject = msg.includes('401') || /unauthorized|invalid.*(api.?key|token|auth)/i.test(msg)
+      setAnthropicApiKeyStatus(isAuthReject ? 'invalid' : 'unverified')
+    } finally {
+      setTestingKey(false)
+    }
+  }
+
   const testMoonshotKey = async () => {
     if (!moonshotApiKey.trim()) { setMoonshotApiKeyStatus('invalid'); return }
     setTestingKey(true)
@@ -1341,6 +1386,19 @@ function App() {
       const msg = err instanceof Error ? err.message : String(err)
       const isAuthReject = msg.includes('401') || /unauthorized|invalid.*(api.?key|token|auth)/i.test(msg)
       setMoonshotApiKeyStatus(isAuthReject ? 'invalid' : 'unverified')
+    } finally {
+      setTestingKey(false)
+    }
+  }
+
+  const testLocalEndpoint = async () => {
+    setTestingKey(true)
+    setTestKeyError('')
+    try {
+      await testProviderKey(localEndpoint, 'local')
+      setTestKeyError('Local llama.cpp endpoint is reachable')
+    } catch (err) {
+      setTestKeyError(err instanceof Error ? err.message : String(err))
     } finally {
       setTestingKey(false)
     }
@@ -1711,11 +1769,20 @@ function App() {
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
                   <option value="openrouter" style={{ background: '#111' }}>OpenRouter</option>
+                  <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
                   <option value="moonshot" style={{ background: '#111' }}>Moonshot (Kimi)</option>
+                  <option value="local" style={{ background: '#111' }}>Local Inference (llama.cpp)</option>
                 </select>
               </div>
 
               {/* Provider-specific runtime info */}
+              {activeProvider === 'anthropic' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#d97757', display: 'inline-block' }} />
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Anthropic</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Claude Messages API — native tool support</span>
+                </div>
+              )}
               {activeProvider === 'openrouter' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
@@ -1728,6 +1795,13 @@ function App() {
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#3b82f6', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Moonshot</span>
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Kimi AI — native tool support</span>
+                </div>
+              )}
+              {activeProvider === 'local' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#a855f7', display: 'inline-block' }} />
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Local Mode</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>OpenAI-compatible llama.cpp server</span>
                 </div>
               )}
 
@@ -1748,11 +1822,20 @@ function App() {
                       </option>
                     ))}
                   </select>
-                  {!providerSupportsTools(normalizedActiveModel) && (
+                  {!providerSupportsTools(normalizedActiveModel, activeProvider) && (
                     <div style={{ color: '#8a8a8a', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>
                       Native tool calls are disabled for this OpenRouter free model, so chat runs directly without sending tool schemas.
                     </div>
                   )}
+                </div>
+              )}
+              {activeProvider === 'anthropic' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Claude Model</label>
+                  <select value={anthropicModel} onChange={e => setAnthropicModel(e.target.value)} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
+                    {anthropicProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note} ({m.contextK}K ctx)</option>)}
+                  </select>
+                  <div style={{ color: '#d97757', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Anthropic Messages API with native tool calling.</div>
                 </div>
               )}
               {activeProvider === 'moonshot' && (
@@ -1776,8 +1859,36 @@ function App() {
                   </div>
                 </div>
               )}
+              {activeProvider === 'local' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Local Model</label>
+                  <select value={localModel} onChange={e => { setLocalModel(e.target.value); safeSetItem('fm_local_model', e.target.value) }} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
+                    {localInferenceProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
+                  </select>
+                </div>
+              )}
 
               {/* API key — provider-specific */}
+              {activeProvider === 'anthropic' && (
+                <>
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Anthropic API Key</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input type={showApiKey ? 'text' : 'password'} placeholder="sk-ant-..." value={anthropicApiKey} onChange={e => { setAnthropicApiKey(e.target.value); setAnthropicApiKeyStatus('unverified') }} style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${anthropicApiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                      <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>{showApiKey ? '🙈' : '👁'}</button>
+                    </div>
+                    {testKeyError && <div style={{ color: anthropicApiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                    <button onClick={testAnthropicKey} disabled={testingKey || !anthropicApiKey} style={{ flex: 1, background: testingKey ? '#333' : '#d97757', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST CLAUDE KEY'}</button>
+                  </div>
+                  <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
+                    {!anthropicApiKey && <span style={{ color: '#ef4444' }}>Anthropic: no API key — paste one in Settings (sk-ant-...)</span>}
+                    {anthropicApiKey && anthropicApiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Claude Key to verify</span>}
+                    {anthropicApiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>Claude API key verified</span>}
+                  </div>
+                </>
+              )}
               {activeProvider === 'openrouter' && (
                 <>
                   <div style={{ marginBottom: '14px' }}>
@@ -1852,13 +1963,23 @@ function App() {
                 </>
               )}
 
+              {activeProvider === 'local' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>llama.cpp Server Endpoint</label>
+                  <input type="url" placeholder="http://127.0.0.1:8080/v1" value={localEndpoint} onChange={e => { setLocalEndpoint(e.target.value); safeSetItem('fm_local_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                  <button onClick={testLocalEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#a855f7', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST LOCAL ENDPOINT'}</button>
+                  {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Start llama-server with a quantized GGUF model and its OpenAI-compatible /v1 endpoint.</div>
+                </div>
+              )}
+
               {/* Operator diagnostics */}
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', activeProvider === 'moonshot' ? 'Moonshot' : 'OpenRouter'],
-                  ['runtime model', activeProvider === 'moonshot' ? moonshotProvider.models.find(m => m.id === moonshotModel)?.label ?? moonshotModel : activeModelLabel],
-                  ['auth state', (activeProvider === 'moonshot' ? moonshotApiKey : apiKey) ? 'present' : 'missing'],
+                  ['runtime provider', activeProvider === 'local' ? 'Local Inference' : activeProvider === 'moonshot' ? 'Moonshot' : 'OpenRouter'],
+                  ['runtime model', activeModelLabel],
+                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : (activeProvider === 'moonshot' ? moonshotApiKey : apiKey) ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
                   ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
@@ -2408,7 +2529,7 @@ function App() {
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
-          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={apiKey} />
+          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'local' ? localEndpoint : apiKey} />
         )}
 
         {activeTab === 'activity' && (

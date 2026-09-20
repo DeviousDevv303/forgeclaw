@@ -1,18 +1,22 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ───────────────────────────────────────────────────────────
-// Multi-provider runtime: OpenRouter + Moonshot (Kimi)
+// Multi-provider runtime: OpenRouter + Anthropic + Moonshot (Kimi) + Local
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
 import { openrouterProvider } from './providers/openrouterProvider'
+import { anthropicProvider } from './providers/anthropicProvider'
 import { moonshotProvider } from './providers/moonshotProvider'
+import { localInferenceProvider } from './providers/localInferenceProvider'
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export const providers = {
   openrouter: openrouterProvider,
+  anthropic: anthropicProvider,
   moonshot: moonshotProvider,
+  local: localInferenceProvider,
 } as const
 
 export type ProviderId = keyof typeof providers
@@ -81,4 +85,4 @@ export async function testProviderKey(apiKey: string = '', providerId: ProviderI
   await providers[providerId].test(apiKey)
 }
 
-export { openrouterProvider, moonshotProvider }
+export { openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider }
