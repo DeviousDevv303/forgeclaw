@@ -155,6 +155,7 @@ const RESPONSE_LANGUAGE_INSTRUCTIONS: Record<string, string> = {
   ru: 'Respond in Russian unless the user asks for another language.',
   zh: 'Respond in Chinese unless the user asks for another language.',
 }
+const LOCAL_RESPONSE_SYSTEM_PROMPT = `You are ForgeClaw's local response model. Answer the user's request directly and concisely. Do not emit execution plans, manifests, progress updates, tool calls, or status scaffolding. Return the normal assistant answer first. After the answer, append a concise public reasoning trace for the UI in this exact format: [FM:TRACE]brief rationale and verification path[FM:TRACE_END]. Do not include hidden chain-of-thought.`
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -600,7 +601,6 @@ function App() {
   const [elVoiceId, setElVoiceId] = useState<string>(() => safeGetItem('fc_el_voice_id') || '')
   const elAudioRef = useRef<HTMLAudioElement | null>(null)
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
-  const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
   const [showConnectors, setShowConnectors] = useState(false)
 
   // Activity log — Manus-like live view of tool calls
@@ -844,12 +844,15 @@ function App() {
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
     const relevant = findRelevant(corpus, promptText, 3)
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
-    const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
+    const localDirectResponse = activeProvider === 'local'
+    const runtimeToolInstruction = !localDirectResponse && providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'
-    const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}`
+    const baseSystemPrompt = localDirectResponse
+      ? `${LOCAL_RESPONSE_SYSTEM_PROMPT}\n\n${languageInstruction}`
+      : `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}`
     
-    const finalSystemPrompt = relevant.length > 0
+    const finalSystemPrompt = !localDirectResponse && relevant.length > 0
       ? baseSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
         relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
       : baseSystemPrompt
@@ -858,7 +861,7 @@ function App() {
     const supportsNativeTools = providerSupportsTools(normalizedActiveModel, activeProvider)
     
     // Inject manual tool schema for no-tools models
-    const activeSystemPrompt = supportsNativeTools
+    const activeSystemPrompt = localDirectResponse || supportsNativeTools
       ? finalSystemPrompt
       : injectToolSchema(finalSystemPrompt, FORGE_TOOLS)
 
@@ -888,14 +891,18 @@ function App() {
           ? [{ role: m.role, content: m.content }]
           : []
       )
-      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: promptText }]
+      // Local mode is stateless per turn: persisted chat/corpus content may contain
+      // old execution material and must never consume llama.cpp context.
+      const conversationMessages: AIMessage[] = localDirectResponse
+        ? [{ role: 'user', content: promptText }]
+        : [...historyMessages, { role: 'user', content: promptText }]
       const allToolResults: ToolResult[] = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
       const chainStartedAt = new Date().toISOString()
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
       // Some models do not support native function calling.
-      const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
+      const supportsTools = !localDirectResponse && providerSupportsTools(normalizedActiveModel, activeProvider)
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -1050,10 +1057,25 @@ function App() {
       const messageTrace = trace
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
         ?? buildFallbackTrace(promptText, messageContent, `${activeProvider}:${normalizedActiveModel}`)
-      setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: messageContent, plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: activeProvider, model: normalizedActiveModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
-        : m
-      ))
+      setMessages(prev => {
+        const previous = prev.find(m => m.id === msgId)
+        const completed: Message = {
+          ...(previous ?? { id: msgId, role: 'assistant' as const, timestamp: Date.now(), source: activeProvider }),
+          content: messageContent,
+          plan,
+          agentPhase,
+          streaming: false,
+          activeTags: tagsFound,
+          thinking,
+          trace: messageTrace,
+          provider: activeProvider,
+          model: normalizedActiveModel,
+          toolResults: messageToolResults,
+          showReasoning: false,
+          reasoning: messageReasoning,
+        }
+        return [...prev.filter(message => message.id !== msgId), completed]
+      })
       setRequestStatus('success')
       setLastRequestError('')
       setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
@@ -2436,7 +2458,7 @@ function App() {
 
               if (msg.role === 'user') {
                 return (
-                  <div key={msg.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '5px 0', borderBottom: '1px solid #0f0f0f', opacity: hoveredStepId ? 0.3 : 1, transition: 'opacity 0.15s' }}>
+                  <div key={msg.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '5px 0', borderBottom: '1px solid #0f0f0f' }}>
                     <span style={{ color: '#333', fontSize: '8px', flexShrink: 0, marginTop: '2px', width: '90px' }}>{dateStr} {timeStr}</span>
                     <span style={{ color: '#f9731644', fontSize: '8px', letterSpacing: '1px', flexShrink: 0, marginTop: '2px' }}>USER</span>
                     <span style={{ color: '#555', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{msg.content.slice(0, 120)}</span>
@@ -2445,16 +2467,12 @@ function App() {
               }
 
               // Assistant entry
-              const toolCount = msg.toolResults?.length ?? 0
-              const toolErrors = msg.toolResults?.filter(t => t.isError).length ?? 0
               const hasThinking = !!buildMessageTrace(msg)
               const src = msg.provider === 'anthropic' ? 'ANTHROPIC' : msg.provider === 'moonshot' ? 'MOONSHOT' : 'LOCAL'
               const srcColor = msg.provider === 'anthropic' ? '#d97757' : msg.provider === 'moonshot' ? '#3b82f6' : '#10b981'
-              // This response block contains the hovered step
-              const blockHovered = hoveredStepId && msg.toolResults?.some(tr => tr.reasoningStepId === hoveredStepId)
 
               return (
-                <div key={msg.id} style={{ borderBottom: '1px solid #0f0f0f', opacity: hoveredStepId && !blockHovered ? 0.25 : 1, transition: 'opacity 0.15s' }}>
+                <div key={msg.id} style={{ borderBottom: '1px solid #0f0f0f' }}>
                   {/* Response row */}
                   <div style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '5px 0' }}>
                     <span style={{ color: '#333', fontSize: '8px', flexShrink: 0, marginTop: '2px', width: '90px' }}>{dateStr} {timeStr}</span>
@@ -2464,32 +2482,8 @@ function App() {
                     </span>
                     <div style={{ display: 'flex', gap: '6px', flexShrink: 0, alignItems: 'center' }}>
                       {hasThinking && <span style={{ color: '#2a4a22', fontSize: '7px', border: '1px solid #2a4a22', padding: '0 3px', borderRadius: '2px', letterSpacing: '1px' }}>TRACE</span>}
-                      {toolCount > 0 && (
-                        <span style={{ color: toolErrors > 0 ? '#cc333388' : '#5a9e4488', fontSize: '7px', border: `1px solid ${toolErrors > 0 ? '#cc333344' : '#5a9e4444'}`, padding: '0 3px', borderRadius: '2px', letterSpacing: '1px' }}>
-                          {toolCount} TOOL{toolCount !== 1 ? 'S' : ''}{toolErrors > 0 ? ` · ${toolErrors} ERR` : ''}
-                        </span>
-                      )}
                     </div>
                   </div>
-                  {/* Tool rows */}
-                  {msg.toolResults && msg.toolResults.map((tr, ti) => {
-                    const isHovered = tr.reasoningStepId === hoveredStepId
-                    const isDimmed = hoveredStepId && !isHovered
-                    return (
-                      <div
-                        key={ti}
-                        onMouseEnter={() => setHoveredStepId(tr.reasoningStepId ?? null)}
-                        onMouseLeave={() => setHoveredStepId(null)}
-                        style={{ display: 'flex', gap: '10px', alignItems: 'center', padding: '3px 0 3px 100px', opacity: isDimmed ? 0.2 : 0.85, background: isHovered ? 'rgba(249,115,22,0.06)' : 'transparent', borderLeft: isHovered ? '2px solid rgba(249,115,22,0.4)' : '2px solid transparent', cursor: 'default', transition: 'opacity 0.15s, background 0.15s' }}>
-                        <span style={{ color: tr.isError ? '#cc3333' : '#3a5c2a', fontSize: '8px', flexShrink: 0 }}>⬡</span>
-                        <span style={{ color: tr.isError ? '#cc3333' : '#4a7c3f', fontSize: '8px', flexShrink: 0, textTransform: 'uppercase', letterSpacing: '1px' }}>{tr.name}</span>
-                        <span style={{ color: '#2a3a2a', fontSize: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                          {tr.output.split('\n')[0].slice(0, 100)}
-                        </span>
-                        <span style={{ color: tr.isError ? '#cc333388' : '#5a9e4488', fontSize: '7px', flexShrink: 0 }}>{tr.isError ? 'FAILED' : 'OK'}</span>
-                      </div>
-                    )
-                  })}
                 </div>
               )
             })}

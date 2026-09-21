@@ -118,6 +118,11 @@ async function readStream(response: Response, onToken: (token: string) => void):
         if (token) { text += token; onToken(token) }
       }
     }
+  } catch (error) {
+    // A browser stream can terminate after llama.cpp has already delivered valid output.
+    // Preserve that output; only propagate failures that occurred before any token arrived.
+    if (text) return text
+    throw error
   } finally {
     reader.releaseLock()
   }
