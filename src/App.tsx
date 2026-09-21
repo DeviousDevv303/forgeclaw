@@ -40,7 +40,6 @@ import { getDiscardedPaths } from './lib/agentCore'
 import { useForgeOps } from './hooks/useForgeOps'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
-import { ChatLiveExecution } from './components/ChatLiveExecution'
 import type { AgentPhase } from './types/forgeOps'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -385,13 +384,6 @@ function buildFallbackTrace(prompt: string, response: string, source: string): s
     'Tools: None required for this turn',
     `Verification: Visible response generated and rendered (${responseSize} characters)`,
   ].join('\n')
-}
-
-function findPreviousUserPrompt(messages: Message[], startIndex: number): string | undefined {
-  for (let i = startIndex - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') return messages[i].content
-  }
-  return undefined
 }
 
 function cleanStoredMessage(message: Message): Message {
@@ -2127,12 +2119,11 @@ function App() {
                   ))}
                 </div>
               ) : (
-                messages.map((rawMsg, messageIndex) => {
+                messages.map(rawMsg => {
                   const displayContent = rawMsg.role === 'assistant' ? cleanVisibleResponse(rawMsg.content) : rawMsg.content
                   const msg = rawMsg.role === 'assistant' ? { ...rawMsg, content: displayContent } : rawMsg
                   const reasoningOpen = openReasoningIds.has(msg.id)
                   const reasoningTrace = buildMessageTrace(msg)
-                  const promptContext = msg.role === 'assistant' ? findPreviousUserPrompt(messages, messageIndex) : undefined
                   return (
                     <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: '4px' }}>
                       {msg.role === 'assistant' && (
@@ -2179,23 +2170,6 @@ function App() {
                           </div>
                         )}
                       </div>
-
-                      {/* Live execution drawer - follows the assistant answer in the chat stream */}
-                      {msg.role === 'assistant' && (
-                        <div style={{ maxWidth: '90%', marginTop: '8px', width: '100%' }}>
-                          <ChatLiveExecution
-                            objective={promptContext}
-                            plan={msg.plan}
-                            phase={msg.agentPhase}
-                            streaming={msg.streaming}
-                            toolResults={msg.toolResults}
-                            trace={reasoningTrace}
-                            provider={msg.provider}
-                            model={msg.model}
-                            error={msg.content.startsWith('[ERROR]') || /no API key|auth failed/i.test(msg.content)}
-                          />
-                        </div>
-                      )}
 
                       {/* Reasoning trace — minimal collapsible */}
                       {msg.role === 'assistant' && reasoningTrace && (
