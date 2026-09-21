@@ -7,7 +7,7 @@
 
 ## Conclusion
 
-ForgeClaw now has a provider-agnostic Local Mode path that communicates with an OpenAI-compatible local inference server. The initial runtime uses **llama.cpp** with **Qwen2.5 1.5B Instruct, Q4_K_M GGUF**. The application boots through Vite without an OpenRouter key, the local provider completes inference, llama.cpp emits a native tool call, the managed-agent loop returns successfully, and an offline `run_js` tool execution was verified.
+ForgeClaw now has a provider-agnostic Local Mode path that communicates with an OpenAI-compatible local inference server. The initial runtime uses **llama.cpp** with **Qwen2.5 1.5B Instruct, Q4_K_M GGUF**. The application boots through Vite without a cloud API key, the local provider completes inference, llama.cpp emits a native tool call, the managed-agent loop returns successfully, and an offline `run_js` tool execution was verified.
 
 The hardware result is positive for this sandbox, but it is not a valid acceptance result for the stated 8 GB laptop because the sandbox exposed **24 GiB of RAM** during the runtime test. The provisional 6.5 GB ceiling therefore remains unvalidated for the target machine.
 
@@ -25,13 +25,13 @@ The hardware result is positive for this sandbox, but it is not a valid acceptan
 
 The repository was cloned from the authorized public `main` branch. Before changes, `npm ci` completed successfully. The baseline `npm run build`, `npm run lint`, and `npm run test:run` commands passed. The repository had no test files before the Local Mode smoke test was added.
 
-The existing provider architecture consisted of OpenRouter and Moonshot adapters behind shared `AIProvider`, router, and model-bridge contracts. The application defaulted to OpenRouter and required a cloud key for the active execution path.
+The provider architecture uses shared `AIProvider`, router, and model-bridge contracts. The application now defaults to Local Inference and preserves Anthropic and Moonshot as explicit alternatives; Local Mode does not require a cloud key for the active execution path.
 
 ## Implemented Local Mode path
 
 The new `localInferenceProvider` implements the existing `AIProvider` contract. It uses an OpenAI-compatible HTTP endpoint and does not require an API key. The default endpoint is `http://127.0.0.1:8080/v1`; the UI allows an operator to override it. The adapter supports non-streaming and streaming chat completions, native tool schemas, native tool-call response parsing, and a `/v1/models` health check.
 
-The provider was registered in `providerRouter.ts` and `modelProviders.ts`. Local Mode is now the default provider for a new session, while OpenRouter and Moonshot remain available as optional providers. The existing cloud-provider adapters were not removed or replaced.
+The provider is registered in `providerRouter.ts` and `modelProviders.ts`. Local Mode is the default provider for a new session, while Anthropic and Moonshot remain available as optional providers. No automatic cloud fallback is used.
 
 The App settings UI now exposes Local Inference, the local GGUF model entry, the llama.cpp endpoint, a local endpoint health check, and Local Mode diagnostics. The endpoint is stored in browser local storage under `fm_local_endpoint`; no cloud credential is required.
 

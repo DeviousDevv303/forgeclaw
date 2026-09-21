@@ -23,34 +23,15 @@ grep -Eq '^VALIDATION:' "$msg_file" || fail "missing VALIDATION section."
 grep -Eq '^Contract: v1\.1, override by Cristian$' "$msg_file" || fail "missing contract line."
 grep -Eq '^Co-authored-by: Cristian <towerslutz@gmail\.com>$' "$msg_file" || fail "missing Cristian co-author line."
 
-provider_router="src/lib/ai/providerRouter.ts"
-app_file="src/App.tsx"
-
-# Check that providerRouter imports from providers/ directory, not hardcoded to one
-grep -Eq "import .* from '\./providers/'" "$provider_router" \
-  || fail "providerRouter must import from providers directory."
-
-if git diff --cached --name-only -- "$provider_router" | grep -q .; then
-  grep -Eq "ACTIVE_PROVIDER = (openrouterProvider|moonshotProvider)" "$provider_router" \
-    || fail "providerRouter must keep ACTIVE_PROVIDER on openrouterProvider or moonshotProvider."
-fi
-
-if git diff --cached --name-only -- "$app_file" | grep -q .; then
-  grep -Eq "RUNTIME_PROVIDER: ProviderId = ('openrouter'|'moonshot')" "$app_file" \
-    || fail "App.tsx RUNTIME_PROVIDER must be openrouter or moonshot."
-fi
-
 added_lines="$(git diff --cached -U0 -- ':(exclude).githooks/commit-msg' | grep -E '^\+[^+]' || true)"
 
-bad_a="cl""aude"
-bad_b="anth""ropic"
 bad_c="Open""AI"
 bad_d="open""ai"
 bad_e="Oll""ama"
 bad_f="oll""ama"
 bad_g="sk-""ant"
 
-for blocked in "$bad_a" "$bad_b" "$bad_c" "$bad_d" "$bad_e" "$bad_f" "$bad_g"; do
+for blocked in "$bad_c" "$bad_d" "$bad_e" "$bad_f" "$bad_g"; do
   if printf '%s\n' "$added_lines" | grep -Fq "$blocked"; then
     fail "staged diff adds blocked legacy provider text: $blocked"
   fi

@@ -3,13 +3,12 @@
 // ─── Provider Bridge ──────────────────────────────────────────────────────────
 
 import type { AIMessage, AIRequest } from './ai/types'
-import { DEFAULT_OPENROUTER_MODEL, openrouterProvider, resolveOpenRouterModel } from './ai/providers/openrouterProvider'
 import { ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, anthropicProvider } from './ai/providers/anthropicProvider'
 import { DEFAULT_MOONSHOT_MODEL, moonshotProvider } from './ai/providers/moonshotProvider'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL, localInferenceProvider } from './ai/providers/localInferenceProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
 
-export type ProviderId = 'openrouter' | 'anthropic' | 'moonshot' | 'local'
+export type ProviderId = 'anthropic' | 'moonshot' | 'local'
 
 export interface ModelOption {
   id: string
@@ -29,14 +28,6 @@ export interface ProviderConfig {
 }
 
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
-  openrouter: {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    url: 'https://openrouter.ai/api/v1/chat/completions',
-    models: openrouterProvider.models.map(model => ({ ...model, noTools: !openrouterProvider.supportsTools(model.id) })),
-    keyPlaceholder: 'sk-or-...',
-    keyPrefix: 'sk-or-',
-  },
   anthropic: {
     id: 'anthropic',
     name: 'Anthropic (Claude)',
@@ -62,10 +53,9 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['local', 'openrouter', 'anthropic', 'moonshot']
+export const PROVIDER_ORDER: ProviderId[] = ['local', 'anthropic', 'moonshot']
 export const DEFAULT_PROVIDER: ProviderId = 'local'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
-  openrouter: DEFAULT_OPENROUTER_MODEL,
   anthropic: DEFAULT_ANTHROPIC_MODEL,
   moonshot: DEFAULT_MOONSHOT_MODEL,
   local: DEFAULT_LOCAL_MODEL,
@@ -117,15 +107,14 @@ export async function callProvider(
     return { text: response.text, provider: 'local', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
   }
 
-  const response = await openrouterProvider.send({ ...request, model: resolveOpenRouterModel(model) }, apiKey)
-  return { text: response.text, provider: 'openrouter', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
+  throw new Error(`Unsupported provider: ${providerId}`)
 }
 
 export function modelSupportsTools(providerId: ProviderId, modelId: string): boolean {
   if (providerId === 'anthropic') return anthropicProvider.supportsTools(modelId)
   if (providerId === 'moonshot') return moonshotProvider.supportsTools(modelId)
   if (providerId === 'local') return localInferenceProvider.supportsTools(modelId)
-  return openrouterProvider.supportsTools(resolveOpenRouterModel(modelId))
+  throw new Error(`Unsupported provider: ${providerId}`)
 }
 
 export async function testProviderKey(providerId: ProviderId, _model: string, apiKey: string): Promise<void> {
@@ -141,5 +130,5 @@ export async function testProviderKey(providerId: ProviderId, _model: string, ap
     await localInferenceProvider.test(apiKey)
     return
   }
-  await openrouterProvider.test(apiKey)
+  throw new Error(`Unsupported provider: ${providerId}`)
 }

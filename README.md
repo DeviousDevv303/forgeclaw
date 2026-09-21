@@ -22,7 +22,7 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 ## Current runtime
 
-The active application path uses an OpenRouter provider adapter. The provider boundary is intentionally kept behind shared interfaces so additional providers can be added without rewriting the orchestration layer.
+The active application path uses the Local Inference provider by default, with Anthropic and Moonshot available as explicit alternatives behind the shared provider interface. Local Mode communicates with an OpenAI-compatible llama.cpp server at `http://127.0.0.1:8080/v1`.
 
 The operator supplies provider credentials through the application's settings flow. Credentials are not intended to be committed to the repository.
 
@@ -88,7 +88,7 @@ scripts/
 | Build | Vite |
 | Styling | Tailwind CSS |
 | State | Zustand |
-| AI runtime | Provider interface with an active OpenRouter adapter |
+| AI runtime | Local llama.cpp provider by default; Anthropic and Moonshot alternatives |
 | GitHub API | Octokit REST |
 | Optional backend | Supabase Edge Function |
 | Browser automation | Playwright |

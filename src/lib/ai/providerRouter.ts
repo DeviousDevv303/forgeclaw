@@ -1,11 +1,10 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ───────────────────────────────────────────────────────────
-// Multi-provider runtime: OpenRouter + Anthropic + Moonshot (Kimi) + Local
+// Multi-provider runtime: Local + Anthropic + Moonshot (Kimi)
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
-import { openrouterProvider } from './providers/openrouterProvider'
 import { anthropicProvider } from './providers/anthropicProvider'
 import { moonshotProvider } from './providers/moonshotProvider'
 import { localInferenceProvider } from './providers/localInferenceProvider'
@@ -13,7 +12,6 @@ import { localInferenceProvider } from './providers/localInferenceProvider'
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export const providers = {
-  openrouter: openrouterProvider,
   anthropic: anthropicProvider,
   moonshot: moonshotProvider,
   local: localInferenceProvider,
@@ -21,20 +19,15 @@ export const providers = {
 
 export type ProviderId = keyof typeof providers
 
-export const ACTIVE_PROVIDER = providers.openrouter
-export const CLOUD_PROVIDER = providers.openrouter
-
-export const PROVIDER_CONFIG = {
-  primary: providers.openrouter,
-  cloud: providers.openrouter,
-} as const
+export const ACTIVE_PROVIDER = providers.local
+export const PROVIDER_CONFIG = providers
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export async function sendViaRouter(
   request: AIRequest,
   apiKey: string,
-  providerId: ProviderId = 'openrouter',
+  providerId: ProviderId = 'local',
 ): Promise<{ success: true; response: AIResponse } | { success: false; error: AIError }> {
   const provider = providers[providerId]
   
@@ -73,16 +66,16 @@ export async function sendViaRouter(
 
 // ─── Convenience ────────────────────────────────────────────────────────────
 
-export function isProviderConfigured(apiKey: string = '', providerId: ProviderId = 'openrouter'): boolean {
+export function isProviderConfigured(apiKey: string = '', providerId: ProviderId = 'local'): boolean {
   return providers[providerId].isConfigured(apiKey)
 }
 
-export function providerSupportsTools(modelId: string, providerId: ProviderId = 'openrouter'): boolean {
+export function providerSupportsTools(modelId: string, providerId: ProviderId = 'local'): boolean {
   return providers[providerId].supportsTools(modelId)
 }
 
-export async function testProviderKey(apiKey: string = '', providerId: ProviderId = 'openrouter', workspaceId?: string): Promise<void> {
+export async function testProviderKey(apiKey: string = '', providerId: ProviderId = 'local', workspaceId?: string): Promise<void> {
   await providers[providerId].test(apiKey, workspaceId)
 }
 
-export { openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider }
+export { anthropicProvider, moonshotProvider, localInferenceProvider }

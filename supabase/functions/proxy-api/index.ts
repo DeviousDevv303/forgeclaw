@@ -63,44 +63,6 @@ async function validateJwt(
   return { user: { id: data.user.id, email: data.user.email }, response: null };
 }
 
-async function proxyOpenRouter(
-  req: Request,
-  apiKey: string,
-  origin: string | null,
-): Promise<Response> {
-  let body: unknown;
-  try {
-    body = await req.json();
-  } catch {
-    return jsonError(400, "bad_request", "Invalid JSON body.");
-  }
-
-  try {
-    const upstream = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://deviousdevv303.github.io/forgeclaw",
-        "X-Title": "ForgeClaw",
-      },
-      body: JSON.stringify(body),
-    });
-
-    const upstreamBody = await upstream.text();
-    return new Response(upstreamBody, {
-      status: upstream.status,
-      headers: {
-        "Content-Type": upstream.headers.get("Content-Type") ?? "application/json",
-        ...corsHeaders(origin),
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Upstream request failed.";
-    return jsonError(502, "upstream_error", "OpenRouter API unreachable.", { details: message });
-  }
-}
-
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("Origin");
   const url = new URL(req.url);
@@ -124,18 +86,5 @@ Deno.serve(async (req: Request) => {
     return authError;
   }
 
-  switch (url.pathname) {
-    case "/openrouter": {
-      const apiKey = Deno.env.get("OPENROUTER_API_KEY");
-      if (!apiKey) {
-        return jsonError(500, "config_error", "OPENROUTER_API_KEY not configured.");
-      }
-      const response = await proxyOpenRouter(req, apiKey, origin);
-      const headers = new Headers(response.headers);
-      Object.entries(corsHeaders(origin)).forEach(([k, v]) => headers.set(k, v));
-      return new Response(response.body, { status: response.status, headers });
-    }
-    default:
-      return jsonError(404, "not_found", `Unknown route: ${url.pathname}`);
-  }
+  return jsonError(404, "not_found", `Unknown route: ${url.pathname}`);
 });
