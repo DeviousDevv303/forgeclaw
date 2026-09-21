@@ -334,6 +334,26 @@ function cleanVisibleResponse(text: string): string {
   return cleanOutput(publicAnswer || formatScaffoldFallback(text) || text)
 }
 
+function sanitizeModelContextText(text: string): string {
+  const withoutTrace = text
+    .replace(/\[FM:(?:THINK|TRACE)\][\s\S]*?\[FM:(?:THINK|TRACE)_END\]/gi, '')
+    .replace(/\[FM:(?:THINK|TRACE)\][\s\S]*$/i, '')
+  const internalSection = /^(OBJECTIVE|CONSTRAINTS|PLAN|NEXT_?ACTION|STATUS|EXECUTION|VERIFICATION):\s*/i
+  const lines = withoutTrace.split(/\r?\n/)
+  const visible: string[] = []
+  let skippingInternal = false
+  for (const line of lines) {
+    const label = internalSection.test(line.trim())
+    if (label) {
+      skippingInternal = true
+      continue
+    }
+    if (skippingInternal && /^[A-Z][A-Z_ ]{2,}:\s*/.test(line.trim())) skippingInternal = false
+    if (!skippingInternal) visible.push(line)
+  }
+  return visible.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 function buildMessageTrace(message: Message): string | undefined {
   if (message.thinking?.trim()) return message.thinking.trim()
   if (message.trace?.trim()) return message.trace.trim()
@@ -854,7 +874,7 @@ function App() {
     
     const finalSystemPrompt = !localDirectResponse && relevant.length > 0
       ? baseSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
-        relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
+        relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${sanitizeModelContextText(e.response).slice(0, 300)}`).join('\n---\n')
       : baseSystemPrompt
     
     // Check if current model supports native tools
@@ -888,7 +908,12 @@ function App() {
 
       const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
         m.role === 'user' || m.role === 'assistant'
-          ? [{ role: m.role, content: m.content }]
+          ? (() => {
+            const content = m.role === 'assistant' ? sanitizeModelContextText(m.content) : m.content
+            return content && !/^\[(?:ERROR|TOOL ERROR)\]|^Processing…|^Preparing response\.\.\./i.test(content)
+              ? [{ role: m.role, content }]
+              : []
+          })()
           : []
       )
       // Local mode is stateless per turn: persisted chat/corpus content may contain
