@@ -935,10 +935,6 @@ function App() {
         // Soft-review checkpoint at SOFT_REVIEW_ITERS — inject a progress prompt
         if (iter === SOFT_REVIEW_ITERS && !isLastIter) {
           emitForge({ type: 'CHECKPOINT', iter: SOFT_REVIEW_ITERS, total: MAX_AGENT_ITERATIONS })
-          conversationMessages.push({
-            role: 'user',
-            content: `[SOFT CHECKPOINT — iteration ${SOFT_REVIEW_ITERS}/${MAX_AGENT_ITERATIONS}] Summarize progress so far, set STATUS, and continue executing or mark COMPLETE/BLOCKED.`,
-          })
         }
         // For no-tools models, treat every iteration as the final one
         const noMoreTools = isLastIter || !supportsTools
