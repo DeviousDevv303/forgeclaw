@@ -130,6 +130,9 @@ jobs:
       - name: Run Claude Code automation
         id: claude-automation
         uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_CUSTOM_HEADERS: |
+            anthropic-workspace-id: ${{ secrets.ANTHROPICWORKSPACEID }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPICAPIKEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPICWORKSPACEID }}
