@@ -27,6 +27,16 @@ add_library(nexus-core STATIC
 )
 target_include_directories(nexus-core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src)
 
+add_library(nexus-inference STATIC src/inference_runtime.cpp)
+target_link_libraries(nexus-inference PUBLIC nexus-core llama)
+target_include_directories(nexus-inference PUBLIC
+  ${CMAKE_CURRENT_LIST_DIR}/src
+  ${CMAKE_CURRENT_LIST_DIR}/../../third_party/llama.cpp/include
+)
+
+add_library(nexus-ipc STATIC src/local_protocol.cpp)
+target_include_directories(nexus-ipc PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src)
+
 add_executable(nexus-runtime src/main.cpp)
 target_link_libraries(nexus-runtime PRIVATE nexus-core llama)
 target_include_directories(nexus-runtime PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../third_party/llama.cpp/include)
@@ -48,5 +58,16 @@ target_compile_options(nexus-corpus-selftest PRIVATE
   -Wconversion
   -Wshadow
 )
+
+add_executable(nexusd src/nexusd.cpp)
+target_link_libraries(nexusd PRIVATE nexus-inference nexus-ipc nexus-core llama)
+target_include_directories(nexusd PRIVATE
+  ${CMAKE_CURRENT_LIST_DIR}/src
+  ${CMAKE_CURRENT_LIST_DIR}/../../third_party/llama.cpp/include
+)
+
+add_executable(nexus-cli src/nexus_cli.cpp)
+target_link_libraries(nexus-cli PRIVATE nexus-ipc)
+target_include_directories(nexus-cli PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
 
 install(TARGETS nexus-runtime RUNTIME DESTINATION bin)
