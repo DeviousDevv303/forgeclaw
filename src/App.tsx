@@ -22,7 +22,8 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, nexusProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL } from './lib/ai/providers/nexusProvider'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
@@ -598,7 +599,7 @@ function App() {
   // Active execution is deterministic and does not auto-fallback. Local Mode is
   // the default so OpenRouter is optional rather than a boot requirement.
   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
-  const initialProvider: ProviderId = savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'openrouter' || savedProvider === 'local' ? savedProvider : 'local'
+  const initialProvider: ProviderId = savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'openrouter' || savedProvider === 'local' || savedProvider === 'nexus' ? savedProvider : 'local'
   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
   const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>(() => readAnthropicKey())
@@ -609,17 +610,22 @@ function App() {
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
   const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
+  const [nexusEndpoint, setNexusEndpoint] = useState<string>(() => safeGetItem('fm_nexus_endpoint') || DEFAULT_NEXUS_ENDPOINT)
   const [activeModel, setActiveModel] = useState<string>(readOpenRouterModel)
   const normalizedActiveModel = activeProvider === 'local'
     ? localModel
-    : activeProvider === 'anthropic'
+    : activeProvider === 'nexus'
+      ? DEFAULT_NEXUS_MODEL
+      : activeProvider === 'anthropic'
       ? anthropicModel
       : activeProvider === 'moonshot'
         ? moonshotModel
         : normalizeOpenRouterModel(activeModel)
   const activeModelLabel = activeProvider === 'local'
     ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
-    : activeProvider === 'anthropic'
+    : activeProvider === 'nexus'
+      ? nexusProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
+      : activeProvider === 'anthropic'
       ? anthropicProvider.models.find(m => m.id === anthropicModel)?.label ?? anthropicModel
       : activeProvider === 'moonshot'
         ? moonshotProvider.models.find(m => m.id === moonshotModel)?.label ?? moonshotModel
@@ -757,10 +763,10 @@ function App() {
       ...prev,
       provider: activeProvider,
       model: normalizedActiveModel,
-      keyPresent: activeProvider === 'local' ? !!localEndpoint : !!(activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey),
+      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? !!nexusEndpoint : !!(activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey),
       buildVersion: BUILD_COMMIT,
     }))
-  }, [normalizedActiveModel, apiKey, moonshotModel, moonshotApiKey, anthropicApiKey, localEndpoint, activeProvider])
+  }, [normalizedActiveModel, apiKey, moonshotModel, moonshotApiKey, anthropicApiKey, localEndpoint, nexusEndpoint, activeProvider])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -863,9 +869,9 @@ function App() {
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
-    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
-    const currentProviderLabel = activeProvider === 'local' ? 'Local inference' : activeProvider === 'openrouter' ? 'OpenRouter' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
-    const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'openrouter' ? 'sk-or-...' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
+    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
+    const currentProviderLabel = activeProvider === 'local' ? 'Local inference' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'openrouter' ? 'OpenRouter' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
+    const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : activeProvider === 'openrouter' ? 'sk-or-...' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
 
     if (!currentApiKey) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
@@ -1410,6 +1416,19 @@ function App() {
     }
   }
 
+  const testNexusEndpoint = async () => {
+    setTestingKey(true)
+    setTestKeyError('')
+    try {
+      await testProviderKey(nexusEndpoint, 'nexus')
+      setTestKeyError('NEXUS runtime is reachable')
+    } catch (err) {
+      setTestKeyError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setTestingKey(false)
+    }
+  }
+
   const handleExportCorpus = () => {
     if (!corpus.length) { emitFailure({ source: 'forgemind', severity: 'info', message: 'No corpus entries to export.' }); return }
     const blob = new Blob([corpus.map(e => JSON.stringify(e)).join('\n')], { type: 'application/jsonl' })
@@ -1755,7 +1774,7 @@ function App() {
       {/* Main Content */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 2, isolation: 'isolate', overflow: 'hidden' }}>
 
-        {!apiKey && (
+        {activeProvider === 'openrouter' && !apiKey && (
           <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginBottom: '12px', textAlign: 'center' }}>
             <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 OpenRouter: no API key — paste one in Settings (sk-or-...)</span>
           </div>
@@ -1766,7 +1785,7 @@ function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
 
-              {/* Provider Selector — OpenRouter + Moonshot */}
+              {/* Provider Selector */}
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Runtime Provider</label>
                 <select
@@ -1778,6 +1797,7 @@ function App() {
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
                   <option value="moonshot" style={{ background: '#111' }}>Moonshot (Kimi)</option>
                   <option value="local" style={{ background: '#111' }}>Local Inference (llama.cpp)</option>
+                  <option value="nexus" style={{ background: '#111' }}>NEXUS/CORPUS (Termux local)</option>
                 </select>
               </div>
 
@@ -1808,6 +1828,13 @@ function App() {
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#a855f7', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Local Mode</span>
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>OpenAI-compatible llama.cpp server</span>
+                </div>
+              )}
+              {activeProvider === 'nexus' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>NEXUS/CORPUS</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Termux local runtime — no tools</span>
                 </div>
               )}
 
@@ -1871,6 +1898,15 @@ function App() {
                   <select value={localModel} onChange={e => { setLocalModel(e.target.value); safeSetItem('fm_local_model', e.target.value) }} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
                     {localInferenceProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
                   </select>
+                </div>
+              )}
+              {activeProvider === 'nexus' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>NEXUS Model</label>
+                  <select value={normalizedActiveModel} disabled style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
+                    {nexusProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
+                  </select>
+                  <div style={{ color: '#22c55e', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Direct local NEXUS/libllama inference. Tool authority disabled.</div>
                 </div>
               )}
 
@@ -1983,14 +2019,23 @@ function App() {
                   <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Start llama-server with a quantized GGUF model and its OpenAI-compatible /v1 endpoint.</div>
                 </div>
               )}
+              {activeProvider === 'nexus' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>NEXUS HTTP Bridge Endpoint</label>
+                  <input type="url" placeholder={DEFAULT_NEXUS_ENDPOINT} value={nexusEndpoint} onChange={e => { setNexusEndpoint(e.target.value); safeSetItem('fm_nexus_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                  <button onClick={testNexusEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST NEXUS RUNTIME'}</button>
+                  {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Loopback-only Termux bridge at {DEFAULT_NEXUS_ENDPOINT}. NEXUS tool authority is disabled.</div>
+                </div>
+              )}
 
               {/* Operator diagnostics */}
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', activeProvider === 'local' ? 'Local Inference' : activeProvider === 'moonshot' ? 'Moonshot' : 'OpenRouter'],
+                  ['runtime provider', activeProvider === 'local' ? 'Local Inference' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'moonshot' ? 'Moonshot' : 'OpenRouter'],
                   ['runtime model', activeModelLabel],
-                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : (activeProvider === 'moonshot' ? moonshotApiKey : apiKey) ? 'present' : 'missing'],
+                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'nexus' ? (nexusEndpoint ? 'endpoint configured' : 'missing') : (activeProvider === 'moonshot' ? moonshotApiKey : apiKey) ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
                   ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
@@ -2540,7 +2585,7 @@ function App() {
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
-          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'local' ? localEndpoint : apiKey} />
+          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : apiKey} />
         )}
 
         {activeTab === 'activity' && (
