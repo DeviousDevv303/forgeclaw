@@ -9,6 +9,8 @@ on:
     types: [opened, assigned]
   pull_request_review:
     types: [submitted]
+  repository_dispatch:
+    types: [claude-task]
 
 jobs:
   claude:
@@ -85,3 +87,77 @@ jobs:
           #       "NODE_ENV": "test"
           #     }
           #   }
+
+  claude-automation:
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'claude-task'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      actions: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Verify Anthropic API credential
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPICAPIKEY }}
+          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPICWORKSPACEID }}
+        run: |
+          set -euo pipefail
+
+          status="$(curl --silent --show-error \
+            --output /tmp/anthropic-models.json \
+            --write-out '%{http_code}' \
+            --request GET \
+            --header "x-api-key: ${ANTHROPIC_API_KEY}" \
+            --header 'anthropic-version: 2023-06-01' \
+            --header "anthropic-workspace-id: ${ANTHROPIC_WORKSPACE_ID}" \
+            https://api.anthropic.com/v1/models)"
+
+          echo "Anthropic API HTTP status: ${status}"
+
+          if [[ "${status}" != 2* ]]; then
+            cat /tmp/anthropic-models.json
+            exit 1
+          fi
+
+      - name: Run Claude Code automation
+        id: claude-automation
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPICAPIKEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPICWORKSPACEID }}
+
+          prompt: |
+            REPOSITORY: ${{ github.repository }}
+            EVENT: repository_dispatch
+            ACTOR: ${{ github.actor }}
+
+            TASK:
+            ${{ github.event.client_payload.prompt }}
+
+            FORGECLAW AUTOMATION BOUNDARY:
+            - This is ForgeClaw.
+            - Follow the repository's existing Guardian and constitutional rules.
+            - Perform only the requested task.
+            - Do not expand scope.
+            - Do not modify Guardian rules unless explicitly requested.
+            - Do not modify Corpus/NEXUS unless explicitly requested.
+            - Do not modify licensing or failure taxonomy unless explicitly requested.
+            - For CLAUDE:INSPECT, do not modify any files.
+            - Do not create branches.
+            - Do not commit.
+            - Do not push.
+            - Do not open a pull request.
+            - Report concrete evidence rather than claiming work was completed without verification.
+            - Stop after the requested inspection.
+
+          claude_args: |
+            --max-turns 15
+            --allowedTools Read,Glob,Grep
