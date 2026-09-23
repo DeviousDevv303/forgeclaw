@@ -133,6 +133,8 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPICAPIKEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPICWORKSPACEID }}
+          show_full_output: true
+          display_report: true
 
           prompt: |
             REPOSITORY: ${{ github.repository }}
