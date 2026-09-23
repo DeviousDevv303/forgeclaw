@@ -28,3 +28,6 @@ dist-ssr
 28	.env.*
 29	!.env.example
 30	
+
+# Native build output
+/build/
