@@ -7,9 +7,10 @@ import { DEFAULT_OPENROUTER_MODEL, openrouterProvider, resolveOpenRouterModel } 
 import { ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, anthropicProvider } from './ai/providers/anthropicProvider'
 import { DEFAULT_MOONSHOT_MODEL, moonshotProvider } from './ai/providers/moonshotProvider'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL, localInferenceProvider } from './ai/providers/localInferenceProvider'
+import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL, nexusProvider } from './ai/providers/nexusProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
 
-export type ProviderId = 'openrouter' | 'anthropic' | 'moonshot' | 'local'
+export type ProviderId = 'openrouter' | 'anthropic' | 'moonshot' | 'local' | 'nexus'
 
 export interface ModelOption {
   id: string
@@ -60,15 +61,23 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     models: localInferenceProvider.models.map(model => ({ ...model })),
     keyPlaceholder: DEFAULT_LOCAL_ENDPOINT,
   },
+  nexus: {
+    id: 'nexus',
+    name: 'NEXUS/CORPUS (Termux local)',
+    url: DEFAULT_NEXUS_ENDPOINT,
+    models: nexusProvider.models.map(model => ({ ...model })),
+    keyPlaceholder: DEFAULT_NEXUS_ENDPOINT,
+  },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['local', 'openrouter', 'anthropic', 'moonshot']
+export const PROVIDER_ORDER: ProviderId[] = ['local', 'nexus', 'openrouter', 'anthropic', 'moonshot']
 export const DEFAULT_PROVIDER: ProviderId = 'local'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
   openrouter: DEFAULT_OPENROUTER_MODEL,
   anthropic: DEFAULT_ANTHROPIC_MODEL,
   moonshot: DEFAULT_MOONSHOT_MODEL,
   local: DEFAULT_LOCAL_MODEL,
+  nexus: DEFAULT_NEXUS_MODEL,
 }
 
 export type ChatMessage = AIMessage
@@ -116,6 +125,10 @@ export async function callProvider(
     const response = await localInferenceProvider.send({ ...request, model: model || DEFAULT_LOCAL_MODEL }, apiKey)
     return { text: response.text, provider: 'local', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
   }
+  if (providerId === 'nexus') {
+    const response = await nexusProvider.send({ ...request, model: model || DEFAULT_NEXUS_MODEL }, apiKey)
+    return { text: response.text, provider: 'nexus', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
+  }
 
   const response = await openrouterProvider.send({ ...request, model: resolveOpenRouterModel(model) }, apiKey)
   return { text: response.text, provider: 'openrouter', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
@@ -125,6 +138,7 @@ export function modelSupportsTools(providerId: ProviderId, modelId: string): boo
   if (providerId === 'anthropic') return anthropicProvider.supportsTools(modelId)
   if (providerId === 'moonshot') return moonshotProvider.supportsTools(modelId)
   if (providerId === 'local') return localInferenceProvider.supportsTools(modelId)
+  if (providerId === 'nexus') return nexusProvider.supportsTools(modelId)
   return openrouterProvider.supportsTools(resolveOpenRouterModel(modelId))
 }
 
@@ -139,6 +153,10 @@ export async function testProviderKey(providerId: ProviderId, _model: string, ap
   }
   if (providerId === 'local') {
     await localInferenceProvider.test(apiKey)
+    return
+  }
+  if (providerId === 'nexus') {
+    await nexusProvider.test(apiKey)
     return
   }
   await openrouterProvider.test(apiKey)

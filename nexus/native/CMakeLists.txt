@@ -70,4 +70,8 @@ add_executable(nexus-cli src/nexus_cli.cpp)
 target_link_libraries(nexus-cli PRIVATE nexus-ipc)
 target_include_directories(nexus-cli PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
 
+add_executable(nexus-http-bridge src/nexus_http_bridge.cpp)
+target_link_libraries(nexus-http-bridge PRIVATE nexus-ipc)
+target_include_directories(nexus-http-bridge PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src)
+
 install(TARGETS nexus-runtime RUNTIME DESTINATION bin)

@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ───────────────────────────────────────────────────────────
-// Multi-provider runtime: OpenRouter + Anthropic + Moonshot (Kimi) + Local
+// Multi-provider runtime: OpenRouter + Anthropic + Moonshot (Kimi) + Local + NEXUS
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
@@ -9,6 +9,7 @@ import { openrouterProvider } from './providers/openrouterProvider'
 import { anthropicProvider } from './providers/anthropicProvider'
 import { moonshotProvider } from './providers/moonshotProvider'
 import { localInferenceProvider } from './providers/localInferenceProvider'
+import { nexusProvider } from './providers/nexusProvider'
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,7 @@ export const providers = {
   anthropic: anthropicProvider,
   moonshot: moonshotProvider,
   local: localInferenceProvider,
+  nexus: nexusProvider,
 } as const
 
 export type ProviderId = keyof typeof providers
@@ -85,4 +87,4 @@ export async function testProviderKey(apiKey: string = '', providerId: ProviderI
   await providers[providerId].test(apiKey, workspaceId)
 }
 
-export { openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider }
+export { openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, nexusProvider }
