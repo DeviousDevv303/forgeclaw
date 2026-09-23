@@ -21,14 +21,27 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../third_party/llama.cpp ${CMAKE_BINARY_DIR}/llama.cpp)
 
-add_executable(nexus-runtime
-  src/main.cpp
+add_library(nexus-core STATIC
+  src/corpus_store.cpp
   src/sha256.cpp
 )
-target_link_libraries(nexus-runtime PRIVATE llama)
+target_include_directories(nexus-core PUBLIC ${CMAKE_CURRENT_LIST_DIR}/src)
+
+add_executable(nexus-runtime src/main.cpp)
+target_link_libraries(nexus-runtime PRIVATE nexus-core llama)
 target_include_directories(nexus-runtime PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../third_party/llama.cpp/include)
 
 target_compile_options(nexus-runtime PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic
+  -Wconversion
+  -Wshadow
+)
+
+add_executable(nexus-corpus-selftest src/corpus_selftest.cpp)
+target_link_libraries(nexus-corpus-selftest PRIVATE nexus-core)
+target_compile_options(nexus-corpus-selftest PRIVATE
   -Wall
   -Wextra
   -Wpedantic

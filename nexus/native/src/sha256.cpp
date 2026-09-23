@@ -159,4 +159,37 @@ std::string sha256_file(const std::string & path) {
     return result.str();
 }
 
+std::string sha256_text(const std::string & text) {
+    std::array<uint32_t, 8> state = kInitialState;
+    const size_t full_blocks = text.size() / 64u;
+    for (size_t i = 0; i < full_blocks; ++i) {
+        process_block(
+            reinterpret_cast<const uint8_t *>(text.data() + (i * 64u)),
+            state);
+    }
+
+    std::array<uint8_t, 64> block{};
+    const size_t remainder = text.size() % 64u;
+    for (size_t i = 0; i < remainder; ++i) {
+        block[i] = static_cast<uint8_t>(text[(full_blocks * 64u) + i]);
+    }
+    block[remainder] = 0x80u;
+    if (remainder >= 56u) {
+        process_block(block.data(), state);
+        block.fill(0);
+    }
+    const uint64_t bit_length = static_cast<uint64_t>(text.size()) * 8u;
+    for (size_t i = 0; i < 8; ++i) {
+        block[63 - i] = static_cast<uint8_t>(bit_length >> (i * 8));
+    }
+    process_block(block.data(), state);
+
+    std::ostringstream result;
+    result << std::hex << std::setfill('0');
+    for (const uint32_t word : state) {
+        result << std::setw(8) << word;
+    }
+    return result.str();
+}
+
 } // namespace nexus
