@@ -2,7 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── ForgeClaw Tool Suite ─────────────────────────────────────────────────────
 // Gives ForgeMind hands. Each tool maps to a real browser-executable action.
-// Tool calling is routed through the active OpenRouter provider adapter.
+// Tool calling is routed through the active provider adapter.
 
 import { safeGetItem, safeSetItem } from './storage'
 
@@ -793,4 +793,3 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
     return `[TOOL ERROR] ${err instanceof Error ? err.message : String(err)}`
   }
 }
-

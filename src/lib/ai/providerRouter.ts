@@ -1,43 +1,37 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ───────────────────────────────────────────────────────────
-// Multi-provider runtime: OpenRouter + Anthropic + Moonshot (Kimi) + Local
+// Multi-provider runtime: Corpus/NEXUS Local + Anthropic + Moonshot (Kimi) + Local
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
-import { openrouterProvider } from './providers/openrouterProvider'
 import { anthropicProvider } from './providers/anthropicProvider'
 import { moonshotProvider } from './providers/moonshotProvider'
 import { localInferenceProvider } from './providers/localInferenceProvider'
+import { corpusProvider } from './providers/corpusProvider'
+import { nexusProvider } from './providers/nexusProvider'
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
 export const providers = {
-  openrouter: openrouterProvider,
+  corpus: corpusProvider,
   anthropic: anthropicProvider,
   moonshot: moonshotProvider,
   local: localInferenceProvider,
+  nexus: nexusProvider,
 } as const
 
 export type ProviderId = keyof typeof providers
-
-export const ACTIVE_PROVIDER = providers.openrouter
-export const CLOUD_PROVIDER = providers.openrouter
-
-export const PROVIDER_CONFIG = {
-  primary: providers.openrouter,
-  cloud: providers.openrouter,
-} as const
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
 export async function sendViaRouter(
   request: AIRequest,
   apiKey: string,
-  providerId: ProviderId = 'openrouter',
+  providerId: ProviderId = 'local',
 ): Promise<{ success: true; response: AIResponse } | { success: false; error: AIError }> {
   const provider = providers[providerId]
-  
+
   if (!provider) {
     return {
       success: false,
@@ -49,19 +43,19 @@ export async function sendViaRouter(
       },
     }
   }
-  
+
   if (!provider.isConfigured(apiKey)) {
     return {
       success: false,
       error: {
         class: 'AUTH_FAILURE' as const,
-        message: `${provider.label} API key required.`,
+        message: `${provider.label} API key or endpoint required.`,
         provider: providerId,
         retryable: false,
       },
     }
   }
-  
+
   try {
     const response = await provider.send(request, apiKey)
     return { success: true, response }
@@ -73,16 +67,16 @@ export async function sendViaRouter(
 
 // ─── Convenience ────────────────────────────────────────────────────────────
 
-export function isProviderConfigured(apiKey: string = '', providerId: ProviderId = 'openrouter'): boolean {
+export function isProviderConfigured(apiKey: string = '', providerId: ProviderId = 'local'): boolean {
   return providers[providerId].isConfigured(apiKey)
 }
 
-export function providerSupportsTools(modelId: string, providerId: ProviderId = 'openrouter'): boolean {
+export function providerSupportsTools(modelId: string, providerId: ProviderId = 'local'): boolean {
   return providers[providerId].supportsTools(modelId)
 }
 
-export async function testProviderKey(apiKey: string = '', providerId: ProviderId = 'openrouter', workspaceId?: string): Promise<void> {
+export async function testProviderKey(apiKey: string = '', providerId: ProviderId = 'local', workspaceId?: string): Promise<void> {
   await providers[providerId].test(apiKey, workspaceId)
 }
 
-export { openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider }
+export { corpusProvider, anthropicProvider, moonshotProvider, localInferenceProvider, nexusProvider }

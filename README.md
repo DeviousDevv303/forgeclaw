@@ -22,7 +22,7 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 ## Current runtime
 
-The active application path uses an OpenRouter provider adapter. The provider boundary is intentionally kept behind shared interfaces so additional providers can be added without rewriting the orchestration layer.
+The active application path supports Anthropic, Moonshot, and Local Inference through shared provider interfaces. Local Inference is the default provider and uses a separately managed llama.cpp server.
 
 The operator supplies provider credentials through the application's settings flow. Credentials are not intended to be committed to the repository.
 
@@ -88,7 +88,7 @@ scripts/
 | Build | Vite |
 | Styling | Tailwind CSS |
 | State | Zustand |
-| AI runtime | Provider interface with an active OpenRouter adapter |
+| AI runtime | Provider interface with Anthropic, Moonshot, and Local Inference adapters |
 | GitHub API | Octokit REST |
 | Optional backend | Supabase Edge Function |
 | Browser automation | Playwright |
