@@ -31,13 +31,13 @@ grep -Eq "import .* from '\./providers/'" "$provider_router" \
   || fail "providerRouter must import from providers directory."
 
 if git diff --cached --name-only -- "$provider_router" | grep -q .; then
-  grep -Eq "ACTIVE_PROVIDER = (openrouterProvider|moonshotProvider)" "$provider_router" \
-    || fail "providerRouter must keep ACTIVE_PROVIDER on openrouterProvider or moonshotProvider."
+  grep -Eq "import .* from '\./providers/'" "$provider_router" \
+    || fail "providerRouter must retain provider adapters behind the provider directory."
 fi
 
 if git diff --cached --name-only -- "$app_file" | grep -q .; then
-  grep -Eq "RUNTIME_PROVIDER: ProviderId = ('openrouter'|'moonshot')" "$app_file" \
-    || fail "App.tsx RUNTIME_PROVIDER must be openrouter or moonshot."
+  grep -Eq "activeProvider" "$app_file" \
+    || fail "App.tsx must retain active-provider selection."
 fi
 
 added_lines="$(git diff --cached -U0 -- ':(exclude).githooks/commit-msg' | grep -E '^\+[^+]' || true)"

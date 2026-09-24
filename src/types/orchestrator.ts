@@ -2,7 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import type { FailureSeverity } from './errorBus'
 
-export type AgentId = 'forgemind' | 'repoagent' | 'openrouter' | 'github'
+export type AgentId = 'forgemind' | 'repoagent' | 'github'
 
 export type AuthorityScope =
   | 'corpus:read' | 'corpus:write'

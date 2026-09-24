@@ -22,7 +22,9 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, testProviderKey, corpusProvider, nexusProvider, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL } from './lib/ai/providers/nexusProvider'
+import { corpusRepository } from './lib/corpus'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
@@ -72,7 +74,7 @@ interface Message {
 interface CorpusEntry {
   prompt: string
   response: string
-  source: string  // provider:model, e.g. 'openrouter:deepseek/deepseek-v4-flash:free'
+  source: string  // provider:model
   timestamp: string
 }
 
@@ -147,16 +149,8 @@ function getSpeechErrorMessage(error?: string): string {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
-const DEFAULT_OPENROUTER_MODEL = openrouterProvider.models[0]?.id ?? 'poolside/laguna-xs.2:free'
 const DEFAULT_MOONSHOT_MODEL = moonshotProvider.models[1]?.id ?? 'moonshot-v1-32k'
 const DEFAULT_ANTHROPIC_MODEL = anthropicProvider.models[0]?.id ?? 'claude-3-5-haiku-latest'
-const OPENROUTER_SUPPORTED_MODEL_IDS = new Set(openrouterProvider.models.map(model => model.id))
-const LEGACY_MODEL_MARKERS = ['cl' + 'aude', 'anth' + 'ropic', 'op' + 'enai', 'gpt-', 'oll' + 'ama']
-const OPENROUTER_MODEL_STORAGE_VERSION = 'laguna-xs-default'
-const PREVIOUS_OPENROUTER_DEFAULT_MODELS = new Set([
-  'deepseek/deepseek-v4-flash:free',
-  'google/gemma-4-26b-a4b-it:free',
-])
 const RESPONSE_LANGUAGE_INSTRUCTIONS: Record<string, string> = {
   en: 'Respond in English unless the user asks for another language.',
   es: 'Respond in Spanish unless the user asks for another language.',
@@ -390,25 +384,6 @@ function cleanStoredMessage(message: Message): Message {
   }
 }
 
-function isValidOpenRouterModel(modelId: string | null | undefined): modelId is string {
-  const value = modelId?.trim()
-  if (!value || !OPENROUTER_SUPPORTED_MODEL_IDS.has(value)) return false
-  const lower = value.toLowerCase()
-  return !LEGACY_MODEL_MARKERS.some(marker => lower.includes(marker))
-}
-
-function normalizeOpenRouterModel(modelId: string | null | undefined): string {
-  return isValidOpenRouterModel(modelId) ? modelId.trim() : DEFAULT_OPENROUTER_MODEL
-}
-
-function readOpenRouterKey(): string {
-  const primaryKey = safeGetItem('fm_openrouter_key') || ''
-  if (openrouterProvider.isConfigured(primaryKey)) return primaryKey
-
-  const fallbackKey = safeGetItem('fm_api_key') || ''
-  return openrouterProvider.isConfigured(fallbackKey) ? fallbackKey : ''
-}
-
 function readMoonshotKey(): string {
   const key = safeGetItem('fm_moonshot_key') || ''
   return moonshotProvider.isConfigured(key) ? key : ''
@@ -426,28 +401,6 @@ function readAnthropicWorkspaceId(): string {
 
 function readMoonshotModel(): string {
   return safeGetItem('fm_moonshot_model') || DEFAULT_MOONSHOT_MODEL
-}
-
-function readOpenRouterModel(): string {
-  const savedModel = safeGetItem('fm_openrouter_model') || safeGetItem('fm_model')
-  const storageVersion = safeGetItem('fm_openrouter_model_version')
-  if (storageVersion !== OPENROUTER_MODEL_STORAGE_VERSION && savedModel && PREVIOUS_OPENROUTER_DEFAULT_MODELS.has(savedModel)) {
-    return DEFAULT_OPENROUTER_MODEL
-  }
-  return normalizeOpenRouterModel(savedModel)
-}
-
-function purgeLegacyRuntimeStorage(): void {
-  for (const key of ['fm_openrouter_model', 'fm_model']) {
-    if (!isValidOpenRouterModel(safeGetItem(key))) {
-      safeRemoveItem(key)
-    }
-  }
-
-  // Provider reset removed — user selection now persists across sessions
-  // Previously: forced reset to RUNTIME_PROVIDER on every load
-
-  safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
 }
 
 // Render message text — splits on fenced code blocks and styles them
@@ -593,12 +546,10 @@ function App() {
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
-  const [apiKeyStatus, setApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [testKeyError, setTestKeyError] = useState('')
-  // Active execution is deterministic and does not auto-fallback. Local Mode is
-  // the default so OpenRouter is optional rather than a boot requirement.
+  // Active execution is deterministic and does not auto-fallback. Local Mode is the default.
   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
-  const initialProvider: ProviderId = savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'openrouter' || savedProvider === 'local' ? savedProvider : 'local'
+  const initialProvider: ProviderId = savedProvider === 'corpus' || savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'local' || savedProvider === 'nexus' ? savedProvider : 'local'
   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
   const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>(() => readAnthropicKey())
@@ -609,22 +560,19 @@ function App() {
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
   const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
-  const [activeModel, setActiveModel] = useState<string>(readOpenRouterModel)
-  const normalizedActiveModel = activeProvider === 'local'
-    ? localModel
-    : activeProvider === 'anthropic'
-      ? anthropicModel
-      : activeProvider === 'moonshot'
-        ? moonshotModel
-        : normalizeOpenRouterModel(activeModel)
-  const activeModelLabel = activeProvider === 'local'
-    ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
+  const [nexusEndpoint, setNexusEndpoint] = useState<string>(() => safeGetItem('fm_nexus_endpoint') || DEFAULT_NEXUS_ENDPOINT)
+  const [corpusWebhookUrl, setCorpusWebhookUrl] = useState<string>(() => safeGetItem('fm_corpus_webhook') || '')
+  const [corpusSyncStatus, setCorpusSyncStatus] = useState('')
+  const normalizedActiveModel = activeProvider === 'corpus' || activeProvider === 'local' ? localModel : activeProvider === 'nexus' ? DEFAULT_NEXUS_MODEL : activeProvider === 'anthropic' ? anthropicModel : moonshotModel
+  const activeModelLabel = activeProvider === 'corpus'
+    ? corpusProvider.models.find(m => m.id === localModel)?.label ?? localModel
+    : activeProvider === 'local'
+      ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
+    : activeProvider === 'nexus'
+      ? nexusProvider.models.find(m => m.id === DEFAULT_NEXUS_MODEL)?.label ?? DEFAULT_NEXUS_MODEL
     : activeProvider === 'anthropic'
       ? anthropicProvider.models.find(m => m.id === anthropicModel)?.label ?? anthropicModel
-      : activeProvider === 'moonshot'
-        ? moonshotProvider.models.find(m => m.id === moonshotModel)?.label ?? moonshotModel
-        : openrouterProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
-  const [apiKey, setApiKey] = useState<string>(readOpenRouterKey)
+      : moonshotProvider.models.find(m => m.id === moonshotModel)?.label ?? moonshotModel
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
   const [lastRequestError, setLastRequestError] = useState('')
   const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null)
@@ -677,7 +625,7 @@ function App() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
     provider: activeProvider,
     model: normalizedActiveModel,
-    keyPresent: !!apiKey,
+    keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? !!nexusEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey,
     lastRequestStatus: 'none',
     lastError: null,
     lastLatencyMs: null,
@@ -726,41 +674,27 @@ function App() {
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
 
   useEffect(() => { scrollToBottom() }, [messages])
-  useEffect(() => { purgeLegacyRuntimeStorage() }, [])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
-  useEffect(() => {
-    safeSetItem('fm_openrouter_key', apiKey)
-    safeSetItem('fm_api_key', apiKey)
-  }, [apiKey])
   useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
   useEffect(() => { safeSetItem('fm_anthropic_model', anthropicModel) }, [anthropicModel])
   useEffect(() => { safeSetItem('fm_anthropic_workspace_id', anthropicWorkspaceId) }, [anthropicWorkspaceId])
+  useEffect(() => { safeSetItem('fm_nexus_endpoint', nexusEndpoint) }, [nexusEndpoint])
+  useEffect(() => { safeSetItem('fm_corpus_webhook', corpusWebhookUrl) }, [corpusWebhookUrl])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
     setDiagnostics(prev => ({ ...prev, provider: activeProvider }))
   }, [activeProvider])
   useEffect(() => {
-    if (activeProvider !== 'openrouter') return
-    const normalizedModel = normalizeOpenRouterModel(activeModel)
-    if (activeModel !== normalizedModel) {
-      setActiveModel(normalizedModel)
-      return
-    }
-    safeSetItem('fm_openrouter_model', normalizedModel)
-    safeSetItem('fm_model', normalizedModel)
-    safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
-  }, [activeModel, activeProvider])
-  useEffect(() => {
     setDiagnostics(prev => ({
       ...prev,
       provider: activeProvider,
       model: normalizedActiveModel,
-      keyPresent: activeProvider === 'local' ? !!localEndpoint : !!(activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey),
+      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? !!nexusEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey,
       buildVersion: BUILD_COMMIT,
     }))
-  }, [normalizedActiveModel, apiKey, moonshotModel, moonshotApiKey, anthropicApiKey, localEndpoint, activeProvider])
+  }, [normalizedActiveModel, moonshotModel, moonshotApiKey, anthropicApiKey, localEndpoint, nexusEndpoint, activeProvider])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -790,11 +724,23 @@ function App() {
     chatRecognitionRef.current?.stop()
   }, [])
 
-  const logToCorpus = (prompt: string, response: string, source: string) => {
+  const logToCorpus = async (prompt: string, response: string, source: string) => {
     setCorpus(prev => {
       const next = [...prev, { prompt, response, source, timestamp: new Date().toISOString() }]
       return next.length > CORPUS_MAX ? next.slice(next.length - CORPUS_MAX) : next
     })
+    try {
+      const { candidate } = await corpusRepository.appendInteraction({
+        input: prompt,
+        context: '',
+        result: response,
+        runtime: activeProvider,
+        model: normalizedActiveModel,
+      })
+      if (activeProvider === 'corpus') await corpusRepository.admitCandidate(candidate.id)
+    } catch (error) {
+      emitFailure({ source: 'forgemind', severity: 'warning', message: `NEXUS local persistence unavailable: ${error instanceof Error ? error.message : String(error)}` })
+    }
   }
 
   const parseAndExecuteTags = (text: string) => {
@@ -863,9 +809,9 @@ function App() {
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
-    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
-    const currentProviderLabel = activeProvider === 'local' ? 'Local inference' : activeProvider === 'openrouter' ? 'OpenRouter' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
-    const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'openrouter' ? 'sk-or-...' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
+    const currentApiKey = activeProvider === 'corpus' || activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
+    const currentProviderLabel = activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
+    const currentKeyFormat = activeProvider === 'corpus' || activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
 
     if (!currentApiKey) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
@@ -904,7 +850,7 @@ function App() {
 
     setMessages(prev => [...prev, userMsg])
 
-    let source: 'local' | 'cloud' = 'cloud'
+    let source: 'local' | 'cloud' = activeProvider === 'corpus' || activeProvider === 'local' || activeProvider === 'nexus' ? 'local' : 'cloud'
     let cloudMsgId: string | null = null
 
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
@@ -961,7 +907,6 @@ function App() {
       const chainStartedAt = new Date().toISOString()
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
-      // Some models (e.g. OpenRouter free-tier) don't support function calling at all
       const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
@@ -1094,7 +1039,7 @@ function App() {
         // Show progress in the streaming message
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
 
-        // Build next turn — OpenRouter-compat tool result format
+        // Build next turn using the shared tool-result format
         conversationMessages.push({
           role: 'assistant',
           content: result.text || '',
@@ -1105,15 +1050,15 @@ function App() {
         }
       }
 
-      setLastSource('cloud')
+      setLastSource(source)
       const { cleanText, tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
-      logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
+      await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
       // Sync plan to ForgeOps + emit terminal event
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       const messageContent = cleanText || cleanOutput(finalText) || '(empty response)'
-      const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
+      const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${activeProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
@@ -1141,19 +1086,19 @@ function App() {
       } else {
         setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
       }
-      // Auth/runtime failures are surfaced to the operator. No hidden provider fallback
-      // occurs while the runtime is locked to OpenRouter.
+      // Auth/runtime failures are surfaced to the operator. No hidden provider fallback occurs.
       const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)
       if (isAuthError) {
-        setApiKeyStatus('invalid')
+        if (activeProvider === 'anthropic') setAnthropicApiKeyStatus('invalid')
+        if (activeProvider === 'moonshot') setMoonshotApiKeyStatus('invalid')
         setMessages(prev => [...prev, {
           id: (Date.now() + 2).toString(), role: 'assistant',
-          content: 'OpenRouter auth failed. Check your API key in Settings. Keys start with sk-or-...',
+          content: `${currentProviderLabel} authentication failed. Check the provider credentials in Settings.`,
           timestamp: Date.now(), source: 'local' as const,
         }])
       }
     } finally { setLoading(false) }
-  }, [apiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [anthropicApiKey, moonshotApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -1347,24 +1292,6 @@ function App() {
     emitFailure({ source: 'forgemind', severity: 'info', message: 'Session memory wiped by user.' })
   }
 
-  const testApiKey = async () => {
-    if (!apiKey.trim()) { setApiKeyStatus('invalid'); setTestKeyError('No key entered'); return }
-    setTestingKey(true)
-    setTestKeyError('')
-    try {
-      await testProviderKey(apiKey, 'openrouter')
-      setApiKeyStatus('valid')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      setTestKeyError(msg)
-      // Only mark invalid for real auth rejections — not model errors, quota, etc.
-      const isAuthReject = msg.includes('401') || /unauthorized|invalid.*(api.?key|token|auth)/i.test(msg)
-      setApiKeyStatus(isAuthReject ? 'invalid' : 'unverified')
-    } finally {
-      setTestingKey(false)
-    }
-  }
-
   const testAnthropicKey = async () => {
     if (!anthropicApiKey.trim()) { setAnthropicApiKeyStatus('invalid'); setTestKeyError('No Anthropic key entered'); return }
     setTestingKey(true)
@@ -1408,6 +1335,31 @@ function App() {
     } finally {
       setTestingKey(false)
     }
+  }
+
+  const testNexusEndpoint = async () => {
+    setTestingKey(true)
+    setTestKeyError('')
+    try {
+      await testProviderKey(nexusEndpoint, 'nexus')
+      setTestKeyError('NEXUS runtime is reachable and offline-ready')
+    } catch (err) {
+      setTestKeyError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setTestingKey(false)
+    }
+  }
+
+  const syncCorpus = async () => {
+    if (!corpusWebhookUrl.trim()) {
+      setCorpusSyncStatus('No webhook configured; local-only mode remains active.')
+      return
+    }
+    setCorpusSyncStatus('Syncing pending candidates…')
+    const result = await corpusRepository.syncPending(corpusWebhookUrl.trim())
+    setCorpusSyncStatus(result.status === 'synced'
+      ? `Synced ${result.admitted} validated update${result.admitted === 1 ? '' : 's'}.`
+      : `Webhook unavailable; ${Math.max(0, result.attempted - result.admitted)} candidate${Math.max(0, result.attempted - result.admitted) === 1 ? '' : 's'} remain local.`)
   }
 
   const handleExportCorpus = () => {
@@ -1612,11 +1564,10 @@ function App() {
   }
 
   const getStatusIndicator = () => {
-    if (!apiKey) return <span style={{ color: '#ef4444' }}>OpenRouter: no API key</span>
-    if (apiKeyStatus === 'invalid') return <span style={{ color: '#ef4444' }}>OpenRouter: invalid key</span>
-    if (apiKeyStatus === 'unverified') return <span style={{ color: '#eab308' }}>OpenRouter: key unverified</span>
-    if (lastSource === 'cloud') return <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>{activeModelLabel}</span>
-    return <span style={{ color: '#6b6b6b' }}>{activeModelLabel}</span>
+    if (activeProvider === 'local') return <span style={{ color: localEndpoint ? '#6b6b6b' : '#ef4444' }}>{localEndpoint ? activeModelLabel : 'Local endpoint missing'}</span>
+    const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey
+    if (!keyPresent) return <span style={{ color: '#ef4444' }}>{activeProvider === 'anthropic' ? 'Anthropic: no API key' : 'Moonshot: no API key'}</span>
+    return <span style={{ color: lastSource === 'cloud' ? '#3b82f6' : '#6b6b6b', fontWeight: lastSource === 'cloud' ? 'bold' : 'normal' }}>{activeModelLabel}</span>
   }
 
   const TABS: { id: Tab; label: string; badge?: string }[] = [
@@ -1642,21 +1593,6 @@ function App() {
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            {/* OpenRouter runtime credential indicator */}
-            <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
-              <span
-                title={`OpenRouter runtime: ${apiKey ? 'key set' : 'no key'} — click to open Settings`}
-                onClick={() => setActiveTab('settings')}
-                style={{
-                  width: '28px', height: '14px', borderRadius: '3px', cursor: 'pointer',
-                  background: apiKey ? '#22c55e22' : '#1a1a1a',
-                  border: `1px solid ${apiKey ? '#22c55e' : '#333'}`,
-                  color: apiKey ? '#22c55e' : '#444',
-                  fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}
-              >OR</span>
-            </div>
             {/* GitHub token dot */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               <span
@@ -1755,18 +1691,12 @@ function App() {
       {/* Main Content */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', maxWidth: '800px', margin: '0 auto', width: '100%', padding: '16px', position: 'relative', minHeight: 0, zIndex: 2, isolation: 'isolate', overflow: 'hidden' }}>
 
-        {!apiKey && (
-          <div style={{ background: '#1a1a1a', border: '1px solid #333', borderRadius: '6px', padding: '10px', marginBottom: '12px', textAlign: 'center' }}>
-            <span style={{ color: '#ef4444', fontSize: '12px' }}>🔴 OpenRouter: no API key — paste one in Settings (sk-or-...)</span>
-          </div>
-        )}
-
         {/* ── Settings Tab ── */}
         {activeTab === 'settings' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
 
-              {/* Provider Selector — OpenRouter + Moonshot */}
+              {/* Provider Selector */}
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Runtime Provider</label>
                 <select
@@ -1774,7 +1704,8 @@ function App() {
                   onChange={e => setActiveProvider(e.target.value as ProviderId)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
-                  <option value="openrouter" style={{ background: '#111' }}>OpenRouter</option>
+                  <option value="corpus" style={{ background: '#111' }}>Corpus / NEXUS Local</option>
+                  <option value="nexus" style={{ background: '#111' }}>NEXUS/CORPUS (Termux local)</option>
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
                   <option value="moonshot" style={{ background: '#111' }}>Moonshot (Kimi)</option>
                   <option value="local" style={{ background: '#111' }}>Local Inference (llama.cpp)</option>
@@ -1789,13 +1720,6 @@ function App() {
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Claude Messages API — native tool support</span>
                 </div>
               )}
-              {activeProvider === 'openrouter' && (
-                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
-                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>OpenRouter</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Free runtime, no fallback</span>
-                </div>
-              )}
               {activeProvider === 'moonshot' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#3b82f6', display: 'inline-block' }} />
@@ -1803,38 +1727,29 @@ function App() {
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Kimi AI — native tool support</span>
                 </div>
               )}
+              {activeProvider === 'corpus' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Corpus / NEXUS Local</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Offline retrieval + local llama.cpp; no fallback</span>
+                </div>
+              )}
+
+              {activeProvider === 'nexus' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
+                  <div><div style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold' }}>NEXUS/CORPUS</div><div style={{ color: '#666', fontSize: '10px' }}>Direct loopback bridge to native offline libllama; tools disabled.</div></div>
+                </div>
+              )}
+
               {activeProvider === 'local' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#a855f7', display: 'inline-block' }} />
-                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Local Mode</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>OpenAI-compatible llama.cpp server</span>
+                  <div><div style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold' }}>Local Inference (llama.cpp)</div><div style={{ color: '#666', fontSize: '10px' }}>OpenAI-compatible local inference endpoint.</div></div>
                 </div>
               )}
 
               {/* Model selector — provider-specific */}
-              {activeProvider === 'openrouter' && (
-                <div style={{ marginBottom: '14px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                    <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
-                  </div>
-                  <select
-                    value={normalizedActiveModel}
-                    onChange={e => setActiveModel(e.target.value)}
-                    style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
-                  >
-                    {openrouterProvider.models.map(m => (
-                      <option key={m.id} value={m.id} style={{ background: '#111' }}>
-                        {m.label}{m.note ? ` — ${m.note}` : ''}  ({m.contextK}K ctx, no tools)
-                      </option>
-                    ))}
-                  </select>
-                  {!providerSupportsTools(normalizedActiveModel, activeProvider) && (
-                    <div style={{ color: '#8a8a8a', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>
-                      Native tool calls are disabled for this OpenRouter free model, so chat runs directly without sending tool schemas.
-                    </div>
-                  )}
-                </div>
-              )}
               {activeProvider === 'anthropic' && (
                 <div style={{ marginBottom: '14px' }}>
                   <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Claude Model</label>
@@ -1865,11 +1780,19 @@ function App() {
                   </div>
                 </div>
               )}
-              {activeProvider === 'local' && (
+              {(activeProvider === 'corpus' || activeProvider === 'local') && (
                 <div style={{ marginBottom: '14px' }}>
-                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Local Model</label>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{activeProvider === 'corpus' ? 'Corpus Local Model' : 'Local Model'}</label>
                   <select value={localModel} onChange={e => { setLocalModel(e.target.value); safeSetItem('fm_local_model', e.target.value) }} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
                     {localInferenceProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
+                  </select>
+                </div>
+              )}
+              {activeProvider === 'nexus' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>NEXUS Model</label>
+                  <select value={DEFAULT_NEXUS_MODEL} disabled style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
+                    {nexusProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
                   </select>
                 </div>
               )}
@@ -1897,43 +1820,6 @@ function App() {
                     {!anthropicApiKey && <span style={{ color: '#ef4444' }}>Anthropic: no API key — paste one in Settings (sk-ant-...)</span>}
                     {anthropicApiKey && anthropicApiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Claude Key to verify</span>}
                     {anthropicApiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>Claude API key verified</span>}
-                  </div>
-                </>
-              )}
-              {activeProvider === 'openrouter' && (
-                <>
-                  <div style={{ marginBottom: '14px' }}>
-                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OpenRouter API Key</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type={showApiKey ? 'text' : 'password'}
-                        placeholder="sk-or-..."
-                        value={apiKey}
-                        onChange={e => { setApiKey(e.target.value); setApiKeyStatus('unverified') }}
-                        style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${apiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
-                      />
-                      <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
-                        {showApiKey ? '🙈' : '👁'}
-                      </button>
-                    </div>
-                    {testKeyError && <div style={{ color: apiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                    <button
-                      onClick={testApiKey}
-                      disabled={testingKey || !apiKey}
-                      style={{ flex: 1, background: testingKey ? '#333' : '#f97316', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                    >
-                      {testingKey ? 'Testing...' : 'TEST KEY'}
-                    </button>
-                  </div>
-
-                  <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
-                    {!apiKey && <span style={{ color: '#ef4444' }}>OpenRouter: no API key — paste one in Settings (sk-or-...)</span>}
-                    {apiKey && apiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Key to verify</span>}
-                    {apiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>OpenRouter key verified</span>}
-                    {apiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>{testKeyError || 'OpenRouter key invalid'}</span>}
                   </div>
                 </>
               )}
@@ -1974,13 +1860,31 @@ function App() {
                 </>
               )}
 
-              {activeProvider === 'local' && (
+              {(activeProvider === 'corpus' || activeProvider === 'local') && (
                 <div style={{ marginBottom: '14px' }}>
                   <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>llama.cpp Server Endpoint</label>
                   <input type="url" placeholder="http://127.0.0.1:8080/v1" value={localEndpoint} onChange={e => { setLocalEndpoint(e.target.value); safeSetItem('fm_local_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
                   <button onClick={testLocalEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#a855f7', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST LOCAL ENDPOINT'}</button>
                   {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
-                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Start llama-server with a quantized GGUF model and its OpenAI-compatible /v1 endpoint.</div>
+                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{activeProvider === 'corpus' ? `Local corpus records: ${corpusRepository.getInteractionCount()} · approved: ${corpusRepository.getApprovedCount()} · candidates: ${corpusRepository.getCandidateCount()} · version: ${corpusRepository.getVersion()}.` : 'Start llama-server with a quantized GGUF model and its OpenAI-compatible /v1 endpoint.'}</div>
+                  {activeProvider === 'corpus' && (
+                    <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #222' }}>
+                      <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Optional Corpus Webhook</label>
+                      <input type="url" placeholder="https://example.invalid/nexus-sync" value={corpusWebhookUrl} onChange={e => setCorpusWebhookUrl(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                      <button onClick={syncCorpus} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>SYNC PENDING CANDIDATES</button>
+                      {corpusSyncStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusSyncStatus}</div>}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeProvider === 'nexus' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>NEXUS HTTP Bridge Endpoint</label>
+                  <input type="url" placeholder={DEFAULT_NEXUS_ENDPOINT} value={nexusEndpoint} onChange={e => setNexusEndpoint(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                  <button onClick={testNexusEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST NEXUS RUNTIME'}</button>
+                  {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Loopback-only NEXUS text-protocol bridge at {DEFAULT_NEXUS_ENDPOINT}. Tool authority is disabled.</div>
                 </div>
               )}
 
@@ -1988,9 +1892,9 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', activeProvider === 'local' ? 'Local Inference' : activeProvider === 'moonshot' ? 'Moonshot' : 'OpenRouter'],
+                  ['runtime provider', activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local Inference' : activeProvider === 'moonshot' ? 'Moonshot' : 'Anthropic'],
                   ['runtime model', activeModelLabel],
-                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : (activeProvider === 'moonshot' ? moonshotApiKey : apiKey) ? 'present' : 'missing'],
+                  ['auth state', activeProvider === 'corpus' || activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'nexus' ? (nexusEndpoint ? 'endpoint configured' : 'missing') : (activeProvider === 'moonshot' ? moonshotApiKey : anthropicApiKey) ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
                   ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
@@ -2003,8 +1907,6 @@ function App() {
                   </div>
                 ))}
               </div>
-
-              {/* Kimi Code URL override — disabled, OpenRouter only */}
 
               {/* Corpus Memory Progress */}
               <div style={{ marginTop: '12px', borderTop: '1px solid #1a1a1a', paddingTop: '12px' }}>
@@ -2034,8 +1936,6 @@ function App() {
                   </button>
                 </div>
               </div>
-
-              {/* OpenRouter custom model ID — active */}
 
               {/* Corpus training stats */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
@@ -2183,8 +2083,8 @@ function App() {
                   {/* Provider */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
                     <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
-                    <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● OpenRouter</div>
-                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked to OpenRouter</div>
+                    <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● {activeProvider}</div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Active runtime provider</div>
                   </div>
 
                   {/* Model */}
@@ -2505,7 +2405,6 @@ function App() {
                       { name: 'Calendar', icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: 'Web Search', icon: '🔍', key: 'fc_brave_key', connected: !!safeGetItem('fc_brave_key') },
                       { name: 'ElevenLabs', icon: '🔊', key: 'fc_el_api_key', connected: !!elApiKey },
-                      { name: 'OpenRouter', icon: 'OR', key: 'fm_openrouter_key', connected: !!apiKey },
                       { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
@@ -2540,7 +2439,7 @@ function App() {
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
-          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'local' ? localEndpoint : apiKey} />
+          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'nexus' ? nexusEndpoint : localEndpoint} />
         )}
 
         {activeTab === 'activity' && (

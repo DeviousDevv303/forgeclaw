@@ -5,7 +5,7 @@ import { executeTool } from './forgeTools'
 import { callProvider, modelSupportsTools } from './modelProviders'
 import type { ChatMessage, ProviderId } from './modelProviders'
 
-// Runs a bounded sub-agent loop through ForgeClaw's active OpenRouter runtime.
+// Runs a bounded sub-agent loop through ForgeClaw's active provider runtime.
 export async function runSubAgent(
   systemPrompt: string,
   task: string,

@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Manual Tool Mode ───────────────────────────────────────────────────────
-// For providers/models that don't support native tool calling (e.g. OpenRouter free).
+// For providers/models that don't support native tool calling.
 // Injects tool schema into system prompt and parses structured output.
 
 import type { ToolDef } from '../../lib/forgeTools'

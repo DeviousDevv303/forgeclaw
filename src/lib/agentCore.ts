@@ -1,6 +1,6 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-// ─── ForgeClaw Autonomous Core v1.2 (Unified: KimiClaw + OpenRouter + DeviousDevv) ─
+// ─── ForgeClaw Autonomous Core v1.2 (Unified: KimiClaw + DeviousDevv) ─
 // Merged: KimiClaw execution loop / alternate paths / telemetry
 //         Provider anti-drift guardrails
 //         DeviousDevv system prompt + Guardian Arbitration
