@@ -12,7 +12,7 @@ function readGitCommit(): string {
 
 export default defineConfig({
   plugins: [react()],
-  base: '/forgeclaw/',
+  base: '/',
   define: {
     __APP_COMMIT__: JSON.stringify(readGitCommit()),
     __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
