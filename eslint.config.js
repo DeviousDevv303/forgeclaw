@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', '.nexus-llama-build', 'third_party/llama.cpp']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

@@ -8,13 +8,13 @@ import { classifyFailure, extractStatus, decideRetry } from '../../agentCore'
 import { executeTool } from '../../forgeTools'
 
 describe('ForgeClaw Local Mode v0.1 smoke path', () => {
-  const endpoint = process.env.FORGECLAW_LOCAL_ENDPOINT || 'http://127.0.0.1:8080/v1'
+  const endpoint = process.env.FORGECLAW_LOCAL_ENDPOINT || 'http://127.0.0.1:11434/v1'
 
-  it('connects to llama.cpp and completes inference through the provider bridge', async () => {
+  it('connects to Ollama and completes inference through the provider bridge', async () => {
     await localInferenceProvider.test(endpoint)
     const result = await callProvider(
       'local',
-      'local-model',
+      'qwen2.5:1.5b',
       'Reply with exactly the word VERIFIED.',
       [{ role: 'user', content: 'Confirm the local inference path.' }],
       endpoint,
@@ -45,7 +45,7 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
       'State the result of a local execution check in one sentence.',
       ['run_js'],
       'local',
-      'local-model',
+      'qwen2.5:1.5b',
       endpoint,
       FORGE_TOOLS,
       { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' },

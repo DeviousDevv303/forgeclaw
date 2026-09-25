@@ -1,21 +1,21 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Local Inference Provider Adapter ─────────────────────────────────────────
-// OpenAI-compatible transport for a local llama.cpp server.
-// The runtime is replaceable: ForgeClaw depends on this HTTP contract, not on
-// llama.cpp internals. Start llama-server with a GGUF model and expose /v1.
+// OpenAI-compatible transport for a local Ollama server.
+// The runtime is replaceable: ForgeClaw depends on this HTTP contract. Ollama
+// exposes the local model through the OpenAI-compatible /v1 API.
 
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
 
-export const DEFAULT_LOCAL_ENDPOINT = 'http://127.0.0.1:8080/v1'
-export const DEFAULT_LOCAL_MODEL = 'local-model'
+export const DEFAULT_LOCAL_ENDPOINT = 'http://127.0.0.1:11434/v1'
+export const DEFAULT_LOCAL_MODEL = 'qwen2.5:1.5b'
 
 export const LOCAL_MODELS = [
   {
     id: DEFAULT_LOCAL_MODEL,
-    label: 'Local GGUF (llama.cpp)',
-    contextK: 8,
-    note: 'Use a quantized 1.5B–3B model; server selects the loaded GGUF',
+    label: 'Qwen2.5 1.5B (Ollama)',
+    contextK: 4,
+    note: 'Local Ollama model; OpenAI-compatible /v1 endpoint',
   },
 ]
 
@@ -126,7 +126,7 @@ async function readStream(response: Response, onToken: (token: string) => void):
 
 export const localInferenceProvider: AIProvider = {
   id: 'local',
-  label: 'Local Inference (llama.cpp)',
+  label: 'Local Inference (Ollama)',
   requiresKey: false,
   models: LOCAL_MODELS,
 
