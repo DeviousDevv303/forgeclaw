@@ -23,6 +23,7 @@ import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, nexusProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL } from './lib/ai/providers/localInferenceProvider'
 import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL } from './lib/ai/providers/nexusProvider'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
@@ -608,8 +609,14 @@ function App() {
   const [anthropicWorkspaceId, setAnthropicWorkspaceId] = useState<string>(() => readAnthropicWorkspaceId())
   const [moonshotApiKeyStatus, setMoonshotApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
-  const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
-  const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
+  const [localModel, setLocalModel] = useState<string>(() => {
+    const stored = safeGetItem('fm_local_model')
+    return !stored || stored === 'local-model' ? DEFAULT_LOCAL_MODEL : stored
+  })
+  const [localEndpoint, setLocalEndpoint] = useState<string>(() => {
+    const stored = safeGetItem('fm_local_endpoint')
+    return !stored || stored === 'http://127.0.0.1:8080/v1' ? DEFAULT_LOCAL_ENDPOINT : stored
+  })
   const [nexusEndpoint, setNexusEndpoint] = useState<string>(() => safeGetItem('fm_nexus_endpoint') || DEFAULT_NEXUS_ENDPOINT)
   const [activeModel, setActiveModel] = useState<string>(readOpenRouterModel)
   const normalizedActiveModel = activeProvider === 'local'
@@ -871,7 +878,7 @@ function App() {
 
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
     const currentProviderLabel = activeProvider === 'local' ? 'Local inference' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'openrouter' ? 'OpenRouter' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
-    const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : activeProvider === 'openrouter' ? 'sk-or-...' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
+    const currentKeyFormat = activeProvider === 'local' ? DEFAULT_LOCAL_ENDPOINT : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : activeProvider === 'openrouter' ? 'sk-or-...' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
 
     if (!currentApiKey) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
@@ -2013,7 +2020,7 @@ function App() {
               {activeProvider === 'local' && (
                 <div style={{ marginBottom: '14px' }}>
                   <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>llama.cpp Server Endpoint</label>
-                  <input type="url" placeholder="http://127.0.0.1:8080/v1" value={localEndpoint} onChange={e => { setLocalEndpoint(e.target.value); safeSetItem('fm_local_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                  <input type="url" placeholder={DEFAULT_LOCAL_ENDPOINT} value={localEndpoint} onChange={e => { setLocalEndpoint(e.target.value); safeSetItem('fm_local_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
                   <button onClick={testLocalEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#a855f7', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST LOCAL ENDPOINT'}</button>
                   {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
                   <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Start llama-server with a quantized GGUF model and its OpenAI-compatible /v1 endpoint.</div>

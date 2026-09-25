@@ -7,15 +7,15 @@
 
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
 
-export const DEFAULT_LOCAL_ENDPOINT = 'http://127.0.0.1:8080/v1'
-export const DEFAULT_LOCAL_MODEL = 'local-model'
+export const DEFAULT_LOCAL_ENDPOINT = 'http://127.0.0.1:11434/v1'
+export const DEFAULT_LOCAL_MODEL = 'qwen2.5:1.5b'
 
 export const LOCAL_MODELS = [
   {
     id: DEFAULT_LOCAL_MODEL,
-    label: 'Local GGUF (llama.cpp)',
+    label: 'Ollama Qwen2.5 1.5B',
     contextK: 8,
-    note: 'Use a quantized 1.5B–3B model; server selects the loaded GGUF',
+    note: 'Local Ollama model; network and cloud features are not required',
   },
 ]
 
