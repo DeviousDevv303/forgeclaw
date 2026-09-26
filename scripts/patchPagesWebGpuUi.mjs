@@ -77,7 +77,6 @@ for (const [a, b] of reps) {
   }
 }
 
-// Key gate — multi-line
 const keyOld = `    const currentApiKey = activeProvider === 'corpus' || activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
     const currentProviderLabel = activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
     const currentKeyFormat = activeProvider === 'corpus' || activeProvider === 'local' ? 'http://127.0.0.1:11434/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
@@ -101,7 +100,6 @@ if (app.includes(keyOld)) {
   applied++
 } else console.warn('skip key gate')
 
-// Test helpers
 const testsOld = `  const testLocalEndpoint = async () => {
     setTestingKey(true)
     setTestKeyError('')
@@ -193,6 +191,15 @@ const nexusNew = `              {activeProvider === 'corpus' && (
               )}`
 if (app.includes(nexusOld)) { app = app.replace(nexusOld, nexusNew); applied++ }
 else console.warn('skip nexus panel')
+
+// Avoid unused setter after removing endpoint input
+if (app.includes('const [nexusEndpoint, setNexusEndpoint] = useState')) {
+  app = app.replace(
+    'const [nexusEndpoint, setNexusEndpoint] = useState',
+    'const [nexusEndpoint, _setNexusEndpoint] = useState',
+  )
+  applied++
+}
 
 if (app === before) {
   console.error('No patches applied')
