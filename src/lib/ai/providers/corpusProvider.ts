@@ -21,16 +21,15 @@ export const corpusProvider: AIProvider = {
     label: 'Corpus + Qwen2.5 1.5B (Browser WebGPU)',
     contextK: 4,
     note: 'Browser-local WebLLM/WebGPU with optional corpus context',
-    noTools: true,
   }],
 
-  isConfigured(_apiKey: string): boolean {
-    void _apiKey
+  isConfigured(apiKey: string): boolean {
+    void apiKey
     return true
   },
 
-  supportsTools(_modelId: string): boolean {
-    void _modelId
+  supportsTools(modelId: string): boolean {
+    void modelId
     return false
   },
 
