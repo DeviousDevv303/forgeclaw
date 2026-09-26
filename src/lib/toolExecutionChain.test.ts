@@ -1,0 +1,302 @@
+// @vitest-environment node
+// ─── End-to-End Tool Execution Chain ────────────────────────────────────────
+// Written by MANUS. Proves the runtime path the operator asked for:
+//
+//   NEXUS → TOOL DISPATCHER → TOOL → TOOL RESULT → NEXUS → CONCISE RESPONSE
+//
+// It exercises the real dispatcher (`executeTool`), the real tool schemas, the real
+// attribution contract and the real persistence layer. The GitHub legs run against
+// the live API when FORGECLAW_E2E_GITHUB=1 and a PAT is present, and skip otherwise
+// so the suite stays green offline. Nothing here reads or writes Ollama/Termux.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { FORGE_TOOLS, executeTool, loadToolContext } from './forgeTools'
+import {
+  buildAttributedCommitMessage,
+  isAttributedCommitMessage,
+  isGenericCommitMessage,
+  applyAttributionContract,
+  FORGECLAW_AGENT_ID,
+  FORGECLAW_ORCHESTRATOR_ID,
+} from './githubAttribution'
+import { loadCodingAgentState, saveCodingAgentState, clearCodingAgentState, restoreCodingAgentState } from './codingAgentState'
+import { parseRepoState, isCodingTaskRequest } from './codingAgentRuntime'
+import { resolveGithubToken } from './githubAuth'
+
+class MemoryStorage implements Storage {
+  private values = new Map<string, string>()
+  get length() { return this.values.size }
+  clear() { this.values.clear() }
+  getItem(key: string) { return this.values.get(key) ?? null }
+  key(index: number) { return Array.from(this.values.keys())[index] ?? null }
+  removeItem(key: string) { this.values.delete(key) }
+  setItem(key: string, value: string) { this.values.set(key, value) }
+}
+
+const storage = new MemoryStorage()
+Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
+
+const toolNames = FORGE_TOOLS.map(tool => tool.name)
+const ctx = () => ({ ...loadToolContext(), ghToken: '' })
+
+afterEach(() => {
+  storage.clear()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
+
+describe('dispatcher integrity (offline)', () => {
+  it('exposes every capability the coding agent needs', () => {
+    for (const required of [
+      'github_read_file', 'github_write_file', 'github_list_files', 'github_search_code',
+      'github_repo_state', 'github_verify_commit', 'coding_task_update',
+      'run_js', 'memory_write', 'memory_read', 'spawn_agent',
+    ]) {
+      expect(toolNames).toContain(required)
+    }
+  })
+
+  it('has no duplicate tool name in the registry', () => {
+    expect(new Set(toolNames).size).toBe(toolNames.length)
+  })
+
+  it('returns a tool result for run_js (TOOL → TOOL RESULT)', async () => {
+    const output = await executeTool({ id: 'e2e-js', name: 'run_js', input: { code: 'return [1,2,3].length' } }, ctx())
+    expect(output).toBe('3')
+  })
+
+  it('returns a structured error result instead of throwing (error handling)', async () => {
+    const output = await executeTool({ id: 'e2e-bad', name: 'run_js', input: { code: 'throw new Error("boom")' } }, ctx())
+    expect(output.startsWith('[TOOL ERROR]')).toBe(true)
+    expect(output).toContain('boom')
+  })
+
+  it('rejects an unknown tool without crashing the loop', async () => {
+    const output = await executeTool({ id: 'e2e-unknown', name: 'not_a_tool', input: {} }, ctx())
+    expect(output).toContain('[TOOL ERROR]')
+    expect(output).toContain('Unknown tool')
+  })
+
+  it('persists memory through the dispatcher (survives reload)', async () => {
+    await executeTool({ id: 'e2e-mem-w', name: 'memory_write', input: { key: 'e2e', value: 'persisted' } }, ctx())
+    const read = await executeTool({ id: 'e2e-mem-r', name: 'memory_read', input: { key: 'e2e' } }, ctx())
+    expect(read).toBe('persisted')
+  })
+
+  it('gates repository writes on a configured token', async () => {
+    const output = await executeTool(
+      { id: 'e2e-write', name: 'github_write_file', input: { path: 'x.md', content: 'x', message: 'doc: x' } },
+      ctx(),
+    )
+    expect(output).toContain('[TOOL ERROR]')
+    expect(output).toContain('No GitHub token configured')
+  })
+})
+
+describe('agent attribution contract', () => {
+  it('builds a message naming MANUS, what changed, and why', () => {
+    const message = buildAttributedCommitMessage({
+      agentId: FORGECLAW_AGENT_ID,
+      agentLabel: 'ForgeClaw Coding Specialist',
+      what: 'tool dispatcher restores live repository state',
+      why: 'The agent must identify current HEAD before editing',
+      branch: 'main',
+    })
+    expect(message).toContain(FORGECLAW_ORCHESTRATOR_ID)
+    expect(message).toContain('what:')
+    expect(message).toContain('WHY:')
+    expect(message).toContain(FORGECLAW_AGENT_ID)
+    expect(isAttributedCommitMessage(message)).toBe(true)
+  })
+
+  it('rejects generic commit subjects', () => {
+    for (const generic of ['fix', 'update', 'changes', 'WIP']) {
+      expect(isGenericCommitMessage(generic)).toBe(true)
+      expect(isAttributedCommitMessage(generic)).toBe(false)
+    }
+  })
+
+  it('refuses attribution without an acting agent', () => {
+    expect(() => buildAttributedCommitMessage({ agentId: '', agentLabel: '' })).toThrow(/agentId/)
+  })
+
+  it('states the attribution rule to native and manual tool callers', () => {
+    const ruled = applyAttributionContract(FORGE_TOOLS)
+    const write = ruled.find(tool => tool.name === 'github_write_file')
+    expect(write?.description).toContain(FORGECLAW_ORCHESTRATOR_ID)
+    expect(write?.description).toContain('generic')
+    // Every other tool is untouched.
+    expect(ruled.filter(t => t.name !== 'github_write_file').every((t, i) =>
+      t.description === FORGE_TOOLS.filter(x => x.name !== 'github_write_file')[i].description,
+    )).toBe(true)
+  })
+
+  it('applies attribution through the dispatcher when a write is authorized', async () => {
+    const calls: Array<{ url: string; method: string; body?: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), method: init?.method || 'GET', body: init?.body as string | undefined })
+      if (!init?.method) return new Response(JSON.stringify({ sha: 'existing' }), { status: 200 })
+      return new Response(JSON.stringify({ commit: { sha: 'abc1234def', html_url: 'https://github.com/x' } }), { status: 200 })
+    }))
+    saveCodingAgentState({ task: 'wire the dispatcher', branch: 'main' })
+
+    const output = await executeTool(
+      { id: 'e2e-attributed', name: 'github_write_file', input: { path: 'note.md', content: 'hello', message: 'docs: record dispatcher wiring' } },
+      { ...ctx(), ghToken: 'test-token' },
+    )
+
+    const put = calls.find(call => call.method === 'PUT')
+    expect(put).toBeDefined()
+    const sent = JSON.parse(put!.body!) as { message: string }
+    expect(sent.message).toContain(`agent: ${FORGECLAW_ORCHESTRATOR_ID}`)
+    expect(sent.message).toContain('WHY:')
+    expect(isGenericCommitMessage(sent.message.split('\n')[0])).toBe(false)
+    // The result returns to NEXUS carrying the real commit coordinates.
+    expect(output).toContain('abc1234def')
+    expect(output).toContain('docs: record dispatcher wiring')
+    // And the change is recorded against the persisted task.
+    expect(loadCodingAgentState().filesModified).toContain('note.md')
+    expect(loadCodingAgentState().lastCommitSha).toBe('abc1234def')
+  })
+})
+
+describe('persistent agent state', () => {
+  beforeEach(() => storage.clear())
+
+  it('resumes an unfinished task and refuses to replay a completed one', () => {
+    saveCodingAgentState({
+      task: 'restore tool execution',
+      taskStatus: 'in_progress',
+      pendingSteps: ['verify commit'],
+      headShaShort: '1f35568',
+    })
+    const resumed = restoreCodingAgentState()
+    expect(resumed?.task).toBe('restore tool execution')
+    expect(resumed?.pendingSteps).toEqual(['verify commit'])
+    expect(resumed?.headShaShort).toBe('1f35568')
+
+    saveCodingAgentState({ taskStatus: 'complete' })
+    expect(restoreCodingAgentState()).toBeNull()
+  })
+
+  it('never returns a fresh agent for an idle state', () => {
+    clearCodingAgentState()
+    expect(restoreCodingAgentState()).toBeNull()
+  })
+
+  it('records task state through the dispatcher so it survives a reload', async () => {
+    const output = await executeTool({
+      id: 'e2e-task',
+      name: 'coding_task_update',
+      input: {
+        task: 'deliver documented change',
+        status: 'in_progress',
+        completed_steps: JSON.stringify(['inspect repo']),
+        pending_steps: JSON.stringify(['edit', 'test', 'push']),
+        verification_result: 'lint clean',
+        continuation: 'push and verify the commit',
+      },
+    }, ctx())
+    expect(output).toContain('persisted')
+
+    // Simulate a fresh page load: state must come back from storage.
+    const reloaded = loadCodingAgentState()
+    expect(reloaded.taskStatus).toBe('in_progress')
+    expect(reloaded.completedSteps).toEqual(['inspect repo'])
+    expect(reloaded.pendingSteps).toEqual(['edit', 'test', 'push'])
+    expect(reloaded.verificationResults).toContain('lint clean')
+    expect(reloaded.continuationNotes).toBe('push and verify the commit')
+    expect(restoreCodingAgentState()?.task).toBe('deliver documented change')
+  })
+
+  it('records a blocker so a stuck task is resumable with its reason', async () => {
+    await executeTool({
+      id: 'e2e-block',
+      name: 'coding_task_update',
+      input: { task: 'ship change', status: 'blocked', blocker: 'PAT lacks contents:write' },
+    }, ctx())
+    const state = loadCodingAgentState()
+    expect(state.taskStatus).toBe('blocked')
+    expect(state.blockers[0]).toContain('contents:write')
+    expect(restoreCodingAgentState()).not.toBeNull()
+  })
+})
+
+describe('coding task detection and repo state parsing', () => {
+  it('recognises coding objectives and ignores ordinary chat', () => {
+    expect(isCodingTaskRequest('inspect the forgeclaw repository and identify current HEAD')).toBe(true)
+    expect(isCodingTaskRequest('fix the tool dispatcher and push to GitHub')).toBe(true)
+    expect(isCodingTaskRequest('resume the unfinished task')).toBe(false)
+    expect(isCodingTaskRequest('what is the weather today')).toBe(false)
+  })
+
+  it('parses the dispatcher output into a HEAD snapshot', () => {
+    const raw = [
+      'repo: DeviousDevv303/forgeclaw (public)',
+      'url: https://github.com/DeviousDevv303/forgeclaw',
+      'defaultBranch: main',
+      'inspectedBranch: main',
+      'HEAD: 1f35568c0347972f77cd14cb1e4f32e58456d276',
+      'HEAD short: 1f35568',
+      'HEAD commit: feat: coding agent state persistence',
+      'lastPush: 2026-09-26T18:12:30Z',
+    ].join('\n')
+    const snapshot = parseRepoState(raw)
+    expect(snapshot.owner).toBe('DeviousDevv303')
+    expect(snapshot.repo).toBe('forgeclaw')
+    expect(snapshot.branch).toBe('main')
+    expect(snapshot.headShaShort).toBe('1f35568')
+    expect(snapshot.headSubject).toContain('coding agent state persistence')
+  })
+})
+
+// ─── Live GitHub legs ───────────────────────────────────────────────────────
+// Enabled with FORGECLAW_E2E_GITHUB=1 and a PAT in gh_token / VITE_GITHUB_TOKEN.
+// These are the acceptance assertions: real API, real repository, real HEAD.
+const liveEnabled = process.env.FORGECLAW_E2E_GITHUB === '1'
+const liveToken = (process.env.FORGECLAW_E2E_TOKEN || resolveGithubToken() || '').trim()
+const live = liveEnabled && Boolean(liveToken)
+
+describe.skipIf(!live)('live GitHub execution (NEXUS → tool → GitHub API → NEXUS)', () => {
+  const liveCtx = () => ({ ...loadToolContext(), ghToken: liveToken })
+  const owner = process.env.FORGECLAW_E2E_OWNER || 'DeviousDevv303'
+  const repo = process.env.FORGECLAW_E2E_REPO || 'forgeclaw'
+
+  it('authenticates and reads the live repository', async () => {
+    const output = await executeTool({ id: 'live-auth', name: 'github_list_files', input: { owner, repo, path: '' } }, liveCtx())
+    expect(output).not.toContain('[TOOL ERROR]')
+    expect(output).toContain('Contents of /')
+    expect(output).toContain('package.json')
+  })
+
+  it('identifies the current HEAD through the dispatcher', async () => {
+    const output = await executeTool({ id: 'live-head', name: 'github_repo_state', input: { owner, repo } }, liveCtx())
+    expect(output).not.toContain('[TOOL ERROR]')
+    const snapshot = parseRepoState(output)
+    expect(snapshot.headSha).toMatch(/^[0-9a-f]{40}$/)
+    expect(snapshot.branch.length).toBeGreaterThan(0)
+    expect(loadCodingAgentState().headSha).toBe(snapshot.headSha)
+  })
+
+  it('reads a real file from the repository', async () => {
+    const output = await executeTool({ id: 'live-read', name: 'github_read_file', input: { owner, repo, path: 'package.json' } }, liveCtx())
+    expect(output).not.toContain('[TOOL ERROR]')
+    expect(output).toContain('"name": "forgeclaw"')
+  })
+
+  it('verifies a real commit and reports its changed files', async () => {
+    const stateOutput = await executeTool({ id: 'live-head-2', name: 'github_repo_state', input: { owner, repo } }, liveCtx())
+    const head = parseRepoState(stateOutput).headSha
+    const verified = await executeTool({ id: 'live-verify', name: 'github_verify_commit', input: { owner, repo, sha: head, branch: 'main' } }, liveCtx())
+    expect(verified).toContain('✓ VERIFIED')
+    expect(verified).toContain(head)
+    expect(verified).toContain('files changed')
+  })
+
+  it('reports a missing commit as a failed verification, not a success', async () => {
+    const output = await executeTool(
+      { id: 'live-verify-missing', name: 'github_verify_commit', input: { owner, repo, sha: '0'.repeat(40) } },
+      liveCtx(),
+    )
+    expect(output).toContain('VERIFICATION FAILED')
+  })
+})

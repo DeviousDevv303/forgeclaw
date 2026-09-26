@@ -1,52 +1,64 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { nexusProvider } from './nexusProvider'
+// Updated by MANUS: the previous assertions described the removed localhost/Ollama
+// transport ("only loopback endpoints are configured", "checks the offline NEXUS
+// runtime"), but nexusProvider now resolves to the Browser WebGPU engine, which is
+// neither loopback-configured nor available under Node. The test asserted behaviour
+// the runtime intentionally no longer has, so it failed on every run.
+import { describe, expect, it } from 'vitest'
+import {
+  DEFAULT_NEXUS_ENDPOINT,
+  nexusProvider,
+  isNexusWebGpuAvailable,
+  NEXUS_MODELS,
+} from './nexusProvider'
+import { FORGE_TOOLS } from '../../forgeTools'
+import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from '../manualToolMode'
 
-const endpoint = 'http://127.0.0.1:8787'
-const responseText = 'NEXUS provider test response.'
-const encodedResponse = Buffer.from(responseText, 'utf8').toString('base64')
-
-describe('NEXUS local provider adapter', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = String(init?.body ?? '')
-      if (body === 'STATUS') {
-        return new Response('OK\tSTATUS\tinitialized=1\toffline=1\nEND\n', { status: 200 })
-      }
-      if (body.startsWith('CHAT\t')) {
-        return new Response(`OK\tCHAT\t${encodedResponse}\nEND\n`, { status: 200 })
-      }
-      return new Response('ERR\tdW5zdXBwb3J0ZWQ=', { status: 400 })
-    }))
+describe('NEXUS provider adapter (Browser WebGPU path)', () => {
+  it('exposes the WebGPU model list and a placeholder endpoint', () => {
+    expect(nexusProvider.id).toBe('nexus')
+    expect(nexusProvider.label).toContain('WebGPU')
+    expect(NEXUS_MODELS.length).toBeGreaterThan(0)
+    expect(DEFAULT_NEXUS_ENDPOINT.startsWith('webgpu://')).toBe(true)
   })
 
-  it('recognizes only loopback endpoints as configured', () => {
-    expect(nexusProvider.isConfigured(endpoint)).toBe(true)
-    expect(nexusProvider.isConfigured('https://example.invalid')).toBe(false)
-    expect(nexusProvider.supportsTools('qwen2.5-1.5b-instruct-q4_k_m')).toBe(false)
+  it('does not require an API key and never claims native tool support', () => {
+    expect(nexusProvider.requiresKey).toBe(false)
+    expect(nexusProvider.isConfigured('')).toBe(true)
+    expect(nexusProvider.supportsTools(NEXUS_MODELS[0].id)).toBe(false)
   })
 
-  it('checks the offline NEXUS runtime and decodes local chat output', async () => {
-    await nexusProvider.test(endpoint)
-    const onToken = vi.fn()
-    const result = await nexusProvider.send({
-      systemPrompt: 'You are local.',
-      messages: [{ role: 'user', content: 'Say hello.' }],
-      model: 'qwen2.5-1.5b-instruct-q4_k_m',
-      onToken,
-    }, endpoint)
-
-    expect(result.provider).toBe('nexus')
-    expect(result.text).toBe(responseText)
-    expect(onToken).toHaveBeenCalledWith(responseText)
+  it('reports WebGPU as unavailable under Node instead of silently falling back', async () => {
+    expect(isNexusWebGpuAvailable()).toBe(false)
+    await expect(nexusProvider.test('')).rejects.toThrow('NEXUS WebGPU is unavailable')
   })
 
-  it('does not grant tool authority to the MVP runtime', async () => {
+  it('refuses tool authority so the App owns execution through manual tool mode', async () => {
     await expect(nexusProvider.send({
       systemPrompt: 'You are local.',
       messages: [{ role: 'user', content: 'Use a tool.' }],
-      model: 'qwen2.5-1.5b-instruct-q4_k_m',
+      model: NEXUS_MODELS[0].id,
       tools: [{ name: 'run_js', description: 'test', parameters: {} }],
-    }, endpoint)).rejects.toThrow('does not grant tool authority')
+    }, '')).rejects.toThrow('does not grant tool authority')
+  })
+
+  // The manual tool-mode bridge is what lets a no-native-tools model still act.
+  it('round-trips a manual tool block through inject → parse → execute shape', () => {
+    const withSchema = injectToolSchema('SYSTEM', FORGE_TOOLS)
+    expect(withSchema).toContain('```tool_call')
+    expect(withSchema).toContain('github_repo_state')
+
+    const emitted = 'Reading state.\n```tool_call\n{"name":"github_repo_state","arguments":{}}\n```\nSTATUS: IN_PROGRESS'
+    const actions = parseManualToolCalls(emitted)
+    expect(actions).toHaveLength(1)
+    expect(actions[0].toolName).toBe('github_repo_state')
+
+    const calls = toToolCalls(actions)
+    expect(calls[0].name).toBe('github_repo_state')
+    expect(calls[0].id).toMatch(/^manual_/)
+
+    const cleaned = stripToolSyntax(emitted)
+    expect(cleaned).not.toContain('tool_call')
+    expect(cleaned).toContain('STATUS: IN_PROGRESS')
   })
 })

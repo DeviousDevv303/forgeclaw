@@ -5,6 +5,18 @@
 // Tool calling is routed through the active provider adapter.
 
 import { safeGetItem, safeSetItem } from './storage'
+import { resolveGithubToken } from './githubAuth'
+import {
+  FORGECLAW_AGENT_ID,
+  FORGECLAW_AGENT_LABEL,
+  buildAttributedCommitMessage,
+} from './githubAttribution'
+import {
+  loadCodingAgentState,
+  saveCodingAgentState,
+  appendActivity,
+  type CodingAgentState,
+} from './codingAgentState'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -325,6 +337,60 @@ export const FORGE_TOOLS: ToolDef[] = [
       required: ['system_prompt', 'task'],
     },
   },
+
+  // ── Coding agent: repository state, verification, persistence ───────────────
+  {
+    name: 'github_repo_state',
+    description: 'Read the live repository state: metadata, default branch, current HEAD commit, and a file sample. Use this to identify the current HEAD before making changes.',
+    parameters: {
+      type: 'object',
+      properties: {
+        owner:        { type: 'string', description: 'GitHub owner (defaults to configured)' },
+        repo:         { type: 'string', description: 'GitHub repo (defaults to configured)' },
+        branch:       { type: 'string', description: 'Branch to inspect (defaults to the repository default branch)' },
+        sample_path:  { type: 'string', description: 'File to include in the sample preview' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'github_verify_commit',
+    description: 'Verify that a commit exists on GitHub after a push and confirm it changed the expected files. Use this to prove a push landed instead of assuming it did.',
+    parameters: {
+      type: 'object',
+      properties: {
+        sha:    { type: 'string', description: 'Commit SHA to verify' },
+        branch: { type: 'string', description: 'Branch the commit should be on' },
+        owner:  { type: 'string', description: 'GitHub owner' },
+        repo:   { type: 'string', description: 'GitHub repo' },
+      },
+      required: ['sha'],
+    },
+  },
+  {
+    name: 'coding_task_update',
+    description: 'Persist coding-agent task state so the task can resume after a page reload or session restart. Record the objective, current HEAD, completed and pending steps, verified results, and any blockers.',
+    parameters: {
+      type: 'object',
+      properties: {
+        task:               { type: 'string', description: 'The assigned objective' },
+        instructions:       { type: 'string', description: 'Instructions and constraints for this task' },
+        status:             { type: 'string', description: 'Task status', enum: ['in_progress', 'blocked', 'complete', 'idle'] },
+        owner:              { type: 'string', description: 'Repository owner' },
+        repo:               { type: 'string', description: 'Repository name' },
+        branch:             { type: 'string', description: 'Working branch' },
+        head_sha:           { type: 'string', description: 'Current known HEAD commit SHA' },
+        completed_steps:    { type: 'string', description: 'Completed steps — JSON array of strings' },
+        pending_steps:      { type: 'string', description: 'Pending steps — JSON array of strings' },
+        files_modified:     { type: 'string', description: 'Files modified — JSON array of strings' },
+        verification_result:{ type: 'string', description: 'Verification evidence to record' },
+        error:              { type: 'string', description: 'An error to record' },
+        blocker:            { type: 'string', description: 'A blocker to record' },
+        continuation:       { type: 'string', description: 'What to do next on resume' },
+      },
+      required: ['status'],
+    },
+  },
 ]
 
 // ─── Context loader ────────────────────────────────────────────────────────────
@@ -333,7 +399,10 @@ export function loadToolContext(): ToolContext {
   let wa: Record<string, string> = {}
   try { wa = JSON.parse(safeGetItem('wa_credentials') || '{}') } catch { /* ignore */ }
   return {
-    ghToken:         safeGetItem('gh_token') || '',
+    // Single resolution path: .env seed (VITE_GITHUB_TOKEN) → localStorage `gh_token`.
+    // Reading localStorage directly here previously skipped the .env seed, so an operator
+    // token provided through the environment never reached the tool dispatcher.
+    ghToken:         resolveGithubToken(),
     ghOwner:         safeGetItem('fc_gh_owner') || 'DeviousDevv303',
     ghRepo:          safeGetItem('fc_gh_repo')  || 'forgeclaw',
     waPhoneNumberId: wa.phoneNumberId,
@@ -372,9 +441,24 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       case 'github_write_file': {
         const path    = input.path    as string
         const content = input.content as string
-        const message = input.message as string
+        const requestedMessage = input.message as string
         const branch  = input.branch  as string | undefined
         if (!token) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
+
+        // Agent attribution contract: every repository write states the acting agent,
+        // what changed, and why. The dispatcher owns this so no caller can produce a
+        // silent or generic commit.
+        const state = loadCodingAgentState()
+        const message = buildAttributedCommitMessage({
+          agentId: FORGECLAW_AGENT_ID,
+          agentLabel: FORGECLAW_AGENT_LABEL,
+          what: requestedMessage,
+          why: requestedMessage,
+          task: state.task,
+          verification: state.verificationResults[state.verificationResults.length - 1],
+          branch: branch || state.branch,
+          headSha: state.headShaShort || state.headSha,
+        })
 
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
         // Get existing SHA (required by GitHub API to update an existing file)
@@ -391,8 +475,23 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           const err = await res.json().catch(() => ({})) as { message?: string }
           throw new Error(err.message || `GitHub ${res.status}`)
         }
+        const written = await res.json() as { commit?: { sha?: string; html_url?: string }; content?: { sha?: string } }
+        // Record the change against the persisted task so the push is traceable and resumable.
+        const filesModified = state.filesModified.includes(path)
+          ? state.filesModified
+          : [...state.filesModified, path]
+        saveCodingAgentState({
+          owner,
+          repo,
+          branch: branch || state.branch,
+          filesModified,
+          lastCommitSha: written.commit?.sha || '',
+          lastCommitMessage: requestedMessage,
+          activity: appendActivity(state, 'github_write_file', `${path} → ${(written.commit?.sha || 'unknown').slice(0, 7)}`),
+        })
         const branchLabel = branch ? ` on branch ${branch}` : ''
-        return `✓ ${sha ? 'Updated' : 'Created'} ${path} in ${owner}/${repo}${branchLabel} — "${message}"`
+        const commitSha = written.commit?.sha || ''
+        return `✓ ${sha ? 'Updated' : 'Created'} ${path} in ${owner}/${repo}${branchLabel}\n  commit: ${commitSha || '(sha unavailable)'}\n  url: ${written.commit?.html_url || `https://github.com/${owner}/${repo}/commits`}\n  attributed: ${message.split('\n')[0]}\n  message: "${requestedMessage}"`
       }
 
       // ── GitHub: get run status ───────────────────────────────────────────────
@@ -784,6 +883,147 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const toolsStr     = input.tools         as string | undefined
         const tools        = toolsStr ? toolsStr.split(',').map(s => s.trim()).filter(Boolean) : undefined
         return await ctx.spawnAgent(systemPrompt, task, tools)
+      }
+
+      // ── Coding agent: live repository state (HEAD, branch, metadata) ───────────
+      case 'github_repo_state': {
+        const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
+        if (token) headers.Authorization = `token ${token}`
+        const metaRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers })
+        if (!metaRes.ok) throw new Error(`GitHub repo ${metaRes.status} — check owner/repo and token scope`)
+        const meta = await metaRes.json() as { default_branch: string; html_url: string; private: boolean; pushed_at: string }
+        const branch = ((input.branch as string) || meta.default_branch).trim()
+        const commitRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}`, { headers })
+        if (!commitRes.ok) throw new Error(`GitHub commit ${commitRes.status} — branch "${branch}" may not exist`)
+        const commit = await commitRes.json() as {
+          sha: string
+          html_url: string
+          commit: { message: string; author: { name?: string; date?: string } }
+        }
+        let sample = ''
+        const samplePath = (input.sample_path as string) || 'package.json'
+        try {
+          const fileRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${samplePath}?ref=${encodeURIComponent(branch)}`, { headers })
+          if (fileRes.ok) {
+            const file = await fileRes.json() as { content?: string }
+            if (file.content) sample = atob(file.content.replace(/\n/g, '')).slice(0, 1200)
+          }
+        } catch { /* sample is informational only */ }
+
+        const state = loadCodingAgentState()
+        saveCodingAgentState({
+          owner,
+          repo,
+          branch,
+          headSha: commit.sha,
+          headShaShort: commit.sha.slice(0, 7),
+          activity: appendActivity(state, 'github_repo_state', `${owner}/${repo}@${branch} HEAD ${commit.sha.slice(0, 7)}`),
+        })
+
+        return [
+          `repo: ${owner}/${repo}${meta.private ? ' (private)' : ''}`,
+          `url: ${meta.html_url}`,
+          `defaultBranch: ${meta.default_branch}`,
+          `inspectedBranch: ${branch}`,
+          `HEAD: ${commit.sha}`,
+          `HEAD short: ${commit.sha.slice(0, 7)}`,
+          `HEAD commit: ${commit.commit.message.split('\n')[0]}`,
+          `HEAD author: ${commit.commit.author?.name ?? 'unknown'} @ ${commit.commit.author?.date ?? 'unknown'}`,
+          `lastPush: ${meta.pushed_at}`,
+          `sample (${samplePath}):`,
+          sample ? `\`\`\`\n${sample}\n\`\`\`` : '(sample unavailable)',
+        ].join('\n')
+      }
+
+      // ── Coding agent: prove a pushed commit exists on GitHub ──────────────────
+      case 'github_verify_commit': {
+        const sha = String(input.sha || '').trim()
+        if (!sha) throw new Error('sha is required')
+        const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
+        if (token) headers.Authorization = `token ${token}`
+        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(sha)}`, { headers })
+        if (!res.ok) {
+          return `✗ VERIFICATION FAILED — commit ${sha} not found in ${owner}/${repo} (GitHub ${res.status}).`
+        }
+        const commit = await res.json() as {
+          sha: string
+          html_url: string
+          commit: { message: string; author: { name?: string; date?: string } }
+          files?: Array<{ filename: string; status: string; additions: number; deletions: number }>
+        }
+        const files = commit.files ?? []
+        const fileLines = files.length
+          ? files.map(f => `  ${f.status}: ${f.filename} (+${f.additions}/-${f.deletions})`).join('\n')
+          : '  (no file list returned)'
+        // Branch containment is a separate API call; report it explicitly rather than assuming.
+        let onBranch = 'not checked'
+        const branch = input.branch as string | undefined
+        if (branch) {
+          const brRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`, { headers })
+          onBranch = brRes.ok
+            ? `branch "${branch}" resolves`
+            : `branch "${branch}" NOT FOUND`
+        }
+        const state = loadCodingAgentState()
+        saveCodingAgentState({
+          verificationResults: [
+            ...state.verificationResults,
+            `verified commit ${sha.slice(0, 7)} on ${owner}/${repo} — ${files.length} file(s) changed`,
+          ],
+          activity: appendActivity(state, 'github_verify_commit', `${sha.slice(0, 7)} verified (${files.length} files)`),
+        })
+        return [
+          `✓ VERIFIED — commit exists in ${owner}/${repo}`,
+          `sha: ${commit.sha}`,
+          `subject: ${commit.commit.message.split('\n')[0]}`,
+          `author: ${commit.commit.author.name ?? 'unknown'} @ ${commit.commit.author.date ?? 'unknown'}`,
+          `url: ${commit.html_url}`,
+          `branchCheck: ${onBranch}`,
+          `files changed (${files.length}):`,
+          fileLines,
+        ].join('\n')
+      }
+
+      // ── Coding agent: persist task state so the task resumes after reload ─────
+      case 'coding_task_update': {
+        const parseList = (value: unknown): string[] | undefined => {
+          if (value === undefined || value === null || value === '') return undefined
+          if (Array.isArray(value)) return value.map(String)
+          try {
+            const parsed = JSON.parse(String(value))
+            return Array.isArray(parsed) ? parsed.map(String) : [String(value)]
+          } catch {
+            return [String(value)]
+          }
+        }
+        const previous = loadCodingAgentState()
+        const status = (input.status as CodingAgentState['taskStatus']) || previous.taskStatus
+        const completed = parseList(input.completed_steps)
+        const pending = parseList(input.pending_steps)
+        const modified = parseList(input.files_modified)
+        const verification = input.verification_result as string | undefined
+        const error = input.error as string | undefined
+        const blocker = input.blocker as string | undefined
+
+        const next = saveCodingAgentState({
+          task: (input.task as string | undefined) ?? previous.task,
+          taskInstructions: (input.instructions as string | undefined) ?? previous.taskInstructions,
+          taskStatus: status,
+          owner: (input.owner as string | undefined) ?? previous.owner,
+          repo: (input.repo as string | undefined) ?? previous.repo,
+          branch: (input.branch as string | undefined) ?? previous.branch,
+          headSha: (input.head_sha as string | undefined) ?? previous.headSha,
+          headShaShort: input.head_sha ? String(input.head_sha).slice(0, 7) : previous.headShaShort,
+          completedSteps: completed ?? previous.completedSteps,
+          pendingSteps: pending ?? previous.pendingSteps,
+          filesModified: modified ?? previous.filesModified,
+          continuationNotes: (input.continuation as string | undefined) ?? previous.continuationNotes,
+          verificationResults: verification ? [...previous.verificationResults, verification] : previous.verificationResults,
+          errors: error ? [...previous.errors, error] : previous.errors,
+          blockers: blocker ? [...previous.blockers, blocker] : previous.blockers,
+          activity: appendActivity(previous, 'coding_task_update', `${status}${blocker ? ` — blocker: ${blocker}` : ''}`),
+        })
+        return `✓ Coding agent state persisted — status: ${next.taskStatus}, repo: ${next.owner}/${next.repo}@${next.branch}, HEAD: ${next.headShaShort || '(unknown)'}, updated: ${next.updatedAt}`
       }
 
       default:

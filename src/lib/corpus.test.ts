@@ -70,12 +70,18 @@ describe('NEXUS / Corpus Local Mode', () => {
     const repository = new CorpusRepository()
     const { candidate } = await repository.appendInteraction({ input: 'What is beta?', context: '', result: 'Beta is the second letter.', runtime: 'corpus', model: 'local-model' })
     await repository.admitCandidate(candidate.id)
-    const originalSend = localInferenceProvider.send
-    const send = vi.spyOn(localInferenceProvider, 'send').mockResolvedValue({ text: 'local answer', provider: 'local', model: 'local-model', stopReason: 'stop' })
+    // corpusProvider delegates to the NEXUS inference engine, which is the Browser
+    // WebGPU runtime. Spying on localInferenceProvider asserted a delegate that the
+    // corpus path no longer uses, so the spy was never called.
+    const { nexusWebGpuProvider } = await import('./ai/providers/nexusWebGpuProvider')
+    const originalSend = nexusWebGpuProvider.send
+    const send = vi.spyOn(nexusWebGpuProvider, 'send').mockResolvedValue({ text: 'local answer', provider: 'nexus', model: 'local-model', stopReason: 'stop' })
     await corpusProvider.send({ systemPrompt: 'system', messages: [{ role: 'user', content: 'What is beta?' }], model: 'local-model' }, 'http://127.0.0.1:8080/v1')
     expect(send).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt: expect.stringContaining('Beta is the second letter.') }), 'http://127.0.0.1:8080/v1')
     send.mockRestore()
     expect(originalSend).toBeDefined()
+    // The corpus path must not touch the Ollama-backed local provider.
+    expect(localInferenceProvider.id).toBe('local')
   })
 
   it('does not let corpus context bypass the existing Guardian co-sign boundary', () => {

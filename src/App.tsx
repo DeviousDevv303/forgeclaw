@@ -27,6 +27,28 @@ import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL } from './lib/ai/providers/
 import { corpusRepository } from './lib/corpus'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
+import { applyAttributionContract } from './lib/githubAttribution'
+import {
+  loadCodingAgentState,
+  saveCodingAgentState,
+  restoreCodingAgentState,
+  formatCodingAgentStateForContext,
+  appendActivity,
+} from './lib/codingAgentState'
+import type { CodingAgentState } from './lib/codingAgentState'
+import { CodingAgentStatePanel } from './components/CodingAgentStatePanel'
+import { resolveGithubToken } from './lib/githubAuth'
+import { persistGithubToken } from './lib/githubAuth'
+import {
+  isCodingTaskRequest,
+  readRepoState,
+  beginCodingTask,
+  recordToolProgress,
+  recordTaskOutcome,
+  recordVerification,
+  formatRepoStateForContext,
+  formatRepoStateFailure,
+} from './lib/codingAgentRuntime'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
 import { runSubAgent } from './lib/managedAgent'
@@ -158,6 +180,10 @@ const RESPONSE_LANGUAGE_INSTRUCTIONS: Record<string, string> = {
 }
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
+
+// Tools handed to the model carry the attribution contract so both native tool
+// calling and manual tool mode know commits are agent-attributed and non-generic.
+const ATTRIBUTED_TOOLS = applyAttributionContract(FORGE_TOOLS)
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 // STANDING RULE: The line below must never be removed or modified.
@@ -506,8 +532,27 @@ function App() {
     }
   }, [warRoomToken])
 
-  // DEV-ONLY: Load mock events once on mount — addEvent is stable (useCallback)
+  // Resume the coding agent on mount. A reload must not erase an unfinished task:
+  // the persisted objective, HEAD, step lists and blockers are rehydrated and
+  // queued so the operator sees exactly what remains instead of starting blind.
   const addEvent = activityStream.addEvent
+  useEffect(() => {
+    const resumable = restoreCodingAgentState()
+    setAgentResumedState(resumable)
+    if (!resumable) return
+    setResumePrompt(
+      `Resume the unfinished coding task on ${resumable.owner}/${resumable.repo}@${resumable.branch} ` +
+      `(HEAD ${resumable.headShaShort || 'unknown'}). Continue from the persisted state below.\n\n` +
+      formatCodingAgentStateForContext(resumable),
+    )
+    // Factual trail only — no execution narration, no reasoning display.
+    const resumed = saveCodingAgentState({
+      activity: appendActivity(resumable, 'session resumed after reload', `HEAD ${resumable.headShaShort || 'unknown'}`),
+    })
+    setAgentResumedState(resumed)
+  }, [])
+
+  // DEV-ONLY: Load mock events once on mount — addEvent is stable (useCallback)
   useEffect(() => {
     if (import.meta.env.DEV) {
       const mockEvents = collectMockEvents('forgemind')
@@ -558,7 +603,9 @@ function App() {
   const [showApiKey, setShowApiKey] = useState(false)
   const [showGhToken, setShowGhToken] = useState(false)
   const [ghTokenSaved, setGhTokenSaved] = useState(false)
-  const [ghToken, setGhToken] = useState(() => safeGetItem('gh_token') || '')
+  // Resolve through the shared auth path so an operator-provided .env seed and the
+  // localStorage PAT are both honoured here, not just in the GitHub tool helpers.
+  const [ghToken, setGhToken] = useState(() => resolveGithubToken())
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
@@ -617,6 +664,10 @@ function App() {
     reasoning: string
   }
   const [pendingCoSigns, setPendingCoSigns] = useState<PendingCoSign[]>([])
+  // Persistent coding-agent task state (survives reload) + pending resume objective.
+  const [codingAgentState, setCodingAgentState] = useState<CodingAgentState>(() => loadCodingAgentState())
+  const [agentResumedState, setAgentResumedState] = useState<CodingAgentState | null>(null)
+  const [resumePrompt, setResumePrompt] = useState<string | null>(null)
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
   const [tier1Active, setTier1Active] = useState(false)
 
@@ -850,7 +901,30 @@ function App() {
     // Inject manual tool schema for no-tools models
     const activeSystemPrompt = supportsNativeTools
       ? finalSystemPrompt
-      : injectToolSchema(finalSystemPrompt, FORGE_TOOLS)
+      : injectToolSchema(finalSystemPrompt, ATTRIBUTED_TOOLS)
+
+    // ── Live repository state ────────────────────────────────────────────────
+    // Reads happen through the authenticated GitHub tool so the prompt carries the
+    // actually-current HEAD and branch instead of the model guessing them.
+    let effectivePrompt = promptText
+    const owner = (ghOwner || 'DeviousDevv303').trim()
+    const repo = (ghRepo || 'forgeclaw').trim()
+    const codingTask = isCodingTaskRequest(promptText)
+    let repoStateBlock = ''
+    if (codingTask || agentResumedState) {
+      try {
+        const snapshot = await readRepoState({ owner, repo })
+        repoStateBlock = formatRepoStateForContext(snapshot)
+        if (codingTask) {
+          setCodingAgentState(await beginCodingTask(promptText, repoStateBlock, snapshot))
+        }
+      } catch (err) {
+        repoStateBlock = formatRepoStateFailure(err)
+        if (codingTask) {
+          setCodingAgentState(recordToolProgress('github_repo_state', repoStateBlock.split('\n')[1]))
+        }
+      }
+    }
 
     try {
       const requestStartedAt = performance.now()
@@ -871,7 +945,7 @@ function App() {
         ...loadToolContext(),
         sessionId,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
-          runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, currentApiKey, FORGE_TOOLS, loadToolContext()),
+          runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, currentApiKey, ATTRIBUTED_TOOLS, loadToolContext()),
       }
 
       const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
@@ -879,7 +953,17 @@ function App() {
           ? [{ role: m.role, content: m.content }]
           : []
       )
-      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: promptText }]
+      // Attach the persisted task state plus the live repository state read through
+      // the tool dispatcher, so a resumed session continues from real facts.
+      const persistedState = loadCodingAgentState()
+      const resumeBlock = persistedState.taskStatus === 'in_progress' || persistedState.taskStatus === 'blocked'
+        ? formatCodingAgentStateForContext(persistedState)
+        : ''
+      const contextBlocks = [resumeBlock, repoStateBlock].filter(Boolean).join('\n\n')
+      if (contextBlocks) {
+        effectivePrompt = `${promptText}\n\n${contextBlocks}`
+      }
+      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt }]
       const allToolResults: ToolResult[] = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
       const chainStartedAt = new Date().toISOString()
@@ -910,7 +994,7 @@ function App() {
           systemPrompt: activeSystemPrompt,
           messages: conversationMessages,
           workspaceId: activeProvider === 'anthropic' ? (anthropicWorkspaceId.trim() || undefined) : undefined,
-          tools: noMoreTools ? undefined : FORGE_TOOLS,
+          tools: noMoreTools ? undefined : ATTRIBUTED_TOOLS,
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
             const displayText = streamBuffer.split(/\[FM:(THINK|TRACE)\]/i)[0]
@@ -1004,6 +1088,8 @@ function App() {
             emitForge({ type: 'TOOL_SUCCESS', tool: call.name })
             toolRetryCounts.delete(call.name)
           }
+          // Persist the real tool outcome so an unfinished task survives a reload.
+          setCodingAgentState(recordToolProgress(call.name, output))
           setActivityLog(prev => prev.map(e => e.id === actEntryId ? { ...e, output: output.slice(0, 300), status: isErr ? 'error' : 'done' } : e))
           const stepId = `step_${call.id}`
           chainSteps.push({ id: stepId, icon: isErr ? '❌' : '✅', label: call.name, status: isErr ? 'error' : 'done', timestamp: new Date().toISOString(), body: (retryAnnotation || output.split('\n')[0]).slice(0, 200), linkedToolCallIds: [call.id] })
@@ -1048,6 +1134,17 @@ function App() {
       setRequestStatus('success')
       setLastRequestError('')
       setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+      // Persist the outcome so the next session resumes instead of restarting.
+      if (codingTask || agentResumedState) {
+        const verified = allToolResults.filter(r => r.name === 'github_verify_commit').length
+        if (verified > 0) {
+          recordVerification(`${verified} commit verification(s) returned by github_verify_commit`)
+        }
+        setCodingAgentState(recordTaskOutcome(
+          agentPhase === 'COMPLETE' ? 'complete' : agentPhase === 'BLOCKED' ? 'blocked' : 'in_progress',
+          nextAction || undefined,
+        ))
+      }
       resolveTask(taskId)
     } catch (err) {
       const rawMsg = err instanceof Error ? err.message : 'Unknown error'
@@ -1946,7 +2043,7 @@ function App() {
                     value={ghToken}
                     onChange={e => {
                       setGhToken(e.target.value)
-                      safeSetItem('gh_token', e.target.value)
+                      persistGithubToken(e.target.value)
                       setGhTokenSaved(false)
                     }}
                     style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${ghToken ? '#22c55e44' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
@@ -1955,7 +2052,7 @@ function App() {
                     {showGhToken ? '🙈' : '👁'}
                   </button>
                   <button
-                    onClick={() => { safeSetItem('gh_token', ghToken); setGhTokenSaved(true); setTimeout(() => setGhTokenSaved(false), 2000) }}
+                    onClick={() => { persistGithubToken(ghToken); setGhTokenSaved(true); setTimeout(() => setGhTokenSaved(false), 2000) }}
                     style={{ background: ghTokenSaved ? '#14532d' : '#1a1a1a', border: `1px solid ${ghTokenSaved ? '#22c55e' : '#333'}`, color: ghTokenSaved ? '#22c55e' : '#888', borderRadius: '4px', padding: '0 12px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', fontWeight: 'bold', whiteSpace: 'nowrap' }}
                   >
                     {ghTokenSaved ? '✓ SAVED' : 'SAVE'}
@@ -2128,6 +2225,35 @@ function App() {
         {activeTab === 'forgemind' && (
           <>
             <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
+              {/* Persisted coding task — visible so a reload reads as a resume. */}
+              <CodingAgentStatePanel state={codingAgentState} resumed={Boolean(agentResumedState)} onChange={setCodingAgentState} />
+              {resumePrompt && (
+                <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '10px', fontFamily: 'monospace' }}>
+                  <div style={{ color: '#93c5fd', fontSize: '10px', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '6px' }}>
+                    UNFINISHED TASK DETECTED — RESUMABLE
+                  </div>
+                  <div style={{ color: '#94a3b8', fontSize: '11px', marginBottom: '8px' }}>
+                    {codingAgentState.task || 'Coding task'} · {codingAgentState.owner}/{codingAgentState.repo}@{codingAgentState.branch} · HEAD {codingAgentState.headShaShort || 'unknown'}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => { const text = resumePrompt; setResumePrompt(null); void sendPrompt(text) }}
+                      disabled={loading}
+                      style={{ background: loading ? '#1a1a1a' : '#1e3a5f', border: '1px solid #334155', color: loading ? '#555' : '#93c5fd', borderRadius: '4px', padding: '6px 12px', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '10px', fontWeight: 'bold', fontFamily: 'monospace' }}
+                    >
+                      RESUME TASK
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setResumePrompt(null)}
+                      style={{ background: '#1a1a1a', border: '1px solid #333', color: '#888', borderRadius: '4px', padding: '6px 12px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}
+                    >
+                      DISMISS
+                    </button>
+                  </div>
+                </div>
+              )}
               {messages.length === 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444', gap: '16px' }}>
                   <p>System initialized. Awaiting input...</p>

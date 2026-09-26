@@ -27,11 +27,14 @@ provider_router="src/lib/ai/providerRouter.ts"
 app_file="src/App.tsx"
 
 # Check that providerRouter imports from providers/ directory, not hardcoded to one
-grep -Eq "import .* from '\./providers/'" "$provider_router" \
+# Match the provider filename after the directory slash; the old expression
+# incorrectly required a quote immediately after ./providers/ and rejected every
+# valid import such as './providers/nexusProvider'.
+grep -Eq "import .* from '\./providers/[^']+'" "$provider_router" \
   || fail "providerRouter must import from providers directory."
 
 if git diff --cached --name-only -- "$provider_router" | grep -q .; then
-  grep -Eq "import .* from '\./providers/'" "$provider_router" \
+  grep -Eq "import .* from '\./providers/[^']+'" "$provider_router" \
     || fail "providerRouter must retain provider adapters behind the provider directory."
 fi
 
