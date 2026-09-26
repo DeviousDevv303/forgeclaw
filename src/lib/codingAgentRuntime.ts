@@ -6,6 +6,7 @@
 // failure instead of being smoothed over.
 
 import { executeTool, loadToolContext } from './forgeTools'
+import { CANONICAL_IDENTITY, formatCanonicalIdentity, resolveCanonicalRepository } from './canonicalIdentity'
 import {
   loadCodingAgentState,
   saveCodingAgentState,
@@ -25,6 +26,70 @@ export interface RepoStateSnapshot {
   raw: string
 }
 
+export interface RuntimeRequestMetrics {
+  systemTokens: number
+  userTokens: number
+  toolDefinitionTokens: number
+  toolResultTokens: number
+  totalRequestTokens: number
+  modelCalls: number
+  toolCalls: number
+}
+
+/** Stable, intentionally small estimate used for before/after request telemetry. */
+export function estimateTokens(value: string): number {
+  return Math.ceil(value.length / 4)
+}
+
+/** Runtime-owned request envelope; never serializes the complete repository/state. */
+export function buildRuntimeRequestContext(options?: {
+  owner?: string
+  repo?: string
+  taskStatus?: CodingAgentState['taskStatus']
+  requiresRepositoryTool?: boolean
+}): string {
+  const repository = resolveCanonicalRepository({ owner: options?.owner, repo: options?.repo })
+  const lines = [
+    formatCanonicalIdentity(),
+    `[RUNTIME_STATE repository="${repository.fullRepository}" taskStatus="${options?.taskStatus || 'idle'}"]`,
+    'Repository evidence comes from GitHub tools; never infer or preload contents.',
+  ]
+  if (options?.requiresRepositoryTool) {
+    lines.push('For this request, call github_repo_state or another appropriate GitHub read tool before giving repository feedback.')
+  }
+  lines.push('[/RUNTIME_STATE]')
+  return lines.join('\n')
+}
+
+export function createEmptyRequestMetrics(): RuntimeRequestMetrics {
+  return { systemTokens: 0, userTokens: 0, toolDefinitionTokens: 0, toolResultTokens: 0, totalRequestTokens: 0, modelCalls: 0, toolCalls: 0 }
+}
+
+export function measureRequestMetrics(input: {
+  systemPrompt: string
+  userMessages: string
+  toolDefinitions?: unknown
+  toolResults?: string
+  modelCalls?: number
+  toolCalls?: number
+}): RuntimeRequestMetrics {
+  const systemTokens = estimateTokens(input.systemPrompt)
+  const userTokens = estimateTokens(input.userMessages)
+  const toolDefinitionTokens = estimateTokens(input.toolDefinitions ? JSON.stringify(input.toolDefinitions) : '')
+  const toolResultTokens = estimateTokens(input.toolResults || '')
+  return {
+    systemTokens,
+    userTokens,
+    toolDefinitionTokens,
+    toolResultTokens,
+    totalRequestTokens: systemTokens + userTokens + toolDefinitionTokens + toolResultTokens,
+    modelCalls: input.modelCalls || 0,
+    toolCalls: input.toolCalls || 0,
+  }
+}
+
+export { CANONICAL_IDENTITY }
+
 /**
  * A request is treated as a coding task only when it names a code/repo target AND
  * an action. This keeps ordinary conversation from opening repository work.
@@ -32,7 +97,7 @@ export interface RepoStateSnapshot {
 export function isCodingTaskRequest(prompt: string): boolean {
   const t = prompt.toLowerCase()
   const hasTarget = /\b(repo|repository|codebase|forgeclaw|source|file|files|branch|commit|head|github)\b/.test(t)
-  const hasAction = /\b(inspect|read|fix|implement|add|change|modify|update|refactor|test|build|lint|commit|push|verify|debug|repair|write|create)\b/.test(t)
+  const hasAction = /\b(check|inspect|read|fix|implement|add|change|modify|update|refactor|test|build|lint|commit|push|verify|debug|repair|write|create|feedback)\b/.test(t)
   return hasTarget && hasAction
 }
 

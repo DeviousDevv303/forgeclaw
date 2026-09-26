@@ -17,6 +17,7 @@ import {
   appendActivity,
   type CodingAgentState,
 } from './codingAgentState'
+import { CANONICAL_IDENTITY } from './canonicalIdentity'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -403,8 +404,8 @@ export function loadToolContext(): ToolContext {
     // Reading localStorage directly here previously skipped the .env seed, so an operator
     // token provided through the environment never reached the tool dispatcher.
     ghToken:         resolveGithubToken(),
-    ghOwner:         safeGetItem('fc_gh_owner') || 'DeviousDevv303',
-    ghRepo:          safeGetItem('fc_gh_repo')  || 'forgeclaw',
+    ghOwner:         safeGetItem('fc_gh_owner') || CANONICAL_IDENTITY.owner,
+    ghRepo:          safeGetItem('fc_gh_repo')  || CANONICAL_IDENTITY.repository,
     waPhoneNumberId: wa.phoneNumberId,
     waAccessToken:   wa.accessToken,
     waRecipient:     wa.recipientNumber,

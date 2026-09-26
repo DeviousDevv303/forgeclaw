@@ -13,7 +13,7 @@ import { classifyFailure, extractStatus, decideRetry } from '../../agentCore'
 const endpoint = process.env.FORGECLAW_LOCAL_ENDPOINT || 'http://127.0.0.1:11434/v1'
 
 /** Probe the local endpoint so an absent local inference server skips instead of failing. */
-async function locallocal inference serverReachable(): Promise<boolean> {
+async function localServerReachable(): Promise<boolean> {
   try {
     const response = await fetch(`${endpoint.replace(/\/+$/, '')}/models`)
     return response.ok
@@ -22,7 +22,7 @@ async function locallocal inference serverReachable(): Promise<boolean> {
   }
 }
 
-const reachable = await locallocal inference serverReachable()
+const reachable = await localServerReachable()
 
 describe('ForgeClaw Local Mode v0.1 smoke path', () => {
   it('exercises the agent-core classification, verification fields, and retry policy', () => {

@@ -19,7 +19,13 @@ import {
   FORGECLAW_ORCHESTRATOR_ID,
 } from './githubAttribution'
 import { loadCodingAgentState, saveCodingAgentState, clearCodingAgentState, restoreCodingAgentState } from './codingAgentState'
-import { parseRepoState, isCodingTaskRequest } from './codingAgentRuntime'
+import {
+  parseRepoState,
+  isCodingTaskRequest,
+  buildRuntimeRequestContext,
+  measureRequestMetrics,
+  CANONICAL_IDENTITY,
+} from './codingAgentRuntime'
 import { resolveGithubToken } from './githubAuth'
 
 class MemoryStorage implements Storage {
@@ -225,8 +231,43 @@ describe('coding task detection and repo state parsing', () => {
   it('recognises coding objectives and ignores ordinary chat', () => {
     expect(isCodingTaskRequest('inspect the forgeclaw repository and identify current HEAD')).toBe(true)
     expect(isCodingTaskRequest('fix the tool dispatcher and push to GitHub')).toBe(true)
+    expect(isCodingTaskRequest('Go check the ForgeClaw repo and give me some feedback on the repo.')).toBe(true)
     expect(isCodingTaskRequest('resume the unfinished task')).toBe(false)
     expect(isCodingTaskRequest('what is the weather today')).toBe(false)
+  })
+
+  it('uses one canonical identity and keeps repository evidence out of the runtime envelope', () => {
+    expect(CANONICAL_IDENTITY).toEqual({
+      application: 'ForgeClaw',
+      owner: 'DeviousDevv303',
+      repository: 'forgeclaw',
+      fullRepository: 'DeviousDevv303/forgeclaw',
+      defaultBranch: 'main',
+    })
+    const context = buildRuntimeRequestContext({ requiresRepositoryTool: true, taskStatus: 'in_progress' })
+    expect(context).toContain('DeviousDevv303/forgeclaw')
+    expect(context).toContain('github_repo_state')
+    expect(context).not.toContain('HEAD:')
+    expect(context.length).toBeLessThan(500)
+  })
+
+  it('measures context and tool payloads without putting metrics into the prompt', () => {
+    const metrics = measureRequestMetrics({
+      systemPrompt: 'identity',
+      userMessages: 'check the repo',
+      toolDefinitions: [{ name: 'github_repo_state' }],
+      toolResults: 'HEAD: abc',
+      modelCalls: 2,
+      toolCalls: 1,
+    })
+    expect(metrics.systemTokens).toBeGreaterThan(0)
+    expect(metrics.userTokens).toBeGreaterThan(0)
+    expect(metrics.toolDefinitionTokens).toBeGreaterThan(0)
+    expect(metrics.toolResultTokens).toBeGreaterThan(0)
+    expect(metrics.totalRequestTokens).toBe(
+      metrics.systemTokens + metrics.userTokens + metrics.toolDefinitionTokens + metrics.toolResultTokens,
+    )
+    expect(JSON.stringify(metrics)).not.toContain('HEAD:')
   })
 
   it('parses the dispatcher output into a HEAD snapshot', () => {

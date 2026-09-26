@@ -32,7 +32,6 @@ import {
   loadCodingAgentState,
   saveCodingAgentState,
   restoreCodingAgentState,
-  formatCodingAgentStateForContext,
   appendActivity,
 } from './lib/codingAgentState'
 import type { CodingAgentState } from './lib/codingAgentState'
@@ -41,14 +40,13 @@ import { resolveGithubToken } from './lib/githubAuth'
 import { persistGithubToken } from './lib/githubAuth'
 import {
   isCodingTaskRequest,
-  readRepoState,
-  beginCodingTask,
   recordToolProgress,
   recordTaskOutcome,
   recordVerification,
-  formatRepoStateForContext,
-  formatRepoStateFailure,
+  buildRuntimeRequestContext,
+  measureRequestMetrics,
 } from './lib/codingAgentRuntime'
+import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
 import { runSubAgent } from './lib/managedAgent'
@@ -189,7 +187,7 @@ const ATTRIBUTED_TOOLS = applyAttributionContract(FORGE_TOOLS)
 // STANDING RULE: The line below must never be removed or modified.
 // It prevents refusals without overriding identity. Do not trim.
 const FORGEMIND_SYSTEM_PROMPT = `IDENTITY
-You are ForgeClaw, an autonomous execution agent embedded in the ForgeClaw shell. Your purpose is to complete the user's objective through planning, tool use, verification, adaptation, and persistence. You are not a conversational assistant unless the task explicitly requires conversation.
+You are ${CANONICAL_IDENTITY.application}, an autonomous execution agent embedded in the ${CANONICAL_IDENTITY.application} shell. Your purpose is to complete the user's objective through planning, tool use, verification, adaptation, and persistence. You are not a conversational assistant unless the task explicitly requires conversation.
 You retain all your normal values, guidelines, and identity as the AI assistant you are.
 
 MISSION
@@ -541,9 +539,7 @@ function App() {
     setAgentResumedState(resumable)
     if (!resumable) return
     setResumePrompt(
-      `Resume the unfinished coding task on ${resumable.owner}/${resumable.repo}@${resumable.branch} ` +
-      `(HEAD ${resumable.headShaShort || 'unknown'}). Continue from the persisted state below.\n\n` +
-      formatCodingAgentStateForContext(resumable),
+      `Resume the unfinished ForgeClaw coding task. Repository evidence must be read with github_repo_state before continuing.`,
     )
     // Factual trail only — no execution narration, no reasoning display.
     const resumed = saveCodingAgentState({
@@ -645,6 +641,7 @@ function App() {
     lastRequestStatus: 'none' | 'success' | 'error'
     lastError: string | null
     lastLatencyMs: number | null
+    lastRequestMetrics: ReturnType<typeof measureRequestMetrics> | null
     buildVersion: string
   }
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
@@ -654,6 +651,7 @@ function App() {
     lastRequestStatus: 'none',
     lastError: null,
     lastLatencyMs: null,
+    lastRequestMetrics: null,
     buildVersion: BUILD_COMMIT,
   })
 
@@ -903,27 +901,24 @@ function App() {
       ? finalSystemPrompt
       : injectToolSchema(finalSystemPrompt, ATTRIBUTED_TOOLS)
 
-    // ── Live repository state ────────────────────────────────────────────────
-    // Reads happen through the authenticated GitHub tool so the prompt carries the
-    // actually-current HEAD and branch instead of the model guessing them.
+    // ── Runtime-owned repository identity ────────────────────────────────────
+    // Do not pre-read or serialize HEAD/repository contents into the prompt. The
+    // runtime supplies a compact identity envelope and NEXUS calls the GitHub read
+    // tool when evidence is required.
     let effectivePrompt = promptText
-    const owner = (ghOwner || 'DeviousDevv303').trim()
-    const repo = (ghRepo || 'forgeclaw').trim()
+    const owner = (ghOwner || CANONICAL_IDENTITY.owner).trim()
+    const repo = (ghRepo || CANONICAL_IDENTITY.repository).trim()
     const codingTask = isCodingTaskRequest(promptText)
-    let repoStateBlock = ''
-    if (codingTask || agentResumedState) {
-      try {
-        const snapshot = await readRepoState({ owner, repo })
-        repoStateBlock = formatRepoStateForContext(snapshot)
-        if (codingTask) {
-          setCodingAgentState(await beginCodingTask(promptText, repoStateBlock, snapshot))
-        }
-      } catch (err) {
-        repoStateBlock = formatRepoStateFailure(err)
-        if (codingTask) {
-          setCodingAgentState(recordToolProgress('github_repo_state', repoStateBlock.split('\n')[1]))
-        }
-      }
+    if (codingTask && codingAgentState.taskStatus === 'idle') {
+      setCodingAgentState(saveCodingAgentState({
+        task: promptText,
+        taskInstructions: 'Resolve canonical repository evidence through GitHub tools.',
+        taskStatus: 'in_progress',
+        owner,
+        repo,
+        branch: CANONICAL_IDENTITY.defaultBranch,
+        continuationNotes: 'Call github_repo_state before repository feedback or edits.',
+      }))
     }
 
     try {
@@ -953,16 +948,14 @@ function App() {
           ? [{ role: m.role, content: m.content }]
           : []
       )
-      // Attach the persisted task state plus the live repository state read through
-      // the tool dispatcher, so a resumed session continues from real facts.
-      const persistedState = loadCodingAgentState()
-      const resumeBlock = persistedState.taskStatus === 'in_progress' || persistedState.taskStatus === 'blocked'
-        ? formatCodingAgentStateForContext(persistedState)
-        : ''
-      const contextBlocks = [resumeBlock, repoStateBlock].filter(Boolean).join('\n\n')
-      if (contextBlocks) {
-        effectivePrompt = `${promptText}\n\n${contextBlocks}`
-      }
+      // Only project the minimum runtime state required for this request. Full
+      // task state remains in storage and is surfaced by the UI, not token stream.
+      effectivePrompt = `${promptText}\n\n${buildRuntimeRequestContext({
+        owner,
+        repo,
+        taskStatus: codingAgentState.taskStatus,
+        requiresRepositoryTool: codingTask,
+      })}`
       const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt }]
       const allToolResults: ToolResult[] = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
@@ -989,6 +982,15 @@ function App() {
         const reqStart = performance.now()
         const currentModel = normalizedActiveModel
         const currentKey = currentApiKey
+        const requestMetrics = measureRequestMetrics({
+          systemPrompt: activeSystemPrompt,
+          userMessages: conversationMessages.filter(message => message.role === 'user').map(message => message.content).join('\n'),
+          toolDefinitions: noMoreTools ? undefined : ATTRIBUTED_TOOLS,
+          toolResults: conversationMessages.filter(message => message.role === 'tool').map(message => message.content).join('\n'),
+          modelCalls: iter + 1,
+          toolCalls: allToolResults.length,
+        })
+        setDiagnostics(prev => ({ ...prev, lastRequestMetrics: requestMetrics }))
         const routerResult = await sendViaRouter({
           model: currentModel,
           systemPrompt: activeSystemPrompt,
@@ -2195,6 +2197,16 @@ function App() {
                   </div>
 
                   {/* Last Error */}
+                  {/* Request Metrics — measured outside the prompt */}
+                  <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>REQUEST METRICS (EST.)</div>
+                    <div style={{ color: '#888', fontSize: '10px', fontFamily: 'monospace', lineHeight: '1.7' }}>
+                      {diagnostics.lastRequestMetrics
+                        ? `system ${diagnostics.lastRequestMetrics.systemTokens}t · user ${diagnostics.lastRequestMetrics.userTokens}t · tools ${diagnostics.lastRequestMetrics.toolDefinitionTokens}t · results ${diagnostics.lastRequestMetrics.toolResultTokens}t · total ${diagnostics.lastRequestMetrics.totalRequestTokens}t · model calls ${diagnostics.lastRequestMetrics.modelCalls} · tool calls ${diagnostics.lastRequestMetrics.toolCalls}`
+                        : 'No request metrics yet'}
+                    </div>
+                  </div>
+
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
                     <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST ERROR</div>
                     <div style={{
