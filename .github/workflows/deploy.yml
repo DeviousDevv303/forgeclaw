@@ -1,5 +1,6 @@
 name: Deploy to GitHub Pages
 
+# Auto-deploys dist/ to gh-pages on every push to main.
 on:
   push:
     branches: [main]
