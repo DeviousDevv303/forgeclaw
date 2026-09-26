@@ -8,6 +8,7 @@ import { classifyError } from './types'
 import { anthropicProvider } from './providers/anthropicProvider'
 import { moonshotProvider } from './providers/moonshotProvider'
 import { localInferenceProvider } from './providers/localInferenceProvider'
+import { ollamaProvider } from './providers/ollamaProvider'
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,7 @@ export const providers = {
   anthropic: anthropicProvider,
   moonshot: moonshotProvider,
   local: localInferenceProvider,
+  ollama: ollamaProvider,
 } as const
 
 export type ProviderId = keyof typeof providers
@@ -78,4 +80,4 @@ export async function testProviderKey(apiKey: string = '', providerId: ProviderI
   await providers[providerId].test(apiKey, workspaceId)
 }
 
-export { anthropicProvider, moonshotProvider, localInferenceProvider }
+export { anthropicProvider, moonshotProvider, localInferenceProvider, ollamaProvider }

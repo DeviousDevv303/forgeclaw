@@ -22,8 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
-import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
+import { sendViaRouter, testProviderKey, anthropicProvider, moonshotProvider, localInferenceProvider, ollamaProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
@@ -37,6 +36,7 @@ import {
 } from './lib/agentCore'
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
+import { createAgentTask, initializeAgentTasks, resumePendingAgentTasks, subscribeAgentTask } from './lib/agentTaskRuntime'
 import { useForgeOps } from './hooks/useForgeOps'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
@@ -417,7 +417,7 @@ function readMoonshotModel(): string {
 
 function purgeLegacyRuntimeStorage(): void {
   const savedProvider = safeGetItem('fm_provider')
-  if (savedProvider !== 'local' && savedProvider !== 'anthropic' && savedProvider !== 'moonshot') {
+  if (savedProvider !== 'local' && savedProvider !== 'anthropic' && savedProvider !== 'moonshot' && savedProvider !== 'ollama') {
     safeSetItem('fm_provider', 'local')
   }
 }
@@ -568,7 +568,7 @@ function App() {
   const [testKeyError, setTestKeyError] = useState('')
   // Active execution is deterministic and never falls back to another provider.
   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
-  const initialProvider: ProviderId = savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'local' ? savedProvider : 'local'
+  const initialProvider: ProviderId = savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'local' || savedProvider === 'ollama' ? savedProvider : 'ollama'
   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
   const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>(() => readAnthropicKey())
@@ -579,13 +579,19 @@ function App() {
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
   const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
+  const [ollamaModel, setOllamaModel] = useState<string>(() => safeGetItem('fm_ollama_model') || ollamaProvider.models[0].id)
+  const [ollamaEndpoint, setOllamaEndpoint] = useState<string>(() => safeGetItem('fm_ollama_endpoint') || 'http://127.0.0.1:11434')
   const normalizedActiveModel = activeProvider === 'local'
     ? localModel
+    : activeProvider === 'ollama'
+      ? ollamaModel
     : activeProvider === 'anthropic'
       ? anthropicModel
       : moonshotModel
   const activeModelLabel = activeProvider === 'local'
     ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
+    : activeProvider === 'ollama'
+      ? ollamaProvider.models.find(m => m.id === ollamaModel)?.label ?? ollamaModel
     : activeProvider === 'anthropic'
       ? anthropicProvider.models.find(m => m.id === anthropicModel)?.label ?? anthropicModel
       : moonshotProvider.models.find(m => m.id === moonshotModel)?.label ?? moonshotModel
@@ -639,7 +645,7 @@ function App() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
     provider: activeProvider,
     model: normalizedActiveModel,
-    keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey,
+    keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'ollama' ? !!ollamaEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey,
     lastRequestStatus: 'none',
     lastError: null,
     lastLatencyMs: null,
@@ -695,6 +701,13 @@ function App() {
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
   useEffect(() => { safeSetItem('fm_anthropic_model', anthropicModel) }, [anthropicModel])
   useEffect(() => { safeSetItem('fm_anthropic_workspace_id', anthropicWorkspaceId) }, [anthropicWorkspaceId])
+  useEffect(() => { safeSetItem('fm_ollama_model', ollamaModel) }, [ollamaModel])
+  useEffect(() => { safeSetItem('fm_ollama_endpoint', ollamaEndpoint) }, [ollamaEndpoint])
+  useEffect(() => {
+    initializeAgentTasks()
+    const taskApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'ollama' ? ollamaEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
+    resumePendingAgentTasks(activeProvider, normalizedActiveModel, { apiKey: taskApiKey, toolContext: loadToolContext() })
+  }, [activeProvider, normalizedActiveModel, localEndpoint, ollamaEndpoint, anthropicApiKey, moonshotApiKey])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
     setDiagnostics(prev => ({ ...prev, provider: activeProvider }))
@@ -704,10 +717,10 @@ function App() {
       ...prev,
       provider: activeProvider,
       model: normalizedActiveModel,
-      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey,
+      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'ollama' ? !!ollamaEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey,
       buildVersion: BUILD_COMMIT,
     }))
-  }, [normalizedActiveModel, moonshotApiKey, anthropicApiKey, localEndpoint, activeProvider])
+  }, [normalizedActiveModel, moonshotApiKey, anthropicApiKey, localEndpoint, ollamaEndpoint, activeProvider])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -810,9 +823,9 @@ function App() {
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
-    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
-    const currentProviderLabel = activeProvider === 'local' ? 'Local inference' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
-    const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
+    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'ollama' ? ollamaEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
+    const currentProviderLabel = activeProvider === 'ollama' ? 'Ollama / Termux' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
+    const currentKeyFormat = activeProvider === 'ollama' ? 'http://127.0.0.1:11434' : activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
 
     if (!currentApiKey) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
@@ -851,12 +864,46 @@ function App() {
 
     setMessages(prev => [...prev, userMsg])
 
+    // Explicit Chat → Agent handoff. Ordinary Chat remains tool-free; only the
+    // persisted Agent worker receives an allowedTools list, and this path passes [].
+    const delegatedTask = promptText.match(/^@agent\s+([\s\S]+)$/i)
+    if (delegatedTask) {
+      const agentTask = createAgentTask({
+        agentId: 'forgemind',
+        agentKey: 'forgemind-chat',
+        intent: 'chat-agent-delegation',
+        task: delegatedTask[1].trim(),
+        systemPrompt: `${FORGEMIND_SYSTEM_PROMPT}\n\n${RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en}`,
+        provider: activeProvider,
+        model: normalizedActiveModel,
+        allowedTools: [],
+        conversation: [{ role: 'user', content: delegatedTask[1].trim() }],
+      }, { apiKey: currentApiKey, toolContext: { ...loadToolContext(), sessionId } })
+      const delegatedMessageId = `chat-agent-${agentTask.taskId}`
+      setMessages(prev => [...prev, { id: delegatedMessageId, role: 'assistant', content: 'Agent task queued…', timestamp: Date.now(), source: activeProvider, provider: activeProvider, model: normalizedActiveModel, streaming: true }])
+      setLoading(true)
+      setRequestStatus('running')
+      let unsubscribe = () => {}
+      unsubscribe = subscribeAgentTask(agentTask.taskId, task => {
+        const content = task.status === 'completed' ? (task.result || '(no response)') : task.status === 'failed' ? `[ERROR]: ${task.error || 'Agent task failed'}` : task.status === 'cancelled' ? '[CANCELLED]: Agent task cancelled' : task.status === 'running' ? 'Agent is working…' : 'Agent task queued…'
+        setMessages(prev => prev.map(message => message.id === delegatedMessageId ? { ...message, content, streaming: task.status === 'queued' || task.status === 'running' } : message))
+        if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+          unsubscribe()
+          setLoading(false)
+          setRequestStatus(task.status === 'completed' ? 'success' : 'error')
+          setLastRequestError(task.error || '')
+          resolveTask(taskId)
+        }
+      })
+      return
+    }
+
     let responseMsgId: string | null = null
 
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
     const relevant = findRelevant(corpus, promptText, 3)
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
-    const localDirectResponse = activeProvider === 'local'
+    const localDirectResponse = activeProvider === 'local' || activeProvider === 'ollama'
     const runtimeToolInstruction = !localDirectResponse && providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'
@@ -869,13 +916,9 @@ function App() {
         relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${sanitizeModelContextText(e.response).slice(0, 300)}`).join('\n---\n')
       : baseSystemPrompt
     
-    // Check if current model supports native tools
-    const supportsNativeTools = providerSupportsTools(normalizedActiveModel, activeProvider)
-    
-    // Inject manual tool schema for no-tools models
-    const activeSystemPrompt = localDirectResponse || supportsNativeTools
-      ? finalSystemPrompt
-      : injectToolSchema(finalSystemPrompt, FORGE_TOOLS)
+    // Ordinary Chat is conversational only. Agent tasks are the sole path that
+    // receives tool definitions and reaches executeTool through managedAgent.
+    const activeSystemPrompt = `${finalSystemPrompt}\n\nCHAT TOOL BOUNDARY\nThis is ordinary Chat. Do not execute tools or claim to have executed tools. If the user needs an authorized action, ask them to delegate it explicitly with @agent and let the Agent task runtime handle tools.`
 
     try {
       const requestStartedAt = performance.now()
@@ -919,7 +962,7 @@ function App() {
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
       // Some models do not support native function calling.
-      const supportsTools = !localDirectResponse && providerSupportsTools(normalizedActiveModel, activeProvider)
+      const supportsTools = false
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -959,16 +1002,6 @@ function App() {
         // No tool calls → final answer
         if (!result.toolCalls?.length) {
           // Check for manual tool mode (no native tool support)
-          if (!supportsTools && result.text) {
-            const manualActions = parseManualToolCalls(result.text)
-            if (manualActions.length > 0) {
-              // Convert manual actions to tool calls for execution
-              result.toolCalls = toToolCalls(manualActions)
-              // Strip tool syntax from display text
-              result.text = stripToolSyntax(result.text)
-            }
-          }
-          
           if (!result.toolCalls?.length) {
             finalText = result.text || streamBuffer
             break
@@ -1360,6 +1393,19 @@ function App() {
     }
   }
 
+  const testOllamaEndpoint = async () => {
+    setTestingKey(true)
+    setTestKeyError('')
+    try {
+      await testProviderKey(ollamaEndpoint, 'ollama')
+      setTestKeyError('Ollama endpoint is reachable')
+    } catch (err) {
+      setTestKeyError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setTestingKey(false)
+    }
+  }
+
   const handleExportCorpus = () => {
     if (!corpus.length) { emitFailure({ source: 'forgemind', severity: 'info', message: 'No corpus entries to export.' }); return }
     const blob = new Blob([corpus.map(e => JSON.stringify(e)).join('\n')], { type: 'application/jsonl' })
@@ -1562,7 +1608,9 @@ function App() {
   }
 
   const getStatusIndicator = () => {
-    const status = activeProvider === 'local'
+    const status = activeProvider === 'ollama'
+      ? (ollamaEndpoint ? 'Ollama / Termux' : 'Ollama endpoint missing')
+      : activeProvider === 'local'
       ? (localEndpoint ? 'Local' : 'Local endpoint missing')
       : activeProvider === 'anthropic'
         ? (anthropicApiKeyStatus === 'invalid' ? 'Anthropic invalid key' : anthropicApiKey ? 'Anthropic' : 'Anthropic key missing')
@@ -1704,6 +1752,7 @@ function App() {
                   onChange={e => setActiveProvider(e.target.value as ProviderId)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
+                  <option value="ollama" style={{ background: '#111' }}>Ollama (Termux)</option>
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
                   <option value="moonshot" style={{ background: '#111' }}>Moonshot (Kimi)</option>
                   <option value="local" style={{ background: '#111' }}>Local Inference (llama.cpp)</option>
@@ -1730,6 +1779,13 @@ function App() {
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#a855f7', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Local Mode</span>
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>OpenAI-compatible llama.cpp server</span>
+                </div>
+              )}
+              {activeProvider === 'ollama' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Ollama / Termux</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Native local chat API on port 11434</span>
                 </div>
               )}
 
@@ -1769,6 +1825,14 @@ function App() {
                   <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Local Model</label>
                   <select value={localModel} onChange={e => { setLocalModel(e.target.value); safeSetItem('fm_local_model', e.target.value) }} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
                     {localInferenceProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
+                  </select>
+                </div>
+              )}
+              {activeProvider === 'ollama' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ollama Model</label>
+                  <select value={ollamaModel} onChange={e => { setOllamaModel(e.target.value); safeSetItem('fm_ollama_model', e.target.value) }} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
+                    {ollamaProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
                   </select>
                 </div>
               )}
@@ -1845,14 +1909,23 @@ function App() {
                   <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Start llama-server with a quantized GGUF model and its OpenAI-compatible /v1 endpoint.</div>
                 </div>
               )}
+              {activeProvider === 'ollama' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Ollama / Termux Endpoint</label>
+                  <input type="url" placeholder="http://127.0.0.1:11434" value={ollamaEndpoint} onChange={e => { setOllamaEndpoint(e.target.value); safeSetItem('fm_ollama_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                  <button onClick={testOllamaEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST OLLAMA ENDPOINT'}</button>
+                  {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Run Ollama in Termux and pull the selected model before testing.</div>
+                </div>
+              )}
 
               {/* Operator diagnostics */}
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', activeProvider === 'local' ? 'Local Inference' : activeProvider === 'moonshot' ? 'Moonshot' : 'Anthropic'],
+                  ['runtime provider', activeProvider === 'ollama' ? 'Ollama / Termux' : activeProvider === 'local' ? 'Local Inference' : activeProvider === 'moonshot' ? 'Moonshot' : 'Anthropic'],
                   ['runtime model', activeModelLabel],
-                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : (activeProvider === 'moonshot' ? moonshotApiKey : anthropicApiKey) ? 'present' : 'missing'],
+                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'ollama' ? (ollamaEndpoint ? 'endpoint configured' : 'missing') : (activeProvider === 'moonshot' ? moonshotApiKey : anthropicApiKey) ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
                   ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
@@ -2043,7 +2116,7 @@ function App() {
                   {/* Provider */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
                     <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
-                    <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● {activeProvider === 'local' ? 'Local Inference' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'}</div>
+                    <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● {activeProvider === 'ollama' ? 'Ollama / Termux' : activeProvider === 'local' ? 'Local Inference' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'}</div>
                     <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Active runtime provider</div>
                   </div>
 
@@ -2381,7 +2454,7 @@ function App() {
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
-          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : localEndpoint} />
+          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'ollama' ? ollamaEndpoint : localEndpoint} />
         )}
 
         {activeTab === 'activity' && (

@@ -1,9 +1,10 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { safeGetItem, safeSetItem, safeJsonParse } from '../lib/storage'
-import { callProvider } from '../lib/modelProviders'
 import type { ProviderId } from '../lib/modelProviders'
+import { createAgentTask, listAgentTasks, subscribeAgentTask } from '../lib/agentTaskRuntime'
+import { loadToolContext } from '../lib/forgeTools'
 
 interface CustomAgent {
   id: string
@@ -40,9 +41,25 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
   const [draftName, setDraftName] = useState('')
   const [draftPrompt, setDraftPrompt] = useState('')
   const [chatMessages, setChatMessages] = useState<AgentMessage[]>([])
+  const [activeTaskId, setActiveTaskId] = useState<string | null>(null)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!activeAgent) return
+    const existing = activeTaskId ? listAgentTasks(activeAgent.id).find(task => task.taskId === activeTaskId) : listAgentTasks(activeAgent.id)[0]
+    if (!existing) {
+      setActiveTaskId(null)
+      setChatMessages([])
+      return
+    }
+    setChatMessages(existing.conversation)
+    return subscribeAgentTask(existing.taskId, task => {
+      setChatMessages(task.conversation)
+      if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') setLoading(false)
+    })
+  }, [activeAgent, activeTaskId])
 
   const openNew = () => {
     setEditing({ id: '', name: '', systemPrompt: '' })
@@ -75,7 +92,6 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
 
   const launchAgent = (agent: CustomAgent) => {
     setActiveAgent(agent)
-    setChatMessages([])
     setInput('')
   }
 
@@ -84,26 +100,25 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
     const text = input.trim()
     setInput('')
     const userMsg: AgentMessage = { role: 'user', content: text }
-    setChatMessages(prev => [...prev, userMsg, { role: 'assistant', content: '', streaming: true }])
+    setChatMessages(prev => [...prev, userMsg])
     setLoading(true)
 
     try {
-      const history = chatMessages.map(m => ({ role: m.role, content: m.content }))
-      let buf = ''
-      await callProvider(activeProvider, activeModel, activeAgent.systemPrompt,
-        [...history, { role: 'user', content: text }],
-        apiKey,
-        {
-          onToken: (token: string) => {
-            buf += token
-            setChatMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: buf, streaming: true } : m))
-          },
-        }
-      )
-      setChatMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: buf || '(no response)', streaming: false } : m))
+      const createdTask = createAgentTask({
+        agentId: 'forgemind',
+        agentKey: activeAgent.id,
+        intent: 'agent-panel-conversation',
+        task: text,
+        systemPrompt: activeAgent.systemPrompt,
+        provider: activeProvider,
+        model: activeModel,
+        allowedTools: ['memory_read'],
+        conversation: [...chatMessages, userMsg],
+      }, { apiKey, toolContext: loadToolContext() })
+      setActiveTaskId(createdTask.taskId)
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Error'
-      setChatMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: `[ERROR]: ${msg}`, streaming: false } : m))
+      setChatMessages(prev => [...prev, { role: 'assistant', content: `[ERROR]: ${msg}` }])
     } finally {
       setLoading(false)
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)

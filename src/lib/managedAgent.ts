@@ -4,6 +4,7 @@ import type { ToolCall, ToolContext, ToolDef } from './forgeTools'
 import { executeTool } from './forgeTools'
 import { callProvider, modelSupportsTools } from './modelProviders'
 import type { ChatMessage, ProviderId } from './modelProviders'
+import { requiresCoSign } from './guardianGate'
 
 // Runs a bounded sub-agent loop through ForgeClaw's active provider runtime.
 export async function runSubAgent(
@@ -36,7 +37,9 @@ export async function runSubAgent(
     const iterResults = await Promise.all(
       result.toolCalls.map(async (tc: ToolCall) => ({
         toolCallId: tc.id,
-        output: await executeTool(tc, toolCtx),
+        output: requiresCoSign(tc, true)
+          ? `[GUARDIAN BLOCKED] ${tc.name} requires interactive co-sign and cannot run in a detached Agent worker.`
+          : await executeTool(tc, toolCtx),
       })),
     )
 

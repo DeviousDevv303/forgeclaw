@@ -6,9 +6,10 @@ import type { AIMessage, AIRequest } from './ai/types'
 import { ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, anthropicProvider } from './ai/providers/anthropicProvider'
 import { DEFAULT_MOONSHOT_MODEL, moonshotProvider } from './ai/providers/moonshotProvider'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL, localInferenceProvider } from './ai/providers/localInferenceProvider'
+import { DEFAULT_OLLAMA_ENDPOINT, DEFAULT_OLLAMA_MODEL, ollamaProvider } from './ai/providers/ollamaProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
 
-export type ProviderId = 'anthropic' | 'moonshot' | 'local'
+export type ProviderId = 'anthropic' | 'moonshot' | 'local' | 'ollama'
 
 export interface ModelOption {
   id: string
@@ -51,14 +52,22 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     models: localInferenceProvider.models.map(model => ({ ...model })),
     keyPlaceholder: DEFAULT_LOCAL_ENDPOINT,
   },
+  ollama: {
+    id: 'ollama',
+    name: 'Ollama (Termux)',
+    url: `${DEFAULT_OLLAMA_ENDPOINT}/api/chat`,
+    models: ollamaProvider.models.map(model => ({ ...model })),
+    keyPlaceholder: DEFAULT_OLLAMA_ENDPOINT,
+  },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['local', 'anthropic', 'moonshot']
+export const PROVIDER_ORDER: ProviderId[] = ['ollama', 'local', 'anthropic', 'moonshot']
 export const DEFAULT_PROVIDER: ProviderId = 'local'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
   anthropic: DEFAULT_ANTHROPIC_MODEL,
   moonshot: DEFAULT_MOONSHOT_MODEL,
   local: DEFAULT_LOCAL_MODEL,
+  ollama: DEFAULT_OLLAMA_MODEL,
 }
 
 export type ChatMessage = AIMessage
@@ -106,6 +115,10 @@ export async function callProvider(
     const response = await localInferenceProvider.send({ ...request, model: model || DEFAULT_LOCAL_MODEL }, apiKey)
     return { text: response.text, provider: 'local', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
   }
+  if (providerId === 'ollama') {
+    const response = await ollamaProvider.send({ ...request, model: model || DEFAULT_OLLAMA_MODEL }, apiKey)
+    return { text: response.text, provider: 'ollama', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
+  }
 
   throw new Error(`Unsupported provider: ${providerId}`)
 }
@@ -114,6 +127,7 @@ export function modelSupportsTools(providerId: ProviderId, modelId: string): boo
   if (providerId === 'anthropic') return anthropicProvider.supportsTools(modelId)
   if (providerId === 'moonshot') return moonshotProvider.supportsTools(modelId)
   if (providerId === 'local') return localInferenceProvider.supportsTools(modelId)
+  if (providerId === 'ollama') return ollamaProvider.supportsTools(modelId)
   throw new Error(`Unsupported provider: ${providerId}`)
 }
 
@@ -128,6 +142,10 @@ export async function testProviderKey(providerId: ProviderId, _model: string, ap
   }
   if (providerId === 'local') {
     await localInferenceProvider.test(apiKey)
+    return
+  }
+  if (providerId === 'ollama') {
+    await ollamaProvider.test(apiKey)
     return
   }
   throw new Error(`Unsupported provider: ${providerId}`)
