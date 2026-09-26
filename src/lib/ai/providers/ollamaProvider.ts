@@ -1,12 +1,10 @@
 /*
  * ForgeClaw — Ollama/Termux local runtime integration.
  *
- * Decisions: use Ollama's native /api/chat and /api/tags endpoints rather than
- * assuming OpenAI compatibility. The default endpoint is loopback port 11434,
- * which is correct when ForgeClaw and Ollama run on the same Android device.
- * Streaming uses Ollama's newline-delimited JSON protocol. Tool definitions are
- * forwarded in Ollama's native function shape, but the provider remains subject
- * to ForgeClaw's existing Guardian/tool execution boundary.
+ * The phone runtime exposes Ollama's CORS-enabled OpenAI-compatible /v1
+ * endpoints. The default endpoint is the loopback root; requests are made to
+ * /v1/chat/completions and /v1/models. Tool definitions remain subject to
+ * ForgeClaw's existing Guardian/tool execution boundary.
  *
  * Unfinished/untested: live phone connectivity cannot be verified from this
  * sandbox until an Ollama listener is reachable here or through the phone's
@@ -29,9 +27,9 @@ export const OLLAMA_MODELS = [
 
 type OllamaMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  content: string | null
   tool_call_id?: string
-  tool_calls?: Array<{ function: { name: string; arguments: Record<string, unknown> } }>
+  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>
 }
 
 type OllamaTool = {
@@ -41,15 +39,26 @@ type OllamaTool = {
 
 type OllamaResponse = {
   model?: string
-  message?: { role?: string; content?: string; tool_calls?: Array<{ function?: { name?: string; arguments?: Record<string, unknown> | string } }> }
-  done?: boolean
-  done_reason?: string
-  error?: string
+  choices?: Array<{
+    message?: {
+      content?: string | null
+      tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>
+    }
+    delta?: { content?: string }
+    finish_reason?: string
+  }>
+  error?: { message?: string } | string
+}
+
+type OllamaChoiceMessage = {
+  content?: string | null
+  tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }>
 }
 
 function endpoint(apiKey: string): string {
   const configured = apiKey.trim() || import.meta.env.VITE_OLLAMA_URL || DEFAULT_OLLAMA_ENDPOINT
-  return configured.replace(/\/+$/, '')
+  const normalized = configured.replace(/\/+$/, '')
+  return normalized.endsWith('/v1') ? normalized : `${normalized}/v1`
 }
 
 function toMessages(systemPrompt: string, messages: AIMessage[]): OllamaMessage[] {
@@ -59,7 +68,11 @@ function toMessages(systemPrompt: string, messages: AIMessage[]): OllamaMessage[
       const mapped: OllamaMessage = { role: message.role, content: message.content }
       if (message.role === 'tool') mapped.tool_call_id = message.tool_call_id
       if (message.role === 'assistant' && message.tool_calls?.length) {
-        mapped.tool_calls = message.tool_calls.map(call => ({ function: { name: call.name, arguments: call.input ?? {} } }))
+        mapped.tool_calls = message.tool_calls.map(call => ({
+          id: call.id,
+          type: 'function',
+          function: { name: call.name, arguments: JSON.stringify(call.input ?? {}) },
+        }))
       }
       return mapped
     }),
@@ -78,21 +91,20 @@ async function responseError(response: Response): Promise<string> {
   if (!raw) return `Ollama ${response.status}`
   try {
     const parsed = JSON.parse(raw) as OllamaResponse
-    return parsed.error ? `Ollama ${response.status}: ${parsed.error}` : `Ollama ${response.status}: ${raw.slice(0, 300)}`
+    const detail = typeof parsed.error === 'string' ? parsed.error : parsed.error?.message
+    return detail ? `Ollama ${response.status}: ${detail}` : `Ollama ${response.status}: ${raw.slice(0, 300)}`
   } catch {
     return `Ollama ${response.status}: ${raw.slice(0, 300)}`
   }
 }
 
-function parseToolCalls(message: OllamaResponse['message']): AIToolCall[] | undefined {
+function parseToolCalls(message: OllamaChoiceMessage | undefined): AIToolCall[] | undefined {
   const calls = (message?.tool_calls ?? []).map((call, index) => {
     const name = call.function?.name ?? ''
-    const rawInput = call.function?.arguments ?? {}
+    const rawInput = call.function?.arguments ?? '{}'
     let input: Record<string, unknown> = {}
-    if (typeof rawInput === 'string') {
-      try { input = JSON.parse(rawInput) as Record<string, unknown> } catch { input = {} }
-    } else input = rawInput
-    return { id: `ollama-call-${Date.now()}-${index}`, name, input }
+    try { input = JSON.parse(rawInput) as Record<string, unknown> } catch { input = {} }
+    return { id: call.id || `ollama-call-${Date.now()}-${index}`, name, input }
   }).filter(call => call.name)
   return calls.length ? calls : undefined
 }
@@ -113,24 +125,27 @@ async function readStream(response: Response, onToken: (token: string) => void):
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
       for (const line of lines) {
-        const raw = line.trim()
-        if (!raw) continue
+        if (!line.startsWith('data: ')) continue
+        const raw = line.slice(6).trim()
+        if (!raw || raw === '[DONE]') continue
         const event = JSON.parse(raw) as OllamaResponse
-        if (event.error) throw new Error(`Ollama: ${event.error}`)
-        const token = event.message?.content ?? ''
+        const token = event.choices?.[0]?.delta?.content ?? ''
         if (token) { text += token; onToken(token) }
-        const parsedCalls = parseToolCalls(event.message)
+        const parsedCalls = parseToolCalls(event.choices?.[0]?.message)
         if (parsedCalls) toolCalls = [...(toolCalls ?? []), ...parsedCalls]
-        if (event.done) stopReason = event.done_reason
+        if (event.choices?.[0]?.finish_reason) stopReason = event.choices[0].finish_reason
       }
     }
-    if (buffer.trim()) {
-      const event = JSON.parse(buffer.trim()) as OllamaResponse
-      const token = event.message?.content ?? ''
-      if (token) { text += token; onToken(token) }
-      const parsedCalls = parseToolCalls(event.message)
-      if (parsedCalls) toolCalls = [...(toolCalls ?? []), ...parsedCalls]
-      stopReason = event.done_reason ?? stopReason
+    if (buffer.trim().startsWith('data: ')) {
+      const raw = buffer.trim().slice(6).trim()
+      if (raw && raw !== '[DONE]') {
+        const event = JSON.parse(raw) as OllamaResponse
+        const token = event.choices?.[0]?.delta?.content ?? ''
+        if (token) { text += token; onToken(token) }
+        const parsedCalls = parseToolCalls(event.choices?.[0]?.message)
+        if (parsedCalls) toolCalls = [...(toolCalls ?? []), ...parsedCalls]
+        stopReason = event.choices?.[0]?.finish_reason ?? stopReason
+      }
     }
   } finally {
     reader.releaseLock()
@@ -157,11 +172,14 @@ export const ollamaProvider: AIProvider = {
       model,
       messages: toMessages(request.systemPrompt, request.messages),
       stream: !!request.onToken,
-      options: { num_predict: request.maxTokens ?? 2048 },
+      max_tokens: request.maxTokens ?? 2048,
     }
-    if (request.tools?.length) body.tools = toTools(request.tools)
+    if (request.tools?.length) {
+      body.tools = toTools(request.tools)
+      body.tool_choice = 'auto'
+    }
 
-    const response = await fetch(`${endpoint(apiKey)}/api/chat`, {
+    const response = await fetch(`${endpoint(apiKey)}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -174,18 +192,20 @@ export const ollamaProvider: AIProvider = {
     }
 
     const data = await response.json() as OllamaResponse
-    if (data.error) throw new Error(`Ollama: ${data.error}`)
+    if (data.error) throw new Error(typeof data.error === 'string' ? data.error : data.error.message || 'Ollama error')
+    const choice = data.choices?.[0]
+    const message = choice?.message
     return {
-      text: data.message?.content ?? '',
+      text: message?.content ?? '',
       provider: 'ollama',
       model: data.model ?? model,
-      toolCalls: parseToolCalls(data.message),
-      stopReason: data.done_reason,
+      toolCalls: parseToolCalls(message),
+      stopReason: choice?.finish_reason,
     }
   },
 
   async test(apiKey: string): Promise<void> {
-    const response = await fetch(`${endpoint(apiKey)}/api/tags`)
+    const response = await fetch(`${endpoint(apiKey)}/models`)
     if (!response.ok) throw new Error(await responseError(response))
   },
 }
