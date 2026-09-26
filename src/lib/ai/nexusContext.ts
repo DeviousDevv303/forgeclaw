@@ -47,7 +47,12 @@ export function limitNexusContext(
   maxTokens = MAX_NEXUS_CONTEXT_TOKENS,
 ): { systemPrompt: string; messages: AIMessage[]; tokenCount: number } {
   const safeBudget = Math.max(1, Math.floor(maxTokens))
-  const boundedSystem = takePrefixByBudget(systemPrompt, safeBudget)
+  // Never spend the whole budget on the system prompt. WebLLM requires the
+  // final conversation turn to be user/tool; dropping a fresh "hello" here
+  // produced: "Last message should be from either user or tool."
+  const latest = messages[messages.length - 1]
+  const latestCost = latest ? Math.min(safeBudget - 1, Math.max(1, conservativeTokenCount(latest.content))) : 0
+  const boundedSystem = takePrefixByBudget(systemPrompt, Math.max(1, safeBudget - latestCost))
   let used = conservativeTokenCount(boundedSystem)
   const selected: AIMessage[] = []
 

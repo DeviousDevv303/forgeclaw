@@ -108,3 +108,19 @@ Switching the hosted app to NEXUS and pressing `TEST NEXUS RUNTIME` produced `NE
 | Live GitHub write acceptance | NOT RUN | No external write was attempted; browser GitHub token was not configured |
 
 The Pages patch failures found during acceptance were corrected and documented in MANUS commits `4a37865` and `ed9e680`; the final deployment passed.
+
+## Follow-up defect — hello request reproduction and fix
+
+**Reported symptom:** The hosted ForgeClaw chat displayed `[ERROR]: Last message should be from either user or tool.` after a plain greeting.
+
+**Reproduction analysis:** The earlier adapter fix correctly converted canonical `tool` messages, but it did not protect the newest user message from `limitNexusContext`. When the system prompt consumed the entire 4,096-token conservative budget, the limiter dropped the newest user turn. WebLLM then received a system-only conversation, which violated its turn-order contract and surfaced the reported error.
+
+**Fix:** `limitNexusContext` now reserves budget for the newest message before truncating the system prompt and older history. The canonical runtime transcript remains unchanged; only the provider-bound context is bounded. Added regression coverage proves a long system prompt still leaves the final `hello` user turn present and within budget.
+
+**Follow-up validation:**
+
+- `npx tsc -b`: PASS
+- `npx eslint .`: PASS
+- Focused tests: **29 passed, 5 environment-dependent skips**
+- `npm run build`: PASS
+- Existing NEXUS adapter test remains PASS, including tool-result continuation ordering.

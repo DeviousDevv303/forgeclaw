@@ -13,7 +13,7 @@ import {
 } from './nexusProvider'
 import { FORGE_TOOLS } from '../../forgeTools'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from '../manualToolMode'
-import { adaptNexusMessages } from '../nexusContext'
+import { adaptNexusMessages, limitNexusContext } from '../nexusContext'
 
 describe('NEXUS provider adapter (Browser WebGPU path)', () => {
   it('exposes the WebGPU model list and a placeholder endpoint', () => {
@@ -72,5 +72,12 @@ describe('NEXUS provider adapter (Browser WebGPU path)', () => {
     expect(adapted.map(message => message.role)).toEqual(['user', 'assistant', 'user'])
     expect(adapted.at(-1)?.role).toBe('user')
     expect(adapted.at(-1)?.content).toContain('[TOOL RESULT call-1]')
+  })
+
+  it('never drops a fresh user turn when the system prompt exceeds the budget', () => {
+    const bounded = limitNexusContext('SYSTEM '.repeat(3000), [{ role: 'user', content: 'hello' }], 100)
+    expect(bounded.tokenCount).toBeLessThanOrEqual(100)
+    expect(bounded.messages.at(-1)?.role).toBe('user')
+    expect(bounded.messages.at(-1)?.content).toContain('hello')
   })
 })
