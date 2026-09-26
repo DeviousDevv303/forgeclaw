@@ -18,8 +18,9 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-      # npm install (not ci) so @mlc-ai/web-llm resolves if package-lock lags package.json
       - run: npm install
+      - name: Patch Corpus/NEXUS WebGPU UI labels for Pages
+        run: node scripts/patchPagesWebGpuUi.mjs
       - name: Build for GitHub Pages
         run: npm run build
         env:
