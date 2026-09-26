@@ -1,9 +1,16 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useMemo, useSyncExternalStore } from 'react'
 import { safeGetItem, safeSetItem, safeJsonParse } from '../lib/storage'
 import { callProvider } from '../lib/modelProviders'
 import type { ProviderId } from '../lib/modelProviders'
+import {
+  ensureAgentSession,
+  getAgentSessionsSnapshot,
+  setActiveAgentId,
+  subscribeAgentSessions,
+  updateAgentSession,
+} from '../lib/agentSessionStore'
 
 interface CustomAgent {
   id: string
@@ -35,13 +42,14 @@ function saveAgents(agents: CustomAgent[]) {
 
 export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanelProps) {
   const [agents, setAgents] = useState<CustomAgent[]>(loadAgents)
-  const [activeAgent, setActiveAgent] = useState<CustomAgent | null>(null)
+  const agentSnapshot = useSyncExternalStore(subscribeAgentSessions, getAgentSessionsSnapshot, getAgentSessionsSnapshot)
+  const activeAgent = agentSnapshot.activeAgentId ? agentSnapshot.sessions[agentSnapshot.activeAgentId]?.agent ?? null : null
   const [editing, setEditing] = useState<CustomAgent | null>(null)
   const [draftName, setDraftName] = useState('')
   const [draftPrompt, setDraftPrompt] = useState('')
-  const [chatMessages, setChatMessages] = useState<AgentMessage[]>([])
+  const chatMessages: AgentMessage[] = useMemo(() => activeAgent ? agentSnapshot.sessions[activeAgent.id]?.messages ?? [] : [], [activeAgent, agentSnapshot])
   const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
+  const loading = activeAgent ? agentSnapshot.sessions[activeAgent.id]?.loading ?? false : false
   const chatEndRef = useRef<HTMLDivElement>(null)
 
   const openNew = () => {
@@ -70,22 +78,27 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
     const updated = agents.filter(a => a.id !== id)
     setAgents(updated)
     saveAgents(updated)
-    if (activeAgent?.id === id) setActiveAgent(null)
+    if (activeAgent?.id === id) setActiveAgentId(null)
   }
 
   const launchAgent = (agent: CustomAgent) => {
-    setActiveAgent(agent)
-    setChatMessages([])
+    ensureAgentSession(agent)
+    setActiveAgentId(agent.id)
     setInput('')
   }
+
+  const closeAgent = () => setActiveAgentId(null)
 
   const sendMessage = useCallback(async () => {
     if (!input.trim() || loading || !activeAgent) return
     const text = input.trim()
     setInput('')
     const userMsg: AgentMessage = { role: 'user', content: text }
-    setChatMessages(prev => [...prev, userMsg, { role: 'assistant', content: '', streaming: true }])
-    setLoading(true)
+    updateAgentSession(activeAgent.id, session => ({
+      ...session,
+      loading: true,
+      messages: [...session.messages, userMsg, { role: 'assistant', content: '', streaming: true }],
+    }))
 
     try {
       const history = chatMessages.map(m => ({ role: m.role, content: m.content }))
@@ -96,16 +109,26 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
         {
           onToken: (token: string) => {
             buf += token
-            setChatMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: buf, streaming: true } : m))
+            updateAgentSession(activeAgent.id, session => ({
+              ...session,
+              messages: session.messages.map((m, i) => i === session.messages.length - 1 ? { ...m, content: buf, streaming: true } : m),
+            }))
           },
         }
       )
-      setChatMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: buf || '(no response)', streaming: false } : m))
+      updateAgentSession(activeAgent.id, session => ({
+        ...session,
+        loading: false,
+        messages: session.messages.map((m, i) => i === session.messages.length - 1 ? { ...m, content: buf || '(no response)', streaming: false } : m),
+      }))
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Error'
-      setChatMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: `[ERROR]: ${msg}`, streaming: false } : m))
+      updateAgentSession(activeAgent.id, session => ({
+        ...session,
+        loading: false,
+        messages: session.messages.map((m, i) => i === session.messages.length - 1 ? { ...m, content: `[ERROR]: ${msg}`, streaming: false } : m),
+      }))
     } finally {
-      setLoading(false)
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
     }
   }, [input, loading, activeAgent, chatMessages, activeProvider, activeModel, apiKey])
@@ -159,7 +182,7 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ padding: '8px 16px', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '10px', background: '#0a0a0a' }}>
-          <button onClick={() => setActiveAgent(null)} style={{ ...btnStyle(), padding: '3px 10px', fontSize: '10px' }}>← AGENTS</button>
+          <button onClick={closeAgent} style={{ ...btnStyle(), padding: '3px 10px', fontSize: '10px' }}>← AGENTS</button>
           <span style={{ color: '#f97316', fontSize: '11px', fontFamily: 'monospace', fontWeight: 'bold', letterSpacing: '1px' }}>{activeAgent.name}</span>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
