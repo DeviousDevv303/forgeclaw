@@ -12,7 +12,9 @@ function readGitCommit(): string {
 
 export default defineConfig({
   plugins: [react()],
-  base: '/',
+  // GitHub Pages project site: https://deviousdevv303.github.io/forgeclaw/
+  // Local Termux/preview keeps base '/' unless GITHUB_PAGES=true.
+  base: process.env.GITHUB_PAGES === 'true' ? '/forgeclaw/' : '/',
   define: {
     __APP_COMMIT__: JSON.stringify(readGitCommit()),
     __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
