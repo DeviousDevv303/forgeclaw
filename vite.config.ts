@@ -19,6 +19,12 @@ export default defineConfig({
     __APP_COMMIT__: JSON.stringify(readGitCommit()),
     __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
+  optimizeDeps: {
+    exclude: ['@mlc-ai/web-llm'],
+  },
+  worker: {
+    format: 'es',
+  },
   build: {
     outDir: 'dist',
     sourcemap: true,
