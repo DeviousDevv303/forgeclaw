@@ -22,7 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, corpusProvider, nexusProvider, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, testProviderKey, corpusProvider, nexusProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL } from './lib/ai/providers/nexusProvider'
 import { corpusRepository } from './lib/corpus'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
@@ -167,7 +167,6 @@ function getSpeechErrorMessage(error?: string): string {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
-const DEFAULT_MOONSHOT_MODEL = moonshotProvider.models[1]?.id ?? 'moonshot-v1-32k'
 const DEFAULT_ANTHROPIC_MODEL = anthropicProvider.models[0]?.id ?? 'claude-3-5-haiku-latest'
 const RESPONSE_LANGUAGE_INSTRUCTIONS: Record<string, string> = {
   en: 'Respond in English unless the user asks for another language.',
@@ -385,10 +384,6 @@ function cleanStoredMessage(message: Message): Message {
   }
 }
 
-function readMoonshotKey(): string {
-  const key = safeGetItem('fm_moonshot_key') || ''
-  return moonshotProvider.isConfigured(key) ? key : ''
-}
 function readAnthropicKey(): string {
   const key = safeGetItem('fm_anthropic_key') || ''
   return anthropicProvider.isConfigured(key) ? key : ''
@@ -398,10 +393,6 @@ function readAnthropicModel(): string {
 }
 function readAnthropicWorkspaceId(): string {
   return safeGetItem('fm_anthropic_workspace_id') || ''
-}
-
-function readMoonshotModel(): string {
-  return safeGetItem('fm_moonshot_model') || DEFAULT_MOONSHOT_MODEL
 }
 
 // Render message text — splits on fenced code blocks and styles them
@@ -568,21 +559,18 @@ function App() {
   const [testKeyError, setTestKeyError] = useState('')
   // Active execution is deterministic and does not auto-fallback. Local Mode is the default.
   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
-  const initialProvider: ProviderId = savedProvider === 'corpus' || savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'local' || savedProvider === 'nexus' ? savedProvider : 'local'
+  const initialProvider: ProviderId = savedProvider === 'corpus' || savedProvider === 'anthropic' || savedProvider === 'local' || savedProvider === 'nexus' ? savedProvider : 'local'
   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
-  const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>(() => readAnthropicKey())
   const [anthropicApiKeyStatus, setAnthropicApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [anthropicModel, setAnthropicModel] = useState<string>(() => readAnthropicModel())
   const [anthropicWorkspaceId, setAnthropicWorkspaceId] = useState<string>(() => readAnthropicWorkspaceId())
-  const [moonshotApiKeyStatus, setMoonshotApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
-  const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
   const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:11434/v1')
   const [nexusEndpoint, setNexusEndpoint] = useState<string>(() => safeGetItem('fm_nexus_endpoint') || DEFAULT_NEXUS_ENDPOINT)
   const [corpusWebhookUrl, setCorpusWebhookUrl] = useState<string>(() => safeGetItem('fm_corpus_webhook') || '')
   const [corpusSyncStatus, setCorpusSyncStatus] = useState('')
-  const normalizedActiveModel = activeProvider === 'corpus' || activeProvider === 'local' ? localModel : activeProvider === 'nexus' ? DEFAULT_NEXUS_MODEL : activeProvider === 'anthropic' ? anthropicModel : moonshotModel
+  const normalizedActiveModel = activeProvider === 'corpus' || activeProvider === 'local' ? localModel : activeProvider === 'nexus' ? DEFAULT_NEXUS_MODEL : anthropicModel
   const activeModelLabel = activeProvider === 'corpus'
     ? corpusProvider.models.find(m => m.id === localModel)?.label ?? localModel
     : activeProvider === 'local'
@@ -591,7 +579,7 @@ function App() {
       ? nexusProvider.models.find(m => m.id === DEFAULT_NEXUS_MODEL)?.label ?? DEFAULT_NEXUS_MODEL
     : activeProvider === 'anthropic'
       ? anthropicProvider.models.find(m => m.id === anthropicModel)?.label ?? anthropicModel
-      : moonshotProvider.models.find(m => m.id === moonshotModel)?.label ?? moonshotModel
+      : localModel
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
   const [lastRequestError, setLastRequestError] = useState('')
   const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null)
@@ -647,7 +635,7 @@ function App() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
     provider: activeProvider,
     model: normalizedActiveModel,
-    keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? !!nexusEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey,
+    keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? !!nexusEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!localEndpoint,
     lastRequestStatus: 'none',
     lastError: null,
     lastLatencyMs: null,
@@ -703,7 +691,6 @@ function App() {
   useEffect(() => { scrollToBottom() }, [messages])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
-  useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
   useEffect(() => { safeSetItem('fm_anthropic_model', anthropicModel) }, [anthropicModel])
   useEffect(() => { safeSetItem('fm_anthropic_workspace_id', anthropicWorkspaceId) }, [anthropicWorkspaceId])
@@ -718,10 +705,10 @@ function App() {
       ...prev,
       provider: activeProvider,
       model: normalizedActiveModel,
-      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? !!nexusEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey,
+      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? !!nexusEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : !!localEndpoint,
       buildVersion: BUILD_COMMIT,
     }))
-  }, [normalizedActiveModel, moonshotModel, moonshotApiKey, anthropicApiKey, localEndpoint, nexusEndpoint, activeProvider])
+  }, [normalizedActiveModel, anthropicApiKey, localEndpoint, nexusEndpoint, activeProvider])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -835,9 +822,9 @@ function App() {
           .trim()
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
-    const currentApiKey = activeProvider === 'corpus' || activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
-    const currentProviderLabel = activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
-    const currentKeyFormat = activeProvider === 'corpus' || activeProvider === 'local' ? 'http://127.0.0.1:11434/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
+    const currentApiKey = activeProvider === 'corpus' || activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : anthropicApiKey
+    const currentProviderLabel = activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local inference' : 'Anthropic'
+    const currentKeyFormat = activeProvider === 'corpus' || activeProvider === 'local' ? 'http://127.0.0.1:11434/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : 'sk-ant-...'
 
     if (!currentApiKey) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
@@ -1165,7 +1152,6 @@ function App() {
       const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)
       if (isAuthError) {
         if (activeProvider === 'anthropic') setAnthropicApiKeyStatus('invalid')
-        if (activeProvider === 'moonshot') setMoonshotApiKeyStatus('invalid')
         setMessages(prev => [...prev, {
           id: (Date.now() + 2).toString(), role: 'assistant',
           content: `${currentProviderLabel} authentication failed. Check the provider credentials in Settings.`,
@@ -1178,7 +1164,7 @@ function App() {
         setLoading(false)
       }
     }
-  }, [anthropicApiKey, moonshotApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -1406,20 +1392,6 @@ function App() {
     }
   }
 
-  const testMoonshotKey = async () => {
-    if (!moonshotApiKey.trim()) { setMoonshotApiKeyStatus('invalid'); return }
-    setTestingKey(true)
-    try {
-      await testProviderKey(moonshotApiKey, 'moonshot')
-      setMoonshotApiKeyStatus('valid')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      const isAuthReject = msg.includes('401') || /unauthorized|invalid.*(api.?key|token|auth)/i.test(msg)
-      setMoonshotApiKeyStatus(isAuthReject ? 'invalid' : 'unverified')
-    } finally {
-      setTestingKey(false)
-    }
-  }
 
   const testLocalEndpoint = async () => {
     setTestingKey(true)
@@ -1662,8 +1634,8 @@ function App() {
 
   const getStatusIndicator = () => {
     if (activeProvider === 'local') return <span style={{ color: localEndpoint ? '#6b6b6b' : '#ef4444' }}>{localEndpoint ? activeModelLabel : 'Local endpoint missing'}</span>
-    const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : !!moonshotApiKey
-    if (!keyPresent) return <span style={{ color: '#ef4444' }}>{activeProvider === 'anthropic' ? 'Anthropic: no API key' : 'Moonshot: no API key'}</span>
+    const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : activeProvider === 'nexus' ? !!nexusEndpoint : !!localEndpoint
+    if (!keyPresent) return <span style={{ color: '#ef4444' }}>{activeProvider === 'anthropic' ? 'Anthropic: no API key' : 'Local endpoint missing'}</span>
     return <span style={{ color: lastSource === 'cloud' ? '#3b82f6' : '#6b6b6b', fontWeight: lastSource === 'cloud' ? 'bold' : 'normal' }}>{activeModelLabel}</span>
   }
 
@@ -1804,7 +1776,6 @@ function App() {
                   <option value="corpus" style={{ background: '#111' }}>Corpus / NEXUS Local</option>
                   <option value="nexus" style={{ background: '#111' }}>NEXUS/CORPUS (Termux local)</option>
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
-                  <option value="moonshot" style={{ background: '#111' }}>Moonshot (Kimi)</option>
                   <option value="local" style={{ background: '#111' }}>Local Inference (Ollama)</option>
                 </select>
               </div>
@@ -1815,13 +1786,6 @@ function App() {
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#d97757', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Anthropic</span>
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Claude Messages API — native tool support</span>
-                </div>
-              )}
-              {activeProvider === 'moonshot' && (
-                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#3b82f6', display: 'inline-block' }} />
-                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Moonshot</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Kimi AI — native tool support</span>
                 </div>
               )}
               {activeProvider === 'corpus' && (
@@ -1854,27 +1818,6 @@ function App() {
                     {anthropicProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note} ({m.contextK}K ctx)</option>)}
                   </select>
                   <div style={{ color: '#d97757', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Anthropic Messages API with native tool calling.</div>
-                </div>
-              )}
-              {activeProvider === 'moonshot' && (
-                <div style={{ marginBottom: '14px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                    <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Model</label>
-                  </div>
-                  <select
-                    value={moonshotModel}
-                    onChange={e => { setMoonshotModel(e.target.value); safeSetItem('fm_moonshot_model', e.target.value) }}
-                    style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
-                  >
-                    {moonshotProvider.models.map(m => (
-                      <option key={m.id} value={m.id} style={{ background: '#111' }}>
-                        {m.label} — {m.note} ({m.contextK}K ctx, native tools)
-                      </option>
-                    ))}
-                  </select>
-                  <div style={{ color: '#3b82f6', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>
-                    Moonshot supports native tool calling. All tools available.
-                  </div>
                 </div>
               )}
               {(activeProvider === 'corpus' || activeProvider === 'local') && (
@@ -1920,42 +1863,6 @@ function App() {
                   </div>
                 </>
               )}
-              {activeProvider === 'moonshot' && (
-                <>
-                  <div style={{ marginBottom: '14px' }}>
-                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Moonshot API Key</label>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type={showApiKey ? 'text' : 'password'}
-                        placeholder="sk-..."
-                        value={moonshotApiKey}
-                        onChange={e => { setMoonshotApiKey(e.target.value); setMoonshotApiKeyStatus('unverified') }}
-                        style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${moonshotApiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
-                      />
-                      <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>
-                        {showApiKey ? '🙈' : '👁'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                    <button
-                      onClick={testMoonshotKey}
-                      disabled={testingKey || !moonshotApiKey}
-                      style={{ flex: 1, background: testingKey ? '#333' : '#3b82f6', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-                    >
-                      {testingKey ? 'Testing...' : 'TEST MOONSHOT KEY'}
-                    </button>
-                  </div>
-
-                  <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
-                    {!moonshotApiKey && <span style={{ color: '#ef4444' }}>Moonshot: no API key — get one at platform.moonshot.cn</span>}
-                    {moonshotApiKey && moonshotApiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Key to verify</span>}
-                    {moonshotApiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>Moonshot key verified</span>}
-                    {moonshotApiKeyStatus === 'invalid' && <span style={{ color: '#ef4444' }}>Moonshot key invalid</span>}
-                  </div>
-                </>
-              )}
 
               {(activeProvider === 'corpus' || activeProvider === 'local') && (
                 <div style={{ marginBottom: '14px' }}>
@@ -1989,9 +1896,9 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local Inference' : activeProvider === 'moonshot' ? 'Moonshot' : 'Anthropic'],
+                  ['runtime provider', activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],
                   ['runtime model', activeModelLabel],
-                  ['auth state', activeProvider === 'corpus' || activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'nexus' ? (nexusEndpoint ? 'endpoint configured' : 'missing') : (activeProvider === 'moonshot' ? moonshotApiKey : anthropicApiKey) ? 'present' : 'missing'],
+                  ['auth state', activeProvider === 'corpus' || activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'nexus' ? (nexusEndpoint ? 'endpoint configured' : 'missing') : anthropicApiKey ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
                   ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
@@ -2561,7 +2468,7 @@ function App() {
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
-          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'nexus' ? nexusEndpoint : localEndpoint} />
+          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'nexus' ? nexusEndpoint : localEndpoint} />
         )}
 
         {activeTab === 'activity' && (

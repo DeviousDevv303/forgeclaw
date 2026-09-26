@@ -1,14 +1,13 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ────────────────────────────────────────────────────────
-// Multi-provider runtime: Corpus/NEXUS Local + Anthropic + Moonshot (Kimi) + Local
+// Multi-provider runtime: Corpus/NEXUS Local + Anthropic + Local
 // Tool authority restored: requests pass through with tools/system prompt intact.
 // NEXUS/Corpus WebGPU report supportsTools=false; App uses manual tool mode.
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
 import { anthropicProvider } from './providers/anthropicProvider'
-import { moonshotProvider } from './providers/moonshotProvider'
 import { localInferenceProvider } from './providers/localInferenceProvider'
 import { corpusProvider } from './providers/corpusProvider'
 import { nexusProvider } from './providers/nexusProvider'
@@ -18,7 +17,6 @@ import { nexusProvider } from './providers/nexusProvider'
 export const providers = {
   corpus: corpusProvider,
   anthropic: anthropicProvider,
-  moonshot: moonshotProvider,
   local: localInferenceProvider,
   nexus: nexusProvider,
 } as const
@@ -85,4 +83,4 @@ export async function testProviderKey(apiKey: string = '', providerId: ProviderI
   await providers[providerId].test(apiKey, workspaceId)
 }
 
-export { corpusProvider, anthropicProvider, moonshotProvider, localInferenceProvider, nexusProvider }
+export { corpusProvider, anthropicProvider, localInferenceProvider, nexusProvider }

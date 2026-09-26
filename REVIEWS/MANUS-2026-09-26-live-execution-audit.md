@@ -124,3 +124,20 @@ The Pages patch failures found during acceptance were corrected and documented i
 - Focused tests: **29 passed, 5 environment-dependent skips**
 - `npm run build`: PASS
 - Existing NEXUS adapter test remains PASS, including tool-result continuation ordering.
+
+## Follow-up change — complete provider removal
+
+At the operator's request, the Moonshot provider was removed end to end rather than hidden behind the UI:
+
+- Removed it from `ProviderId`, `PROVIDERS`, `PROVIDER_ORDER`, default models, provider dispatch, tool-support checks and provider tests.
+- Removed its router registry entry and export.
+- Removed frontend state, local-storage reads/writes, settings option, model/key controls, diagnostics branches and agent-panel credential routing.
+- Deleted `src/lib/ai/providers/moonshotProvider.ts`.
+- Rewrote the Pages-only deployment patch so the hosted build cannot reintroduce the removed provider.
+- Verified the active source and Pages transformation contain no `moonshot` provider references.
+
+Removal validation:
+
+- TypeScript, ESLint and production build: PASS.
+- Full regression: **38 passed, 7 environment-dependent skips**.
+- Pages transformation isolated reproduction: PASS; 12 patches applied with no removed-provider references in the transformed source.

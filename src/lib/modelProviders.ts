@@ -4,13 +4,12 @@
 
 import type { AIMessage, AIRequest } from './ai/types'
 import { ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, anthropicProvider } from './ai/providers/anthropicProvider'
-import { DEFAULT_MOONSHOT_MODEL, moonshotProvider } from './ai/providers/moonshotProvider'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL, localInferenceProvider } from './ai/providers/localInferenceProvider'
 import { corpusProvider } from './ai/providers/corpusProvider'
 import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL, nexusProvider } from './ai/providers/nexusProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
 
-export type ProviderId = 'corpus' | 'anthropic' | 'moonshot' | 'local' | 'nexus'
+export type ProviderId = 'corpus' | 'anthropic' | 'local' | 'nexus'
 
 export interface ModelOption {
   id: string
@@ -45,14 +44,6 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
     keyPlaceholder: 'sk-ant-...',
     keyPrefix: 'sk-ant-',
   },
-  moonshot: {
-    id: 'moonshot',
-    name: 'Moonshot',
-    url: 'https://api.moonshot.cn/v1/chat/completions',
-    models: moonshotProvider.models.map(model => ({ ...model, noTools: !moonshotProvider.supportsTools(model.id) })),
-    keyPlaceholder: 'sk-...',
-    keyPrefix: 'sk-',
-  },
   local: {
     id: 'local',
     name: 'Local Inference (Ollama)',
@@ -69,12 +60,11 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['corpus', 'local', 'nexus', 'anthropic', 'moonshot']
+export const PROVIDER_ORDER: ProviderId[] = ['corpus', 'local', 'nexus', 'anthropic']
 export const DEFAULT_PROVIDER: ProviderId = 'local'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
   corpus: DEFAULT_LOCAL_MODEL,
   anthropic: DEFAULT_ANTHROPIC_MODEL,
-  moonshot: DEFAULT_MOONSHOT_MODEL,
   local: DEFAULT_LOCAL_MODEL,
   nexus: DEFAULT_NEXUS_MODEL,
 }
@@ -122,10 +112,6 @@ export async function callProvider(
     const response = await anthropicProvider.send({ ...request, model: model || DEFAULT_ANTHROPIC_MODEL }, apiKey)
     return { text: response.text, provider: 'anthropic', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
   }
-  if (providerId === 'moonshot') {
-    const response = await moonshotProvider.send({ ...request, model: model || DEFAULT_MOONSHOT_MODEL }, apiKey)
-    return { text: response.text, provider: 'moonshot', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
-  }
   if (providerId === 'nexus') {
     const response = await nexusProvider.send({ ...request, model: model || DEFAULT_NEXUS_MODEL }, apiKey)
     return { text: response.text, provider: 'nexus', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
@@ -137,7 +123,6 @@ export async function callProvider(
 export function modelSupportsTools(providerId: ProviderId, modelId: string): boolean {
   if (providerId === 'corpus') return corpusProvider.supportsTools(modelId)
   if (providerId === 'anthropic') return anthropicProvider.supportsTools(modelId)
-  if (providerId === 'moonshot') return moonshotProvider.supportsTools(modelId)
   if (providerId === 'nexus') return nexusProvider.supportsTools(modelId)
   return localInferenceProvider.supportsTools(modelId)
 }
@@ -149,10 +134,6 @@ export async function testProviderKey(providerId: ProviderId, _model: string, ap
   }
   if (providerId === 'anthropic') {
     await anthropicProvider.test(apiKey)
-    return
-  }
-  if (providerId === 'moonshot') {
-    await moonshotProvider.test(apiKey)
     return
   }
   if (providerId === 'nexus') {

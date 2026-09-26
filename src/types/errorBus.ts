@@ -11,7 +11,6 @@ export type FailureSeverity = 'info' | 'warning' | 'error' | 'critical'
 export type FailureSource =
   | 'forgemind' | 'repoagent' | 'github'
   | 'orchestrator'  // authority layer telemetry
-  | 'moonshot'
 
 export interface FailureEvent {
   id: string
