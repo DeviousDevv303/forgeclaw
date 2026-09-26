@@ -75,3 +75,36 @@ A second protocol hazard is the soft-review checkpoint in `App.tsx`, which appen
 
 **Contract:** v1.1, override by Cristian
 **Co-authored-by:** Cristian <towerslutz@gmail.com>
+
+## Hosted browser acceptance — 2026-09-26
+
+### Deployment and frontend
+
+GitHub Pages deployment run [`36265297755`](https://github.com/DeviousDevv303/forgeclaw/actions/runs/36265297755) passed all steps, including the Pages-only patch, production build and `gh-pages` publication. The hosted frontend loaded at <https://deviousdevv303.github.io/forgeclaw/> with build commit `ed9e6807b8b5` shown in Operator Diagnostics.
+
+### Persistent agent and isolation checks
+
+In the hosted app, I created `GitHub Coding Specialist`, opened it through the new `OPEN CHAT` flow, sent a harmless provider request, navigated away, reloaded the app, reopened the same agent, and observed the same user/error transcript restored. This confirms agent definitions and transcripts are stored separately by agent ID rather than being cleared on every open. The live custom-agent provider request reached the frontend but returned `Failed to fetch` because the default local inference endpoint is not available from GitHub Pages; this is an external-provider availability block, not a frontend crash.
+
+### NEXUS and STOP checks
+
+Switching the hosted app to NEXUS and pressing `TEST NEXUS RUNTIME` produced `NEXUS runtime is reachable and offline-ready`. A real generation then exposed the environment limitation honestly: WebLLM reported `Unable to find a compatible GPU`. The STOP control was visible while generation was in progress and returned the input control to `SEND`; the original `Last message should be from either user or tool` error did not recur. Because the browser lacks a compatible GPU, generation completion and a full browser-side tool call cannot be claimed as PASS. The result is **NEXUS availability PASS; NEXUS generation BLOCKED by browser GPU capability**.
+
+### Verification summary
+
+| Layer | Result | Evidence |
+|---|---|---|
+| TypeScript | PASS | `npx tsc -b` |
+| ESLint | PASS | `npx eslint .` |
+| Production build | PASS | `npm run build` |
+| Full regression | PASS | 5 files; 37 passed, 7 environment-dependent skips |
+| Tool execution chain | PASS | 25 tests, 5 environment-dependent skips |
+| NEXUS message ordering regression | PASS | Dedicated adapter test asserts final tool result becomes a user continuation |
+| GitHub Pages deploy | PASS | Run `36265297755` |
+| Hosted frontend load | PASS | `https://deviousdevv303.github.io/forgeclaw/` |
+| Agent open/persistence | PASS | `GitHub Coding Specialist`, reload restored transcript |
+| NEXUS runtime probe | PASS | `NEXUS runtime is reachable and offline-ready` |
+| NEXUS model generation | BLOCKED | Hosted browser reports no compatible GPU |
+| Live GitHub write acceptance | NOT RUN | No external write was attempted; browser GitHub token was not configured |
+
+The Pages patch failures found during acceptance were corrected and documented in MANUS commits `4a37865` and `ed9e680`; the final deployment passed.
