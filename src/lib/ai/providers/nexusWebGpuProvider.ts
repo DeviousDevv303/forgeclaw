@@ -48,7 +48,7 @@ export function getNexusWebGpuState(): NexusWebGpuState {
 export function subscribeNexusWebGpu(listener: (next: NexusWebGpuState) => void): () => void {
   listeners.add(listener)
   listener(state)
-  return () => listeners.delete(listener)
+  return () => { listeners.delete(listener) }
 }
 
 export function isNexusWebGpuAvailable(): boolean {
@@ -83,13 +83,16 @@ export const nexusWebGpuProvider: AIProvider = {
   label: 'NEXUS/CORPUS (Browser WebGPU)',
   requiresKey: false,
   models: NEXUS_WEBGPU_MODELS,
-  isConfigured(_apiKey: string): boolean {
+  isConfigured(apiKey: string): boolean {
+    void apiKey
     return true
   },
-  supportsTools(_modelId: string): boolean {
+  supportsTools(modelId: string): boolean {
+    void modelId
     return false
   },
-  async send(request: AIRequest, _apiKey: string): Promise<AIResponse> {
+  async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
+    void apiKey
     if (request.tools?.length) {
       throw new Error('NEXUS WebGPU does not grant tool authority to local inference')
     }
@@ -117,7 +120,9 @@ export const nexusWebGpuProvider: AIProvider = {
     publish({ status: 'ready', progress: 1, text: 'NEXUS WebGPU model ready' })
     return { text, provider: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL, stopReason: 'stop' }
   },
-  async test(_apiKey: string, _workspaceId?: string): Promise<void> {
+  async test(apiKey: string, workspaceId?: string): Promise<void> {
+    void apiKey
+    void workspaceId
     if (!isNexusWebGpuAvailable()) {
       throw new Error('NEXUS WebGPU is unavailable in this browser; no localhost or Ollama fallback is used')
     }
