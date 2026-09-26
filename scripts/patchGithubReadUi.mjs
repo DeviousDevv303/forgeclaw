@@ -16,7 +16,7 @@ once(
   'import',
   "import type { ProviderId } from './lib/modelProviders'",
   `import type { ProviderId } from './lib/modelProviders'
-import { readRepoSnapshot, formatRepoSnapshotForContext, isExplicitRepoInspectRequest } from './lib/githubReadOnly'`,
+import { readRepoSnapshot } from './lib/githubReadOnly'`,
 )
 
 once(
