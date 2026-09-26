@@ -6,11 +6,11 @@ import type { AIMessage, AIRequest } from './ai/types'
 import { ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, anthropicProvider } from './ai/providers/anthropicProvider'
 import { DEFAULT_MOONSHOT_MODEL, moonshotProvider } from './ai/providers/moonshotProvider'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL, localInferenceProvider } from './ai/providers/localInferenceProvider'
-import { corpusProvider } from './ai/providers/corpusProvider'
-import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL, nexusProvider } from './ai/providers/nexusProvider'
+import { DEFAULT_OLLAMA_ENDPOINT, DEFAULT_OLLAMA_MODEL, ollamaProvider } from './ai/providers/ollamaProvider'
+import { DEFAULT_NEXUS_WEBGPU_MODEL, nexusWebGpuProvider } from './ai/providers/nexusWebGpuProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
 
-export type ProviderId = 'corpus' | 'anthropic' | 'moonshot' | 'local' | 'nexus'
+export type ProviderId = 'anthropic' | 'moonshot' | 'local' | 'ollama' | 'nexus'
 
 export interface ModelOption {
   id: string
@@ -30,13 +30,6 @@ export interface ProviderConfig {
 }
 
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
-  corpus: {
-    id: 'corpus',
-    name: 'Corpus / NEXUS Local',
-    url: `${DEFAULT_LOCAL_ENDPOINT}/chat/completions`,
-    models: corpusProvider.models.map(model => ({ ...model })),
-    keyPlaceholder: DEFAULT_LOCAL_ENDPOINT,
-  },
   anthropic: {
     id: 'anthropic',
     name: 'Anthropic (Claude)',
@@ -55,28 +48,35 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
   local: {
     id: 'local',
-    name: 'Local Inference (Ollama)',
+    name: 'Local Inference (llama.cpp)',
     url: `${DEFAULT_LOCAL_ENDPOINT}/chat/completions`,
     models: localInferenceProvider.models.map(model => ({ ...model })),
     keyPlaceholder: DEFAULT_LOCAL_ENDPOINT,
   },
+  ollama: {
+    id: 'ollama',
+    name: 'Ollama (Termux)',
+    url: `${DEFAULT_OLLAMA_ENDPOINT}/api/chat`,
+    models: ollamaProvider.models.map(model => ({ ...model })),
+    keyPlaceholder: DEFAULT_OLLAMA_ENDPOINT,
+  },
   nexus: {
     id: 'nexus',
-    name: 'NEXUS/CORPUS (Termux local)',
-    url: DEFAULT_NEXUS_ENDPOINT,
-    models: nexusProvider.models.map(model => ({ ...model })),
-    keyPlaceholder: DEFAULT_NEXUS_ENDPOINT,
+    name: 'NEXUS/CORPUS (Browser WebGPU)',
+    url: 'browser://webgpu',
+    models: nexusWebGpuProvider.models.map(model => ({ ...model })),
+    keyPlaceholder: 'Browser WebGPU — no endpoint',
   },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['corpus', 'local', 'nexus', 'anthropic', 'moonshot']
+export const PROVIDER_ORDER: ProviderId[] = ['nexus', 'ollama', 'local', 'anthropic', 'moonshot']
 export const DEFAULT_PROVIDER: ProviderId = 'local'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
-  corpus: DEFAULT_LOCAL_MODEL,
   anthropic: DEFAULT_ANTHROPIC_MODEL,
   moonshot: DEFAULT_MOONSHOT_MODEL,
   local: DEFAULT_LOCAL_MODEL,
-  nexus: DEFAULT_NEXUS_MODEL,
+  ollama: DEFAULT_OLLAMA_MODEL,
+  nexus: DEFAULT_NEXUS_WEBGPU_MODEL,
 }
 
 export type ChatMessage = AIMessage
@@ -112,10 +112,6 @@ export async function callProvider(
     onToken: options.onToken,
   }
 
-  if (providerId === 'corpus') {
-    const response = await corpusProvider.send({ ...request, model: model || DEFAULT_LOCAL_MODEL }, apiKey)
-    return { text: response.text, provider: 'corpus', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
-  }
   if (providerId === 'anthropic') {
     const response = await anthropicProvider.send({ ...request, model: model || DEFAULT_ANTHROPIC_MODEL }, apiKey)
     return { text: response.text, provider: 'anthropic', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
@@ -124,27 +120,32 @@ export async function callProvider(
     const response = await moonshotProvider.send({ ...request, model: model || DEFAULT_MOONSHOT_MODEL }, apiKey)
     return { text: response.text, provider: 'moonshot', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
   }
+  if (providerId === 'local') {
+    const response = await localInferenceProvider.send({ ...request, model: model || DEFAULT_LOCAL_MODEL }, apiKey)
+    return { text: response.text, provider: 'local', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
+  }
+  if (providerId === 'ollama') {
+    const response = await ollamaProvider.send({ ...request, model: model || DEFAULT_OLLAMA_MODEL }, apiKey)
+    return { text: response.text, provider: 'ollama', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
+  }
   if (providerId === 'nexus') {
-    const response = await nexusProvider.send({ ...request, model: model || DEFAULT_NEXUS_MODEL }, apiKey)
+    const response = await nexusWebGpuProvider.send({ ...request, model: model || DEFAULT_NEXUS_WEBGPU_MODEL }, apiKey)
     return { text: response.text, provider: 'nexus', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
   }
-  const response = await localInferenceProvider.send({ ...request, model: model || DEFAULT_LOCAL_MODEL }, apiKey)
-  return { text: response.text, provider: 'local', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
+
+  throw new Error(`Unsupported provider: ${providerId}`)
 }
 
 export function modelSupportsTools(providerId: ProviderId, modelId: string): boolean {
-  if (providerId === 'corpus') return corpusProvider.supportsTools(modelId)
   if (providerId === 'anthropic') return anthropicProvider.supportsTools(modelId)
   if (providerId === 'moonshot') return moonshotProvider.supportsTools(modelId)
-  if (providerId === 'nexus') return nexusProvider.supportsTools(modelId)
-  return localInferenceProvider.supportsTools(modelId)
+  if (providerId === 'local') return localInferenceProvider.supportsTools(modelId)
+  if (providerId === 'ollama') return ollamaProvider.supportsTools(modelId)
+  if (providerId === 'nexus') return nexusWebGpuProvider.supportsTools(modelId)
+  throw new Error(`Unsupported provider: ${providerId}`)
 }
 
 export async function testProviderKey(providerId: ProviderId, _model: string, apiKey: string): Promise<void> {
-  if (providerId === 'corpus') {
-    await corpusProvider.test(apiKey)
-    return
-  }
   if (providerId === 'anthropic') {
     await anthropicProvider.test(apiKey)
     return
@@ -153,9 +154,17 @@ export async function testProviderKey(providerId: ProviderId, _model: string, ap
     await moonshotProvider.test(apiKey)
     return
   }
-  if (providerId === 'nexus') {
-    await nexusProvider.test(apiKey)
+  if (providerId === 'local') {
+    await localInferenceProvider.test(apiKey)
     return
   }
-  await localInferenceProvider.test(apiKey)
+  if (providerId === 'ollama') {
+    await ollamaProvider.test(apiKey)
+    return
+  }
+  if (providerId === 'nexus') {
+    await nexusWebGpuProvider.test(apiKey)
+    return
+  }
+  throw new Error(`Unsupported provider: ${providerId}`)
 }
