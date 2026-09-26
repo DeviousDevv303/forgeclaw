@@ -21,9 +21,10 @@ import {
   SUB_AGENT_TASK_RESERVE,
 } from './managedAgent'
 import { FORGE_TOOLS, loadToolContext } from './forgeTools'
-import { injectToolSchema, injectToolSchemaWithinBudget } from './ai/manualToolMode'
+import { injectToolSchema, injectToolSchemaWithinBudget, parseManualToolCalls, stripToolSyntax } from './ai/manualToolMode'
 import { MAX_NEXUS_CONTEXT_TOKENS, conservativeTokenCount, limitNexusContext } from './ai/nexusContext'
 import { PROVIDERS, modelSupportsTools } from './modelProviders'
+import { hasSuccessfulRepositoryEvidence } from './codingAgentRuntime'
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -104,6 +105,13 @@ describe('capability profiles decide tool authority', () => {
 })
 
 describe('budget-aware manual tool catalog', () => {
+  it('parses the observed bare GitHub fallback but not arbitrary JavaScript', () => {
+    const actions = parseManualToolCalls('I will inspect the repo now:\ngithub_repo_state();')
+    expect(actions).toEqual([{ toolName: 'github_repo_state', params: {}, rawOutput: 'github_repo_state();' }])
+    expect(stripToolSyntax('github_repo_state();')).toBe('')
+    expect(parseManualToolCalls('run_js();')).toHaveLength(0)
+  })
+
   it('is necessary: the full registry catalog does not fit the browser-local budget', () => {
     const unbounded = injectToolSchema('SYSTEM', FORGE_TOOLS).replace('SYSTEM', '')
     expect(conservativeTokenCount(unbounded)).toBeGreaterThan(MAX_NEXUS_CONTEXT_TOKENS)
@@ -147,6 +155,24 @@ describe('budget-aware manual tool catalog', () => {
 })
 
 describe('saved-agent run reaches real tools without native function calling', () => {
+  it('turns the observed pseudo-call into a real dispatcher continuation', async () => {
+    const { seen, callProviderFn } = makeTransport([
+      { text: 'github_repo_state();' },
+      { text: 'STATUS: COMPLETE — grounded in the returned repository state.' },
+    ])
+
+    const result = await runSubAgent('You are the GitHub Coding Specialist.', TASK, undefined, 'nexus', 'qwen', '', FORGE_TOOLS, ctx(), {
+      capability: 'coding-readonly',
+      callProviderFn,
+    })
+
+    const toolTurn = seen[1].messages.find(message => message.role === 'tool')
+    expect(toolTurn).toBeDefined()
+    expect(String(toolTurn?.content).includes('repo:') || String(toolTurn?.content).includes('[TOOL ERROR]')).toBe(true)
+    expect(result).toContain('STATUS: COMPLETE')
+    expect(result).not.toContain('github_repo_state();')
+  })
+
   it('reports the real unauthenticated failure when no token is configured', async () => {
     // Wiring check that must not depend on network reachability: the dispatcher
     // reports a missing credential rather than inventing repository state.
@@ -334,5 +360,14 @@ describe('existing systems are untouched', () => {
       expect(names).toContain(required)
     }
     expect(new Set(names).size).toBe(names.length)
+  })
+})
+
+describe('repository completion safety', () => {
+  it('does not treat model text or failed tools as evidence', () => {
+    expect(hasSuccessfulRepositoryEvidence([])).toBe(false)
+    expect(hasSuccessfulRepositoryEvidence([{ name: 'github_repo_state', isError: true }])).toBe(false)
+    expect(hasSuccessfulRepositoryEvidence([{ name: 'github_repo_state' }])).toBe(true)
+    expect(hasSuccessfulRepositoryEvidence([{ name: 'run_js' }])).toBe(false)
   })
 })

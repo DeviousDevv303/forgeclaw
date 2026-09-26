@@ -25,7 +25,8 @@ export const MANUAL_TOOL_INSTRUCTIONS = `When you need to call a tool, emit EXAC
 
 After tool results are returned, continue until STATUS: COMPLETE or STATUS: BLOCKED.
 Never claim a GitHub write/read succeeded without an actual tool result.
-Do not invent tool results.`
+Do not invent tool results.
+Never emit JavaScript-style pseudo-calls such as github_repo_state(); — emit the exact fenced JSON block above.`
 
 const MANUAL_TOOL_HEADER = 'AVAILABLE TOOLS (you MUST use them to act; do not only describe actions):'
 
@@ -164,6 +165,16 @@ export function parseManualToolCalls(text: string): ManualToolAction[] {
     }
   }
 
+  // Format D: a small-model fallback for an argument-free GitHub call such as
+  // `github_repo_state();`. This is intentionally narrow: only github_* names,
+  // no arbitrary JavaScript, and an empty argument list. It converts the
+  // observed pseudo-call into a real dispatcher call; completion safety below
+  // still requires the resulting tool to return successfully.
+  const bareGithubCallRe = /\b(github_[a-zA-Z0-9_]+)\s*\(\s*\)\s*;?/g
+  while ((m = bareGithubCallRe.exec(text)) !== null) {
+    actions.push({ toolName: m[1], params: {}, rawOutput: m[0] })
+  }
+
   return actions
 }
 
@@ -182,6 +193,7 @@ export function stripToolSyntax(text: string): string {
     .replace(/```tool_call\s*\n[\s\S]*?```/gi, '')
     .replace(/TOOL_CALL:\s*[a-zA-Z0-9_]+\s*\n\{[\s\S]*?\}/gi, '')
     .replace(/<tool_call\s+name=["'][^"']+["']\s*>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/\bgithub_[a-zA-Z0-9_]+\s*\(\s*\)\s*;?/g, '')
     .trim()
 }
 

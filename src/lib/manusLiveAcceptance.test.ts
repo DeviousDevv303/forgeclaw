@@ -44,7 +44,7 @@ afterEach(() => storage.clear())
 describe.skipIf(!live)('live acceptance — the operator request reaches the repository', () => {
   it('inspects the real repository and answers from live evidence', async () => {
     console.log(`[MANUS] live acceptance auth mode: ${authMode}`)
-    const request = 'Check my forge claw repo to see what it says it can do versus what it can actually do so I can blend the two'
+    const request = 'Inspect DeviousDevv303/forgeclaw and tell me what the current architecture actually supports'
 
     let turn = 0
     const seen: Array<{ systemPrompt: string; messages: ChatMessage[] }> = []

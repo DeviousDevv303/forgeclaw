@@ -101,6 +101,24 @@ export function isCodingTaskRequest(prompt: string): boolean {
   return hasTarget && hasAction
 }
 
+/**
+ * A model response is not repository evidence. Only a successful result from an
+ * existing GitHub read/verification tool can satisfy a repository task. Errors,
+ * Guardian blocks, and text that merely resembles a call are deliberately false.
+ */
+export function hasSuccessfulRepositoryEvidence(
+  results: Array<{ name: string; isError?: boolean }>,
+): boolean {
+  const evidenceTools = new Set([
+    'github_repo_state',
+    'github_read_file',
+    'github_list_files',
+    'github_search_code',
+    'github_verify_commit',
+  ])
+  return results.some(result => evidenceTools.has(result.name) && !result.isError)
+}
+
 function field(raw: string, key: string): string {
   const match = new RegExp(`^${key}:\\s*(.+)$`, 'im').exec(raw)
   return match ? match[1].trim() : ''

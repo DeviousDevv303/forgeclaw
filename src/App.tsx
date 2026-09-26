@@ -45,6 +45,7 @@ import {
   recordToolProgress,
   recordTaskOutcome,
   recordVerification,
+  hasSuccessfulRepositoryEvidence,
   buildRuntimeRequestContext,
   measureRequestMetrics,
 } from './lib/codingAgentRuntime'
@@ -1027,6 +1028,15 @@ function App() {
           signal: controller.signal,
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
+            // NEXUS has no native tool channel. Do not stream raw manual-tool
+            // protocol text into the normal assistant renderer: until the full
+            // response is parsed, even `github_repo_state();` is only model text.
+            // Keep it diagnostic-only and show a neutral progress marker; the
+            // parsed tool result or sanitized final answer is rendered below.
+            if (!supportsTools) {
+              setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
+              return
+            }
             const displayText = streamBuffer.split(/\[FM:(THINK|TRACE)\]/i)[0]
             const visibleText = cleanVisibleResponse(displayText)
             setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: visibleText || 'Preparing response...', streaming: true } : m))
@@ -1119,22 +1129,30 @@ function App() {
       if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
       setLastSource(source)
       const { cleanText, tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
+      const repositoryEvidenceRequired = codingTask || Boolean(agentResumedState)
+      const repositoryEvidenceObserved = hasSuccessfulRepositoryEvidence(allToolResults)
+      const completionBlocked = repositoryEvidenceRequired && !repositoryEvidenceObserved
+      const effectiveAgentPhase: AgentPhase = completionBlocked ? 'BLOCKED' : agentPhase
+      const completionSafetyNotice = completionBlocked
+        ? 'STATUS: BLOCKED\nRepository evidence was not obtained from an actual GitHub tool result; the model response was not accepted as completion.'
+        : ''
       await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
       // Sync plan to ForgeOps + emit terminal event
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
-      if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
+      if (completionBlocked) emitForge({ type: 'MISSION_BLOCKED', reason: 'Repository evidence required, but no GitHub tool returned successfully' })
+      else if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
-      const messageContent = cleanText || cleanOutput(finalText) || '(empty response)'
+      const messageContent = [cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)', completionSafetyNotice].filter(Boolean).join('\n\n')
       const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${activeProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace
-        ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
+        ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase: effectiveAgentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
 
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: messageContent, plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: activeProvider, model: normalizedActiveModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
+        ? { ...m, content: messageContent, plan, agentPhase: effectiveAgentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: activeProvider, model: normalizedActiveModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
-      setRequestStatus('success')
+      setRequestStatus(completionBlocked ? 'blocked' : 'success')
       setLastRequestError('')
       setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
       // Persist the outcome so the next session resumes instead of restarting.
@@ -1144,8 +1162,8 @@ function App() {
           recordVerification(`${verified} commit verification(s) returned by github_verify_commit`)
         }
         setCodingAgentState(recordTaskOutcome(
-          agentPhase === 'COMPLETE' ? 'complete' : agentPhase === 'BLOCKED' ? 'blocked' : 'in_progress',
-          nextAction || undefined,
+          effectiveAgentPhase === 'COMPLETE' ? 'complete' : effectiveAgentPhase === 'BLOCKED' ? 'blocked' : 'in_progress',
+          completionBlocked ? 'Repository evidence required, but no GitHub tool returned successfully.' : nextAction || undefined,
         ))
       }
       resolveTask(taskId)

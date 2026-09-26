@@ -90,8 +90,8 @@ export function toolsForCapability(
 // so the provider's own limiter cannot silently truncate the tool instructions
 // away and leave the model believing it has no hands.
 
-/** Bytes reserved for the tool catalog. Measured cost of the core read set. */
-const TOOL_CATALOG_RESERVE = 1600
+/** Bytes reserved for the tool catalog, including the explicit protocol guard. */
+const TOOL_CATALOG_RESERVE = 2000
 /** Bytes reserved for the task/instruction turn this call adds. */
 export const SUB_AGENT_TASK_RESERVE = 1024
 /** Total system-prompt allowance for a budgeted provider. */
