@@ -114,6 +114,45 @@ results.push(patch({
                 </div>`,
 }))
 
+// 5. Pages-only runtime truth: the selected `nexus` provider is Browser
+// WebGPU/WebLLM, not a Termux/libllama loopback bridge. Keep this deploy patch
+// separate from the local source so the Pages build can describe its runtime
+// without changing the provider routing contract.
+results.push(patch({
+  label: 'NEXUS provider label',
+  marker: 'NEXUS/CORPUS (Browser WebGPU)',
+  anchor: `<option value="nexus" style={{ background: '#111' }}>NEXUS/CORPUS (Termux local)</option>`,
+  replacement: `<option value="nexus" style={{ background: '#111' }}>NEXUS/CORPUS (Browser WebGPU)</option>`,
+}))
+
+results.push(patch({
+  label: 'NEXUS runtime description',
+  marker: 'Browser-local WebLLM/WebGPU; tool calls use the existing manual protocol.',
+  anchor: `Direct loopback bridge to native offline libllama; tools disabled.`,
+  replacement: `Browser-local WebLLM/WebGPU; tool calls use the existing manual protocol.`,
+}))
+
+results.push(patch({
+  label: 'NEXUS endpoint label',
+  marker: 'NEXUS Browser WebGPU Runtime',
+  anchor: `NEXUS HTTP Bridge Endpoint`,
+  replacement: `NEXUS Browser WebGPU Runtime`,
+}))
+
+results.push(patch({
+  label: 'NEXUS endpoint description',
+  marker: 'The browser-local WebLLM engine is initialized in this page.',
+  anchor: `Loopback-only NEXUS text-protocol bridge at {DEFAULT_NEXUS_ENDPOINT}. Tool authority is disabled.`,
+  replacement: `The browser-local WebLLM engine is initialized in this page.`,
+}))
+
+results.push(patch({
+  label: 'NEXUS diagnostics provider',
+  marker: "['runtime provider', activeProvider === 'corpus' ? 'Corpus/NEXUS WebGPU' : activeProvider === 'nexus' ? 'NEXUS WebGPU'",
+  anchor: "['runtime provider', activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],",
+  replacement: "['runtime provider', activeProvider === 'corpus' ? 'Corpus/NEXUS WebGPU' : activeProvider === 'nexus' ? 'NEXUS WebGPU' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],",
+}))
+
 // ── Result integrity ─────────────────────────────────────────────────────────
 // Guard the defect class directly: no addition may appear more than once.
 const uniqueness = [
