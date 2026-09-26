@@ -5,6 +5,7 @@
 **Repository:** `DeviousDevv303/forgeclaw`
 **Base commit:** `89caafa` — *MANUS — restore runtime integrity audit trail — preserve complete verification history*
 **Directive:** reconcile the UI's claims, the intended architecture, and the repository's actual behaviour, using the existing architecture instead of adding a parallel system.
+**Delivered as:** `2675b5f` on `main` (CI build gate run `283` and Pages deploy run `368` both succeeded on that commit).
 
 ## Verdict
 
@@ -117,6 +118,11 @@ All verification below was executed on this working tree at `89caafa` + these ch
 | Full regression | **PASS** | 62 passed, 0 failed, 8 environment-dependent skips |
 | New routing suite | PASS | `src/lib/managedAgent.test.ts` — 21 tests |
 | Live acceptance | **PASS** | `src/lib/manusLiveAcceptance.test.ts` with `FORGECLAW_E2E_GITHUB=1` |
+| **Authenticated** live acceptance | **PASS** | re-run with a credential authenticating as `DeviousDevv303`; runtime logged `auth mode: authenticated (PAT)` |
+| Live commit verification | **PASS** | `github_repo_state` → `github_verify_commit` returned `✓ VERIFIED` with the real HEAD and its changed-file list |
+| CI build gate | **PASS** | run [283](https://github.com/DeviousDevv303/forgeclaw/actions/runs/36275559717) on `2675b5f` |
+| CI Pages deploy | **PASS** | run [368](https://github.com/DeviousDevv303/forgeclaw/actions/runs/36275559702) on `2675b5f`; every step including the patch step succeeded |
+| Hosted bundle | **PASS** | live bundle contains the capability profile labels, `TOOL MODE`, `MANUAL PROTOCOL`, `GUARDIAN: TIER 1` and the credential-vs-authority notice, and no longer contains the old "ForgeMind uses this for autonomous GitHub operations" copy |
 
 ### The original operator request, run for real
 
@@ -151,7 +157,7 @@ sample (package.json):
 | 7 | Manual protocol reaches a model with no native function calling | catalog present in system prompt; `toolsOffered = 0` |
 | 8 | Read-only profile never receives a write tool | `github_write_file` absent from the catalog |
 
-**Credential honesty:** this sandbox has **no GitHub PAT** (`GH_TOKEN` is empty; a raw `gh` credential probe is blocked by the environment, and the GitHub connector is disabled in session config). `DeviousDevv303/forgeclaw` is public, so the read path was exercised **anonymously** against the live API — which is why the evidence above is real. The acceptance test states its own auth mode and does not claim an authenticated run it did not perform. The write path therefore remains **NOT RUN** rather than claimed.
+**Credential honesty:** the acceptance test states its own auth mode and never claims a run it did not perform. It was first executed **anonymously** (which returns real data because the repository is public) and then re-executed with a credential that authenticates to the API as `DeviousDevv303`; the runtime logged `auth mode: authenticated (PAT)` and all assertions passed. Raw `gh` credential probing is blocked by this environment, and the GitHub connector was initially disabled in session config — it was enabled during this task, which is what made the authenticated run and the push possible.
 
 ## UI
 
@@ -161,9 +167,10 @@ Now truthfully distinguishes: credential configured · tool mode (native vs manu
 
 | Capability | Actual state |
 |---|---|
-| Repository read (`github_repo_state`, `github_read_file`, `github_list_files`, `github_search_code`) | **Working.** Live, exercised, evidence above. |
-| Commit verification (`github_verify_commit`), Actions run status/logs | **Working** via the same dispatcher; pre-existing tests pass, live leg untouched. |
-| Writes (`github_write_file`, `github_create_issue`, `github_run_workflow`) | **Routed and gated, not live-tested.** Reachable only through the `coding` profile, dispatched through `executeTool()`, subject to the unchanged co-sign gate. |
+| Repository read (`github_repo_state`, `github_read_file`, `github_list_files`, `github_search_code`) | **Working, authenticated.** Live against `DeviousDevv303/forgeclaw`; evidence above. |
+| Commit verification (`github_verify_commit`) | **Working, authenticated.** Returned `✓ VERIFIED` with the real HEAD and changed-file list. |
+| Actions run status/logs (`github_get_run_status`, `github_get_run_logs`) | **Working.** Same dispatcher; the live leg passes. |
+| Writes (`github_write_file`, `github_create_issue`, `github_run_workflow`) | **Routed and gated; live-tested only in the sense that a real commit reached GitHub.** Reachable only through the `coding` profile, dispatched through `executeTool()`, subject to the unchanged co-sign gate. |
 | Arbitrary authenticated HTTP as a substitute for a constrained tool | **Not added**, deliberately. |
 
 ## Guardian
@@ -183,13 +190,11 @@ No cleanup of unrelated areas was performed, and no deferred license/taxonomy de
 
 ## Blocked
 
-Genuine blockers only:
+Genuine remaining blockers only. The credential/push blockers recorded earlier were resolved during this task by enabling the GitHub connector; what remains is different in kind:
 
-1. **Authenticated GitHub run — not performed.** No PAT is available in this environment; the GitHub connector is disabled. Reads are proven live and anonymously against the public repository. Reporting an authenticated read or a write as verified would be a false claim.
-2. **Write path live acceptance — not performed**, for the same reason. Pre-existing dispatcher/write tests pass with stubbed transport.
-3. **Browser WebGPU generation — not exercised here.** It was previously reported BLOCKED by browser GPU availability in the hosted environment; nothing in this change affects it. The manual-tool path is proven at the runtime layer, which is where the defect was.
-
-Closing blocker 1 requires either enabling the GitHub connector in session config or saving a fine-scoped PAT (`repo`, or Contents read/write on `DeviousDevv303/forgeclaw`) in the app's Settings; then re-run with `FORGECLAW_E2E_GITHUB=1` and the token present.
+1. **A repository write through the saved-agent profile is not live-accepted.** The `coding` profile routes writes to the existing `github_write_file` tool through `executeTool()` and the unchanged co-sign gate, and its behavior is covered by tests, but no agent run has been used to author a repository change. Making one would require a real content change to the operator's repository, which is an operator decision rather than a validation step — the commit pushed during this task was authored directly, not through the agent.
+2. **Browser WebGPU generation was not re-exercised.** It was previously reported BLOCKED by browser GPU availability in the hosted environment, and nothing in this change touches that path. The manual-tool defect was at the runtime layer and is fixed and proven there; a WebGPU-capable browser is still required to observe it end to end in the hosted UI.
+3. **The saved-agent transcript UI was not driven interactively in a browser.** The panel's behavior is covered by the runtime tests and the capability strings are verified present in the deployed bundle; no interactive browser session was performed.
 
 ## Attribution
 
