@@ -1,0 +1,6 @@
+ForgeClaw NEXUS GitHub connectivity probe
+========================================
+Timestamp (UTC): 2026-09-26T17:50:00Z
+Purpose: verify authenticated commit/push from operator-controlled automation.
+Branch: chore/nexus-github-connectivity-probe
+Safe to delete this file and branch after verification.
