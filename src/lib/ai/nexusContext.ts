@@ -37,6 +37,15 @@ function takePrefixByBudget(value: string, budget: number): string {
 }
 
 /**
+ * Public form of the prefix limiter. Callers that compose their own prompt (for
+ * example the managed-agent path, which must reserve budget for a tool catalog)
+ * need the same conservative measurement the provider boundary uses.
+ */
+export function boundPrefixByBudget(value: string, budget: number): string {
+  return takePrefixByBudget(value, Math.max(0, Math.floor(budget)))
+}
+
+/**
  * Preserve the system instruction and newest conversation messages while
  * enforcing a hard, conservative prompt budget. Older messages are dropped
  * whole before any remaining message is prefix-truncated.

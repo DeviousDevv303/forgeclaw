@@ -3,13 +3,23 @@
 import { useState, useRef, useCallback } from 'react'
 import { safeGetItem, safeSetItem, safeJsonParse } from '../lib/storage'
 import type { ProviderId } from '../lib/modelProviders'
+import { modelSupportsTools } from '../lib/modelProviders'
 import { FORGE_TOOLS, loadToolContext } from '../lib/forgeTools'
-import { runSubAgent } from '../lib/managedAgent'
+import type { ToolCall } from '../lib/forgeTools'
+import { runSubAgent, CAPABILITY_LABELS, toolsForCapability } from '../lib/managedAgent'
+import type { AgentCapability, SubAgentBudgetReport } from '../lib/managedAgent'
+import { resolveGithubToken } from '../lib/githubAuth'
+import { MAX_NEXUS_CONTEXT_TOKENS } from '../lib/ai/nexusContext'
 
 interface CustomAgent {
   id: string
   name: string
   systemPrompt: string
+  /**
+   * Runtime-enforced capability profile. Optional so agents saved before this
+   * field existed keep loading; `resolveCapability` supplies the legacy default.
+   */
+  capability?: AgentCapability
 }
 
 interface AgentMessage {
@@ -23,6 +33,10 @@ interface AgentsPanelProps {
   activeProvider: ProviderId
   activeModel: string
   apiKey: string
+  /** Guardian posture, forwarded so an agent run is gated exactly like ForgeMind. */
+  tier1Active?: boolean
+  /** Project-owned Guardian approval handler (co-sign). */
+  requestGuardianApproval?: (call: ToolCall) => Promise<boolean>
 }
 
 const STORAGE_KEY = 'fc_custom_agents'
@@ -39,6 +53,20 @@ function chatKey(agentId: string): string {
   return `fc_custom_agent_chat:${agentId}`
 }
 
+/**
+ * Legacy compatibility. Agents saved before capability profiles existed carry
+ * only a name and prompt, so infer an editable default from their stated purpose.
+ * The inference only produces a starting value in the editor; authority is still
+ * enforced by the runtime's capability filter, never by this heuristic.
+ */
+function resolveCapability(agent: CustomAgent): AgentCapability {
+  if (agent.capability) return agent.capability
+  const text = `${agent.name} ${agent.systemPrompt}`.toLowerCase()
+  if (/\b(cod(e|ing)|repo(sitory)?|github|commit|branch|pull request|merge)\b/.test(text)) return 'coding'
+  if (/\b(read|inspect|review|analys|audit|search|explain)\b/.test(text)) return 'coding-readonly'
+  return 'chat'
+}
+
 function loadChat(agentId: string): AgentMessage[] {
   return safeJsonParse(safeGetItem(chatKey(agentId)), [])
 }
@@ -47,12 +75,31 @@ function saveChat(agentId: string, messages: AgentMessage[]): void {
   safeSetItem(chatKey(agentId), JSON.stringify(messages.slice(-100)))
 }
 
-export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanelProps) {
+type ChipTone = 'ok' | 'warn' | 'muted'
+
+const CHIP_COLORS: Record<ChipTone, { border: string; color: string }> = {
+  ok: { border: '#14532d', color: '#22c55e' },
+  warn: { border: '#713f12', color: '#fbbf24' },
+  muted: { border: '#222', color: '#666' },
+}
+
+function CapabilityChip({ label, tone }: { label: string; tone: ChipTone }) {
+  const palette = CHIP_COLORS[tone]
+  return (
+    <span style={{ border: `1px solid ${palette.border}`, color: palette.color, borderRadius: '3px', padding: '2px 6px', letterSpacing: '0.5px' }}>
+      {label}
+    </span>
+  )
+}
+
+export function AgentsPanel({ activeProvider, activeModel, apiKey, tier1Active = false, requestGuardianApproval }: AgentsPanelProps) {
   const [agents, setAgents] = useState<CustomAgent[]>(loadAgents)
   const [activeAgent, setActiveAgent] = useState<CustomAgent | null>(null)
   const [editing, setEditing] = useState<CustomAgent | null>(null)
   const [draftName, setDraftName] = useState('')
   const [draftPrompt, setDraftPrompt] = useState('')
+  const [draftCapability, setDraftCapability] = useState<AgentCapability>('coding-readonly')
+  const [lastRunReport, setLastRunReport] = useState<SubAgentBudgetReport | null>(null)
   const [chatMessages, setChatMessages] = useState<AgentMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -63,19 +110,21 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
     setEditing({ id: '', name: '', systemPrompt: '' })
     setDraftName('')
     setDraftPrompt('')
+    setDraftCapability('coding-readonly')
   }
 
   const openEdit = (agent: CustomAgent) => {
     setEditing(agent)
     setDraftName(agent.name)
     setDraftPrompt(agent.systemPrompt)
+    setDraftCapability(resolveCapability(agent))
   }
 
   const saveAgent = () => {
     if (!draftName.trim() || !draftPrompt.trim()) return
     const updated = editing!.id
-      ? agents.map(a => a.id === editing!.id ? { ...a, name: draftName.trim(), systemPrompt: draftPrompt.trim() } : a)
-      : [...agents, { id: `agent_${Date.now()}`, name: draftName.trim(), systemPrompt: draftPrompt.trim() }]
+      ? agents.map(a => a.id === editing!.id ? { ...a, name: draftName.trim(), systemPrompt: draftPrompt.trim(), capability: draftCapability } : a)
+      : [...agents, { id: `agent_${Date.now()}`, name: draftName.trim(), systemPrompt: draftPrompt.trim(), capability: draftCapability }]
     setAgents(updated)
     saveAgents(updated)
     setEditing(null)
@@ -110,11 +159,22 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
     setLoading(true)
     const controller = new AbortController()
     abortRef.current = controller
+    setLastRunReport(null)
 
     try {
       const history = chatMessages.slice(-12).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n')
       const task = history ? `${history}\n\nUSER: ${text}` : text
       const runId = `agent-run-${agent.id}-${Date.now()}`
+      const capability = resolveCapability(agent)
+      const toolCtx = {
+        ...loadToolContext(),
+        agentId: agent.id,
+        runId,
+        signal: controller.signal,
+        tier1Active,
+        requestGuardianApproval,
+      }
+      let report: SubAgentBudgetReport | null = null
       const result = await runSubAgent(
         agent.systemPrompt,
         task,
@@ -123,10 +183,12 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
         activeModel,
         apiKey,
         FORGE_TOOLS,
-        { ...loadToolContext(), agentId: agent.id, runId, signal: controller.signal, tier1Active: false },
+        toolCtx,
+        { capability, onBudget: next => { report = next } },
       )
       const buf = result
       if (controller.signal.aborted) return
+      if (report) setLastRunReport(report)
       setChatMessages(prev => {
         const next = prev.map(m => m.id === assistantId ? { ...m, content: buf || '(no response)', streaming: false } : m)
         saveChat(agent.id, next)
@@ -145,7 +207,7 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
       setLoading(false)
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
     }
-  }, [input, loading, activeAgent, chatMessages, activeProvider, activeModel, apiKey])
+  }, [input, loading, activeAgent, chatMessages, activeProvider, activeModel, apiKey, tier1Active, requestGuardianApproval])
 
   const stopGeneration = () => {
     abortRef.current?.abort()
@@ -169,6 +231,36 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
     padding: '6px 12px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold',
     fontFamily: 'monospace',
   })
+
+  // ── Truthful capability facts ───────────────────────────────────────────────
+  // These describe the real runtime rather than the presence of a stored token.
+  const activeCapability: AgentCapability = activeAgent ? resolveCapability(activeAgent) : 'chat'
+  const providerToolMode: 'native' | 'manual' = modelSupportsTools(activeProvider, activeModel) ? 'native' : 'manual'
+  const githubCredentialConfigured = Boolean(resolveGithubToken())
+  const grantedToolCount = toolsForCapability(activeCapability, FORGE_TOOLS).length
+
+  const runtimeNotice = ((): { text: string; tone: 'blocked' | 'warn' } | null => {
+    if (activeCapability !== 'chat' && !githubCredentialConfigured) {
+      return {
+        text: 'NO GITHUB CREDENTIAL — this agent cannot authenticate repository operations. Save a PAT in Settings. The agent will report the failure rather than invent repository state.',
+        tone: 'blocked',
+      }
+    }
+    if (lastRunReport && !lastRunReport.nativeTools) {
+      const parts = [
+        `MANUAL TOOL PROTOCOL — ${activeProvider} has no native function calling. The runtime injects a tool catalog and parses emitted tool-call blocks.`,
+        `Last run offered ${lastRunReport.catalogTools.length} tool(s) within the ${MAX_NEXUS_CONTEXT_TOKENS}-byte browser-local budget.`,
+      ]
+      if (lastRunReport.unavailableTools.length) {
+        parts.push(`Not offered in that budgeted run: ${lastRunReport.unavailableTools.join(', ')}. Raise the capability-appropriate budget or use a provider with native tool calling to reach them.`)
+      }
+      return { text: parts.join(' '), tone: 'warn' }
+    }
+    if (activeCapability === 'chat') {
+      return { text: 'CHAT PROFILE — no tools are granted, so this agent reasons only and cannot read or change the repository.', tone: 'warn' }
+    }
+    return null
+  })()
 
   // ── Editor view ─────────────────────────────────────────────────────────────
   if (editing !== null) {
@@ -194,6 +286,22 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
               onChange={e => setDraftPrompt(e.target.value)}
             />
           </div>
+          <div>
+            <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Capability Profile</label>
+            <select
+              style={{ ...inputStyle, cursor: 'pointer' }}
+              value={draftCapability}
+              onChange={e => setDraftCapability(e.target.value as AgentCapability)}
+            >
+              {(Object.keys(CAPABILITY_LABELS) as AgentCapability[]).map(capability => (
+                <option key={capability} value={capability}>{CAPABILITY_LABELS[capability]}</option>
+              ))}
+            </select>
+            <div style={{ color: '#444', fontSize: '10px', marginTop: '6px', lineHeight: '1.5' }}>
+              Enforced by the runtime, not by the prompt. {toolsForCapability(draftCapability, FORGE_TOOLS).length} tool(s) granted.
+              {draftCapability === 'coding' && ' Writes to main and destructive actions still require Guardian co-sign.'}
+            </div>
+          </div>
           <button onClick={saveAgent} disabled={!draftName.trim() || !draftPrompt.trim()} style={{ ...btnStyle(true), opacity: (!draftName.trim() || !draftPrompt.trim()) ? 0.4 : 1 }}>
             SAVE AGENT
           </button>
@@ -209,6 +317,36 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
         <div style={{ padding: '8px 16px', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '10px', background: '#0a0a0a' }}>
           <button onClick={() => setActiveAgent(null)} style={{ ...btnStyle(), padding: '3px 10px', fontSize: '10px' }}>← AGENTS</button>
           <span style={{ color: '#f97316', fontSize: '11px', fontFamily: 'monospace', fontWeight: 'bold', letterSpacing: '1px' }}>{activeAgent.name}</span>
+        </div>
+        <div style={{ padding: '8px 16px', borderBottom: '1px solid #1a1a1a', background: '#080808', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontFamily: 'monospace', fontSize: '9px' }}>
+            <CapabilityChip label={`PROFILE: ${CAPABILITY_LABELS[activeCapability]}`} tone={activeCapability === 'chat' ? 'muted' : 'ok'} />
+            <CapabilityChip label={`PROVIDER: ${activeProvider}`} tone="muted" />
+            <CapabilityChip
+              label={providerToolMode === 'native' ? 'TOOL MODE: NATIVE' : 'TOOL MODE: MANUAL PROTOCOL'}
+              tone={providerToolMode === 'native' ? 'ok' : 'warn'}
+            />
+            <CapabilityChip
+              label={githubCredentialConfigured ? 'GITHUB CREDENTIAL: CONFIGURED' : 'GITHUB CREDENTIAL: NOT CONFIGURED'}
+              tone={githubCredentialConfigured ? 'ok' : 'warn'}
+            />
+            <CapabilityChip
+              label={activeCapability === 'chat' ? 'TOOLS: NONE (chat profile)' : `TOOLS GRANTED: ${grantedToolCount}`}
+              tone={activeCapability === 'chat' ? 'muted' : 'ok'}
+            />
+            <CapabilityChip
+              label={tier1Active ? 'GUARDIAN: TIER 1 (CO-SIGN)' : 'GUARDIAN: AUTONOMOUS (NOT ARMED)'}
+              tone={tier1Active ? 'ok' : 'muted'}
+            />
+          </div>
+          {runtimeNotice && (
+            <div style={{ color: runtimeNotice.tone === 'blocked' ? '#fca5a5' : '#fbbf24', fontSize: '10px', fontFamily: 'monospace', lineHeight: '1.6' }}>
+              {runtimeNotice.text}
+            </div>
+          )}
+          <div style={{ color: '#333', fontSize: '9px', fontFamily: 'monospace' }}>
+            A configured credential authenticates GitHub access. It does not by itself grant this agent authority; the profile above and Guardian decide that.
+          </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {chatMessages.length === 0 && (
@@ -279,6 +417,13 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
               </div>
               <div style={{ color: '#444', fontSize: '10px', fontFamily: 'monospace', marginBottom: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {agent.systemPrompt.slice(0, 90)}{agent.systemPrompt.length > 90 ? '…' : ''}
+              </div>
+              <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', fontFamily: 'monospace', fontSize: '9px' }}>
+                <CapabilityChip
+                  label={CAPABILITY_LABELS[resolveCapability(agent)].toUpperCase()}
+                  tone={resolveCapability(agent) === 'chat' ? 'muted' : 'ok'}
+                />
+                <CapabilityChip label={`${toolsForCapability(resolveCapability(agent), FORGE_TOOLS).length} TOOLS`} tone="muted" />
               </div>
               <button onClick={() => openAgent(agent)} style={{ ...btnStyle(true), width: '100%', padding: '7px' }}>
                 OPEN CHAT

@@ -1,36 +1,79 @@
 #!/usr/bin/env node
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+//
+// MANUS — GitHub Pages read-only GitHub UI patch (idempotent).
+//
+// WHY this step had to change:
+// It adds the read-only GitHub credential probe that the Pages build ships. It
+// previously detected an already-applied patch by looking for a *neighbouring*
+// anchor string, so running it against an already-patched file appended a second
+// copy of the additions. That produced duplicate identifiers (`TS2300`) in the
+// deployed build, and the step still exited 0 — it failed open.
+//
+// Each patch now declares its own applied-marker. A patch is applied only when
+// its marker is genuinely absent, and the result is verified to contain exactly
+// one copy. A genuinely missing anchor is now a hard failure instead of a skip,
+// so a future refactor of App.tsx cannot silently ship a Pages build without the
+// read-only probe.
 import fs from 'node:fs'
 
 const path = 'src/App.tsx'
 let app = fs.readFileSync(path, 'utf8')
 const before = app
-let n = 0
-const once = (label, a, b) => {
-  if (!app.includes(a)) { console.warn('skip', label); return }
-  app = app.replace(a, b)
-  n++
-  console.log('ok', label)
+
+/**
+ * Apply one patch.
+ * - `marker` proves the patch is already present (idempotent re-run).
+ * - `anchor` is the unique existing text to extend.
+ * - `replacement` must contain the anchor plus the addition.
+ */
+function patch({ label, marker, anchor, replacement }) {
+  if (app.includes(marker)) {
+    console.log(`ok      ${label} (already applied)`)
+    return true
+  }
+  const occurrences = app.split(anchor).length - 1
+  if (occurrences === 0) {
+    console.error(`FAIL    ${label} — anchor not found: ${JSON.stringify(anchor.slice(0, 70))}`)
+    return false
+  }
+  if (occurrences > 1) {
+    console.error(`FAIL    ${label} — anchor is not unique (${occurrences} matches)`)
+    return false
+  }
+  app = app.replace(anchor, replacement)
+  console.log(`applied ${label}`)
+  return true
 }
 
-once(
-  'import',
-  "import type { ProviderId } from './lib/modelProviders'",
-  `import type { ProviderId } from './lib/modelProviders'
-import { readRepoSnapshot } from './lib/githubReadOnly'`,
-)
+const results = []
 
-once(
-  'state',
-  'const [ghTokenSaved, setGhTokenSaved] = useState(false)',
-  `const [ghTokenSaved, setGhTokenSaved] = useState(false)
+// 1. Read-only repository probe import.
+results.push(patch({
+  label: 'read-only probe import',
+  marker: "import { readRepoSnapshot } from './lib/githubReadOnly'",
+  anchor: "import type { ProviderId } from './lib/modelProviders'",
+  replacement: `import type { ProviderId } from './lib/modelProviders'
+import { readRepoSnapshot } from './lib/githubReadOnly'`,
+}))
+
+// 2. Probe state.
+results.push(patch({
+  label: 'read-only probe state',
+  marker: 'const [githubReadStatus, setGithubReadStatus] = useState(\'\')',
+  anchor: 'const [ghTokenSaved, setGhTokenSaved] = useState(false)',
+  replacement: `const [ghTokenSaved, setGhTokenSaved] = useState(false)
   const [githubReadStatus, setGithubReadStatus] = useState('')
   const [testingGithubRead, setTestingGithubRead] = useState(false)`,
-)
+}))
 
-if (!app.includes('const testGithubRead = async') && app.includes('const testLocalEndpoint = async')) {
-  app = app.replace(
-    'const testLocalEndpoint = async',
-    `const testGithubRead = async () => {
+// 3. Probe handler, placed beside the existing local-endpoint test.
+results.push(patch({
+  label: 'read-only probe handler',
+  marker: 'const testGithubRead = async',
+  anchor: '  const testLocalEndpoint = async () => {',
+  replacement: `  const testGithubRead = async () => {
     setTestingGithubRead(true)
     setGithubReadStatus('')
     try {
@@ -45,50 +88,57 @@ if (!app.includes('const testGithubRead = async') && app.includes('const testLoc
     }
   }
 
-  const testLocalEndpoint = async`,
-  )
-  n++
-  console.log('ok handler')
+  const testLocalEndpoint = async () => {`,
+}))
+
+// 4. Probe button plus the truthful credential-storage notice.
+results.push(patch({
+  label: 'read-only probe button and credential notice',
+  marker: 'TEST GITHUB READ (read-only)',
+  anchor: `                <div style={{ color: '#444', fontSize: '10px', marginBottom: '10px' }}>
+                  Personal access token from github.com → Settings → Developer settings → Personal access tokens. ForgeMind uses this for autonomous GitHub operations.
+                </div>`,
+  replacement: `                <button
+                  type="button"
+                  disabled={testingGithubRead || !ghToken.trim()}
+                  onClick={testGithubRead}
+                  style={{ width: '100%', marginBottom: '8px', background: testingGithubRead ? '#333' : '#1e3a5f', color: '#93c5fd', border: '1px solid #334155', borderRadius: '4px', padding: '8px', cursor: testingGithubRead || !ghToken.trim() ? 'not-allowed' : 'pointer', fontSize: '11px', fontWeight: 'bold', fontFamily: 'monospace' }}
+                >
+                  {testingGithubRead ? 'Reading repo…' : 'TEST GITHUB READ (read-only)'}
+                </button>
+                {githubReadStatus && (
+                  <div style={{ color: githubReadStatus.startsWith('OK') ? '#22c55e' : '#eab308', fontSize: '10px', fontFamily: 'monospace', marginBottom: '8px', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{githubReadStatus}</div>
+                )}
+                <div style={{ color: '#444', fontSize: '10px', marginBottom: '10px' }}>
+                  Personal access token stays in this browser only (localStorage key gh_token). Not committed. A stored token authenticates requests; it does not by itself grant an agent write authority — the agent's capability profile and Guardian decide that. Prefer a fine-scoped PAT.
+                </div>`,
+}))
+
+// ── Result integrity ─────────────────────────────────────────────────────────
+// Guard the defect class directly: no addition may appear more than once.
+const uniqueness = [
+  ['probe import', /from '\.\/lib\/githubReadOnly'/g, 1],
+  ['probe state', /const \[githubReadStatus, setGithubReadStatus\]/g, 1],
+  ['probe handler', /const testGithubRead = async/g, 1],
+  ['probe button', /TEST GITHUB READ \(read-only\)/g, 1],
+]
+for (const [label, pattern, expected] of uniqueness) {
+  const found = (app.match(pattern) || []).length
+  if (found !== expected) {
+    console.error(`FAIL    ${label} appears ${found} time(s), expected ${expected}`)
+    results.push(false)
+  }
 }
 
-if (!app.includes('let effectivePrompt = promptText')) once(
-  'early-inspect',
-  `  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string) => {
-    if (!promptText.trim()) return
-
-    const displayContent = imageUrl`,
-  `  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string) => {
-    if (!promptText.trim()) return
-    let effectivePrompt = promptText
-
-    // Read-only GitHub inspect (explicit request only). PAT never logged.
-    if ((activeProvider === 'corpus' || activeProvider === 'nexus') && ghToken.trim() && isExplicitRepoInspectRequest(promptText)) {
-      try {
-        const snap = await readRepoSnapshot(ghToken, (ghOwner || 'DeviousDevv303').trim(), (ghRepo || 'forgeclaw').trim())
-        effectivePrompt = promptText + '\\n\\n[NEXUS_GITHUB_READ_CONTEXT]\\n' + formatRepoSnapshotForContext(snap) + '\\n[/NEXUS_GITHUB_READ_CONTEXT]'
-      } catch (err) {
-        effectivePrompt = promptText + '\\n\\n[NEXUS_GITHUB_READ_CONTEXT]\\nGITHUB READ FAILED: ' + (err instanceof Error ? err.message : String(err)) + '\\n[/NEXUS_GITHUB_READ_CONTEXT]'
-      }
-    }
-
-    const displayContent = imageUrl`,
-)
-
-once(
-  'messages',
-  "const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: promptText }]",
-  "const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt }]",
-)
-
-once(
-  'settings',
-  `{ghTokenSaved ? '✓ SAVED' : 'SAVE'}\n                  </button>\n                </div>\n                <div style={{ color: '#444', fontSize: '10px', marginBottom: '10px' }}>\n                  Personal access token from github.com → Settings → Developer settings → Personal access tokens. ForgeMind uses this for autonomous GitHub operations.\n                </div>`,
-  `{ghTokenSaved ? '✓ SAVED' : 'SAVE'}\n                  </button>\n                </div>\n                <button\n                  type="button"\n                  disabled={testingGithubRead || !ghToken.trim()}\n                  onClick={testGithubRead}\n                  style={{ width: '100%', marginBottom: '8px', background: testingGithubRead ? '#333' : '#1e3a5f', color: '#93c5fd', border: '1px solid #334155', borderRadius: '4px', padding: '8px', cursor: testingGithubRead || !ghToken.trim() ? 'not-allowed' : 'pointer', fontSize: '11px', fontWeight: 'bold', fontFamily: 'monospace' }}\n                >\n                  {testingGithubRead ? 'Reading repo…' : 'TEST GITHUB READ (read-only)'}\n                </button>\n                {githubReadStatus && (\n                  <div style={{ color: githubReadStatus.startsWith('OK') ? '#22c55e' : '#eab308', fontSize: '10px', fontFamily: 'monospace', marginBottom: '8px', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{githubReadStatus}</div>\n                )}\n                <div style={{ color: '#444', fontSize: '10px', marginBottom: '10px' }}>\n                  Personal access token stays in this browser only (localStorage key gh_token). Not committed. Scripts on this origin can read it (XSS risk). Prefer a fine-scoped PAT. TEST GITHUB READ verifies api.github.com without write.\n                </div>`,
-)
-
-if (app === before) {
-  console.error('no patches')
+if (!results.every(Boolean)) {
+  console.error('Pages patch failed — refusing to write a partial or duplicated source.')
   process.exit(1)
 }
+
+if (app === before) {
+  console.log('Pages read-only GitHub UI already present — source unmodified.')
+  process.exit(0)
+}
+
 fs.writeFileSync(path, app)
-console.log('applied', n)
+console.log('Pages read-only GitHub UI patch applied.')

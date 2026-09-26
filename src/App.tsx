@@ -25,7 +25,8 @@ import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, corpusProvider, nexusProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL } from './lib/ai/providers/nexusProvider'
 import { corpusRepository } from './lib/corpus'
-import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
+import { injectToolSchemaWithinBudget, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
+import { MAX_NEXUS_CONTEXT_TOKENS } from './lib/ai/nexusContext'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { applyAttributionContract, FORGECLAW_AGENT_ID } from './lib/githubAttribution'
 import {
@@ -908,10 +909,17 @@ function App() {
     // Check if current model supports native tools
     const supportsNativeTools = providerSupportsTools(normalizedActiveModel, activeProvider)
     
-    // Inject manual tool schema for no-tools models
+    // Inject manual tool schema for no-tools models.
+    // The browser-local runtimes carry a hard prompt budget and the full registry
+    // does not fit inside it: injecting it unmeasured let the provider limiter drop
+    // the catalog, so the model was never told tools existed and answered by asking
+    // the operator to paste repository contents. Budget it here instead.
+    const manualToolInjection = supportsNativeTools
+      ? null
+      : injectToolSchemaWithinBudget(finalSystemPrompt, ATTRIBUTED_TOOLS, MAX_NEXUS_CONTEXT_TOKENS - 1024)
     const activeSystemPrompt = supportsNativeTools
       ? finalSystemPrompt
-      : injectToolSchema(finalSystemPrompt, ATTRIBUTED_TOOLS)
+      : manualToolInjection!.systemPrompt
 
     // ── Runtime-owned repository identity ────────────────────────────────────
     // Do not pre-read or serialize HEAD/repository contents into the prompt. The
@@ -2482,7 +2490,13 @@ function App() {
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
-          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'nexus' ? nexusEndpoint : localEndpoint} />
+          <AgentsPanel
+            activeProvider={activeProvider}
+            activeModel={normalizedActiveModel}
+            apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'nexus' ? nexusEndpoint : localEndpoint}
+            tier1Active={tier1Active}
+            requestGuardianApproval={requestGuardianApproval}
+          />
         )}
 
         {activeTab === 'activity' && (
