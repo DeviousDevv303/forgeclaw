@@ -51,7 +51,7 @@ if (!app.includes('const testGithubRead = async') && app.includes('const testLoc
   console.log('ok handler')
 }
 
-once(
+if (!app.includes('let effectivePrompt = promptText')) once(
   'early-inspect',
   `  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string) => {
     if (!promptText.trim()) return
