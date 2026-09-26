@@ -16,14 +16,14 @@
 import type { AIMessage, AIProvider, AIRequest, AIResponse, AIToolCall } from '../types'
 
 export const DEFAULT_OLLAMA_ENDPOINT = 'http://127.0.0.1:11434'
-export const DEFAULT_OLLAMA_MODEL = 'llama3.2:3b'
+export const DEFAULT_OLLAMA_MODEL = 'qwen2.5:1.5b'
 
 export const OLLAMA_MODELS = [
   {
     id: DEFAULT_OLLAMA_MODEL,
-    label: 'Llama 3.2 3B (Ollama)',
+    label: 'Qwen2.5 1.5B (Ollama)',
     contextK: 8,
-    note: 'Install with: ollama pull llama3.2:3b',
+    note: 'Verified phone model: qwen2.5:1.5b',
   },
 ]
 

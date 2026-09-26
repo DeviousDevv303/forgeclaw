@@ -34,7 +34,7 @@ describe('ollamaProvider', () => {
     const response = await ollamaProvider.send({
       systemPrompt: 'system',
       messages: [{ role: 'user', content: 'test' }],
-      model: 'llama3.2:3b',
+      model: 'qwen2.5:1.5b',
       onToken: token => tokens.push(token),
     }, 'http://127.0.0.1:11434')
     expect(tokens.join('')).toBe('LOCAL OK')
