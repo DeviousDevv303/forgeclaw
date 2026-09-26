@@ -96,6 +96,36 @@ describe('dispatcher integrity (offline)', () => {
     expect(output).toContain('[TOOL ERROR]')
     expect(output).toContain('No GitHub token configured')
   })
+
+  it('enforces Guardian at the dispatcher boundary even without an App caller', async () => {
+    const output = await executeTool(
+      { id: 'guardian-boundary', name: 'github_write_file', input: { path: 'x.md', content: 'x', message: 'doc: x' } },
+      { ...ctx(), ghToken: 'test-token', tier1Active: true },
+    )
+    expect(output).toContain('[GUARDIAN BLOCK]')
+    expect(output).toContain('no project-owned approval handler')
+  })
+
+  it('executes a protected write only after the context approval callback', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method
+        ? new Response(JSON.stringify({ commit: { sha: 'approved123', html_url: 'https://github.com/x' } }), { status: 200 })
+        : new Response(JSON.stringify({ sha: 'existing' }), { status: 200 }),
+    ))
+    const approved = vi.fn(async () => true)
+    const output = await executeTool(
+      { id: 'guardian-approved', name: 'github_write_file', input: { path: 'x.md', content: 'x', message: 'docs: x' } },
+      { ...ctx(), ghToken: 'test-token', tier1Active: true, requestGuardianApproval: approved },
+    )
+    expect(approved).toHaveBeenCalledOnce()
+    expect(output).toContain('approved123')
+  })
+
+  it('keeps coding state separate for saved agents', async () => {
+    await executeTool({ id: 'agent-state', name: 'coding_task_update', input: { task: 'agent task', status: 'in_progress' } }, { ...ctx(), agentId: 'custom-agent-1' })
+    expect(loadCodingAgentState('custom-agent-1').task).toBe('agent task')
+    expect(loadCodingAgentState().task).not.toBe('agent task')
+  })
 })
 
 describe('agent attribution contract', () => {

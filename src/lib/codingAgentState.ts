@@ -12,6 +12,10 @@ const STATE_VERSION = 2
 const MAX_ACTIVITY_ENTRIES = 40
 const MAX_TOOL_RESULTS = 12
 
+function stateKey(agentId: string): string {
+  return agentId === FORGECLAW_AGENT_ID ? STATE_KEY : `${STATE_KEY}:${agentId}`
+}
+
 export type CodingTaskStatus = 'idle' | 'in_progress' | 'blocked' | 'complete'
 
 export interface ToolResultRecord {
@@ -38,6 +42,8 @@ export interface CodingAgentState {
   agentId: string
   agentLabel: string
   updatedAt: string
+  sessionId: string
+  activeRunId: string
   owner: string
   repo: string
   branch: string
@@ -65,6 +71,8 @@ const DEFAULT_STATE: CodingAgentState = {
   agentId: FORGECLAW_AGENT_ID,
   agentLabel: FORGECLAW_AGENT_LABEL,
   updatedAt: new Date(0).toISOString(),
+  sessionId: '',
+  activeRunId: '',
   owner: 'DeviousDevv303',
   repo: 'forgeclaw',
   branch: 'main',
@@ -91,12 +99,14 @@ function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : []
 }
 
-export function loadCodingAgentState(): CodingAgentState {
-  const raw = safeGetItem(STATE_KEY)
+export function loadCodingAgentState(agentId = FORGECLAW_AGENT_ID): CodingAgentState {
+  const raw = safeGetItem(stateKey(agentId))
   const parsed = safeJsonParse<Partial<CodingAgentState>>(raw, {})
   return {
     ...DEFAULT_STATE,
     ...parsed,
+    agentId: parsed.agentId || agentId,
+    agentLabel: parsed.agentLabel || (agentId === FORGECLAW_AGENT_ID ? FORGECLAW_AGENT_LABEL : agentId),
     version: STATE_VERSION,
     completedSteps: asArray<string>(parsed.completedSteps),
     pendingSteps: asArray<string>(parsed.pendingSteps),
@@ -110,10 +120,11 @@ export function loadCodingAgentState(): CodingAgentState {
   }
 }
 
-export function saveCodingAgentState(partial: Partial<CodingAgentState>): CodingAgentState {
+export function saveCodingAgentState(partial: Partial<CodingAgentState>, agentId = partial.agentId || FORGECLAW_AGENT_ID): CodingAgentState {
   const next: CodingAgentState = {
-    ...loadCodingAgentState(),
+    ...loadCodingAgentState(agentId),
     ...partial,
+    agentId,
     version: STATE_VERSION,
     updatedAt: new Date().toISOString(),
   }
@@ -123,20 +134,20 @@ export function saveCodingAgentState(partial: Partial<CodingAgentState>): Coding
   if (next.activity.length > MAX_ACTIVITY_ENTRIES) {
     next.activity = next.activity.slice(-MAX_ACTIVITY_ENTRIES)
   }
-  safeSetItem(STATE_KEY, JSON.stringify(next))
+  safeSetItem(stateKey(agentId), JSON.stringify(next))
   return next
 }
 
-export function clearCodingAgentState(): void {
-  safeRemoveItem(STATE_KEY)
+export function clearCodingAgentState(agentId = FORGECLAW_AGENT_ID): void {
+  safeRemoveItem(stateKey(agentId))
 }
 
 /**
  * Load the persisted task when one is resumable.
  * Returns null for a fresh/idle/complete agent so a finished task is not replayed.
  */
-export function restoreCodingAgentState(): CodingAgentState | null {
-  const state = loadCodingAgentState()
+export function restoreCodingAgentState(agentId = FORGECLAW_AGENT_ID): CodingAgentState | null {
+  const state = loadCodingAgentState(agentId)
   const resumable =
     (state.taskStatus === 'in_progress' || state.taskStatus === 'blocked') && Boolean(state.task.trim())
   return resumable ? state : null
@@ -181,3 +192,6 @@ updatedAt: ${state.updatedAt}
 }
 
 export const CODING_AGENT_STATE_KEY = STATE_KEY
+export function codingAgentStateKey(agentId = FORGECLAW_AGENT_ID): string {
+  return stateKey(agentId)
+}

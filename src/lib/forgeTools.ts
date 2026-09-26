@@ -12,12 +12,13 @@ import {
   buildAttributedCommitMessage,
 } from './githubAttribution'
 import {
-  loadCodingAgentState,
-  saveCodingAgentState,
+  loadCodingAgentState as loadPersistedCodingAgentState,
+  saveCodingAgentState as savePersistedCodingAgentState,
   appendActivity,
   type CodingAgentState,
 } from './codingAgentState'
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
+import { requiresCoSign } from './guardianGate'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -61,6 +62,11 @@ export interface ToolContext {
   waRecipient?: string
   braveKey?: string
   googleToken?: string
+  agentId?: string
+  runId?: string
+  signal?: AbortSignal
+  tier1Active?: boolean
+  requestGuardianApproval?: (call: ToolCall) => Promise<boolean>
   spawnAgent?: (systemPrompt: string, task: string, tools?: string[]) => Promise<string>
 }
 
@@ -416,8 +422,24 @@ export function loadToolContext(): ToolContext {
 
 // ─── Executor ─────────────────────────────────────────────────────────────────
 
+async function toolFetch(ctx: ToolContext, input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
+  return fetch(input, { ...init, signal: ctx.signal ?? init.signal })
+}
+
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
   const { name, input } = call
+  if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted before tool execution.'
+  if (requiresCoSign(call, Boolean(ctx.tier1Active))) {
+    if (!ctx.requestGuardianApproval) {
+      return `[GUARDIAN BLOCK] ${name} requires Guardian co-sign approval, but no project-owned approval handler is attached.`
+    }
+    const approved = await ctx.requestGuardianApproval(call)
+    if (!approved || ctx.signal?.aborted) return `[GUARDIAN REJECTED] ${name} was not executed.`
+  }
+  const loadState = () => loadPersistedCodingAgentState(ctx.agentId)
+  const saveState = (partial: Partial<CodingAgentState>) =>
+    ctx.signal?.aborted ? loadState() : savePersistedCodingAgentState(partial, ctx.agentId)
   const owner = (input.owner as string) || ctx.ghOwner
   const repo  = (input.repo  as string) || ctx.ghRepo
   const token = ctx.ghToken
@@ -430,7 +452,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const path = input.path as string
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
-        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { headers })
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { headers })
         if (!res.ok) throw new Error(`GitHub ${res.status}: ${res.statusText}`)
         const data = await res.json() as { content?: string; encoding?: string; size?: number }
         if (!data.content) throw new Error('No content returned (may be a directory)')
@@ -449,7 +471,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         // Agent attribution contract: every repository write states the acting agent,
         // what changed, and why. The dispatcher owns this so no caller can produce a
         // silent or generic commit.
-        const state = loadCodingAgentState()
+        const state = loadState()
         const message = buildAttributedCommitMessage({
           agentId: FORGECLAW_AGENT_ID,
           agentLabel: FORGECLAW_AGENT_LABEL,
@@ -465,13 +487,13 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         // Get existing SHA (required by GitHub API to update an existing file)
         const existingUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}${branch ? `?ref=${branch}` : ''}`
         let sha: string | undefined
-        const existing = await fetch(existingUrl, { headers }).then(r => r.json()).catch(() => null) as { sha?: string } | null
+        const existing = await toolFetch(ctx, existingUrl, { headers }).then(r => r.json()).catch(() => null) as { sha?: string } | null
         if (existing?.sha) sha = existing.sha
 
         const body: Record<string, unknown> = { message, content: btoa(unescape(encodeURIComponent(content))) }
         if (sha) body.sha = sha
         if (branch) body.branch = branch
-        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { method: 'PUT', headers, body: JSON.stringify(body) })
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { method: 'PUT', headers, body: JSON.stringify(body) })
         if (!res.ok) {
           const err = await res.json().catch(() => ({})) as { message?: string }
           throw new Error(err.message || `GitHub ${res.status}`)
@@ -481,7 +503,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const filesModified = state.filesModified.includes(path)
           ? state.filesModified
           : [...state.filesModified, path]
-        saveCodingAgentState({
+        saveState({
           owner,
           repo,
           branch: branch || state.branch,
@@ -500,7 +522,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const runId = input.run_id as string
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
-        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}`, { headers })
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}`, { headers })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
         type Run = { id: number; name: string; status: string; conclusion: string | null; html_url: string; created_at: string; updated_at: string }
         const run = await res.json() as Run
@@ -512,7 +534,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const runId = input.run_id as string
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
-        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/jobs`, { headers })
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/jobs`, { headers })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
         type Step = { name: string; status: string; conclusion: string | null; number: number }
         type Job  = { id: number; name: string; status: string; conclusion: string | null; steps: Step[] }
@@ -533,7 +555,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const path = (input.path as string) || ''
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
-        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { headers })
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { headers })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
         const items = await res.json() as Array<{ name: string; type: string; size?: number }>
         const lines = items.map(i => `${i.type === 'dir' ? '📁' : '📄'} ${i.name}${i.size ? ` (${i.size}b)` : ''}`)
@@ -546,7 +568,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
         const q = encodeURIComponent(`${query} repo:${owner}/${repo}`)
-        const res = await fetch(`https://api.github.com/search/code?q=${q}&per_page=10`, { headers })
+        const res = await toolFetch(ctx, `https://api.github.com/search/code?q=${q}&per_page=10`, { headers })
         if (!res.ok) throw new Error(`GitHub search ${res.status}`)
         const data = await res.json() as { total_count: number; items: Array<{ path: string; html_url: string }> }
         const hits = data.items.map(i => `• ${i.path}`).join('\n')
@@ -559,7 +581,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const body  = input.body  as string
         if (!token) throw new Error('No GitHub token configured.')
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
-        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, { method: 'POST', headers, body: JSON.stringify({ title, body }) })
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/issues`, { method: 'POST', headers, body: JSON.stringify({ title, body }) })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
         const data = await res.json() as { number: number; html_url: string }
         return `✓ Created issue #${data.number}: "${title}"\n${data.html_url}`
@@ -571,7 +593,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const ref = (input.ref as string) || 'main'
         if (!token) throw new Error('No GitHub token configured.')
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
-        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, { method: 'POST', headers, body: JSON.stringify({ ref }) })
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, { method: 'POST', headers, body: JSON.stringify({ ref }) })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
         return `✓ Triggered ${workflow} on ${ref} in ${owner}/${repo}`
       }
@@ -582,7 +604,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const method = (input.method as string) || 'GET'
         const hdrs   = input.headers ? JSON.parse(input.headers as string) as Record<string, string> : {}
         const body   = input.body   as string | undefined
-        const res = await fetch(url, { method, headers: hdrs, body })
+        const res = await toolFetch(ctx, url, { method, headers: hdrs, body })
         const text = await res.text()
         return `HTTP ${res.status} ${res.statusText}\n${text.slice(0, 4000)}${text.length > 4000 ? '\n[truncated]' : ''}`
       }
@@ -613,7 +635,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const to   = (input.to as string) || ctx.waRecipient
         if (!ctx.waPhoneNumberId || !ctx.waAccessToken) throw new Error('WhatsApp not configured. Open the WhatsApp tab → SETUP.')
         if (!to) throw new Error('No recipient number. Provide "to" or configure a default in WhatsApp SETUP.')
-        const res = await fetch(`https://graph.facebook.com/v19.0/${ctx.waPhoneNumberId}/messages`, {
+        const res = await toolFetch(ctx, `https://graph.facebook.com/v19.0/${ctx.waPhoneNumberId}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ctx.waAccessToken}` },
           body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: text } }),
@@ -640,7 +662,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const count = Math.min(parseInt(String(input.count || '5'), 10) || 5, 10)
 
         if (ctx.braveKey) {
-          const res = await fetch(
+          const res = await toolFetch(ctx,
             `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`,
             { headers: { Accept: 'application/json', 'X-Subscription-Token': ctx.braveKey } },
           )
@@ -653,7 +675,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
 
         // Fallback: DuckDuckGo Instant Answers (no key, CORS-enabled)
-        const res = await fetch(
+        const res = await toolFetch(ctx,
           `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
         )
         if (!res.ok) throw new Error(`DuckDuckGo ${res.status}`)
@@ -674,7 +696,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         if (!ctx.googleToken) throw new Error('No Google OAuth token. Add it in Settings → Google OAuth Token.')
         const q = encodeURIComponent((input.query as string) || '')
         const max = Math.min(parseInt(String(input.max_results || '10'), 10) || 10, 20)
-        const listRes = await fetch(
+        const listRes = await toolFetch(ctx,
           `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${max}${q ? `&q=${q}` : ''}`,
           { headers: { Authorization: `Bearer ${ctx.googleToken}` } },
         )
@@ -684,7 +706,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const msgs = listData.messages || []
         if (!msgs.length) return input.query ? `No emails matching "${input.query}"` : 'No emails found.'
         const details = await Promise.all(msgs.map(async m => {
-          const dr = await fetch(
+          const dr = await toolFetch(ctx,
             `https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`,
             { headers: { Authorization: `Bearer ${ctx.googleToken!}` } },
           )
@@ -706,7 +728,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const body    = input.body    as string
         const raw = `To: ${to}\r\nSubject: ${subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n${body}`
         const encoded = btoa(unescape(encodeURIComponent(raw))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-        const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+        const res = await toolFetch(ctx, 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
           method: 'POST',
           headers: { Authorization: `Bearer ${ctx.googleToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ raw: encoded }),
@@ -726,7 +748,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           timeMin: now.toISOString(), timeMax: future.toISOString(),
           maxResults: String(maxResults), orderBy: 'startTime', singleEvents: 'true',
         })
-        const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`, {
+        const res = await toolFetch(ctx, `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`, {
           headers: { Authorization: `Bearer ${ctx.googleToken}` },
         })
         if (!res.ok) throw new Error(`Calendar API ${res.status} — check OAuth token scope (calendar.readonly required)`)
@@ -753,7 +775,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const event: Record<string, unknown> = { summary, start: { dateTime: start }, end: { dateTime: end } }
         if (description) event.description = description
         if (location)    event.location    = location
-        const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+        const res = await toolFetch(ctx, 'https://www.googleapis.com/calendar/v3/calendars/primary/events', {
           method: 'POST',
           headers: { Authorization: `Bearer ${ctx.googleToken}`, 'Content-Type': 'application/json' },
           body: JSON.stringify(event),
@@ -780,7 +802,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
 
         // ── 1. Dispatch workflow ───────────────────────────────────────────
-        const dispatchRes = await fetch(
+        const dispatchRes = await toolFetch(ctx,
           `https://api.github.com/repos/${owner}/${repo}/actions/workflows/shell-exec.yml/dispatches`,
           {
             method: 'POST',
@@ -809,7 +831,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         await new Promise(r => setTimeout(r, 4000))
 
         // ── 3. Find the run we just created ──────────────────────────────────
-        const runsRes = await fetch(
+        const runsRes = await toolFetch(ctx,
           `https://api.github.com/repos/${owner}/${repo}/actions/workflows/shell-exec.yml/runs?per_page=5&event=workflow_dispatch`,
           { headers }
         )
@@ -844,7 +866,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         let lastStatus = run.status
 
         while (Date.now() - startTime < maxWait * 1000) {
-          const statusRes = await fetch(
+          const statusRes = await toolFetch(ctx,
             `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
             { headers }
           )
@@ -856,7 +878,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
           if (statusData.status === 'completed') {
             // Get logs for the run
-            const logsRes = await fetch(
+            const logsRes = await toolFetch(ctx,
               `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}/logs`,
               { headers, redirect: 'follow' }
             )
@@ -890,11 +912,11 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       case 'github_repo_state': {
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
-        const metaRes = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers })
+        const metaRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}`, { headers })
         if (!metaRes.ok) throw new Error(`GitHub repo ${metaRes.status} — check owner/repo and token scope`)
         const meta = await metaRes.json() as { default_branch: string; html_url: string; private: boolean; pushed_at: string }
         const branch = ((input.branch as string) || meta.default_branch).trim()
-        const commitRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}`, { headers })
+        const commitRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}`, { headers })
         if (!commitRes.ok) throw new Error(`GitHub commit ${commitRes.status} — branch "${branch}" may not exist`)
         const commit = await commitRes.json() as {
           sha: string
@@ -904,15 +926,15 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         let sample = ''
         const samplePath = (input.sample_path as string) || 'package.json'
         try {
-          const fileRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${samplePath}?ref=${encodeURIComponent(branch)}`, { headers })
+          const fileRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/contents/${samplePath}?ref=${encodeURIComponent(branch)}`, { headers })
           if (fileRes.ok) {
             const file = await fileRes.json() as { content?: string }
             if (file.content) sample = atob(file.content.replace(/\n/g, '')).slice(0, 1200)
           }
         } catch { /* sample is informational only */ }
 
-        const state = loadCodingAgentState()
-        saveCodingAgentState({
+        const state = loadState()
+        saveState({
           owner,
           repo,
           branch,
@@ -942,7 +964,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         if (!sha) throw new Error('sha is required')
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
-        const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(sha)}`, { headers })
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(sha)}`, { headers })
         if (!res.ok) {
           return `✗ VERIFICATION FAILED — commit ${sha} not found in ${owner}/${repo} (GitHub ${res.status}).`
         }
@@ -960,13 +982,13 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         let onBranch = 'not checked'
         const branch = input.branch as string | undefined
         if (branch) {
-          const brRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`, { headers })
+          const brRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`, { headers })
           onBranch = brRes.ok
             ? `branch "${branch}" resolves`
             : `branch "${branch}" NOT FOUND`
         }
-        const state = loadCodingAgentState()
-        saveCodingAgentState({
+        const state = loadState()
+        saveState({
           verificationResults: [
             ...state.verificationResults,
             `verified commit ${sha.slice(0, 7)} on ${owner}/${repo} — ${files.length} file(s) changed`,
@@ -997,7 +1019,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
             return [String(value)]
           }
         }
-        const previous = loadCodingAgentState()
+        const previous = loadState()
         const status = (input.status as CodingAgentState['taskStatus']) || previous.taskStatus
         const completed = parseList(input.completed_steps)
         const pending = parseList(input.pending_steps)
@@ -1006,7 +1028,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const error = input.error as string | undefined
         const blocker = input.blocker as string | undefined
 
-        const next = saveCodingAgentState({
+        const next = saveState({
           task: (input.task as string | undefined) ?? previous.task,
           taskInstructions: (input.instructions as string | undefined) ?? previous.taskInstructions,
           taskStatus: status,

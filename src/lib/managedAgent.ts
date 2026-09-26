@@ -24,9 +24,11 @@ export async function runSubAgent(
   const maxIters = 8
 
   for (let i = 0; i < maxIters; i++) {
+    if (toolCtx.signal?.aborted) return '[SUB-AGENT ABORTED]'
     const isLast = i === maxIters - 1
     const result = await callProvider(provider, model, systemPrompt, messages, apiKey, {
       tools: isLast || !modelSupportsTools(provider, model) ? undefined : tools,
+      signal: toolCtx.signal,
     })
 
     if (!result.toolCalls?.length) {

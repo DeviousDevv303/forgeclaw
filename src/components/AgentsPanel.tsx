@@ -2,8 +2,9 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useState, useRef, useCallback } from 'react'
 import { safeGetItem, safeSetItem, safeJsonParse } from '../lib/storage'
-import { callProvider } from '../lib/modelProviders'
 import type { ProviderId } from '../lib/modelProviders'
+import { FORGE_TOOLS, loadToolContext } from '../lib/forgeTools'
+import { runSubAgent } from '../lib/managedAgent'
 
 interface CustomAgent {
   id: string
@@ -111,24 +112,20 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
     abortRef.current = controller
 
     try {
-      const history = chatMessages.map(m => ({ role: m.role, content: m.content }))
-      let buf = ''
-      await callProvider(activeProvider, activeModel, agent.systemPrompt,
-        [...history, { role: 'user', content: text }],
+      const history = chatMessages.slice(-12).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n')
+      const task = history ? `${history}\n\nUSER: ${text}` : text
+      const runId = `agent-run-${agent.id}-${Date.now()}`
+      const result = await runSubAgent(
+        agent.systemPrompt,
+        task,
+        undefined,
+        activeProvider,
+        activeModel,
         apiKey,
-        {
-          signal: controller.signal,
-          onToken: (token: string) => {
-            if (controller.signal.aborted) return
-            buf += token
-            setChatMessages(prev => {
-              const next = prev.map(m => m.id === assistantId ? { ...m, content: buf, streaming: true } : m)
-              saveChat(agent.id, next)
-              return next
-            })
-          },
-        }
+        FORGE_TOOLS,
+        { ...loadToolContext(), agentId: agent.id, runId, signal: controller.signal, tier1Active: false },
       )
+      const buf = result
       if (controller.signal.aborted) return
       setChatMessages(prev => {
         const next = prev.map(m => m.id === assistantId ? { ...m, content: buf || '(no response)', streaming: false } : m)

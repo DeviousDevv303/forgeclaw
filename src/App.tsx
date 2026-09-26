@@ -27,7 +27,7 @@ import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL } from './lib/ai/providers/
 import { corpusRepository } from './lib/corpus'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
-import { applyAttributionContract } from './lib/githubAttribution'
+import { applyAttributionContract, FORGECLAW_AGENT_ID } from './lib/githubAttribution'
 import {
   loadCodingAgentState,
   saveCodingAgentState,
@@ -36,6 +36,7 @@ import {
 } from './lib/codingAgentState'
 import type { CodingAgentState } from './lib/codingAgentState'
 import { CodingAgentStatePanel } from './components/CodingAgentStatePanel'
+import { LiveExecution } from './components/LiveExecution'
 import { resolveGithubToken } from './lib/githubAuth'
 import { persistGithubToken } from './lib/githubAuth'
 import {
@@ -47,8 +48,8 @@ import {
   measureRequestMetrics,
 } from './lib/codingAgentRuntime'
 import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
-import { requiresCoSign, extractThinking } from './lib/guardianGate'
-import type { ToolResult } from './lib/forgeTools'
+import { extractThinking } from './lib/guardianGate'
+import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { runSubAgent } from './lib/managedAgent'
 import {
   MAX_AGENT_ITERATIONS,
@@ -482,7 +483,7 @@ function App() {
   // Activity stream is single source of truth
   const activityStream = useAgentActivityStream()
   const reasoning = useReasoningStream({ activityEvents: activityStream.events })
-  const { emit: emitForge } = useForgeOps()
+  const { state: forgeOpsState, emit: emitForge } = useForgeOps()
   const monitor = useSystemMonitor()
   // Stable per-session ID for shell_exec audit trail — resets on page reload
   const [sessionId] = useState(() => `fc-${Date.now().toString(36)}`)
@@ -656,6 +657,23 @@ function App() {
   const [resumePrompt, setResumePrompt] = useState<string | null>(null)
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
   const [tier1Active, setTier1Active] = useState(false)
+
+  const requestGuardianApproval = useCallback(async (call: ToolCall): Promise<boolean> => {
+    if (!tier1Active) return true
+    const coSignId = `cosign_${call.id}_${Date.now()}`
+    const reasoning = extractThinking('') ?? '(approval requested by authoritative dispatcher)'
+    return new Promise<boolean>((resolve) => {
+      coSignResolvers.current.set(coSignId, resolve)
+      setPendingCoSigns(prev => [...prev, { id: coSignId, toolName: call.name, toolInput: call.input, reasoning }])
+      setTimeout(() => {
+        if (coSignResolvers.current.has(coSignId)) {
+          coSignResolvers.current.delete(coSignId)
+          setPendingCoSigns(prev => prev.filter(cs => cs.id !== coSignId))
+          resolve(false)
+        }
+      }, 120_000)
+    })
+  }, [tier1Active])
 
   const [listening, setListening] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState('')
@@ -843,6 +861,7 @@ function App() {
 
     // Emit forge objective
     emitForge({ type: 'OBJECTIVE_RECEIVED', objective: displayContent })
+    emitForge({ type: 'PHASE_CHANGE', phase: 'PLAN' })
 
     // Orchestrator: admit forgemind chat task
     const taskId = `fm-${Date.now()}`
@@ -864,6 +883,9 @@ function App() {
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`
     const controller = new AbortController()
     activeRunRef.current = { id: runId, controller, messageId: `${Date.now() + 1}` }
+    if (isCodingTaskRequest(promptText) || agentResumedState) {
+      setCodingAgentState(saveCodingAgentState({ sessionId, activeRunId: runId }))
+    }
 
     setMessages(prev => [...prev, userMsg])
 
@@ -929,8 +951,21 @@ function App() {
       const toolCtx = {
         ...loadToolContext(),
         sessionId,
+        agentId: FORGECLAW_AGENT_ID,
+        runId,
+        signal: controller.signal,
+        tier1Active,
+        requestGuardianApproval,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
-          runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, currentApiKey, ATTRIBUTED_TOOLS, loadToolContext()),
+          runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, currentApiKey, ATTRIBUTED_TOOLS, {
+            ...loadToolContext(),
+            sessionId,
+            agentId: FORGECLAW_AGENT_ID,
+            runId,
+            signal: controller.signal,
+            tier1Active,
+            requestGuardianApproval,
+          }),
       }
 
       const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
@@ -956,6 +991,8 @@ function App() {
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
+        emitForge({ type: 'PHASE_CHANGE', phase: 'EXECUTION' })
+        emitForge({ type: 'CHECKPOINT', iter, total: MAX_AGENT_ITERATIONS })
 
         // For no-tools models, treat every iteration as the final one
         const noMoreTools = isLastIter || !supportsTools
@@ -1014,48 +1051,19 @@ function App() {
           }
         }
 
-        // Tool calls → Guardian gate (interactive), then execute
+        // Tool calls → executeTool owns Guardian enforcement and side effects.
         const iterResults: ToolResult[] = []
         for (const call of result.toolCalls) {
-          if (requiresCoSign(call, tier1Active)) {
-            const coSignId = `cosign_${call.id}`
-            const reasoning = extractThinking(result.text || '') ?? '(no reasoning snapshot)'
-            const approved = await new Promise<boolean>((resolve) => {
-              coSignResolvers.current.set(coSignId, resolve)
-              setPendingCoSigns(prev => [...prev, {
-                id: coSignId,
-                toolName: call.name,
-                toolInput: call.input,
-                reasoning,
-              }])
-              // Auto-reject after 2 minutes — prevents loading from hanging
-              setTimeout(() => {
-                if (coSignResolvers.current.has(coSignId)) {
-                  coSignResolvers.current.delete(coSignId)
-                  setPendingCoSigns(prev => prev.filter(cs => cs.id !== coSignId))
-                  resolve(false)
-                }
-              }, 120_000)
-            })
-            setPendingCoSigns(prev => prev.filter(cs => cs.id !== coSignId))
-            coSignResolvers.current.delete(coSignId)
-            if (!approved) {
-              const output = `[GUARDIAN REJECTED] User rejected ${call.name} — not executed.`
-              const stepId = `step_${call.id}`
-              chainSteps.push({ id: stepId, icon: '❌', label: call.name, status: 'error', timestamp: new Date().toISOString(), body: output, linkedToolCallIds: [call.id] })
-              iterResults.push({ toolCallId: call.id, name: call.name, output, isError: true, reasoningStepId: stepId })
-              emitFailure({ source: 'forgemind', severity: 'warning', message: `Guardian: user rejected ${call.name}` })
-              continue
-            }
-          }
           const actEntryId = `act_${call.id}_${Date.now()}`
           setActivityLog(prev => [...prev.slice(-99), { id: actEntryId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
           emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
           emitForge({ type: 'TOOL_START', tool: call.name, iter })
           const output = await executeTool(call, toolCtx)
+          if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
           const isErr = output.startsWith('[TOOL ERROR]')
           let retryAnnotation = ''
           if (isErr) {
+            emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
             const failClass: ToolFailureClass = classifyToolFailure(output)
             emitForge({ type: 'TOOL_FAILURE', tool: call.name, failClass })
             const retryKey = call.name
@@ -1070,6 +1078,7 @@ function App() {
               emitFailure({ source: 'forgemind', severity: 'warning', message: `Retry blocked — user approval needed for ${call.name}: ${decision.reason}` })
             }
           } else {
+            emitForge({ type: 'PHASE_CHANGE', phase: 'VERIFICATION' })
             emitForge({ type: 'TOOL_SUCCESS', tool: call.name })
             toolRetryCounts.delete(call.name)
           }
@@ -1099,6 +1108,7 @@ function App() {
         }
       }
 
+      if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
       setLastSource(source)
       const { cleanText, tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
       await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
@@ -1116,7 +1126,6 @@ function App() {
         ? { ...m, content: messageContent, plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: activeProvider, model: normalizedActiveModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
-      if (activeRunRef.current?.id !== runId || controller.signal.aborted) return
       setRequestStatus('success')
       setLastRequestError('')
       setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
@@ -1164,7 +1173,7 @@ function App() {
         setLoading(false)
       }
     }
-  }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, tier1Active, requestGuardianApproval]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -2166,6 +2175,11 @@ function App() {
             <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
               {/* Persisted coding task — visible so a reload reads as a resume. */}
               <CodingAgentStatePanel state={codingAgentState} resumed={Boolean(agentResumedState)} onChange={setCodingAgentState} />
+              <LiveExecution
+                state={forgeOpsState}
+                currentPlan={messages.slice().reverse().find(message => message.role === 'assistant' && message.plan)?.plan}
+                isActive={loading}
+              />
               {resumePrompt && (
                 <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '10px', fontFamily: 'monospace' }}>
                   <div style={{ color: '#93c5fd', fontSize: '10px', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '6px' }}>
