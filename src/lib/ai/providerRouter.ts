@@ -94,6 +94,8 @@ export function isProviderConfigured(apiKey: string = '', providerId: ProviderId
 }
 
 export function providerSupportsTools(_modelId: string, _providerId: ProviderId = 'local'): boolean {
+  void _modelId
+  void _providerId
   // TEMPORARY BYPASS: keep all normal chat requests in plain Q&A mode while the
   // live execution issue is being fixed. We do not want the model to enter the agent loop.
   return false

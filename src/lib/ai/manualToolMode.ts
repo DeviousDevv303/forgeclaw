@@ -14,11 +14,13 @@ export interface ManualToolAction {
 
 // NORMAL CHAT MODE: do not inject tool descriptions into any provider prompt.
 export function injectToolSchema(systemPrompt: string, _tools: ToolDef[]): string {
+  void _tools
   return systemPrompt
 }
 
 // NORMAL CHAT MODE: model text is always ordinary answer text, never a tool call.
 export function parseManualToolCalls(_text: string): ManualToolAction[] {
+  void _text
   return []
 }
 

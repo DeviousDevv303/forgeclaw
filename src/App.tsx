@@ -42,7 +42,6 @@ import { getDiscardedPaths } from './lib/agentCore'
 import { useForgeOps } from './hooks/useForgeOps'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
-import { ChatLiveExecution } from './components/ChatLiveExecution'
 import type { AgentPhase } from './types/forgeOps'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -233,12 +232,9 @@ Safe failed actions may be retried automatically (up to 3 attempts per tool). Re
 
 ANTI-CHAT RULE:
 Default mode is execution. Do not produce long conversational prose unless the task explicitly requests explanation. Results, not narration.
-
-Append a concise public reasoning trace AFTER every visible response for the UI:
-[FM:TRACE]brief operational rationale, assumptions checked, tool decisions, and verification path; do not include hidden chain-of-thought[FM:TRACE_END]
-
 For code: fenced blocks with language tag (\`\`\`html, \`\`\`js, \`\`\`python, etc.).
-Never start with [FM:TRACE] or [FM:THINK]. Structured response first. Always.`
+`
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -355,24 +351,6 @@ function buildMessageTrace(message: Message): string | undefined {
   }
 
   return lines.length ? lines.join('\n\n') : undefined
-}
-
-function buildFallbackTrace(prompt: string, response: string, source: string): string {
-  const objective = prompt.trim().split('\n')[0]?.slice(0, 140) || 'Respond to the operator'
-  const responseSize = response.trim().length
-  return [
-    `Objective: ${objective}`,
-    `Path: Direct response through ${source}`,
-    'Tools: None required for this turn',
-    `Verification: Visible response generated and rendered (${responseSize} characters)`,
-  ].join('\n')
-}
-
-function findPreviousUserPrompt(messages: Message[], startIndex: number): string | undefined {
-  for (let i = startIndex - 1; i >= 0; i--) {
-    if (messages[i].role === 'user') return messages[i].content
-  }
-  return undefined
 }
 
 function cleanStoredMessage(message: Message): Message {
@@ -1062,7 +1040,7 @@ function App() {
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
-        ?? buildFallbackTrace(promptText, messageContent, `${activeProvider}:${normalizedActiveModel}`)
+
       setMessages(prev => prev.map(m => m.id === msgId
         ? { ...m, content: messageContent, plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: activeProvider, model: normalizedActiveModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
@@ -2159,12 +2137,11 @@ function App() {
                   ))}
                 </div>
               ) : (
-                messages.map((rawMsg, messageIndex) => {
+                messages.map((rawMsg) => {
                   const displayContent = rawMsg.role === 'assistant' ? cleanVisibleResponse(rawMsg.content) : rawMsg.content
                   const msg = rawMsg.role === 'assistant' ? { ...rawMsg, content: displayContent } : rawMsg
                   const reasoningOpen = openReasoningIds.has(msg.id)
                   const reasoningTrace = buildMessageTrace(msg)
-                  const promptContext = msg.role === 'assistant' ? findPreviousUserPrompt(messages, messageIndex) : undefined
                   return (
                     <div key={msg.id} style={{ display: 'flex', flexDirection: 'column', alignItems: msg.role === 'user' ? 'flex-end' : 'flex-start', gap: '4px' }}>
                       {msg.role === 'assistant' && (
@@ -2211,23 +2188,6 @@ function App() {
                           </div>
                         )}
                       </div>
-
-                      {/* Live execution drawer - follows the assistant answer in the chat stream */}
-                      {msg.role === 'assistant' && (
-                        <div style={{ maxWidth: '90%', marginTop: '8px', width: '100%' }}>
-                          <ChatLiveExecution
-                            objective={promptContext}
-                            plan={msg.plan}
-                            phase={msg.agentPhase}
-                            streaming={msg.streaming}
-                            toolResults={msg.toolResults}
-                            trace={reasoningTrace}
-                            provider={msg.provider}
-                            model={msg.model}
-                            error={msg.content.startsWith('[ERROR]') || /no API key|auth failed/i.test(msg.content)}
-                          />
-                        </div>
-                      )}
 
                       {/* Reasoning trace — minimal collapsible */}
                       {msg.role === 'assistant' && reasoningTrace && (
