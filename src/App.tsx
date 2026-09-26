@@ -415,6 +415,13 @@ function readMoonshotModel(): string {
   return safeGetItem('fm_moonshot_model') || DEFAULT_MOONSHOT_MODEL
 }
 
+function readOllamaModel(): string {
+  const saved = safeGetItem('fm_ollama_model')
+  return saved && ollamaProvider.models.some(model => model.id === saved)
+    ? saved
+    : ollamaProvider.models[0].id
+}
+
 function purgeLegacyRuntimeStorage(): void {
   const savedProvider = safeGetItem('fm_provider')
   if (savedProvider !== 'local' && savedProvider !== 'anthropic' && savedProvider !== 'moonshot' && savedProvider !== 'ollama') {
@@ -579,7 +586,7 @@ function App() {
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
   const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
-  const [ollamaModel, setOllamaModel] = useState<string>(() => safeGetItem('fm_ollama_model') || ollamaProvider.models[0].id)
+  const [ollamaModel, setOllamaModel] = useState<string>(() => readOllamaModel())
   const [ollamaEndpoint, setOllamaEndpoint] = useState<string>(() => safeGetItem('fm_ollama_endpoint') || 'http://127.0.0.1:11434')
   const normalizedActiveModel = activeProvider === 'local'
     ? localModel
