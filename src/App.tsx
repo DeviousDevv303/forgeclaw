@@ -22,9 +22,9 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, nexusProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL } from './lib/ai/providers/localInferenceProvider'
-import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL } from './lib/ai/providers/nexusProvider'
+import { DEFAULT_NEXUS_WEBGPU_MODEL, getNexusWebGpuState, subscribeNexusWebGpu, nexusWebGpuProvider } from './lib/ai/providers/nexusWebGpuProvider'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
@@ -617,12 +617,13 @@ function App() {
     const stored = safeGetItem('fm_local_endpoint')
     return !stored || stored === 'http://127.0.0.1:8080/v1' ? DEFAULT_LOCAL_ENDPOINT : stored
   })
-  const [nexusEndpoint, setNexusEndpoint] = useState<string>(() => safeGetItem('fm_nexus_endpoint') || DEFAULT_NEXUS_ENDPOINT)
+  const [nexusWebGpuState, setNexusWebGpuState] = useState(getNexusWebGpuState)
+  useEffect(() => subscribeNexusWebGpu(setNexusWebGpuState), [])
   const [activeModel, setActiveModel] = useState<string>(readOpenRouterModel)
   const normalizedActiveModel = activeProvider === 'local'
     ? localModel
     : activeProvider === 'nexus'
-      ? DEFAULT_NEXUS_MODEL
+      ? DEFAULT_NEXUS_WEBGPU_MODEL
       : activeProvider === 'anthropic'
       ? anthropicModel
       : activeProvider === 'moonshot'
@@ -631,7 +632,7 @@ function App() {
   const activeModelLabel = activeProvider === 'local'
     ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
     : activeProvider === 'nexus'
-      ? nexusProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
+      ? nexusWebGpuProvider.models.find(m => m.id === normalizedActiveModel)?.label ?? normalizedActiveModel
       : activeProvider === 'anthropic'
       ? anthropicProvider.models.find(m => m.id === anthropicModel)?.label ?? anthropicModel
       : activeProvider === 'moonshot'
@@ -770,10 +771,10 @@ function App() {
       ...prev,
       provider: activeProvider,
       model: normalizedActiveModel,
-      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? !!nexusEndpoint : !!(activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey),
+      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? true : !!(activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey),
       buildVersion: BUILD_COMMIT,
     }))
-  }, [normalizedActiveModel, apiKey, moonshotModel, moonshotApiKey, anthropicApiKey, localEndpoint, nexusEndpoint, activeProvider])
+  }, [normalizedActiveModel, apiKey, moonshotModel, moonshotApiKey, anthropicApiKey, localEndpoint, activeProvider])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -876,9 +877,9 @@ function App() {
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
-    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
+    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? '' : activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
     const currentProviderLabel = activeProvider === 'local' ? 'Local inference' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'openrouter' ? 'OpenRouter' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
-    const currentKeyFormat = activeProvider === 'local' ? DEFAULT_LOCAL_ENDPOINT : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : activeProvider === 'openrouter' ? 'sk-or-...' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
+    const currentKeyFormat = activeProvider === 'local' ? DEFAULT_LOCAL_ENDPOINT : activeProvider === 'nexus' ? 'browser://webgpu' : activeProvider === 'openrouter' ? 'sk-or-...' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
 
     if (!currentApiKey) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
@@ -1427,8 +1428,8 @@ function App() {
     setTestingKey(true)
     setTestKeyError('')
     try {
-      await testProviderKey(nexusEndpoint, 'nexus')
-      setTestKeyError('NEXUS runtime is reachable')
+      await testProviderKey('', 'nexus')
+      setTestKeyError('NEXUS WebGPU is available')
     } catch (err) {
       setTestKeyError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1804,7 +1805,7 @@ function App() {
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
                   <option value="moonshot" style={{ background: '#111' }}>Moonshot (Kimi)</option>
                   <option value="local" style={{ background: '#111' }}>Local Inference (llama.cpp)</option>
-                  <option value="nexus" style={{ background: '#111' }}>NEXUS/CORPUS (Termux local)</option>
+                  <option value="nexus" style={{ background: '#111' }}>NEXUS/CORPUS (Browser WebGPU)</option>
                 </select>
               </div>
 
@@ -1841,7 +1842,7 @@ function App() {
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>NEXUS/CORPUS</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Termux local runtime — no tools</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Browser-local WebLLM/WebGPU — no tools</span>
                 </div>
               )}
 
@@ -1911,9 +1912,9 @@ function App() {
                 <div style={{ marginBottom: '14px' }}>
                   <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>NEXUS Model</label>
                   <select value={normalizedActiveModel} disabled style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
-                    {nexusProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
+                    {nexusWebGpuProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
                   </select>
-                  <div style={{ color: '#22c55e', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Direct local NEXUS/libllama inference. Tool authority disabled.</div>
+                  <div style={{ color: nexusWebGpuState.status === 'error' ? '#ef4444' : '#22c55e', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{nexusWebGpuState.text}. Tool authority disabled.</div>
                 </div>
               )}
 
@@ -2028,11 +2029,10 @@ function App() {
               )}
               {activeProvider === 'nexus' && (
                 <div style={{ marginBottom: '14px' }}>
-                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>NEXUS HTTP Bridge Endpoint</label>
-                  <input type="url" placeholder={DEFAULT_NEXUS_ENDPOINT} value={nexusEndpoint} onChange={e => { setNexusEndpoint(e.target.value); safeSetItem('fm_nexus_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
-                  <button onClick={testNexusEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST NEXUS RUNTIME'}</button>
-                  {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
-                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Loopback-only Termux bridge at {DEFAULT_NEXUS_ENDPOINT}. NEXUS tool authority is disabled.</div>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>NEXUS WebGPU Runtime</label>
+                  <button onClick={testNexusEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Checking...' : 'CHECK WEBGPU'}</button>
+                  {testKeyError && <div style={{ color: testKeyError.includes('available') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>No Ollama, Termux, localhost bridge, or cloud inference is used by this mode. Model assets are cached by the browser.</div>
                 </div>
               )}
 
@@ -2040,9 +2040,9 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', activeProvider === 'local' ? 'Local Inference' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'moonshot' ? 'Moonshot' : 'OpenRouter'],
+                  ['runtime provider', activeProvider === 'local' ? 'Local Inference' : activeProvider === 'nexus' ? 'NEXUS/CORPUS WebGPU' : activeProvider === 'moonshot' ? 'Moonshot' : 'OpenRouter'],
                   ['runtime model', activeModelLabel],
-                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'nexus' ? (nexusEndpoint ? 'endpoint configured' : 'missing') : (activeProvider === 'moonshot' ? moonshotApiKey : apiKey) ? 'present' : 'missing'],
+                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'nexus' ? 'browser capability checked on demand' : (activeProvider === 'moonshot' ? moonshotApiKey : apiKey) ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
                   ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
@@ -2592,7 +2592,7 @@ function App() {
 
         {/* ── Agents Tab ── */}
         {activeTab === 'agents' && (
-          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : apiKey} />
+          <AgentsPanel activeProvider={activeProvider} activeModel={normalizedActiveModel} apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? '' : apiKey} />
         )}
 
         {activeTab === 'activity' && (

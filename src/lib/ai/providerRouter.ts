@@ -10,6 +10,7 @@ import { anthropicProvider } from './providers/anthropicProvider'
 import { moonshotProvider } from './providers/moonshotProvider'
 import { localInferenceProvider } from './providers/localInferenceProvider'
 import { nexusProvider } from './providers/nexusProvider'
+import { nexusWebGpuProvider } from './providers/nexusWebGpuProvider'
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
 
@@ -18,7 +19,7 @@ export const providers = {
   anthropic: anthropicProvider,
   moonshot: moonshotProvider,
   local: localInferenceProvider,
-  nexus: nexusProvider,
+  nexus: nexusWebGpuProvider,
 } as const
 
 export type ProviderId = keyof typeof providers
@@ -87,4 +88,4 @@ export async function testProviderKey(apiKey: string = '', providerId: ProviderI
   await providers[providerId].test(apiKey, workspaceId)
 }
 
-export { openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, nexusProvider }
+export { openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, nexusProvider, nexusWebGpuProvider }
