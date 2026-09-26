@@ -19,8 +19,8 @@ jobs:
           node-version: 22
           cache: 'npm'
       - run: npm install
-      - name: Patch Corpus/NEXUS WebGPU UI labels for Pages
-        run: node scripts/patchPagesWebGpuUi.mjs
+      - name: Patch GitHub read-only UI for Pages
+        run: node scripts/patchGithubReadUi.mjs
       - name: Build for GitHub Pages
         run: npm run build
         env:
