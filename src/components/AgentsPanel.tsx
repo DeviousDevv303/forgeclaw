@@ -12,6 +12,7 @@ interface CustomAgent {
 }
 
 interface AgentMessage {
+  id: string
   role: 'user' | 'assistant'
   content: string
   streaming?: boolean
@@ -33,6 +34,18 @@ function saveAgents(agents: CustomAgent[]) {
   safeSetItem(STORAGE_KEY, JSON.stringify(agents))
 }
 
+function chatKey(agentId: string): string {
+  return `fc_custom_agent_chat:${agentId}`
+}
+
+function loadChat(agentId: string): AgentMessage[] {
+  return safeJsonParse(safeGetItem(chatKey(agentId)), [])
+}
+
+function saveChat(agentId: string, messages: AgentMessage[]): void {
+  safeSetItem(chatKey(agentId), JSON.stringify(messages.slice(-100)))
+}
+
 export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanelProps) {
   const [agents, setAgents] = useState<CustomAgent[]>(loadAgents)
   const [activeAgent, setActiveAgent] = useState<CustomAgent | null>(null)
@@ -42,6 +55,7 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
   const [chatMessages, setChatMessages] = useState<AgentMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
   const openNew = () => {
@@ -70,45 +84,82 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
     const updated = agents.filter(a => a.id !== id)
     setAgents(updated)
     saveAgents(updated)
+    safeSetItem(chatKey(id), '')
     if (activeAgent?.id === id) setActiveAgent(null)
   }
 
-  const launchAgent = (agent: CustomAgent) => {
+  const openAgent = (agent: CustomAgent) => {
     setActiveAgent(agent)
-    setChatMessages([])
+    setChatMessages(loadChat(agent.id))
     setInput('')
   }
 
   const sendMessage = useCallback(async () => {
     if (!input.trim() || loading || !activeAgent) return
+    const agent = activeAgent
     const text = input.trim()
     setInput('')
-    const userMsg: AgentMessage = { role: 'user', content: text }
-    setChatMessages(prev => [...prev, userMsg, { role: 'assistant', content: '', streaming: true }])
+    const userMsg: AgentMessage = { id: `user-${Date.now()}`, role: 'user', content: text }
+    const assistantId = `assistant-${Date.now()}`
+    setChatMessages(prev => {
+      const next = [...prev, userMsg, { id: assistantId, role: 'assistant' as const, content: '', streaming: true }]
+      saveChat(agent.id, next)
+      return next
+    })
     setLoading(true)
+    const controller = new AbortController()
+    abortRef.current = controller
 
     try {
       const history = chatMessages.map(m => ({ role: m.role, content: m.content }))
       let buf = ''
-      await callProvider(activeProvider, activeModel, activeAgent.systemPrompt,
+      await callProvider(activeProvider, activeModel, agent.systemPrompt,
         [...history, { role: 'user', content: text }],
         apiKey,
         {
+          signal: controller.signal,
           onToken: (token: string) => {
+            if (controller.signal.aborted) return
             buf += token
-            setChatMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: buf, streaming: true } : m))
+            setChatMessages(prev => {
+              const next = prev.map(m => m.id === assistantId ? { ...m, content: buf, streaming: true } : m)
+              saveChat(agent.id, next)
+              return next
+            })
           },
         }
       )
-      setChatMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: buf || '(no response)', streaming: false } : m))
+      if (controller.signal.aborted) return
+      setChatMessages(prev => {
+        const next = prev.map(m => m.id === assistantId ? { ...m, content: buf || '(no response)', streaming: false } : m)
+        saveChat(agent.id, next)
+        return next
+      })
     } catch (err) {
+      if (controller.signal.aborted) return
       const msg = err instanceof Error ? err.message : 'Error'
-      setChatMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: `[ERROR]: ${msg}`, streaming: false } : m))
+      setChatMessages(prev => {
+        const next = prev.map(m => m.id === assistantId ? { ...m, content: `[ERROR]: ${msg}`, streaming: false } : m)
+        saveChat(agent.id, next)
+        return next
+      })
     } finally {
+      if (abortRef.current === controller) abortRef.current = null
       setLoading(false)
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
     }
   }, [input, loading, activeAgent, chatMessages, activeProvider, activeModel, apiKey])
+
+  const stopGeneration = () => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setChatMessages(prev => {
+      const next = prev.filter(message => !message.streaming)
+      if (activeAgent) saveChat(activeAgent.id, next)
+      return next
+    })
+    setLoading(false)
+  }
 
   const inputStyle: React.CSSProperties = {
     background: '#0a0a0a', color: '#ccc', border: '1px solid #222',
@@ -193,9 +244,11 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
             disabled={loading}
           />
-          <button onClick={sendMessage} disabled={loading || !input.trim()} style={{ ...btnStyle(true), padding: '10px 18px', opacity: (loading || !input.trim()) ? 0.5 : 1 }}>
-            {loading ? '…' : 'SEND'}
-          </button>
+          {loading ? (
+            <button onClick={stopGeneration} style={{ ...btnStyle(), padding: '10px 18px', color: '#fecaca', borderColor: '#ef4444', background: '#3f1111' }}>STOP</button>
+          ) : (
+            <button onClick={sendMessage} disabled={!input.trim()} style={{ ...btnStyle(true), padding: '10px 18px', opacity: !input.trim() ? 0.5 : 1 }}>SEND</button>
+          )}
         </div>
       </div>
     )
@@ -230,8 +283,8 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey }: AgentsPanel
               <div style={{ color: '#444', fontSize: '10px', fontFamily: 'monospace', marginBottom: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {agent.systemPrompt.slice(0, 90)}{agent.systemPrompt.length > 90 ? '…' : ''}
               </div>
-              <button onClick={() => launchAgent(agent)} style={{ ...btnStyle(true), width: '100%', padding: '7px' }}>
-                LAUNCH CHAT
+              <button onClick={() => openAgent(agent)} style={{ ...btnStyle(true), width: '100%', padding: '7px' }}>
+                OPEN CHAT
               </button>
             </div>
           ))}

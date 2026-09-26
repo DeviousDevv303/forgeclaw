@@ -1,6 +1,6 @@
 import type { InitProgressReport, MLCEngineInterface } from '@mlc-ai/web-llm'
 import type { AIProvider, AIRequest, AIResponse } from '../types'
-import { limitNexusContext } from '../nexusContext'
+import { adaptNexusMessages, limitNexusContext } from '../nexusContext'
 
 export const DEFAULT_NEXUS_WEBGPU_MODEL = 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'
 export const NEXUS_WEBGPU_MODELS = [
@@ -136,7 +136,7 @@ export const nexusWebGpuProvider: AIProvider = {
     publish({ status: 'generating', progress: 1, text: `Generating within ${bounded.tokenCount}/4096 conservative prompt tokens` })
     const messages = [
       { role: 'system' as const, content: bounded.systemPrompt },
-      ...bounded.messages.map(message => ({ role: message.role as 'user' | 'assistant', content: message.content })),
+      ...adaptNexusMessages(bounded.messages),
     ]
     const stream = await engine.chatCompletion({
       model: DEFAULT_NEXUS_WEBGPU_MODEL,
@@ -146,6 +146,7 @@ export const nexusWebGpuProvider: AIProvider = {
     })
     let text = ''
     for await (const chunk of stream) {
+      if (request.signal?.aborted) throw new DOMException('Generation aborted', 'AbortError')
       const delta = chunk.choices[0]?.delta?.content
       if (typeof delta === 'string' && delta) {
         text += delta

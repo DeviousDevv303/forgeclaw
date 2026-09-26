@@ -92,6 +92,7 @@ export interface CallResult {
 export interface CallOptions {
   tools?: ToolDef[]
   onToken?: (token: string) => void
+  signal?: AbortSignal
   maxTokens?: number
 }
 
@@ -110,6 +111,7 @@ export async function callProvider(
     maxTokens: options.maxTokens,
     tools: options.tools,
     onToken: options.onToken,
+    signal: options.signal,
   }
 
   if (providerId === 'corpus') {

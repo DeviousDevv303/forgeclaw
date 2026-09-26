@@ -1,5 +1,17 @@
 import type { AIMessage } from './types'
 
+export type NexusMessage = { role: 'user' | 'assistant'; content: string }
+
+/** WebLLM has no tool role; represent dispatcher results as user continuations. */
+export function adaptNexusMessages(messages: AIMessage[]): NexusMessage[] {
+  return messages.map(message => ({
+    role: message.role === 'tool' ? 'user' : message.role,
+    content: message.role === 'tool'
+      ? `[TOOL RESULT ${message.tool_call_id || 'unknown'}]\n${message.content}`
+      : message.content,
+  }))
+}
+
 /** Hard upper bound for the browser-local NEXUS prompt budget. */
 export const MAX_NEXUS_CONTEXT_TOKENS = 4096
 

@@ -156,6 +156,7 @@ export const localInferenceProvider: AIProvider = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+      signal: request.signal,
     })
     if (!response.ok) throw new Error(await responseError(response))
 

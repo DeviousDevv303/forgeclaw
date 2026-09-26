@@ -13,6 +13,7 @@ import {
 } from './nexusProvider'
 import { FORGE_TOOLS } from '../../forgeTools'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from '../manualToolMode'
+import { adaptNexusMessages } from '../nexusContext'
 
 describe('NEXUS provider adapter (Browser WebGPU path)', () => {
   it('exposes the WebGPU model list and a placeholder endpoint', () => {
@@ -60,5 +61,16 @@ describe('NEXUS provider adapter (Browser WebGPU path)', () => {
     const cleaned = stripToolSyntax(emitted)
     expect(cleaned).not.toContain('tool_call')
     expect(cleaned).toContain('STATUS: IN_PROGRESS')
+  })
+
+  it('keeps the next WebGPU request user/tool-safe after a real tool result', () => {
+    const adapted = adaptNexusMessages([
+      { role: 'user', content: 'Check the repository.' },
+      { role: 'assistant', content: '', tool_calls: [{ id: 'call-1', name: 'github_repo_state', input: {} }] },
+      { role: 'tool', content: 'repo: DeviousDevv303/forgeclaw', tool_call_id: 'call-1' },
+    ])
+    expect(adapted.map(message => message.role)).toEqual(['user', 'assistant', 'user'])
+    expect(adapted.at(-1)?.role).toBe('user')
+    expect(adapted.at(-1)?.content).toContain('[TOOL RESULT call-1]')
   })
 })

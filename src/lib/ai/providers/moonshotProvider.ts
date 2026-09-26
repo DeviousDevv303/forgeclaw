@@ -128,6 +128,7 @@ export const moonshotProvider: AIProvider = {
         Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify(body),
+      signal: request.signal,
     })
     
     if (!response.ok) {

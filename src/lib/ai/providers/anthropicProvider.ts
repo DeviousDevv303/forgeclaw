@@ -163,6 +163,7 @@ export const anthropicProvider: AIProvider = {
       method: 'POST',
       headers: headers(apiKey, request.workspaceId),
       body: JSON.stringify(body),
+      signal: request.signal,
     })
     if (!response.ok) throw new Error(await anthropicError(response))
 

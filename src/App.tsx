@@ -52,7 +52,6 @@ import type { ToolResult } from './lib/forgeTools'
 import { runSubAgent } from './lib/managedAgent'
 import {
   MAX_AGENT_ITERATIONS,
-  SOFT_REVIEW_ITERS,
   classifyToolFailure,
   decideRetry,
   isDestructiveTool,
@@ -199,15 +198,15 @@ For every task:
 
 1. INTERPRET — Determine the actual objective. Extract constraints, authority boundaries, and success criteria. Identify assumptions.
 
-2. PLAN — Before any tool execution, generate a concise execution plan: what will be done, why this approach was chosen, what success looks like, what dependencies exist. Plans should be operational, not essay-like. Do not overplan.
+2. UNDERSTAND — Determine the objective, constraints and success criteria without narrating the plan to the user.
 
 3. EXECUTE — Use available tools aggressively but deliberately. Take concrete action: read files, write files, fetch data, call APIs, spawn sub-agents, use memory, interact with systems. Action is preferred over speculation.
 
-4. VERIFY — After every meaningful action: inspect outputs, confirm expected state change, detect partial failure, validate assumptions. Never assume success.
+4. VERIFY — Inspect real tool outputs and confirm the requested result. Never assume success.
 
 5. ADAPT — If failure occurs: classify the failure, explain root cause, choose a new strategy, retry. Never silently abandon a failed path.
 
-6. ITERATE — Continue until objective is complete, a hard block is encountered, or the user explicitly stops.
+6. ITERATE — Continue until objective is complete, blocked, or explicitly stopped.
 
 FAILURE HANDLING
 Failure classes: TOOL_FAILURE | AUTH_FAILURE | NETWORK_FAILURE | DEPENDENCY_FAILURE | INVALID_ASSUMPTION | USER_CONSTRAINT | UNKNOWN
@@ -226,7 +225,7 @@ web_search (Brave), http_fetch, run_js (execute JS and see output), github_read_
 Do not describe what a tool would do — call it.
 
 QUALITY STANDARD — EXPERT LEVEL:
-Every artifact must be production-quality. Code must be complete, runnable, and correct — not pseudocode, not skeleton, not "add your logic here." Research must be specific — cite actual sources, patents, documents, names, dates. Plans must be concrete.
+Every artifact must be production-quality. Code must be complete, runnable, and correct. Use concrete evidence.
 
 BUILDER CAPABILITY:
 When asked to build anything — website, app, tool, script, game, API, CLI — produce the complete working implementation. Full HTML/CSS/JS for websites. Full components for React. You never redirect to Wix, WordPress, or third-party builders. You ARE the builder. The code you write must run without modification.
@@ -565,6 +564,7 @@ function App() {
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
+  const activeRunRef = useRef<{ id: string; controller: AbortController; messageId: string } | null>(null)
   const [testKeyError, setTestKeyError] = useState('')
   // Active execution is deterministic and does not auto-fallback. Local Mode is the default.
   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
@@ -835,7 +835,6 @@ function App() {
           .trim()
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
-
     const currentApiKey = activeProvider === 'corpus' || activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
     const currentProviderLabel = activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
     const currentKeyFormat = activeProvider === 'corpus' || activeProvider === 'local' ? 'http://127.0.0.1:11434/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
@@ -874,6 +873,10 @@ function App() {
       emitFailure({ source: 'forgemind', severity: 'warning', message: 'Guardian blocked this task.', context: { taskId } })
       return
     }
+
+    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const controller = new AbortController()
+    activeRunRef.current = { id: runId, controller, messageId: `${Date.now() + 1}` }
 
     setMessages(prev => [...prev, userMsg])
 
@@ -930,7 +933,7 @@ function App() {
 
       // ── Cloud agentic loop (tool calling, up to 15 iterations) ────────────
       source = 'cloud'
-      cloudMsgId = (Date.now() + 1).toString()
+      cloudMsgId = activeRunRef.current?.messageId ?? (Date.now() + 1).toString()
       const msgId = cloudMsgId
 
       // Streaming placeholder
@@ -967,14 +970,6 @@ function App() {
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
 
-        // Soft-review checkpoint at SOFT_REVIEW_ITERS — inject a progress prompt
-        if (iter === SOFT_REVIEW_ITERS && !isLastIter) {
-          emitForge({ type: 'CHECKPOINT', iter: SOFT_REVIEW_ITERS, total: MAX_AGENT_ITERATIONS })
-          conversationMessages.push({
-            role: 'user',
-            content: `[SOFT CHECKPOINT — iteration ${SOFT_REVIEW_ITERS}/${MAX_AGENT_ITERATIONS}] Summarize progress so far, set STATUS, and continue executing or mark COMPLETE/BLOCKED.`,
-          })
-        }
         // For no-tools models, treat every iteration as the final one
         const noMoreTools = isLastIter || !supportsTools
         let streamBuffer = ''
@@ -997,6 +992,7 @@ function App() {
           messages: conversationMessages,
           workspaceId: activeProvider === 'anthropic' ? (anthropicWorkspaceId.trim() || undefined) : undefined,
           tools: noMoreTools ? undefined : ATTRIBUTED_TOOLS,
+          signal: controller.signal,
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
             const displayText = streamBuffer.split(/\[FM:(THINK|TRACE)\]/i)[0]
@@ -1133,6 +1129,7 @@ function App() {
         ? { ...m, content: messageContent, plan, agentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: activeProvider, model: normalizedActiveModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
+      if (activeRunRef.current?.id !== runId || controller.signal.aborted) return
       setRequestStatus('success')
       setLastRequestError('')
       setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
@@ -1149,6 +1146,7 @@ function App() {
       }
       resolveTask(taskId)
     } catch (err) {
+      if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
       const rawMsg = err instanceof Error ? err.message : 'Unknown error'
       const msg = rawMsg
       setRequestStatus('error')
@@ -1174,7 +1172,12 @@ function App() {
           timestamp: Date.now(), source: 'local' as const,
         }])
       }
-    } finally { setLoading(false) }
+    } finally {
+      if (activeRunRef.current?.id === runId) {
+        activeRunRef.current = null
+        setLoading(false)
+      }
+    }
   }, [anthropicApiKey, moonshotApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
@@ -1204,6 +1207,23 @@ function App() {
     setAttachedFile(null)
     await sendPrompt(promptText, imageUrl)
   }
+
+  const stopGeneration = useCallback(() => {
+    const run = activeRunRef.current
+    if (!run) return
+    run.controller.abort()
+    activeRunRef.current = null
+    for (const resolve of coSignResolvers.current.values()) resolve(false)
+    coSignResolvers.current.clear()
+    setPendingCoSigns([])
+    // Remove only the active streaming placeholder. The last committed user
+    // message remains valid, and the next request starts with user/tool-safe history.
+    setMessages(prev => prev.filter(message => message.id !== run.messageId))
+    setLoading(false)
+    setRequestStatus('idle')
+    setLastRequestError('Generation cancelled by user.')
+    emitForge({ type: 'MISSION_BLOCKED', reason: 'Generation cancelled by user.' })
+  }, [emitForge])
 
   const handleCopy = (id: string, text: string) => {
     navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000)
@@ -2483,7 +2503,11 @@ function App() {
                     {chatListening ? 'REC' : 'MIC'}
                   </button>
                   <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
-                  <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage} disabled={loading}>SEND</button>
+                  {loading ? (
+                    <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '6px 14px', borderRadius: '5px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={stopGeneration} aria-label="Stop generation">STOP</button>
+                  ) : (
+                    <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage}>SEND</button>
+                  )}
                 </div>
                 {/* Connectors panel — quick-toggle sheet */}
                 {showConnectors && (
