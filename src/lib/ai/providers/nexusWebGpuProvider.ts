@@ -90,8 +90,8 @@ async function getEngine(): Promise<MLCEngineInterface> {
     enginePromise = (async () => {
       try {
         return await createEngine()
-      } catch (firstError) {
-        // One automatic retry — transient HF/CDN or Cache/IndexedDB races are common on phones.
+      } catch {
+        // One automatic retry — transient HF/CDN races are common on phones.
         publish({
           status: 'initializing',
           progress: 0,
