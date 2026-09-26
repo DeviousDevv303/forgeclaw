@@ -8,8 +8,7 @@ export const NEXUS_WEBGPU_MODELS = [
     id: DEFAULT_NEXUS_WEBGPU_MODEL,
     label: 'Qwen2.5 1.5B Instruct Q4 (Browser WebGPU)',
     contextK: 4,
-    note: 'Browser-local WebLLM/WebGPU; model assets are cached by the browser',
-    noTools: true,
+    note: 'Browser-local WebLLM/WebGPU; model assets cached in IndexedDB',
   },
 ]
 
@@ -33,12 +32,24 @@ function publish(next: NexusWebGpuState): void {
 function progressState(report: InitProgressReport): NexusWebGpuState {
   const text = report.text || 'Loading browser-local model'
   const normalized = text.toLowerCase()
-  const status: NexusWebGpuStatus = normalized.includes('download')
+  const status: NexusWebGpuStatus = normalized.includes('download') || normalized.includes('fetch')
     ? 'downloading'
-    : normalized.includes('load') || normalized.includes('initialize')
+    : normalized.includes('load') || normalized.includes('initialize') || normalized.includes('cache')
       ? 'loading'
       : 'initializing'
   return { status, progress: Math.max(0, Math.min(1, report.progress ?? 0)), text }
+}
+
+function friendlyLoadError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/Cache\.add|cache\.add|network error|Failed to fetch|NetworkError/i.test(message)) {
+    return (
+      'Model download/cache failed (network or storage). ' +
+      'Stay on Wi‑Fi, free storage space, hard-refresh, and retry. ' +
+      'Details: ' + message
+    )
+  }
+  return message
 }
 
 export function getNexusWebGpuState(): NexusWebGpuState {
@@ -55,24 +66,48 @@ export function isNexusWebGpuAvailable(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator && Boolean(navigator.gpu)
 }
 
+async function createEngine(): Promise<MLCEngineInterface> {
+  const { CreateMLCEngine, prebuiltAppConfig } = await import('@mlc-ai/web-llm')
+  // IndexedDB avoids Cache.add() failures common on mobile when caching HF model shards.
+  const appConfig = {
+    ...prebuiltAppConfig,
+    cacheBackend: 'indexeddb' as const,
+  }
+  return CreateMLCEngine(DEFAULT_NEXUS_WEBGPU_MODEL, {
+    appConfig,
+    initProgressCallback: (report: InitProgressReport) => publish(progressState(report)),
+  })
+}
+
 async function getEngine(): Promise<MLCEngineInterface> {
   if (!isNexusWebGpuAvailable()) {
-    const message = 'NEXUS WebGPU is unavailable in this browser. Enable WebGPU or use another NEXUS runtime.'
+    const message = 'NEXUS WebGPU is unavailable in this browser. Enable WebGPU or use a WebGPU-capable browser.'
     publish({ status: 'error', progress: 0, text: message, error: message })
     throw new Error(message)
   }
   if (!enginePromise) {
-    publish({ status: 'initializing', progress: 0, text: 'Checking WebGPU and initializing NEXUS' })
-    enginePromise = import('@mlc-ai/web-llm').then(({ CreateMLCEngine }) => CreateMLCEngine(DEFAULT_NEXUS_WEBGPU_MODEL, {
-      initProgressCallback: (report: InitProgressReport) => publish(progressState(report)),
-    })).then(engine => {
+    publish({ status: 'initializing', progress: 0, text: 'Checking WebGPU and initializing NEXUS (IndexedDB cache)' })
+    enginePromise = (async () => {
+      try {
+        return await createEngine()
+      } catch (firstError) {
+        // One automatic retry — transient HF/CDN or Cache/IndexedDB races are common on phones.
+        publish({
+          status: 'initializing',
+          progress: 0,
+          text: 'Retrying model load after cache/network error…',
+        })
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        return await createEngine()
+      }
+    })().then(engine => {
       publish({ status: 'ready', progress: 1, text: 'NEXUS WebGPU model ready' })
       return engine
     }).catch(error => {
       enginePromise = undefined
-      const message = error instanceof Error ? error.message : String(error)
+      const message = friendlyLoadError(error)
       publish({ status: 'error', progress: 0, text: message, error: message })
-      throw error
+      throw new Error(message)
     })
   }
   return enginePromise
