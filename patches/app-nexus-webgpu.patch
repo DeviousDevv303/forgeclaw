@@ -1,1 +1,29 @@
-See local commit 6fa630a for full App.tsx. Apply with: git apply patches/app-nexus-webgpu.patch
+diff --git a/src/App.tsx b/src/App.tsx
+index 45f1c71..37d05f1 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -22,7 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
+ import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
+ import type { ProviderId } from './lib/modelProviders'
+ import type { AIMessage } from './lib/ai/types'
+-import { sendViaRouter, testProviderKey, anthropicProvider, moonshotProvider, localInferenceProvider, ollamaProvider, providerSupportsTools } from './lib/ai/providerRouter'
++import { sendViaRouter, testProviderKey, anthropicProvider, moonshotProvider, localInferenceProvider, ollamaProvider, nexusWebGpuProvider, providerSupportsTools } from './lib/ai/providerRouter'
+ import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
+ import { requiresCoSign, extractThinking } from './lib/guardianGate'
+ import type { ToolResult } from './lib/forgeTools'
+@@ -424,7 +424,7 @@ function readOllamaModel(): string {
+ 
+ function purgeLegacyRuntimeStorage(): void {
+   const savedProvider = safeGetItem('fm_provider')
+-  if (savedProvider !== 'local' && savedProvider !== 'anthropic' && savedProvider !== 'moonshot' && savedProvider !== 'ollama') {
++  if (savedProvider !== 'local' && savedProvider !== 'anthropic' && savedProvider !== 'moonshot' && savedProvider !== 'ollama' && savedProvider !== 'nexus') {
+     safeSetItem('fm_provider', 'local')
+   }
+ }
+@@ -575,7 +575,7 @@ function App() {
+   const [testKeyError, setTestKeyError] = useState('')
+   // Active execution is deterministic and never falls back to another provider.
+   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
+-  const initialProvider: ProviderId = savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'local' || savedProvider === 'ollama' ? savedProvider : 'ollama'
++  const initialProvider: ProviderId = savedProvider === 'anthropic' || savedProvider === 'moonshot' || savedProvider === 'local' || savedProvider === 'ollama' || savedProvider === 'nexus' ? savedProvider : 'ollama'
+   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
