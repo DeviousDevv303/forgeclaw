@@ -2,6 +2,8 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ────────────────────────────────────────────────────────
 // Multi-provider runtime: Corpus/NEXUS Local + Anthropic + Moonshot (Kimi) + Local
+// Tool authority restored: requests pass through with tools/system prompt intact.
+// NEXUS/Corpus WebGPU report supportsTools=false; App uses manual tool mode.
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
@@ -22,28 +24,6 @@ export const providers = {
 } as const
 
 export type ProviderId = keyof typeof providers
-
-// TEMPORARY BYPASS: we are deliberately disabling the autonomous execution/tool stack
-// for normal chat while we debug the runaway token/input issue. This keeps the UI in
-// a normal Q&A mode and prevents the live execution loop from expanding context before
-// the visible answer is rendered.
-const NORMAL_CHAT_SYSTEM_PROMPT = `You are ForgeClaw.
-Answer the user's latest message directly and naturally.
-Do not plan, execute tools, call sub-agents, or emit OBJECTIVE/PLAN/EXECUTION/STATUS headers.
-Keep the answer concise and useful.
-After the answer, append a brief UI trace:
-[FM:TRACE]Direct response; no tools or autonomous execution used.[FM:TRACE_END]`
-
-function normalChatRequest(request: AIRequest): AIRequest {
-  const latestUserMessage = [...request.messages].reverse().find(message => message.role === 'user')
-
-  return {
-    ...request,
-    messages: latestUserMessage ? [latestUserMessage] : request.messages.slice(-1),
-    systemPrompt: NORMAL_CHAT_SYSTEM_PROMPT,
-    tools: undefined,
-  }
-}
 
 // ─── Router ───────────────────────────────────────────────────────────────
 
@@ -79,7 +59,9 @@ export async function sendViaRouter(
   }
 
   try {
-    const response = await provider.send(normalChatRequest(request), apiKey)
+    // Pass the request as-is. Providers that lack native tool support
+    // (NEXUS/Corpus WebGPU) ignore tools and rely on manual tool mode in App.
+    const response = await provider.send(request, apiKey)
     return { success: true, response }
   } catch (err) {
     const classified = classifyError(err, providerId)
@@ -93,12 +75,10 @@ export function isProviderConfigured(apiKey: string = '', providerId: ProviderId
   return providers[providerId].isConfigured(apiKey)
 }
 
-export function providerSupportsTools(_modelId: string, _providerId: ProviderId = 'local'): boolean {
-  void _modelId
-  void _providerId
-  // TEMPORARY BYPASS: keep all normal chat requests in plain Q&A mode while the
-  // live execution issue is being fixed. We do not want the model to enter the agent loop.
-  return false
+export function providerSupportsTools(modelId: string, providerId: ProviderId = 'local'): boolean {
+  const provider = providers[providerId]
+  if (!provider) return false
+  return provider.supportsTools(modelId)
 }
 
 export async function testProviderKey(apiKey: string = '', providerId: ProviderId = 'local', workspaceId?: string): Promise<void> {
