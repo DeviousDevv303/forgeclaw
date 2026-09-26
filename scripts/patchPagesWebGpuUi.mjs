@@ -192,12 +192,17 @@ const nexusNew = `              {activeProvider === 'corpus' && (
 if (app.includes(nexusOld)) { app = app.replace(nexusOld, nexusNew); applied++ }
 else console.warn('skip nexus panel')
 
-// Drop unused setter after removing endpoint input (eslint rejects _prefixed unused too)
-app = app.replace(
-  /const \[nexusEndpoint, (?:setNexusEndpoint|_setNexusEndpoint)\] = useState/g,
-  'const [nexusEndpoint] = useState',
-)
-applied++
+// Drop unused setter after removing endpoint input
+const setterPatterns = [
+  'const [nexusEndpoint, setNexusEndpoint] = useState',
+  'const [nexusEndpoint, _setNexusEndpoint] = useState',
+]
+for (const p of setterPatterns) {
+  if (app.includes(p)) {
+    app = app.replaceAll(p, 'const [nexusEndpoint] = useState')
+    applied++
+  }
+}
 
 if (app === before) {
   console.error('No patches applied')
