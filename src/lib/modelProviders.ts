@@ -3,11 +3,12 @@
 // ─── Provider Bridge ──────────────────────────────────────────────────────────
 
 import type { AIMessage, AIRequest } from './ai/types'
-import { DEFAULT_OPENROUTER_MODEL, openrouterProvider, resolveOpenRouterModel } from './ai/providers/openrouterProvider'
-import { ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, anthropicProvider } from './ai/providers/anthropicProvider'
+import { DEFAULT_OPENROUTER_MODEL, openrouterProvider } from './ai/providers/openrouterProvider'
+import { ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL } from './ai/providers/anthropicProvider'
 import { DEFAULT_MOONSHOT_MODEL, moonshotProvider } from './ai/providers/moonshotProvider'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL, localInferenceProvider } from './ai/providers/localInferenceProvider'
 import { DEFAULT_NEXUS_WEBGPU_MODEL, nexusWebGpuProvider } from './ai/providers/nexusWebGpuProvider'
+import { providers as registeredProviders } from './ai/providerRouter'
 import type { ToolCall, ToolDef } from './forgeTools'
 
 export type ProviderId = 'openrouter' | 'anthropic' | 'moonshot' | 'local' | 'nexus'
@@ -56,7 +57,7 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
   local: {
     id: 'local',
-    name: 'Local Inference (llama.cpp)',
+    name: 'Local Inference (Ollama)',
     url: `${DEFAULT_LOCAL_ENDPOINT}/chat/completions`,
     models: localInferenceProvider.models.map(model => ({ ...model })),
     keyPlaceholder: DEFAULT_LOCAL_ENDPOINT,
@@ -104,6 +105,7 @@ export async function callProvider(
   apiKey: string,
   options: CallOptions = {},
 ): Promise<CallResult> {
+  const provider = registeredProviders[providerId]
   const request: AIRequest = {
     systemPrompt,
     messages,
@@ -113,51 +115,14 @@ export async function callProvider(
     onToken: options.onToken,
   }
 
-  if (providerId === 'anthropic') {
-    const response = await anthropicProvider.send({ ...request, model: model || DEFAULT_ANTHROPIC_MODEL }, apiKey)
-    return { text: response.text, provider: 'anthropic', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
-  }
-  if (providerId === 'moonshot') {
-    const response = await moonshotProvider.send({ ...request, model: model || DEFAULT_MOONSHOT_MODEL }, apiKey)
-    return { text: response.text, provider: 'moonshot', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
-  }
-  if (providerId === 'local') {
-    const response = await localInferenceProvider.send({ ...request, model: model || DEFAULT_LOCAL_MODEL }, apiKey)
-    return { text: response.text, provider: 'local', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
-  }
-  if (providerId === 'nexus') {
-    const response = await nexusWebGpuProvider.send({ ...request, model: model || DEFAULT_NEXUS_WEBGPU_MODEL }, apiKey)
-    return { text: response.text, provider: 'nexus', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
-  }
-
-  const response = await openrouterProvider.send({ ...request, model: resolveOpenRouterModel(model) }, apiKey)
-  return { text: response.text, provider: 'openrouter', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
+  const response = await provider.send({ ...request, model: model || DEFAULT_MODEL[providerId] }, apiKey)
+  return { text: response.text, provider: providerId, model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
 }
 
 export function modelSupportsTools(providerId: ProviderId, modelId: string): boolean {
-  if (providerId === 'anthropic') return anthropicProvider.supportsTools(modelId)
-  if (providerId === 'moonshot') return moonshotProvider.supportsTools(modelId)
-  if (providerId === 'local') return localInferenceProvider.supportsTools(modelId)
-  if (providerId === 'nexus') return nexusWebGpuProvider.supportsTools(modelId)
-  return openrouterProvider.supportsTools(resolveOpenRouterModel(modelId))
+  return registeredProviders[providerId].supportsTools(modelId)
 }
 
 export async function testProviderKey(providerId: ProviderId, _model: string, apiKey: string): Promise<void> {
-  if (providerId === 'anthropic') {
-    await anthropicProvider.test(apiKey)
-    return
-  }
-  if (providerId === 'moonshot') {
-    await moonshotProvider.test(apiKey)
-    return
-  }
-  if (providerId === 'local') {
-    await localInferenceProvider.test(apiKey)
-    return
-  }
-  if (providerId === 'nexus') {
-    await nexusWebGpuProvider.test(apiKey)
-    return
-  }
-  await openrouterProvider.test(apiKey)
+  await registeredProviders[providerId].test(apiKey)
 }

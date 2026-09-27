@@ -32,6 +32,38 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
     }
   })
 
+  it('returns native tool calls from the local provider without hallucinating execution', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: 'I will inspect the calculation result.',
+          tool_calls: [{
+            id: 'call_run_js_1',
+            type: 'function',
+            function: { name: 'run_js', arguments: '{"code":"return 6 * 7"}' },
+          }],
+        },
+        finish_reason: 'tool_calls',
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const result = await localInferenceProvider.send({
+        systemPrompt: 'Use the tool when needed; never claim execution without a tool result.',
+        messages: [{ role: 'user', content: 'Calculate 6 * 7 using run_js.' }],
+        model: DEFAULT_LOCAL_MODEL,
+        tools: [{ name: 'run_js', description: 'Execute JavaScript.', parameters: { type: 'object' } }],
+      }, DEFAULT_LOCAL_ENDPOINT)
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+      const body = JSON.parse(String(init.body)) as { tools?: Array<{ function?: { name?: string } }> }
+      expect(body.tools?.[0]?.function?.name).toBe('run_js')
+      expect(result.toolCalls).toEqual([{ id: 'call_run_js_1', name: 'run_js', input: { code: 'return 6 * 7' } }])
+      expect(result.text).toContain('inspect')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('connects to llama.cpp and completes inference through the provider bridge', async () => {
     await localInferenceProvider.test(endpoint)
     const result = await callProvider(

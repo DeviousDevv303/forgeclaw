@@ -22,7 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { isProviderConfigured, sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL } from './lib/ai/providers/localInferenceProvider'
 import { DEFAULT_NEXUS_WEBGPU_MODEL, getNexusWebGpuState, subscribeNexusWebGpu, nexusWebGpuProvider } from './lib/ai/providers/nexusWebGpuProvider'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
@@ -878,10 +878,11 @@ function App() {
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
 
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? '' : activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey
-    const currentProviderLabel = activeProvider === 'local' ? 'Local inference' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'openrouter' ? 'OpenRouter' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
+    const currentProviderLabel = activeProvider === 'local' ? 'Local inference' : activeProvider === 'nexus' ? 'NEXUS/CORPUS WebGPU' : activeProvider === 'openrouter' ? 'OpenRouter' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'
     const currentKeyFormat = activeProvider === 'local' ? DEFAULT_LOCAL_ENDPOINT : activeProvider === 'nexus' ? 'browser://webgpu' : activeProvider === 'openrouter' ? 'sk-or-...' : activeProvider === 'anthropic' ? 'sk-ant-...' : 'sk-...'
+    const providerReady = isProviderConfigured(currentApiKey, activeProvider)
 
-    if (!currentApiKey) {
+    if (!providerReady) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
       setRequestStatus('blocked')
       setLastRequestError(missingKeyMessage)
@@ -918,7 +919,7 @@ function App() {
 
     setMessages(prev => [...prev, userMsg])
 
-    let source: 'local' | 'cloud' = 'cloud'
+    const source: 'local' | 'cloud' = activeProvider === 'local' || activeProvider === 'nexus' ? 'local' : 'cloud'
     let cloudMsgId: string | null = null
 
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
@@ -949,8 +950,7 @@ function App() {
       setLastRequestError('')
       setLastRequestLatencyMs(null)
 
-      // ── Cloud agentic loop (tool calling, up to 15 iterations) ────────────
-      source = 'cloud'
+      // ── Agentic loop (tool calling, up to 15 iterations) ─────────────────
       cloudMsgId = (Date.now() + 1).toString()
       const msgId = cloudMsgId
 
@@ -1119,7 +1119,7 @@ function App() {
         }
       }
 
-      setLastSource('cloud')
+      setLastSource(source)
       const { cleanText, tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
       logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
       // Sync plan to ForgeOps + emit terminal event
@@ -1127,7 +1127,7 @@ function App() {
       if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       const messageContent = cleanText || cleanOutput(finalText) || '(empty response)'
-      const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: 'Agentic execution via OpenRouter', steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
+      const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${currentProviderLabel}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
@@ -1155,14 +1155,13 @@ function App() {
       } else {
         setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
       }
-      // Auth/runtime failures are surfaced to the operator. No hidden provider fallback
-      // occurs while the runtime is locked to OpenRouter.
+      // Auth/runtime failures are surfaced to the operator. No hidden provider fallback occurs.
       const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)
       if (isAuthError) {
         setApiKeyStatus('invalid')
         setMessages(prev => [...prev, {
           id: (Date.now() + 2).toString(), role: 'assistant',
-          content: 'OpenRouter auth failed. Check your API key in Settings. Keys start with sk-or-...',
+          content: `${currentProviderLabel} authentication failed. Check its configuration in Settings (${currentKeyFormat}).`,
           timestamp: Date.now(), source: 'local' as const,
         }])
       }
@@ -1804,7 +1803,7 @@ function App() {
                   <option value="openrouter" style={{ background: '#111' }}>OpenRouter</option>
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
                   <option value="moonshot" style={{ background: '#111' }}>Moonshot (Kimi)</option>
-                  <option value="local" style={{ background: '#111' }}>Local Inference (llama.cpp)</option>
+                  <option value="local" style={{ background: '#111' }}>Local Inference (Ollama)</option>
                   <option value="nexus" style={{ background: '#111' }}>NEXUS/CORPUS (Browser WebGPU)</option>
                 </select>
               </div>
@@ -1835,7 +1834,7 @@ function App() {
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#a855f7', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Local Mode</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>OpenAI-compatible llama.cpp server</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>OpenAI-compatible local Ollama endpoint</span>
                 </div>
               )}
               {activeProvider === 'nexus' && (
@@ -2235,8 +2234,8 @@ function App() {
                   {/* Provider */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
                     <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
-                    <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● OpenRouter</div>
-                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime locked to OpenRouter</div>
+                    <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● {activeProvider === 'local' ? 'Local Inference' : activeProvider === 'nexus' ? 'NEXUS/CORPUS WebGPU' : activeProvider === 'openrouter' ? 'OpenRouter' : activeProvider === 'anthropic' ? 'Anthropic' : 'Moonshot'}</div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Runtime selected in the provider registry</div>
                   </div>
 
                   {/* Model */}
