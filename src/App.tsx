@@ -356,6 +356,15 @@ function cleanVisibleResponse(text: string): string {
   return cleanOutput(publicAnswer || formatScaffoldFallback(text) || text)
 }
 
+// TEMP PHONE DIAGNOSTIC: display provider text locally, masking recognizable credentials.
+function redactPhoneDiagnosticSecrets(text: string): string {
+  return text
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '[REDACTED_GITHUB_TOKEN]')
+    .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, '[REDACTED_API_KEY]')
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1[REDACTED]')
+    .replace(/((?:api[_ -]?key|access[_ -]?token|github[_ -]?token|token|secret|password|authorization)\s*["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi, '$1[REDACTED]')
+}
+
 function buildMessageTrace(message: Message): string | undefined {
   if (message.thinking?.trim()) return message.thinking.trim()
   if (message.trace?.trim()) return message.trace.trim()
@@ -623,6 +632,8 @@ function App() {
     status: 'running' | 'done' | 'error'
   }
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
+  // TEMP PHONE DIAGNOSTIC — component memory only; never persisted or transmitted.
+  const [phoneToolTrace, setPhoneToolTrace] = useState<string[]>([])
 
   // Diagnostics — operator visibility panel
   interface DiagnosticsState {
@@ -885,6 +896,7 @@ function App() {
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`
     const controller = new AbortController()
     activeRunRef.current = { id: runId, controller, messageId: `${Date.now() + 1}` }
+    setPhoneToolTrace([])
     if (isCodingTaskRequest(promptText) || agentResumedState) {
       setCodingAgentState(saveCodingAgentState({ sessionId, activeRunId: runId }))
     }
@@ -1061,7 +1073,9 @@ function App() {
         if (!result.toolCalls?.length) {
           // Check for manual tool mode (no native tool support)
           if (!supportsTools && result.text) {
+            setPhoneToolTrace(previous => [...previous, `PARSER_INPUT (response.text; recognizable credentials redacted):\n${redactPhoneDiagnosticSecrets(result.text)}`])
             const manualActions = parseManualToolCalls(result.text)
+            setPhoneToolTrace(previous => [...previous, `PARSER_ACTION_COUNT: ${manualActions.length}`])
             if (manualActions.length > 0) {
               // Convert manual actions to tool calls for execution
               result.toolCalls = toToolCalls(manualActions)
@@ -1071,6 +1085,7 @@ function App() {
           }
           
           if (!result.toolCalls?.length) {
+            if (!supportsTools && !result.text) setPhoneToolTrace(previous => [...previous, 'PARSER_INPUT: empty; PARSER_ACTION_COUNT: 0'])
             finalText = result.text || streamBuffer
             break
           }
@@ -1083,8 +1098,18 @@ function App() {
           setActivityLog(prev => [...prev.slice(-99), { id: actEntryId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
           emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
           emitForge({ type: 'TOOL_START', tool: call.name, iter })
-          const output = await executeTool(call, toolCtx)
-          if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+          setPhoneToolTrace(previous => [...previous, `EXECUTE_TOOL_ENTERED: true; tool=${call.name}`])
+          let output: string
+          try {
+            output = await executeTool(call, toolCtx)
+          } catch (error) {
+            setPhoneToolTrace(previous => [...previous, `EXECUTE_TOOL_RETURNED: false (threw ${error instanceof Error ? error.name : 'unknown error'}); aborted=${controller.signal.aborted}; runIdMatch=${activeRunRef.current?.id === runId}`])
+            throw error
+          }
+          const abortedAfterDispatch = controller.signal.aborted
+          const runIdMatchesAfterDispatch = activeRunRef.current?.id === runId
+          setPhoneToolTrace(previous => [...previous, `EXECUTE_TOOL_RETURNED: true; aborted=${abortedAfterDispatch}; runIdMatch=${runIdMatchesAfterDispatch}`])
+          if (abortedAfterDispatch || !runIdMatchesAfterDispatch) return
           const isErr = output.startsWith('[TOOL ERROR]')
           let retryAnnotation = ''
           if (isErr) {
@@ -1115,6 +1140,7 @@ function App() {
           // Inject retry guidance into tool result so the model adapts its next action
           const outputWithRetry = isErr && retryAnnotation ? `${output}\n\n${retryAnnotation}` : output
           iterResults.push({ toolCallId: call.id, name: call.name, output: outputWithRetry, isError: isErr, reasoningStepId: stepId })
+          setPhoneToolTrace(previous => [...previous, `ITER_RESULTS_PUSH: reached; count=${iterResults.length}; tool=${call.name}`])
           emitForge({ type: 'THREAD_MERGE', threadId: call.id })
         }
         allToolResults.push(...iterResults)
@@ -2538,6 +2564,13 @@ function App() {
                 <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{messages.filter(m => m.role === 'assistant').length} RESPONSES · {messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0)} TOOL CALLS</span>
               </div>
             </div>
+
+            {phoneToolTrace.length > 0 && (
+              <div style={{ border: '1px solid #78350f', background: '#1c1208', padding: '10px', marginBottom: '12px', color: '#fbbf24', fontSize: '10px' }}>
+                <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>TEMP PHONE DIAGNOSTIC — LOCAL ONLY (credential-like text redacted)</div>
+                <pre style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: '45vh', overflow: 'auto', font: 'inherit' }}>{phoneToolTrace.join('\n\n')}</pre>
+              </div>
+            )}
 
             {activityView === 'failures' && (
               <div style={{ flex: 1, minHeight: 0 }}>
