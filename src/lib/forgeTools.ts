@@ -60,7 +60,6 @@ export interface ToolContext {
   waPhoneNumberId?: string
   waAccessToken?: string
   waRecipient?: string
-  braveKey?: string
   googleToken?: string
   agentId?: string
   runId?: string
@@ -415,7 +414,6 @@ export function loadToolContext(): ToolContext {
     waPhoneNumberId: wa.phoneNumberId,
     waAccessToken:   wa.accessToken,
     waRecipient:     wa.recipientNumber,
-    braveKey:        safeGetItem('fc_brave_key')     || undefined,
     googleToken:     safeGetItem('fc_google_token')  || undefined,
   }
 }
@@ -661,11 +659,23 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const query = input.query as string
         const count = Math.min(parseInt(String(input.count || '5'), 10) || 5, 10)
 
-        if (ctx.braveKey) {
-          const res = await toolFetch(ctx,
-            `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`,
-            { headers: { Accept: 'application/json', 'X-Subscription-Token': ctx.braveKey } },
-          )
+        // Probe the local Deno engine quickly. Brave's subscription key belongs there, not in browser storage.
+        if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
+        let proxyAvailable = false
+        const healthController = new AbortController()
+        const healthTimeout = globalThis.setTimeout(() => healthController.abort(), 900)
+        try {
+          const health = await fetch('http://localhost:3001/health', { signal: healthController.signal })
+          proxyAvailable = health.ok
+        } catch {
+          // No local engine/CORS permission: preserve the public DuckDuckGo fallback below.
+        } finally {
+          globalThis.clearTimeout(healthTimeout)
+        }
+
+        if (proxyAvailable) {
+          const params = new URLSearchParams({ q: query, count: String(count) })
+          const res = await toolFetch(ctx, `http://localhost:3001/api/brave/search?${params}`)
           if (!res.ok) throw new Error(`Brave Search ${res.status}`)
           type BraveResult = { title: string; url: string; description: string }
           const data = await res.json() as { web?: { results: BraveResult[] } }

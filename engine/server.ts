@@ -5,6 +5,9 @@
 const PORT = Deno.env.get("PORT") ? parseInt(Deno.env.get("PORT")!) : 3001;
 const MOONSHOT_API_KEY = Deno.env.get("MOONSHOT_API_KEY") || "";
 const MOONSHOT_BASE_URL = "https://api.moonshot.cn/v1";
+// Set BRAVE_API_KEY in this Deno process's environment; never keep the Brave key in browser storage.
+const BRAVE_API_KEY = Deno.env.get("BRAVE_API_KEY") || "";
+const BRAVE_BASE_URL = "https://api.search.brave.com/res/v1/web/search";
 
 // CORS — allow GitHub Pages origin. Tighten this to your exact domain in prod.
 const CORS_HEADERS = {
@@ -24,7 +27,11 @@ Deno.serve({ port: PORT }, async (req) => {
 
   // Health check
   if (path === "/health" && req.method === "GET") {
-    return Response.json({ status: "ok", engine: "forgemind", version: "0.1.0" });
+    return Response.json({
+      status: "ok",
+      engine: "forgemind",
+      version: "0.1.0",
+    }, { headers: CORS_HEADERS });
   }
 
   // Moonshot proxy: /api/moonshot/v1/chat/completions → api.moonshot.cn/v1/chat/completions
@@ -35,7 +42,7 @@ Deno.serve({ port: PORT }, async (req) => {
     if (!MOONSHOT_API_KEY) {
       return Response.json(
         { error: "MOONSHOT_API_KEY not configured on server" },
-        { status: 500, headers: CORS_HEADERS }
+        { status: 500, headers: CORS_HEADERS },
       );
     }
 
@@ -59,13 +66,64 @@ Deno.serve({ port: PORT }, async (req) => {
         statusText: upstream.statusText,
         headers: {
           ...CORS_HEADERS,
-          "content-type": upstream.headers.get("content-type") || "application/json",
+          "content-type": upstream.headers.get("content-type") ||
+            "application/json",
         },
       });
     } catch (err) {
       return Response.json(
         { error: "Upstream Moonshot error", detail: String(err) },
-        { status: 502, headers: CORS_HEADERS }
+        { status: 502, headers: CORS_HEADERS },
+      );
+    }
+  }
+
+  // Brave Search relay: the browser calls localhost; Deno injects the server-side key.
+  if (path === "/api/brave/search" && req.method === "GET") {
+    const query = url.searchParams.get("q")?.trim() || "";
+    const requestedCount = parseInt(url.searchParams.get("count") || "5", 10);
+    const count = Math.min(
+      Math.max(Number.isFinite(requestedCount) ? requestedCount : 5, 1),
+      20,
+    );
+    if (!query) {
+      return Response.json({ error: "Missing q query parameter" }, {
+        status: 400,
+        headers: CORS_HEADERS,
+      });
+    }
+    if (!BRAVE_API_KEY) {
+      return Response.json(
+        { error: "BRAVE_API_KEY not configured on server" },
+        { status: 500, headers: CORS_HEADERS },
+      );
+    }
+
+    const targetUrl = new URL(BRAVE_BASE_URL);
+    targetUrl.searchParams.set("q", query);
+    targetUrl.searchParams.set("count", String(count));
+    try {
+      const upstream = await fetch(targetUrl, {
+        headers: {
+          Accept: "application/json",
+          "X-Subscription-Token": BRAVE_API_KEY,
+        },
+      });
+
+      // Preserve Brave's JSON response/status while adding the engine's browser CORS headers.
+      return new Response(upstream.body, {
+        status: upstream.status,
+        statusText: upstream.statusText,
+        headers: {
+          ...CORS_HEADERS,
+          "content-type": upstream.headers.get("content-type") ||
+            "application/json",
+        },
+      });
+    } catch (err) {
+      return Response.json(
+        { error: "Upstream Brave Search error", detail: String(err) },
+        { status: 502, headers: CORS_HEADERS },
       );
     }
   }
@@ -73,10 +131,16 @@ Deno.serve({ port: PORT }, async (req) => {
   // SQLite persistence routes (stub — wire your db.ts here)
   if (path === "/api/ledger" && req.method === "POST") {
     // Wire to engine/db/db.ts
-    return Response.json({ status: "not-implemented" }, { status: 501, headers: CORS_HEADERS });
+    return Response.json({ status: "not-implemented" }, {
+      status: 501,
+      headers: CORS_HEADERS,
+    });
   }
 
-  return Response.json({ error: "Not found" }, { status: 404, headers: CORS_HEADERS });
+  return Response.json({ error: "Not found" }, {
+    status: 404,
+    headers: CORS_HEADERS,
+  });
 });
 
 console.log(`ForgeMind engine running on http://localhost:${PORT}`);
