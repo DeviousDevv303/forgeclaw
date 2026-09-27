@@ -22,7 +22,7 @@ import {
 } from './managedAgent'
 import { FORGE_TOOLS, loadToolContext } from './forgeTools'
 import { injectToolSchema, injectToolSchemaWithinBudget, parseManualToolCalls, stripToolSyntax } from './ai/manualToolMode'
-import { MAX_NEXUS_CONTEXT_TOKENS, conservativeTokenCount, limitNexusContext } from './ai/nexusContext'
+import { boundPrefixByBudget, MAX_NEXUS_CONTEXT_TOKENS, conservativeTokenCount, limitNexusContext } from './ai/nexusContext'
 import { PROVIDERS, modelSupportsTools } from './modelProviders'
 import { hasSuccessfulRepositoryEvidence } from './codingAgentRuntime'
 
@@ -151,6 +151,22 @@ describe('budget-aware manual tool catalog', () => {
     expect(bounded.systemPrompt).toContain('```tool_call')
     expect(bounded.systemPrompt).toContain('github_repo_state')
     expect(String(bounded.messages.at(-1)?.content)).toContain('USER:')
+  })
+
+  it('keeps the ForgeMind manual protocol and first GitHub reads after prose reservation', () => {
+    const granted = toolsForCapability('coding-readonly', FORGE_TOOLS)
+    const longForgeMindPrompt = 'IDENTITY\n' + 'x'.repeat(9000) + '\nEXECUTION RULES\nUse tools.'
+    const catalog = injectToolSchemaWithinBudget(
+      boundPrefixByBudget(longForgeMindPrompt, 1024),
+      granted,
+      MAX_NEXUS_CONTEXT_TOKENS - 1024,
+    )
+    const bounded = limitNexusContext(catalog.systemPrompt, [{ role: 'user', content: 'repository task' }], MAX_NEXUS_CONTEXT_TOKENS)
+    expect(catalog.included).toContain('github_repo_state')
+    expect(catalog.included).toContain('github_list_files')
+    expect(bounded.systemPrompt).toContain('```tool_call')
+    expect(bounded.systemPrompt).toContain('github_repo_state')
+    expect(bounded.systemPrompt).toContain('github_list_files')
   })
 })
 

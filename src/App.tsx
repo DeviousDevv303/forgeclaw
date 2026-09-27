@@ -26,7 +26,7 @@ import { sendViaRouter, testProviderKey, corpusProvider, nexusProvider, anthropi
 import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL } from './lib/ai/providers/nexusProvider'
 import { corpusRepository } from './lib/corpus'
 import { injectToolSchemaWithinBudget, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
-import { MAX_NEXUS_CONTEXT_TOKENS } from './lib/ai/nexusContext'
+import { boundPrefixByBudget, MAX_NEXUS_CONTEXT_TOKENS } from './lib/ai/nexusContext'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { applyAttributionContract, FORGECLAW_AGENT_ID } from './lib/githubAttribution'
 import {
@@ -52,7 +52,7 @@ import {
 import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
 import { extractThinking } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
-import { runSubAgent } from './lib/managedAgent'
+import { runSubAgent, toolsForCapability } from './lib/managedAgent'
 import {
   MAX_AGENT_ITERATIONS,
   classifyToolFailure,
@@ -897,6 +897,10 @@ function App() {
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
     const relevant = findRelevant(corpus, promptText, 3)
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
+    const codingTask = isCodingTaskRequest(promptText)
+    const runtimeTools = codingTask
+      ? applyAttributionContract(toolsForCapability('coding-readonly', FORGE_TOOLS))
+      : ATTRIBUTED_TOOLS
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'
@@ -917,7 +921,11 @@ function App() {
     // the operator to paste repository contents. Budget it here instead.
     const manualToolInjection = supportsNativeTools
       ? null
-      : injectToolSchemaWithinBudget(finalSystemPrompt, ATTRIBUTED_TOOLS, MAX_NEXUS_CONTEXT_TOKENS - 1024)
+      : injectToolSchemaWithinBudget(
+        boundPrefixByBudget(finalSystemPrompt, 1024),
+        runtimeTools,
+        MAX_NEXUS_CONTEXT_TOKENS - 1024,
+      )
     const activeSystemPrompt = supportsNativeTools
       ? finalSystemPrompt
       : manualToolInjection!.systemPrompt
@@ -929,7 +937,6 @@ function App() {
     let effectivePrompt = promptText
     const owner = (ghOwner || CANONICAL_IDENTITY.owner).trim()
     const repo = (ghRepo || CANONICAL_IDENTITY.repository).trim()
-    const codingTask = isCodingTaskRequest(promptText)
     if (codingTask && codingAgentState.taskStatus === 'idle') {
       setCodingAgentState(saveCodingAgentState({
         task: promptText,
@@ -1013,7 +1020,7 @@ function App() {
         const requestMetrics = measureRequestMetrics({
           systemPrompt: activeSystemPrompt,
           userMessages: conversationMessages.filter(message => message.role === 'user').map(message => message.content).join('\n'),
-          toolDefinitions: noMoreTools ? undefined : ATTRIBUTED_TOOLS,
+          toolDefinitions: noMoreTools ? undefined : runtimeTools,
           toolResults: conversationMessages.filter(message => message.role === 'tool').map(message => message.content).join('\n'),
           modelCalls: iter + 1,
           toolCalls: allToolResults.length,
@@ -1024,7 +1031,7 @@ function App() {
           systemPrompt: activeSystemPrompt,
           messages: conversationMessages,
           workspaceId: activeProvider === 'anthropic' ? (anthropicWorkspaceId.trim() || undefined) : undefined,
-          tools: noMoreTools ? undefined : ATTRIBUTED_TOOLS,
+          tools: noMoreTools ? undefined : runtimeTools,
           signal: controller.signal,
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
