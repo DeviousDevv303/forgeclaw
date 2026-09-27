@@ -21,7 +21,7 @@ import {
   SUB_AGENT_TASK_RESERVE,
 } from './managedAgent'
 import { FORGE_TOOLS, loadToolContext } from './forgeTools'
-import { injectToolSchema, injectToolSchemaWithinBudget, parseManualToolCalls, stripToolSyntax } from './ai/manualToolMode'
+import { injectToolSchema, injectToolSchemaWithinBudget, parseManualToolCalls, stripToolSyntax, toToolCalls } from './ai/manualToolMode'
 import { boundPrefixByBudget, MAX_NEXUS_CONTEXT_TOKENS, conservativeTokenCount, limitNexusContext } from './ai/nexusContext'
 import { PROVIDERS, modelSupportsTools } from './modelProviders'
 import { hasSuccessfulRepositoryEvidence } from './codingAgentRuntime'
@@ -112,6 +112,25 @@ describe('budget-aware manual tool catalog', () => {
     expect(parseManualToolCalls('run_js();')).toHaveLength(0)
   })
 
+  it('parses the live Qwen raw JSON object into the existing tool-call shape', () => {
+    const emitted = JSON.stringify({
+      name: 'github_repo_state',
+      arguments: { owner: 'DeviousDevv303', repo: 'forgeclaw', branch: null, sample_path: null },
+    })
+    const actions = parseManualToolCalls(emitted)
+    expect(actions).toEqual([{
+      toolName: 'github_repo_state',
+      params: { owner: 'DeviousDevv303', repo: 'forgeclaw', branch: null, sample_path: null },
+      rawOutput: emitted,
+    }])
+    expect(toToolCalls(actions)).toEqual([
+      expect.objectContaining({ name: 'github_repo_state', input: expect.objectContaining({ repo: 'forgeclaw' }) }),
+    ])
+    expect(stripToolSyntax(emitted)).toBe('')
+    expect(parseManualToolCalls('{"name":"github_repo_state","arguments":[] }')).toHaveLength(0)
+    expect(parseManualToolCalls('{"name":"not_a_tool","value":true}')).toHaveLength(0)
+  })
+
   it('is necessary: the full registry catalog does not fit the browser-local budget', () => {
     const unbounded = injectToolSchema('SYSTEM', FORGE_TOOLS).replace('SYSTEM', '')
     expect(conservativeTokenCount(unbounded)).toBeGreaterThan(MAX_NEXUS_CONTEXT_TOKENS)
@@ -187,6 +206,24 @@ describe('saved-agent run reaches real tools without native function calling', (
     expect(String(toolTurn?.content).includes('repo:') || String(toolTurn?.content).includes('[TOOL ERROR]')).toBe(true)
     expect(result).toContain('STATUS: COMPLETE')
     expect(result).not.toContain('github_repo_state();')
+  })
+
+  it('turns the live raw JSON payload into a real dispatcher continuation', async () => {
+    const { seen, callProviderFn } = makeTransport([
+      { text: JSON.stringify({ name: 'github_repo_state', arguments: { owner: 'DeviousDevv303', repo: 'forgeclaw', branch: null, sample_path: null } }) },
+      { text: 'STATUS: COMPLETE — grounded in the returned repository state.' },
+    ])
+
+    const result = await runSubAgent('You are the GitHub Coding Specialist.', TASK, undefined, 'nexus', 'qwen', '', FORGE_TOOLS, ctx(), {
+      capability: 'coding-readonly',
+      callProviderFn,
+    })
+
+    const toolTurn = seen[1].messages.find(message => message.role === 'tool')
+    expect(toolTurn).toBeDefined()
+    expect(String(toolTurn?.content).includes('repo:') || String(toolTurn?.content).includes('[TOOL ERROR]')).toBe(true)
+    expect(result).toContain('STATUS: COMPLETE')
+    expect(result).not.toContain('"name":"github_repo_state"')
   })
 
   it('reports the real unauthenticated failure when no token is configured', async () => {

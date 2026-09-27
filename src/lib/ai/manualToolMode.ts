@@ -165,6 +165,37 @@ export function parseManualToolCalls(text: string): ManualToolAction[] {
     }
   }
 
+  // Format D: Qwen may emit the same manual JSON object without the requested
+  // fence. Keep this deliberately narrow: a single top-level object with a
+  // string tool name and an arguments/input object. It is still converted to
+  // the normal ToolCall and must pass the existing dispatcher and evidence
+  // guard; arbitrary JSON is never treated as a tool call.
+  const rawJson = text.trim()
+  if (rawJson.startsWith('{') && rawJson.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(rawJson) as {
+        name?: unknown
+        arguments?: unknown
+        input?: unknown
+      }
+      const params = parsed.arguments ?? parsed.input
+      if (
+        typeof parsed.name === 'string' &&
+        params !== null &&
+        typeof params === 'object' &&
+        !Array.isArray(params)
+      ) {
+        actions.push({
+          toolName: parsed.name,
+          params: params as Record<string, unknown>,
+          rawOutput: rawJson,
+        })
+      }
+    } catch {
+      // skip malformed raw JSON
+    }
+  }
+
   // Format D: a small-model fallback for an argument-free GitHub call such as
   // `github_repo_state();`. This is intentionally narrow: only github_* names,
   // no arbitrary JavaScript, and an empty argument list. It converts the
@@ -189,12 +220,28 @@ export function toToolCalls(
 }
 
 export function stripToolSyntax(text: string): string {
-  return text
+  const stripped = text
     .replace(/```tool_call\s*\n[\s\S]*?```/gi, '')
     .replace(/TOOL_CALL:\s*[a-zA-Z0-9_]+\s*\n\{[\s\S]*?\}/gi, '')
     .replace(/<tool_call\s+name=["'][^"']+["']\s*>[\s\S]*?<\/tool_call>/gi, '')
     .replace(/\bgithub_[a-zA-Z0-9_]+\s*\(\s*\)\s*;?/g, '')
     .trim()
+
+  // Consume the exact raw JSON form recognized above. Only remove it when it
+  // is the complete response and has an object-valued arguments/input field;
+  // ordinary JSON prose must remain visible.
+  if (stripped.startsWith('{') && stripped.endsWith('}')) {
+    try {
+      const parsed = JSON.parse(stripped) as { name?: unknown; arguments?: unknown; input?: unknown }
+      const params = parsed.arguments ?? parsed.input
+      if (typeof parsed.name === 'string' && params !== null && typeof params === 'object' && !Array.isArray(params)) {
+        return ''
+      }
+    } catch {
+      // keep malformed JSON visible
+    }
+  }
+  return stripped
 }
 
 export function renderManualToolAction(action: ManualToolAction, toolDef?: ToolDef): string {
