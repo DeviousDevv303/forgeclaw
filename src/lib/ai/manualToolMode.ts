@@ -206,6 +206,35 @@ export function parseManualToolCalls(text: string): ManualToolAction[] {
     actions.push({ toolName: m[1], params: {}, rawOutput: m[0] })
   }
 
+// Format D: github_tool_name(key: "value" key2: unquoted)
+  const parenRe = /(github_[a-zA-Z0-9_]+)\s*\(([^)]*)\)/g
+  while ((m = parenRe.exec(text)) !== null) {
+    try {
+      const params: Record<string, unknown> = {}
+      const argText = m[2].trim()
+      let offset = 0
+      const argRe = /([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*("([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^\s,]+))/y
+
+      while (offset < argText.length) {
+        while (offset < argText.length && /[\s,]/.test(argText[offset])) offset++
+        if (offset >= argText.length) break
+        argRe.lastIndex = offset
+        const argMatch = argRe.exec(argText)
+        if (!argMatch) throw new Error('Malformed parenthesized tool arguments')
+        params[argMatch[1]] = argMatch[3] !== undefined
+          ? JSON.parse(`"${argMatch[3]}"`)
+          : argMatch[4] !== undefined
+            ? argMatch[4]
+            : argMatch[5]
+        offset = argRe.lastIndex
+      }
+
+      actions.push({ toolName: m[1], params, rawOutput: m[0] })
+    } catch {
+      // skip malformed
+    }
+  }
+
   return actions
 }
 
