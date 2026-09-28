@@ -23,4 +23,26 @@ describe('NEXUS browser WebGPU provider', () => {
       vi.unstubAllGlobals()
     }
   })
+
+  it('requires a usable GPU adapter rather than trusting navigator.gpu alone', async () => {
+    const requestAdapter = vi.fn().mockResolvedValue(null)
+    vi.stubGlobal('navigator', { gpu: { requestAdapter } })
+    try {
+      await expect(nexusWebGpuProvider.test('', undefined)).rejects.toThrow(/compatible GPU adapter/)
+      expect(requestAdapter).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('reports adapter acquisition separately from model readiness', async () => {
+    const requestAdapter = vi.fn().mockResolvedValue({})
+    vi.stubGlobal('navigator', { gpu: { requestAdapter } })
+    try {
+      await nexusWebGpuProvider.test('', undefined)
+      expect(requestAdapter).toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })

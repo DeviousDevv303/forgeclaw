@@ -25,7 +25,8 @@ import type { AIMessage } from './lib/ai/types'
 import { isProviderConfigured, sendViaRouter, testProviderKey, openrouterProvider, anthropicProvider, moonshotProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL } from './lib/ai/providers/localInferenceProvider'
 import { DEFAULT_NEXUS_WEBGPU_MODEL, getNexusWebGpuState, subscribeNexusWebGpu, nexusWebGpuProvider } from './lib/ai/providers/nexusWebGpuProvider'
-import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
+import { MAX_NEXUS_CONTEXT_TOKENS } from './lib/ai/nexusContext'
+import { injectToolSchemaWithinBudget, parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { requiresCoSign, extractThinking } from './lib/guardianGate'
 import type { ToolResult } from './lib/forgeTools'
@@ -753,28 +754,19 @@ function App() {
   useEffect(() => { safeSetItem('fm_anthropic_workspace_id', anthropicWorkspaceId) }, [anthropicWorkspaceId])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
-    setDiagnostics(prev => ({ ...prev, provider: activeProvider }))
   }, [activeProvider])
   useEffect(() => {
     if (activeProvider !== 'openrouter') return
     const normalizedModel = normalizeOpenRouterModel(activeModel)
-    if (activeModel !== normalizedModel) {
-      setActiveModel(normalizedModel)
-      return
-    }
     safeSetItem('fm_openrouter_model', normalizedModel)
     safeSetItem('fm_model', normalizedModel)
     safeSetItem('fm_openrouter_model_version', OPENROUTER_MODEL_STORAGE_VERSION)
   }, [activeModel, activeProvider])
-  useEffect(() => {
-    setDiagnostics(prev => ({
-      ...prev,
-      provider: activeProvider,
-      model: normalizedActiveModel,
-      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'nexus' ? true : !!(activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey),
-      buildVersion: BUILD_COMMIT,
-    }))
-  }, [normalizedActiveModel, apiKey, moonshotModel, moonshotApiKey, anthropicApiKey, localEndpoint, activeProvider])
+  const activeKeyPresent = activeProvider === 'local'
+    ? !!localEndpoint
+    : activeProvider === 'nexus'
+      ? true
+      : !!(activeProvider === 'openrouter' ? apiKey : activeProvider === 'anthropic' ? anthropicApiKey : moonshotApiKey)
 
   useEffect(() => {
     const loadVoices = () => {
@@ -938,10 +930,12 @@ function App() {
     // Check if current model supports native tools
     const supportsNativeTools = providerSupportsTools(normalizedActiveModel, activeProvider)
     
-    // Inject manual tool schema for no-tools models
+    // Bound the manual tool catalog for browser-local models. Without a hard
+    // budget, the catalog can consume the entire NEXUS prompt window and the
+    // model will answer as if tools do not exist.
     const activeSystemPrompt = supportsNativeTools
       ? finalSystemPrompt
-      : injectToolSchema(finalSystemPrompt, FORGE_TOOLS)
+      : injectToolSchemaWithinBudget(finalSystemPrompt, FORGE_TOOLS, MAX_NEXUS_CONTEXT_TOKENS - 1024).systemPrompt
 
     try {
       const requestStartedAt = performance.now()
@@ -2248,11 +2242,11 @@ function App() {
                   {/* API Key */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
                     <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>API KEY</div>
-                    <div style={{ color: diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
-                      {diagnostics.keyPresent ? '● PRESENT' : '● MISSING'}
+                    <div style={{ color: activeKeyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
+                      {activeKeyPresent ? '● PRESENT' : '● MISSING'}
                     </div>
                     <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                      {diagnostics.keyPresent ? 'Key format valid' : 'Enter key above'}
+                      {activeKeyPresent ? 'Runtime configured' : 'Enter key above'}
                     </div>
                   </div>
 

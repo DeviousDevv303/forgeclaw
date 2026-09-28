@@ -49,7 +49,7 @@ export function useWhatsApp() {
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   const [isPolling, setIsPolling] = useState(false)
-  const [connected, setConnected] = useState(false)
+  const connected = !!(credentials.phoneNumberId && credentials.accessToken && credentials.recipientNumber)
 
   // seenFiles avoids re-processing unchanged inbox files across polls
   const seenFiles = useRef(new Set<string>())
@@ -57,13 +57,6 @@ export function useWhatsApp() {
   // Persist credentials and messages whenever they change
   useEffect(() => { safeSetItem(STORAGE_KEY_CREDS, JSON.stringify(credentials)) }, [credentials])
   useEffect(() => { safeSetItem(STORAGE_KEY_MSGS, JSON.stringify(messages)) }, [messages])
-
-  // Mark connected when we have the minimum required fields
-  useEffect(() => {
-    setConnected(
-      !!(credentials.phoneNumberId && credentials.accessToken && credentials.recipientNumber)
-    )
-  }, [credentials])
 
   // ── Send ─────────────────────────────────────────────────────────────────────
 
@@ -181,9 +174,12 @@ export function useWhatsApp() {
   }, [credentials])
 
   useEffect(() => {
-    pollInbox()
-    const id = setInterval(pollInbox, POLL_INTERVAL_MS)
-    return () => clearInterval(id)
+    const initialPoll = window.setTimeout(() => { void pollInbox() }, 0)
+    const id = setInterval(() => { void pollInbox() }, POLL_INTERVAL_MS)
+    return () => {
+      window.clearTimeout(initialPoll)
+      clearInterval(id)
+    }
   }, [pollInbox])
 
   // ── Helpers ───────────────────────────────────────────────────────────────

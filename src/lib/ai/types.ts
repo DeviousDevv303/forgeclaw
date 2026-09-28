@@ -9,6 +9,7 @@ export interface AIRequest {
   maxTokens?: number
   tools?: AIToolDef[]
   onToken?: (token: string) => void
+  signal?: AbortSignal
   workspaceId?: string
 }
 

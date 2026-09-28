@@ -135,9 +135,12 @@ export function useWarRoom({
   }, [owner, repo, token, ghGet, addEvent, deriveAndSet])
 
   useEffect(() => {
-    poll()
-    const id = setInterval(poll, pollInterval)
-    return () => clearInterval(id)
+    const initialPoll = window.setTimeout(() => { void poll() }, 0)
+    const id = setInterval(() => { void poll() }, pollInterval)
+    return () => {
+      window.clearTimeout(initialPoll)
+      clearInterval(id)
+    }
   }, [poll, pollInterval])
 
   return { lanes, proposals, refresh: poll, isPolling }

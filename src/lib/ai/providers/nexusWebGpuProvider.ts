@@ -13,7 +13,7 @@ export const NEXUS_WEBGPU_MODELS = [
   },
 ]
 
-export type NexusWebGpuStatus = 'idle' | 'initializing' | 'downloading' | 'loading' | 'ready' | 'generating' | 'error'
+export type NexusWebGpuStatus = 'idle' | 'available' | 'initializing' | 'downloading' | 'loading' | 'ready' | 'generating' | 'error'
 export interface NexusWebGpuState {
   status: NexusWebGpuStatus
   progress: number
@@ -24,6 +24,12 @@ export interface NexusWebGpuState {
 let state: NexusWebGpuState = { status: 'idle', progress: 0, text: 'WebGPU not initialized' }
 let enginePromise: Promise<MLCEngineInterface> | undefined
 const listeners = new Set<(next: NexusWebGpuState) => void>()
+
+type WebGpuNavigator = Navigator & {
+  gpu?: {
+    requestAdapter: (options?: { powerPreference?: 'low-power' | 'high-performance' }) => Promise<unknown | null>
+  }
+}
 
 function publish(next: NexusWebGpuState): void {
   state = next
@@ -55,24 +61,61 @@ export function isNexusWebGpuAvailable(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator && Boolean(navigator.gpu)
 }
 
+async function acquireAdapter(): Promise<unknown> {
+  if (!isNexusWebGpuAvailable()) {
+    throw new Error('WebGPU API is unavailable in this browser')
+  }
+  const gpu = (navigator as WebGpuNavigator).gpu
+  if (!gpu) throw new Error('WebGPU API is unavailable in this browser')
+  const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' }) ?? await gpu.requestAdapter()
+  if (!adapter) {
+    throw new Error('WebGPU API is present, but this browser could not acquire a compatible GPU adapter')
+  }
+  return adapter
+}
+
+function friendlyLoadError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/Cache\.add|cache\.add|network error|Failed to fetch|NetworkError/i.test(message)) {
+    return `Model download/cache failed (network or storage). Stay on Wi-Fi, free storage, hard-refresh, and retry. Details: ${message}`
+  }
+  return message
+}
+
+async function createEngine(): Promise<MLCEngineInterface> {
+  const { CreateMLCEngine, prebuiltAppConfig } = await import('@mlc-ai/web-llm')
+  const appConfig = { ...prebuiltAppConfig, cacheBackend: 'indexeddb' as const }
+  return CreateMLCEngine(DEFAULT_NEXUS_WEBGPU_MODEL, {
+    appConfig,
+    initProgressCallback: (report: InitProgressReport) => publish(progressState(report)),
+  })
+}
+
 async function getEngine(): Promise<MLCEngineInterface> {
   if (!isNexusWebGpuAvailable()) {
-    const message = 'NEXUS WebGPU is unavailable in this browser. Enable WebGPU or use another NEXUS runtime.'
+    const message = 'NEXUS WebGPU is unavailable in this browser. Enable WebGPU or use a WebGPU-capable browser.'
     publish({ status: 'error', progress: 0, text: message, error: message })
     throw new Error(message)
   }
   if (!enginePromise) {
-    publish({ status: 'initializing', progress: 0, text: 'Checking WebGPU and initializing NEXUS' })
-    enginePromise = import('@mlc-ai/web-llm').then(({ CreateMLCEngine }) => CreateMLCEngine(DEFAULT_NEXUS_WEBGPU_MODEL, {
-      initProgressCallback: (report: InitProgressReport) => publish(progressState(report)),
-    })).then(engine => {
+    publish({ status: 'initializing', progress: 0, text: 'Acquiring GPU adapter and initializing NEXUS (IndexedDB cache)' })
+    enginePromise = (async () => {
+      await acquireAdapter()
+      try {
+        return await createEngine()
+      } catch {
+        publish({ status: 'initializing', progress: 0, text: 'Retrying model load after cache/network error…' })
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        return await createEngine()
+      }
+    })().then(engine => {
       publish({ status: 'ready', progress: 1, text: 'NEXUS WebGPU model ready' })
       return engine
     }).catch(error => {
       enginePromise = undefined
-      const message = error instanceof Error ? error.message : String(error)
+      const message = friendlyLoadError(error)
       publish({ status: 'error', progress: 0, text: message, error: message })
-      throw error
+      throw new Error(message)
     })
   }
   return enginePromise
@@ -104,6 +147,7 @@ export const nexusWebGpuProvider: AIProvider = {
     })
     let text = ''
     for await (const chunk of stream) {
+      if (request.signal?.aborted) throw new DOMException('Generation aborted', 'AbortError')
       const delta = chunk.choices[0]?.delta?.content
       if (typeof delta === 'string' && delta) {
         text += delta
@@ -114,8 +158,13 @@ export const nexusWebGpuProvider: AIProvider = {
     return { text, provider: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL, stopReason: 'stop' }
   },
   async test(): Promise<void> {
-    if (!isNexusWebGpuAvailable()) {
-      throw new Error('NEXUS WebGPU is unavailable in this browser; no localhost or Ollama fallback is used')
+    try {
+      await acquireAdapter()
+      publish({ status: 'available', progress: 0, text: 'NEXUS WebGPU API available; GPU adapter acquired' })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      publish({ status: 'error', progress: 0, text: message, error: message })
+      throw new Error(`${message}; no localhost or Ollama fallback is used`)
     }
   },
 }
