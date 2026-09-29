@@ -79,10 +79,12 @@ committed. Order is the frozen sequence.
 - Invariant: A self-edit targeting `foundation/codex/` returns a
   Guardian block.
 - Verification: 7 passed | 5 failed after commit.
-
+  
 ---
 
 ## Invariant 8 — concurrency-ownership
+
+
 
 - Test: `tests/foundation/concurrency-ownership.test.ts`
 - Implementation: `foundation/runtime/taskOwnership.ts`
@@ -97,10 +99,26 @@ committed. Order is the frozen sequence.
 
 - Test: `tests/foundation/event-ordering.test.ts`
 - Implementation: `foundation/runtime/eventOrdering.ts`
-- Commit: aeee1ff
+-  Commit: 22afc45
 - Invariant: A late event for a stopped run is dropped rather than
   applied.
 - Verification: 9 passed | 3 failed after commit.
 - Note: Instance-based runtime; no module-level singleton.
 
 ---
+
+
+t## Invariant 10 — recovery-wal
+
+- Test: `tests/foundation/recovery-wal.test.ts`
+- Implementation: `foundation/runtime/recoveryWal.ts`
+- Commit: PENDING
+- Invariant: A killed mid-transition recovers to a defined state.
+- Verification: 10 passed | 2 failed after commit.
+- Note: Rollback policy — pending transitions abort and return state
+  to fromState. Instance-based; no module-level singleton.
+
+---
+
+
+
