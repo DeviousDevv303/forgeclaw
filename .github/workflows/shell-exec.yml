@@ -1,23 +1,24 @@
-# ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
-# Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-# ─── shell-exec.yml — GitHub Actions Workflow for ForgeClaw Shell Execution ─────
-# Place this file in: .github/workflows/shell-exec.yml
-# Required by the shell_exec tool. Accepts arbitrary shell commands and returns output.
-
 name: ForgeClaw Shell Execution
 
 on:
   workflow_dispatch:
     inputs:
       command:
-        description: 'Shell command to execute'
+        description: Shell command approved by ForgeClaw
         required: true
         type: string
       working_directory:
-        description: 'Working directory relative to repo root'
+        description: Repository-relative working directory
         required: false
-        default: '.'
+        default: .
         type: string
+      invocation_id:
+        description: ForgeClaw invocation identifier
+        required: true
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   execute:
@@ -27,31 +28,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Execute shell command
-        id: shell_exec
+      - name: Execute command
         run: |
-          echo "=== ForgeClaw Shell Execution ==="
-          echo "Working directory: ${{ github.event.inputs.working_directory }}"
-          echo "Command: ${{ github.event.inputs.command }}"
-          echo "================================"
-          echo ""
-          
-          cd "${{ github.event.inputs.working_directory }}"
-          
-          # Run the command and capture output
-          {
-            echo "::group::Command execution"
-            bash -c "${{ github.event.inputs.command }}"
-            EXIT_CODE=$?
-            echo "::endgroup::"
-            echo ""
-            echo "=== EXECUTION COMPLETE ==="
-            echo "Exit code: $EXIT_CODE"
-            
-            if [ $EXIT_CODE -ne 0 ]; then
-              echo "Status: FAILURE"
-              exit $EXIT_CODE
-            else
-              echo "Status: SUCCESS"
-            fi
-          }
+          set +e
+          cd "${{ inputs.working_directory }}"
+          echo "=== FORGECLAW EXECUTION ==="
+          echo "invocation_id=${{ inputs.invocation_id }}"
+          echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          bash -c "${{ inputs.command }}"
+          EXIT_CODE=$?
+          echo "exit_code=$EXIT_CODE"
+          echo "end=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          exit $EXIT_CODE
