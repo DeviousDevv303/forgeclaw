@@ -1,3 +1,4 @@
+
 # Phase B — Invariant Log
 
 This log records each Phase B invariant as it is implemented and
@@ -85,9 +86,21 @@ committed. Order is the frozen sequence.
 
 - Test: `tests/foundation/concurrency-ownership.test.ts`
 - Implementation: `foundation/runtime/taskOwnership.ts`
-- Commit: PENDING
+- Commit: 442cfc8
 - Invariant: Two runs cannot simultaneously own the same task.
-- Verification: PENDING
+- Verification: 8 passed | 4 failed after commit.
 - Note: First invariant to introduce mutable runtime state.
+
+---
+
+## Invariant 9 — event-ordering
+
+- Test: `tests/foundation/event-ordering.test.ts`
+- Implementation: `foundation/runtime/eventOrdering.ts`
+- Commit: aeee1ff
+- Invariant: A late event for a stopped run is dropped rather than
+  applied.
+- Verification: 9 passed | 3 failed after commit.
+- Note: Instance-based runtime; no module-level singleton.
 
 ---
