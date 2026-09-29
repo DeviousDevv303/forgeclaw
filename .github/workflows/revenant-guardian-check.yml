@@ -1,0 +1,53 @@
+name: Revenant Guardian Check
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guardian:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run Phase B predicate tests
+        run: npx vitest run tests/foundation/
+
+      - name: Verify protected surface unchanged
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch origin "$BASE_REF"
+          BASE="origin/$BASE_REF"
+          CHANGED=$(git diff --name-only "$BASE"...HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+          echo
+
+          FAIL=0
+          if echo "$CHANGED" | grep -q '^foundation/'; then
+            echo "FAIL: PR touches foundation/"
+            FAIL=1
+          fi
+          if echo "$CHANGED" | grep -q '^tests/foundation/'; then
+            echo "FAIL: PR touches tests/foundation/"
+            FAIL=1
+          fi
+          if [ "$FAIL" = "1" ]; then
+            exit 1
+          fi
+          echo "PASS: protected surface untouched"
