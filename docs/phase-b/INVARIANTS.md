@@ -3,6 +3,10 @@
 This log records each Phase B invariant as it is implemented and
 committed. Order is the frozen sequence.
 
+All twelve invariants are green as of commit 15329b6 for invariant
+11 and the invariant 12 commit that follows. Phase B exit requires
+the DeepSeek adversarial attack to find no bypass.
+
 ---
 
 ## Invariant 1 — guardian-replacement
@@ -120,10 +124,29 @@ committed. Order is the frozen sequence.
 
 - Test: `tests/foundation/sovereignty.test.ts`
 - Implementation: `foundation/runtime/offlineRuntime.ts`
-- Commit: PENDING
+- Commit: 15329b6
 - Invariant: System can start/complete a minimal task with network
   egress blocked.
 - Verification: 11 passed | 1 failed after commit.
 - Note: Instance-based runtime; no provider or network dependency.
 
 ---
+
+## Invariant 12 — provider-removal
+
+- Test: `tests/foundation/provider-removal.test.ts`
+- Implementation: `foundation/runtime/providerRemoval.ts`
+- Commit: PENDING
+- Invariant: Removing providers produces a defined terminal state,
+  not a hang.
+- Verification: 12 passed | 0 failed after commit.
+- Note: Instance-based runtime; no module-level singleton.
+
+---
+
+## Phase B status
+
+- All 12 invariants implemented and green.
+- Phase B exit gate requires the DeepSeek adversarial attack against
+  the passing suite to find no bypass.
+- Phase C is prohibited until that exit gate is satisfied.
