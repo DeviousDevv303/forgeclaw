@@ -935,7 +935,8 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
 
         executionLog = executionLog
-          .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+          // eslint-disable-next-line no-control-regex
+          .replace(/\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
           .split('\n')
           .map(line => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.+-]+Z\s+/, ''))
           .join('\n')
