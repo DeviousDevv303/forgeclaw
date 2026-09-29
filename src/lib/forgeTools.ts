@@ -854,6 +854,35 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
           const runsData = await runsRes.json() as { workflow_runs?: WorkflowRun[] }
           const runs = runsData.workflow_runs || []
+
+          // TEMP DIAGNOSTIC: remove after one reproduction. Does not alter successful correlation.
+          if (runs.length > 0) {
+            const firstRun = runs[0]
+            const firstTitle = firstRun.display_title || firstRun.name || ""
+            const firstCreatedAt = Date.parse(firstRun.created_at)
+            const firstPredicate = firstTitle.includes(invocationId) && (
+              !Number.isNaN(firstCreatedAt)
+                ? firstCreatedAt >= dispatchStartedAt - 60000
+                : true
+            )
+
+            if (!firstPredicate) {
+              return {
+                __diagnostic: true,
+                __diagnosticText:
+                  `SHELL_CORRELATION_DIAGNOSTIC\n` +
+                  `keys=${JSON.stringify(Object.keys(firstRun))}\n` +
+                  `id=${String(firstRun.id)}\n` +
+                  `name=${JSON.stringify(firstRun.name)}\n` +
+                  `display_title=${JSON.stringify(firstRun.display_title)}\n` +
+                  `created_at=${JSON.stringify(firstRun.created_at)}\n` +
+                  `invocationId=${JSON.stringify(invocationId)}\n` +
+                  `nameMatches=${String(firstRun.name?.includes(invocationId) ?? false)}\n` +
+                  `displayTitleMatches=${String(firstRun.display_title?.includes(invocationId) ?? false)}\n` +
+                  `predicate=${String(firstPredicate)}`
+              } as unknown as WorkflowRun
+            }
+          }
           return runs.find(run => {
             const title = run.display_title || run.name || ''
             const createdAt = Date.parse(run.created_at)
@@ -869,6 +898,9 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         while (!run && Date.now() < findDeadline) {
           if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted while locating shell execution.'
           run = await findCorrelatedRun()
+          if (run && "__diagnostic" in (run as unknown as Record<string, unknown>)) {
+            return String((run as unknown as Record<string, unknown>).__diagnosticText)
+          }
           if (run) break
           await new Promise<void>((resolve) => setTimeout(resolve, 2000))
         }
