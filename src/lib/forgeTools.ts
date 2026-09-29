@@ -792,58 +792,49 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
       // ── Shell execution via GitHub Actions ───────────────────────────────────
       case 'shell_exec': {
-        const command     = input.command as string
-        const workingDir  = (input.working_directory as string) || '.'
-        const maxWait     = Math.min(parseInt(String(input.timeout_seconds || '180'), 10) || 180, 600)
-        const shouldWait  = (input.wait as boolean) !== false
+        const command    = input.command as string
+        const workingDir = (input.working_directory as string) || '.'
+        const maxWait    = Math.min(parseInt(String(input.timeout_seconds || '180'), 10) || 180, 600)
+        const shouldWait = (input.wait as boolean) !== false
 
-        if (!token) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
+        const sOwner = (input.owner as string) || ctx.ghOwner
+        const sRepo  = (input.repo  as string) || ctx.ghRepo
+        const sToken = ctx.ghToken
 
-        const headers = {
-          Authorization: `token ${token}`,
+        if (!sToken) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
+        if (!command) throw new Error('shell_exec requires a command.')
+
+        const sHeaders = {
+          Authorization: `token ${sToken}`,
           Accept: 'application/vnd.github.v3+json',
           'Content-Type': 'application/json',
         }
 
-        // ── 1. Dispatch workflow ───────────────────────────────────────────
-        const dispatchRes = await toolFetch(ctx,
-          `https://api.github.com/repos/${owner}/${repo}/actions/workflows/shell-exec.yml/dispatches`,
-          {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              ref: 'main',
-              inputs: {
-                command,
-                working_directory: workingDir,
-              },
-            }),
-          }
-        )
+        const invocationId = `shell-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
+        const workflowUrl = `https://api.github.com/repos/${sOwner}/${sRepo}/actions/workflows/shell-exec.yml`
+        const dispatchStartedAt = Date.now()
+
+        const dispatchRes = await toolFetch(ctx, `${workflowUrl}/dispatches`, {
+          method: 'POST',
+          headers: sHeaders,
+          body: JSON.stringify({
+            ref: 'main',
+            inputs: {
+              command,
+              working_directory: workingDir,
+              invocation_id: invocationId,
+            },
+          }),
+        })
 
         if (!dispatchRes.ok) {
-          if (dispatchRes.status === 404) {
-            throw new Error(
-              'shell-exec.yml workflow not found in repo. ' +
-              'Create .github/workflows/shell-exec.yml with workflow_dispatch trigger accepting "command" and "working_directory" inputs.'
-            )
-          }
           throw new Error(`GitHub dispatch ${dispatchRes.status}: ${dispatchRes.statusText}`)
         }
 
-        // ── 2. Wait briefly for GitHub to register the run ───────────────────
-        await new Promise(r => setTimeout(r, 4000))
-
-        // ── 3. Find the run we just created ──────────────────────────────────
-        const runsRes = await toolFetch(ctx,
-          `https://api.github.com/repos/${owner}/${repo}/actions/workflows/shell-exec.yml/runs?per_page=5&event=workflow_dispatch`,
-          { headers }
-        )
-
-        if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
-
         type WorkflowRun = {
           id: number
+          name?: string
+          display_title?: string
           status: string
           conclusion: string | null
           created_at: string
@@ -851,55 +842,137 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           run_number: number
         }
 
-        const runsData = await runsRes.json() as { workflow_runs: WorkflowRun[] }
-        const runs = runsData.workflow_runs
-
-        if (!runs.length) {
-          return `✓ Shell execution dispatched. Command: ${command}\nCould not find run ID immediately (GitHub indexing delay).\nCheck https://github.com/${owner}/${repo}/actions`
+        const findCorrelatedRun = async (): Promise<WorkflowRun | undefined> => {
+          const runsRes = await toolFetch(
+            ctx,
+            `${workflowUrl}/runs?event=workflow_dispatch&per_page=20`,
+            { headers: sHeaders },
+          )
+          if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
+          const runsData = await runsRes.json() as { workflow_runs?: WorkflowRun[] }
+          const runs = runsData.workflow_runs || []
+          return runs.find(run => {
+            const title = run.display_title || run.name || ''
+            const createdAt = Date.parse(run.created_at)
+            return title.includes(invocationId) && (
+              !Number.isNaN(createdAt) ? createdAt >= dispatchStartedAt - 60000 : true
+            )
+          })
         }
 
-        const run = runs[0]
+        const findDeadline = Date.now() + Math.min(maxWait * 1000, 30000)
+        let run: WorkflowRun | undefined
+
+        while (!run && Date.now() < findDeadline) {
+          if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted while locating shell execution.'
+          run = await findCorrelatedRun()
+          if (run) break
+          await new Promise<void>((resolve) => setTimeout(resolve, 2000))
+        }
+
+        if (!run) {
+          throw new Error(`Shell execution dispatched but correlated run "${invocationId}" was not found.`)
+        }
 
         if (!shouldWait) {
-          return `✓ Shell execution dispatched. Run #${run.run_number} (id: ${run.id})\nCommand: ${command}\nWorking dir: ${workingDir}\nStatus: ${run.status}\nURL: ${run.html_url}\n\nUse github_get_run_status with run_id="${run.id}" to check completion. Use github_get_run_logs with run_id="${run.id}" to read output.`
+          return `Shell execution dispatched. Run #${run.run_number} (id: ${run.id})\nInvocation: ${invocationId}\nURL: ${run.html_url}`
         }
 
-        // ── 4. Poll until complete or timeout ────────────────────────────────
-        const pollInterval = 5000 // 5 seconds
+        const pollInterval = 5000
         const startTime = Date.now()
         let lastStatus = run.status
+        let finalRun = run
 
         while (Date.now() - startTime < maxWait * 1000) {
-          const statusRes = await toolFetch(ctx,
-            `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
-            { headers }
+          if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted while waiting for shell execution.'
+          const statusRes = await toolFetch(
+            ctx,
+            `https://api.github.com/repos/${sOwner}/${sRepo}/actions/runs/${run.id}`,
+            { headers: sHeaders },
           )
-
           if (!statusRes.ok) throw new Error(`GitHub run status ${statusRes.status}`)
-
           const statusData = await statusRes.json() as WorkflowRun
+          finalRun = statusData
           lastStatus = statusData.status
-
-          if (statusData.status === 'completed') {
-            // Get logs for the run
-            const logsRes = await toolFetch(ctx,
-              `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}/logs`,
-              { headers, redirect: 'follow' }
-            )
-
-            const logs = logsRes.ok
-              ? '[Logs downloaded — see run page for full output]'
-              : '(logs not yet available)'
-
-            return `✓ Shell execution complete. Run #${statusData.run_number} (id: ${statusData.id})\nCommand: ${command}\nWorking dir: ${workingDir}\nStatus: completed\nConclusion: ${statusData.conclusion ?? 'unknown'}\nDuration: ${Math.round((Date.now() - startTime) / 1000)}s\nURL: ${statusData.html_url}\n\n${logs}`
-          }
-
-          // Still running — wait and poll again
-          await new Promise(r => setTimeout(r, pollInterval))
+          if (statusData.status === 'completed') break
+          await new Promise<void>((resolve) => setTimeout(resolve, pollInterval))
         }
 
-        // Timeout reached
-        return `⏱ Shell execution timed out after ${maxWait}s. Run #${run.run_number} (id: ${run.id})\nCommand: ${command}\nLast status: ${lastStatus}\nURL: ${run.html_url}\n\nUse github_get_run_status with run_id="${run.id}" to check completion later. Use github_get_run_logs with run_id="${run.id}" to read output.`
+        if (finalRun.status !== 'completed') {
+          return `Shell execution timed out after ${maxWait}s. Run #${finalRun.run_number}\nInvocation: ${invocationId}\nLast status: ${lastStatus}\nURL: ${finalRun.html_url}`
+        }
+
+        const jobsRes = await toolFetch(
+          ctx,
+          `https://api.github.com/repos/${sOwner}/${sRepo}/actions/runs/${finalRun.id}/jobs?per_page=20`,
+          { headers: sHeaders },
+        )
+        if (!jobsRes.ok) throw new Error(`GitHub jobs list ${jobsRes.status}`)
+
+        type WorkflowJob = { id: number; name: string; conclusion: string | null }
+        const jobsData = await jobsRes.json() as { jobs?: WorkflowJob[] }
+        const job = (jobsData.jobs || []).find(j => j.name === 'execute') || jobsData.jobs?.[0]
+
+        if (!job) {
+          return `[TOOL ERROR] Shell execution completed but the execute job was not found.\nRun #${finalRun.run_number}\nConclusion: ${finalRun.conclusion ?? 'unknown'}`
+        }
+
+        const logsRes = await toolFetch(
+          ctx,
+          `https://api.github.com/repos/${sOwner}/${sRepo}/actions/jobs/${job.id}/logs`,
+          { headers: sHeaders },
+        )
+        const rawLogs = logsRes.ok ? await logsRes.text() : ''
+
+        let executionLog = rawLogs
+        const marker = '=== FORGECLAW EXECUTION ==='
+        const markerIndex = rawLogs.indexOf(marker)
+        if (markerIndex >= 0) {
+          executionLog = rawLogs.slice(markerIndex)
+        }
+
+        executionLog = executionLog
+          .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+          .split('\n')
+          .map(line => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.+-]+Z\s+/, ''))
+          .join('\n')
+          .trim()
+
+        const exitMatch = executionLog.match(/(?:^|\n)exit_code=(\d+)/)
+        const exitCode = exitMatch ? Number(exitMatch[1]) : (finalRun.conclusion === 'success' ? 0 : 1)
+
+        const outputStart = executionLog.indexOf('\nstart=')
+        const outputAfterStart = outputStart >= 0 ? executionLog.slice(outputStart + 1) : executionLog
+        const exitIndex = outputAfterStart.search(/\nexit_code=\d+/)
+        const commandOutput = (
+          exitIndex >= 0 ? outputAfterStart.slice(0, exitIndex) : outputAfterStart
+        )
+          .replace(/^start=[^\n]*\n?/, '')
+          .replace(/\n?end=[^\n]*$/, '')
+          .trim()
+
+        if (exitCode !== 0 || finalRun.conclusion !== 'success') {
+          return [
+            `[TOOL ERROR] Shell execution failed.`,
+            `Run #${finalRun.run_number} (id: ${finalRun.id})`,
+            `Invocation: ${invocationId}`,
+            `Command: ${command}`,
+            `Exit code: ${exitCode}`,
+            `Conclusion: ${finalRun.conclusion ?? 'unknown'}`,
+            '',
+            commandOutput || '(no command output captured)',
+          ].join('\n')
+        }
+
+        return [
+          `Shell execution complete.`,
+          `Run #${finalRun.run_number} (id: ${finalRun.id})`,
+          `Invocation: ${invocationId}`,
+          `Command: ${command}`,
+          `Exit code: ${exitCode}`,
+          '',
+          commandOutput || '(command produced no output)',
+        ].join('\n')
       }
 
       // ── Spawn sub-agent ────────────────────────────────────────────────────────
