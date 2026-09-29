@@ -817,18 +817,35 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const workflowUrl = `https://api.github.com/repos/${sOwner}/${sRepo}/actions/workflows/shell-exec.yml`
         const dispatchStartedAt = Date.now()
 
-        const dispatchRes = await toolFetch(ctx, `${workflowUrl}/dispatches`, {
-          method: 'POST',
-          headers: sHeaders,
-          body: JSON.stringify({
-            ref: 'main',
-            inputs: {
-              command,
-              working_directory: workingDir,
-              invocation_id: invocationId,
-            },
-          }),
-        })
+        // TEMP DIAGNOSTIC SHELL_DIAG_A: isolate dispatch POST failures. Remove after one reproduction.
+        let dispatchRes: Response
+        try {
+          dispatchRes = await toolFetch(ctx, `${workflowUrl}/dispatches`, {
+            method: 'POST',
+            headers: sHeaders,
+            body: JSON.stringify({
+              ref: 'main',
+              inputs: {
+                command,
+                working_directory: workingDir,
+                invocation_id: invocationId,
+              },
+            }),
+          })
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err))
+          return (
+            `SHELL_DIAG_A
+` +
+            `url=${JSON.stringify(`${workflowUrl}/dispatches`)}
+` +
+            `errorName=${JSON.stringify(e.name)}
+` +
+            `errorMessage=${JSON.stringify(e.message)}
+` +
+            `hasToken=${String(Boolean(sToken))}`
+          )
+        }
 
         if (!dispatchRes.ok) {
           throw new Error(`GitHub dispatch ${dispatchRes.status}: ${dispatchRes.statusText}`)
@@ -846,11 +863,29 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
 
         const findCorrelatedRun = async (): Promise<WorkflowRun | undefined> => {
-          const runsRes = await toolFetch(
-            ctx,
-            `${workflowUrl}/runs?event=workflow_dispatch&per_page=20`,
-            { headers: sHeaders },
-          )
+          // TEMP DIAGNOSTIC SHELL_DIAG_B: isolate runs-list GET failures. Remove after one reproduction.
+          let runsRes: Response
+          try {
+            runsRes = await toolFetch(
+              ctx,
+              `${workflowUrl}/runs?event=workflow_dispatch&per_page=20`,
+              { headers: sHeaders },
+            )
+          } catch (err) {
+            const e = err instanceof Error ? err : new Error(String(err))
+            return {
+              __diagnostic: true,
+              __shellDiagB: true,
+              __diagnosticText:
+                `SHELL_DIAG_B
+` +
+                `url=${JSON.stringify(`${workflowUrl}/runs?event=workflow_dispatch&per_page=20`)}
+` +
+                `errorName=${JSON.stringify(e.name)}
+` +
+                `errorMessage=${JSON.stringify(e.message)}`,
+            } as unknown as WorkflowRun
+          }
           if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
           const runsData = await runsRes.json() as { workflow_runs?: WorkflowRun[] }
           const runs = runsData.workflow_runs || []
