@@ -999,6 +999,7 @@ function App() {
       })}`
       const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt }]
       const allToolResults: ToolResult[] = []
+      const toolAttempts: Array<{ name: string; input: string }> = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
       const chainStartedAt = new Date().toISOString()
       let finalText = ''
@@ -1086,6 +1087,10 @@ function App() {
           const output = await executeTool(call, toolCtx)
           if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
           const isErr = output.startsWith('[TOOL ERROR]')
+          toolAttempts.push({
+            name: call.name,
+            input: JSON.stringify(call.input, Object.keys(call.input).sort()),
+          })
           let retryAnnotation = ''
           if (isErr) {
             emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
@@ -1139,14 +1144,28 @@ function App() {
       const repositoryEvidenceRequired = codingTask || Boolean(agentResumedState)
       const repositoryEvidenceObserved = hasSuccessfulRepositoryEvidence(allToolResults)
       const completionBlocked = repositoryEvidenceRequired && !repositoryEvidenceObserved
-      const effectiveAgentPhase: AgentPhase = completionBlocked ? 'BLOCKED' : agentPhase
+      const hasUnresolvedToolFailure = allToolResults.some((result, failedIndex) => {
+        if (!result.isError) return false
+        const failedAttempt = toolAttempts[failedIndex]
+        return !allToolResults.some((laterResult, laterIndex) =>
+          laterIndex > failedIndex &&
+          !laterResult.isError &&
+          laterResult.name === result.name &&
+          toolAttempts[laterIndex]?.input === failedAttempt?.input
+        )
+      })
+      const effectiveAgentPhase: AgentPhase =
+        completionBlocked || hasUnresolvedToolFailure ? 'BLOCKED' : agentPhase
       const completionSafetyNotice = completionBlocked
         ? 'STATUS: BLOCKED\nRepository evidence was not obtained from an actual GitHub tool result; the model response was not accepted as completion.'
-        : ''
+        : hasUnresolvedToolFailure
+          ? 'STATUS: BLOCKED\nA requested tool execution failed and was not successfully resolved; the task was not accepted as complete.'
+          : ''
       await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
       // Sync plan to ForgeOps + emit terminal event
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (completionBlocked) emitForge({ type: 'MISSION_BLOCKED', reason: 'Repository evidence required, but no GitHub tool returned successfully' })
+      else if (hasUnresolvedToolFailure) emitForge({ type: 'MISSION_BLOCKED', reason: 'A requested tool execution failed and was not successfully resolved' })
       else if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       const messageContent = [cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)', completionSafetyNotice].filter(Boolean).join('\n\n')
@@ -1159,7 +1178,7 @@ function App() {
         ? { ...m, content: messageContent, plan, agentPhase: effectiveAgentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: activeProvider, model: normalizedActiveModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
-      setRequestStatus(completionBlocked ? 'blocked' : 'success')
+      setRequestStatus(completionBlocked || hasUnresolvedToolFailure ? 'blocked' : 'success')
       setLastRequestError('')
       setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
       // Persist the outcome so the next session resumes instead of restarting.
