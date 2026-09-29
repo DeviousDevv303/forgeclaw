@@ -810,7 +810,10 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           'Content-Type': 'application/json',
         }
 
-        const invocationId = `shell-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`
+        const randomSuffix = globalThis.crypto?.randomUUID?.().slice(0, 8)
+          ?? Math.random().toString(36).slice(2, 10)
+
+        const invocationId = `shell-${Date.now()}-${randomSuffix}`
         const workflowUrl = `https://api.github.com/repos/${sOwner}/${sRepo}/actions/workflows/shell-exec.yml`
         const dispatchStartedAt = Date.now()
 
