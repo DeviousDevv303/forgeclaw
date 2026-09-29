@@ -20,7 +20,7 @@ import {
   SUB_AGENT_SYSTEM_RESERVE,
   SUB_AGENT_TASK_RESERVE,
 } from './managedAgent'
-import { FORGE_TOOLS, loadToolContext } from './forgeTools'
+import { executeTool, FORGE_TOOLS, loadToolContext } from './forgeTools'
 import { injectToolSchema, injectToolSchemaWithinBudget, parseManualToolCalls, stripToolSyntax, toToolCalls } from './ai/manualToolMode'
 import { boundPrefixByBudget, MAX_NEXUS_CONTEXT_TOKENS, conservativeTokenCount, limitNexusContext } from './ai/nexusContext'
 import { PROVIDERS, modelSupportsTools } from './modelProviders'
@@ -45,6 +45,27 @@ afterEach(() => {
   storage.clear()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('repository path normalization', () => {
+  it('normalizes a leading slash before dispatching a GitHub file read', async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      expect(String(input)).toBe('https://api.github.com/repos/DeviousDevv303/forgeclaw/contents/README.md')
+      return new Response(JSON.stringify({ content: btoa('# ForgeClaw'), size: 10 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await executeTool(
+      { id: 'path-normalization', name: 'github_read_file', input: { path: '/README.md' } },
+      { ...ctx(), ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' },
+    )
+
+    expect(result).toContain('File: README.md')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })
 
 /** Replay scripted provider answers and capture exactly what the provider saw. */

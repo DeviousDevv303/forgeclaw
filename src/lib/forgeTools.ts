@@ -70,6 +70,10 @@ export interface ToolContext {
   spawnAgent?: (systemPrompt: string, task: string, tools?: string[]) => Promise<string>
 }
 
+function normalizeRepositoryPath(path: string): string {
+  return path.replace(/^\/+/, '')
+}
+
 // ─── Tool Definitions ─────────────────────────────────────────────────────────
 
 export const FORGE_TOOLS: ToolDef[] = [
@@ -449,7 +453,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
       // ── GitHub: read file ────────────────────────────────────────────────────
       case 'github_read_file': {
-        const path = input.path as string
+        const path = normalizeRepositoryPath(input.path as string)
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { headers })
@@ -462,7 +466,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
       // ── GitHub: write file ───────────────────────────────────────────────────
       case 'github_write_file': {
-        const path    = input.path    as string
+        const path    = normalizeRepositoryPath(input.path as string)
         const content = input.content as string
         const requestedMessage = input.message as string
         const branch  = input.branch  as string | undefined
@@ -552,7 +556,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
       // ── GitHub: list files ───────────────────────────────────────────────────
       case 'github_list_files': {
-        const path = (input.path as string) || ''
+        const path = normalizeRepositoryPath((input.path as string) || '')
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/contents/${path}`, { headers })
