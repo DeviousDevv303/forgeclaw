@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseManualToolCalls } from './manualToolMode'
+import { parseManualToolCalls, stripToolSyntax } from './manualToolMode'
 
 describe('parseManualToolCalls', () => {
   it('parses Format A fenced tool calls', () => {
@@ -10,6 +10,18 @@ describe('parseManualToolCalls', () => {
         rawOutput: '```tool_call\n{"name":"github_read_file","arguments":{"path":"package.json"}}\n```',
       },
     ])
+  })
+
+  it('parses fenced JSON tool calls', () => {
+    const emitted = '```json\n{"name":"github_read_file","arguments":{"path":"/README.md"}}\n```'
+    expect(parseManualToolCalls(emitted)).toEqual([
+      {
+        toolName: 'github_read_file',
+        params: { path: '/README.md' },
+        rawOutput: emitted,
+      },
+    ])
+    expect(stripToolSyntax(emitted)).toBe('')
   })
 
   it('parses Format B line tool calls', () => {

@@ -143,6 +143,20 @@ export function parseManualToolCalls(text: string): ManualToolAction[] {
     }
   }
 
+  // Format A2: some Qwen responses fence the same tool-call object as JSON.
+  const jsonFenceRe = /```json\s*\n([\s\S]*?)```/gi
+  while ((m = jsonFenceRe.exec(text)) !== null) {
+    try {
+      const parsed = JSON.parse(m[1].trim()) as { name?: unknown; arguments?: unknown; input?: unknown }
+      const params = parsed.arguments ?? parsed.input
+      if (typeof parsed.name === 'string' && params !== null && typeof params === 'object' && !Array.isArray(params)) {
+        actions.push({ toolName: parsed.name, params: params as Record<string, unknown>, rawOutput: m[0] })
+      }
+    } catch {
+      // skip malformed JSON fences
+    }
+  }
+
   // Format B: TOOL_CALL: name\n{json}
   const lineRe = /TOOL_CALL:\s*([a-zA-Z0-9_]+)\s*\n(\{[\s\S]*?\})/gi
   while ((m = lineRe.exec(text)) !== null) {
@@ -206,12 +220,13 @@ export function parseManualToolCalls(text: string): ManualToolAction[] {
     actions.push({ toolName: m[1], params: {}, rawOutput: m[0] })
   }
 
-// Format D: github_tool_name(key: "value" key2: unquoted)
+  // Format E: github_tool_name(key: "value" key2: unquoted)
   const parenRe = /(github_[a-zA-Z0-9_]+)\s*\(([^)]*)\)/g
   while ((m = parenRe.exec(text)) !== null) {
     try {
       const params: Record<string, unknown> = {}
       const argText = m[2].trim()
+      if (!argText) continue
       let offset = 0
       const argRe = /([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*("([^"\\]*(?:\\.[^"\\]*)*)"|'([^'\\]*(?:\\.[^'\\]*)*)'|([^\s,]+))/y
 
@@ -251,6 +266,17 @@ export function toToolCalls(
 export function stripToolSyntax(text: string): string {
   const stripped = text
     .replace(/```tool_call\s*\n[\s\S]*?```/gi, '')
+    .replace(/```json\s*\n([\s\S]*?)```/gi, (block, body: string) => {
+      try {
+        const parsed = JSON.parse(body.trim()) as { name?: unknown; arguments?: unknown; input?: unknown }
+        const params = parsed.arguments ?? parsed.input
+        return typeof parsed.name === 'string' && params !== null && typeof params === 'object' && !Array.isArray(params)
+          ? ''
+          : block
+      } catch {
+        return block
+      }
+    })
     .replace(/TOOL_CALL:\s*[a-zA-Z0-9_]+\s*\n\{[\s\S]*?\}/gi, '')
     .replace(/<tool_call\s+name=["'][^"']+["']\s*>[\s\S]*?<\/tool_call>/gi, '')
     .replace(/\bgithub_[a-zA-Z0-9_]+\s*\(\s*\)\s*;?/g, '')
