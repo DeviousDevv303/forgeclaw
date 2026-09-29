@@ -1,5 +1,7 @@
 name: ForgeClaw Shell Execution
 
+run-name: Shell exec ${{ inputs.invocation_id }}
+
 on:
   workflow_dispatch:
     inputs:
@@ -9,11 +11,11 @@ on:
         type: string
       working_directory:
         description: Repository-relative working directory
-        required: false
+        required: true
         default: .
         type: string
       invocation_id:
-        description: ForgeClaw invocation identifier
+        description: ForgeClaw invocation identifier used to correlate the run
         required: true
         type: string
 
@@ -29,13 +31,15 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Execute command
+        env:
+          FORGE_COMMAND: ${{ inputs.command }}
         run: |
           set +e
           cd "${{ inputs.working_directory }}"
           echo "=== FORGECLAW EXECUTION ==="
           echo "invocation_id=${{ inputs.invocation_id }}"
           echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          bash -c "${{ inputs.command }}"
+          bash -c "$FORGE_COMMAND"
           EXIT_CODE=$?
           echo "exit_code=$EXIT_CODE"
           echo "end=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
