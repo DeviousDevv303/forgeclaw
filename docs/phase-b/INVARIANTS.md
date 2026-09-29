@@ -1,4 +1,3 @@
-
 # Phase B — Invariant Log
 
 This log records each Phase B invariant as it is implemented and
@@ -79,12 +78,10 @@ committed. Order is the frozen sequence.
 - Invariant: A self-edit targeting `foundation/codex/` returns a
   Guardian block.
 - Verification: 7 passed | 5 failed after commit.
-  
+
 ---
 
 ## Invariant 8 — concurrency-ownership
-
-
 
 - Test: `tests/foundation/concurrency-ownership.test.ts`
 - Implementation: `foundation/runtime/taskOwnership.ts`
@@ -99,7 +96,7 @@ committed. Order is the frozen sequence.
 
 - Test: `tests/foundation/event-ordering.test.ts`
 - Implementation: `foundation/runtime/eventOrdering.ts`
--  Commit: 22afc45
+- Commit: 22afc45
 - Invariant: A late event for a stopped run is dropped rather than
   applied.
 - Verification: 9 passed | 3 failed after commit.
@@ -107,12 +104,11 @@ committed. Order is the frozen sequence.
 
 ---
 
-
-t## Invariant 10 — recovery-wal
+## Invariant 10 — recovery-wal
 
 - Test: `tests/foundation/recovery-wal.test.ts`
 - Implementation: `foundation/runtime/recoveryWal.ts`
-- Commit: PENDING
+- Commit: a4d5028
 - Invariant: A killed mid-transition recovers to a defined state.
 - Verification: 10 passed | 2 failed after commit.
 - Note: Rollback policy — pending transitions abort and return state
@@ -120,5 +116,14 @@ t## Invariant 10 — recovery-wal
 
 ---
 
+## Invariant 11 — sovereignty
 
+- Test: `tests/foundation/sovereignty.test.ts`
+- Implementation: `foundation/runtime/offlineRuntime.ts`
+- Commit: PENDING
+- Invariant: System can start/complete a minimal task with network
+  egress blocked.
+- Verification: 11 passed | 1 failed after commit.
+- Note: Instance-based runtime; no provider or network dependency.
 
+---
