@@ -899,7 +899,7 @@ function App() {
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
     const codingTask = isCodingTaskRequest(promptText)
     const runtimeTools = codingTask
-      ? applyAttributionContract(toolsForCapability('coding-readonly', FORGE_TOOLS))
+      ? applyAttributionContract(toolsForCapability('coding', FORGE_TOOLS))
       : ATTRIBUTED_TOOLS
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'

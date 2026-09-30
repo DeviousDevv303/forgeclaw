@@ -42,6 +42,7 @@ export const CODING_TOOL_ORDER: readonly string[] = [
   'github_list_files',
   'github_search_code',
   'github_verify_commit',
+  'shell_exec',
   'github_write_file',
   'github_create_issue',
   'github_run_workflow',

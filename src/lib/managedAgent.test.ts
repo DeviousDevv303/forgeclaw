@@ -107,6 +107,7 @@ describe('capability profiles decide tool authority', () => {
     const granted = toolsForCapability('coding', FORGE_TOOLS).map(tool => tool.name)
     for (const read of CODING_READONLY_TOOL_NAMES) expect(granted).toContain(read)
     expect(granted).toContain('github_write_file')
+    expect(granted).toContain('shell_exec')
     expect(granted).toContain('github_verify_commit')
     // Priority order is preserved so a tight budget keeps the valuable tools.
     expect(granted).toEqual(CODING_TOOL_ORDER.filter(name => FORGE_TOOLS.some(t => t.name === name)))
