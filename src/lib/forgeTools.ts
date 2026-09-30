@@ -329,7 +329,7 @@ export const FORGE_TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         command: { type: 'string', description: 'Shell command to execute. Can include &&, ||, pipes, redirects. Runs in bash -c.' },
-        working_directory: { type: 'string', description: 'Working directory relative to repo root. Default: repository root.' },
+        working_directory: { type: 'string', description: 'Repository-relative working directory. Omit this field or use "." for the repository root. NEVER use /workspace or any absolute path.' },
         timeout_seconds: { type: 'number', description: 'Maximum seconds to wait for completion. Default: 180. Max: 600.' },
         wait: { type: 'boolean', description: 'If true (default), polls until completion or timeout. If false, dispatches and returns immediately with run ID.' },
         exercise_id: { type: 'string', description: 'Optional stable Shell competency exercise ID. Verified results become an unapproved CORPUS candidate.' },
