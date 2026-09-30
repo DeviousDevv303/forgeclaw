@@ -901,6 +901,9 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       case 'shell_exec': {
         const command    = input.command as string
         const workingDir = (input.working_directory as string) || '.'
+        if (workingDir.startsWith('/')) {
+          throw new Error('shell_exec working_directory must be repository-relative (use "." for the repository root).')
+        }
         const maxWait    = Math.min(parseInt(String(input.timeout_seconds || '180'), 10) || 180, 600)
         const shouldWait = (input.wait as boolean) !== false
 
