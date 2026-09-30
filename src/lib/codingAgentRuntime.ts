@@ -5,7 +5,7 @@
 // actual tool execution — nothing is synthesised, and a failure is reported as a
 // failure instead of being smoothed over.
 
-import { executeTool, loadToolContext } from './forgeTools'
+import { executeTool, loadToolContext, type ToolDef } from './forgeTools'
 import { CANONICAL_IDENTITY, formatCanonicalIdentity, resolveCanonicalRepository } from './canonicalIdentity'
 import {
   loadCodingAgentState,
@@ -99,6 +99,25 @@ export function isCodingTaskRequest(prompt: string): boolean {
   const hasTarget = /\b(repo|repository|codebase|forgeclaw|source|file|files|branch|commit|head|github)\b/.test(t)
   const hasAction = /\b(check|inspect|read|fix|implement|add|change|modify|update|refactor|test|build|lint|commit|push|verify|debug|repair|write|create|feedback)\b/.test(t)
   return hasTarget && hasAction
+}
+
+/**
+ * Detect an operator-directed Shell operation before generic coding routing.
+ * This is intent classification only; execution still goes through executeTool
+ * and the existing Guardian gate.
+ */
+export function isExplicitShellRequest(prompt: string): boolean {
+  const text = prompt.trim().toLowerCase()
+  if (!text) return false
+  if (/\bshell_exec\b|\bshell command\b|\b(?:run|execute)\s+(?:the\s+)?(?:shell|command|bash)\b/.test(text)) return true
+  return /^(?:please\s+)?(?:(?:run|execute)\s+(?:the\s+)?|)(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/.test(text)
+}
+
+/** Select only the existing Shell tool for explicit Shell requests. */
+export function selectRequestTools(prompt: string, allTools: ToolDef[], defaultTools: ToolDef[]): ToolDef[] {
+  return isExplicitShellRequest(prompt)
+    ? allTools.filter(tool => tool.name === 'shell_exec')
+    : defaultTools
 }
 
 /**

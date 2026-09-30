@@ -42,6 +42,7 @@ import { resolveGithubToken } from './lib/githubAuth'
 import { persistGithubToken } from './lib/githubAuth'
 import {
   isCodingTaskRequest,
+  selectRequestTools,
   recordToolProgress,
   recordTaskOutcome,
   recordVerification,
@@ -898,9 +899,11 @@ function App() {
     const relevant = findRelevant(corpus, promptText, 3)
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
     const codingTask = isCodingTaskRequest(promptText)
-    const runtimeTools = codingTask
-      ? applyAttributionContract(toolsForCapability('coding-readonly', FORGE_TOOLS))
-      : ATTRIBUTED_TOOLS
+    const runtimeTools = selectRequestTools(
+      promptText,
+      ATTRIBUTED_TOOLS,
+      codingTask ? applyAttributionContract(toolsForCapability('coding-readonly', FORGE_TOOLS)) : ATTRIBUTED_TOOLS,
+    )
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'

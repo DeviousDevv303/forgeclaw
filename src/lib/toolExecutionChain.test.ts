@@ -22,6 +22,8 @@ import { loadCodingAgentState, saveCodingAgentState, clearCodingAgentState, rest
 import {
   parseRepoState,
   isCodingTaskRequest,
+  isExplicitShellRequest,
+  selectRequestTools,
   buildRuntimeRequestContext,
   measureRequestMetrics,
   CANONICAL_IDENTITY,
@@ -258,6 +260,23 @@ describe('persistent agent state', () => {
 })
 
 describe('coding task detection and repo state parsing', () => {
+  it('routes an explicit Shell command to shell_exec instead of repository inspection', () => {
+    expect(isExplicitShellRequest('git push origin main')).toBe(true)
+    expect(isExplicitShellRequest('execute git push origin main')).toBe(true)
+    const readonlyTools = FORGE_TOOLS.filter(tool => ['github_repo_state', 'github_read_file'].includes(tool.name))
+    const selected = selectRequestTools('git push origin main', FORGE_TOOLS, readonlyTools).map(tool => tool.name)
+    expect(selected).toEqual(['shell_exec'])
+    expect(selected).not.toContain('github_repo_state')
+  })
+
+  it('keeps ordinary repository-state requests on github_repo_state', () => {
+    expect(isExplicitShellRequest('inspect the repository and report the current HEAD')).toBe(false)
+    const readonlyTools = FORGE_TOOLS.filter(tool => ['github_repo_state', 'github_read_file'].includes(tool.name))
+    const selected = selectRequestTools('inspect the repository and report the current HEAD', FORGE_TOOLS, readonlyTools).map(tool => tool.name)
+    expect(selected).toContain('github_repo_state')
+    expect(selected).not.toContain('shell_exec')
+  })
+
   it('recognises coding objectives and ignores ordinary chat', () => {
     expect(isCodingTaskRequest('inspect the forgeclaw repository and identify current HEAD')).toBe(true)
     expect(isCodingTaskRequest('fix the tool dispatcher and push to GitHub')).toBe(true)
