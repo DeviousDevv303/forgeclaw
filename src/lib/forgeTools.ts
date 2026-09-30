@@ -432,6 +432,7 @@ export function loadToolContext(): ToolContext {
 
 const GITHUB_READ_RETRY_DELAYS_MS = [100, 250] as const
 const GITHUB_READ_RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504])
+const GITHUB_READ_TIMEOUT_MS = 10000
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === 'string') return input
@@ -490,8 +491,27 @@ async function toolFetch(ctx: ToolContext, input: RequestInfo | URL, init: Reque
   for (let attempt = 0; ; attempt += 1) {
     if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
 
+    const controller = new AbortController()
+    const parentSignal = ctx.signal ?? init.signal
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, GITHUB_READ_TIMEOUT_MS)
+
+    const onParentAbort = () => controller.abort()
+
+    if (parentSignal?.aborted) {
+      throw new DOMException('Run aborted', 'AbortError')
+    }
+
+    parentSignal?.addEventListener('abort', onParentAbort, { once: true })
+
     try {
-      const response = await fetch(input, { ...init, signal: ctx.signal ?? init.signal })
+      const response = await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      })
 
       if (
         !GITHUB_READ_RETRYABLE_STATUSES.has(response.status) ||
@@ -500,8 +520,18 @@ async function toolFetch(ctx: ToolContext, input: RequestInfo | URL, init: Reque
         return response
       }
     } catch (error) {
-      if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
+      if (parentSignal?.aborted) {
+        throw new DOMException('Run aborted', 'AbortError')
+      }
+
+      if (timedOut) {
+        throw new Error(`GitHub read timed out after ${GITHUB_READ_TIMEOUT_MS}ms`)
+      }
+
       if (attempt >= GITHUB_READ_RETRY_DELAYS_MS.length) throw error
+    } finally {
+      clearTimeout(timer)
+      parentSignal?.removeEventListener('abort', onParentAbort)
     }
 
     await waitForGithubRetry(GITHUB_READ_RETRY_DELAYS_MS[attempt], ctx.signal)
