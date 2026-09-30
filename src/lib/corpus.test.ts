@@ -41,6 +41,25 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(await repository.admitCandidate(candidate.id)).not.toBeNull()
   })
 
+  it('stores Shell evidence as an unapproved candidate and preserves provenance', async () => {
+    const repository = new CorpusRepository()
+    const { candidate } = await repository.appendShellExperience({
+      input: 'Identify the current repository directory.',
+      context: '{"exerciseId":"shell.l1.pwd"}',
+      result: '{"recordId":"shell-experience-1","runId":"42"}',
+      runtime: 'github-actions',
+      model: 'unknown',
+      source: 'shell:owner/repo:42',
+      provenance: { repository: 'owner/repo', runId: '42', invocationId: 'shell-1' },
+    })
+    expect(candidate.admissionStatus).toBe('candidate')
+    expect(candidate.provenance?.runId).toBe('42')
+    expect(repository.retrieve('recordId')).toHaveLength(0)
+    const rejected = await repository.rejectCandidate(candidate.id, 'lesson failed review')
+    expect(rejected?.admissionStatus).toBe('rejected')
+    expect(repository.retrieve('recordId')).toHaveLength(0)
+  })
+
   it('rejects malformed and tampered candidates', async () => {
     const repository = new CorpusRepository()
     storage.setItem('forgeclaw_nexus_candidate_v1:malformed', '{bad json')

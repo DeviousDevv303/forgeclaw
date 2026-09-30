@@ -30,6 +30,11 @@ export interface LearningCandidate extends CorpusRecord {
   input: string
   context: string
   generatedResult: string
+  provenance?: Record<string, string>
+}
+
+export interface ShellCorpusExperienceInput extends CorpusInteractionInput {
+  provenance: Record<string, string>
 }
 
 export interface CorpusInteractionInput {
@@ -223,6 +228,72 @@ export class CorpusRepository {
     if (readIndex(INDEX_KEY).includes(approved.id)) return approved
     this.saveRecord(approved)
     return approved
+  }
+
+  /**
+   * Store verified Shell evidence as an unapproved candidate. This is an
+   * additive adapter over the existing candidate path; it never admits data.
+   */
+  appendShellExperience(input: ShellCorpusExperienceInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+    const timestamp = new Date().toISOString()
+    const content = canonicalContent(input)
+    return integrityHash(content).then(integrity => {
+      const interactionId = `interaction-${integrity}`
+      const version = this.nextVersion()
+      const interaction: CorpusRecord = {
+        id: interactionId,
+        corpusId: 'nexus-local',
+        source: input.source || 'forgeclaw-shell',
+        content: input.result,
+        timestamp,
+        version,
+        recordType: 'interaction',
+        integrity,
+        admissionStatus: 'raw',
+        metadata: { input: input.input, runtime: input.runtime, model: input.model, ...input.provenance },
+      }
+      this.saveRecord(interaction)
+      const candidate: LearningCandidate = {
+        ...interaction,
+        id: `candidate-${integrity}`,
+        recordType: 'learning_candidate',
+        admissionStatus: 'candidate',
+        sourceInteractionId: interactionId,
+        runtime: input.runtime,
+        model: input.model,
+        input: input.input,
+        context: input.context,
+        generatedResult: input.result,
+        provenance: input.provenance,
+      }
+      this.saveRecord(candidate, true)
+      return { interaction, candidate }
+    })
+  }
+
+  /** Reject a pending candidate durably while preserving the existing states. */
+  async rejectCandidate(candidateId: string, reason = 'rejected by validation'): Promise<CorpusRecord | null> {
+    const raw = safeGetItem(`${CANDIDATE_PREFIX}${candidateId}`)
+    if (!raw) return null
+    let candidate: LearningCandidate
+    try { candidate = JSON.parse(raw) as LearningCandidate } catch { return null }
+    if (candidate.admissionStatus !== 'candidate') return null
+    const expectedIntegrity = await integrityHash([candidate.input, candidate.context, candidate.generatedResult, candidate.runtime, candidate.model].join('\n'))
+    if (expectedIntegrity !== candidate.integrity) return null
+    const rejected: CorpusRecord = {
+      id: `rejected-${candidate.integrity}`,
+      corpusId: candidate.corpusId,
+      source: candidate.source,
+      content: candidate.generatedResult,
+      timestamp: candidate.timestamp,
+      version: this.nextVersion(),
+      recordType: 'knowledge',
+      integrity: candidate.integrity,
+      admissionStatus: 'rejected',
+      metadata: { input: candidate.input, sourceInteractionId: candidate.sourceInteractionId, rejectionReason: reason, ...candidate.provenance },
+    }
+    if (!readIndex(INDEX_KEY).includes(rejected.id)) this.saveRecord(rejected)
+    return rejected
   }
 
   async syncPending(webhookUrl: string, fetchImpl: typeof fetch = fetch): Promise<CorpusSyncResult> {

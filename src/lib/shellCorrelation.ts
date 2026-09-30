@@ -14,6 +14,7 @@ export interface ShellWorkflowRun {
   head_branch: string
   html_url: string
   run_number: number
+  head_sha?: string
 }
 
 /**

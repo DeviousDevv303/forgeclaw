@@ -20,7 +20,9 @@ import {
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign } from './guardianGate'
 import { isCorrelatedShellRun, parseShellExecutionLog, type ShellWorkflowRun } from './shellCorrelation'
-
+import { corpusRepository } from './corpus'
+import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
+import { getShellExercise } from './shellCompetency'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ToolParam {
@@ -330,6 +332,7 @@ export const FORGE_TOOLS: ToolDef[] = [
         working_directory: { type: 'string', description: 'Working directory relative to repo root. Default: repository root.' },
         timeout_seconds: { type: 'number', description: 'Maximum seconds to wait for completion. Default: 180. Max: 600.' },
         wait: { type: 'boolean', description: 'If true (default), polls until completion or timeout. If false, dispatches and returns immediately with run ID.' },
+        exercise_id: { type: 'string', description: 'Optional stable Shell competency exercise ID. Verified results become an unapproved CORPUS candidate.' },
         owner: { type: 'string', description: 'GitHub owner' },
         repo: { type: 'string', description: 'GitHub repo' },
       },
@@ -915,6 +918,52 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const rawLogs = await logsRes.text()
 
         const { commandOutput, exitCode } = parseShellExecutionLog(rawLogs, finalRun.conclusion)
+
+        const exercise = getShellExercise(input.exercise_id as string | undefined || '')
+        if (exercise) {
+          const dispatchTimestamp = new Date(dispatchStartedAt).toISOString()
+          const completionTimestamp = new Date().toISOString()
+          const rawExperience = await createShellRawExperience({
+            exerciseId: exercise.exerciseId,
+            competencyLevel: exercise.level,
+            objective: exercise.objective,
+            difficulty: exercise.difficulty,
+            repository: `${sOwner}/${sRepo}`,
+            requestedRef: 'main',
+            workingDirectory: workingDir,
+            command,
+            safety: exercise.safety,
+            mutation: exercise.mutation,
+            invocationId,
+            runId: String(finalRun.id),
+            runNumber: finalRun.run_number,
+            branch: finalRun.head_branch,
+            workflowStatus: finalRun.status,
+            workflowConclusion: finalRun.conclusion,
+            exitCode,
+            actualResult: commandOutput,
+            expectedResult: exercise.expectedResult,
+            runtime: 'github-actions',
+            dispatchTimestamp,
+            completionTimestamp,
+            sourceWorkflow: 'shell-exec.yml',
+            ...(finalRun.head_sha ? { sourceCommit: finalRun.head_sha } : {}),
+            provenance: {
+              repository: `${sOwner}/${sRepo}`,
+              requestedRef: 'main',
+              workingDirectory: workingDir,
+              sourceWorkflow: 'shell-exec.yml',
+              ...(finalRun.head_sha ? { sourceCommit: finalRun.head_sha } : {}),
+              runtime: 'github-actions',
+              dispatchTimestamp,
+              completionTimestamp,
+            },
+            verified: true,
+          })
+          // The candidate remains unapproved; persistence cannot change the
+          // already verified Shell result or its error classification.
+          try { await corpusRepository.appendShellExperience(shellExperienceAsCorpusInput(rawExperience)) } catch { /* optional evidence persistence */ }
+        }
 
         if (exitCode !== 0 || finalRun.conclusion !== 'success') {
           return [
