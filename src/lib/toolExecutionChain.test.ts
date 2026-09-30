@@ -339,6 +339,97 @@ describe('coding task detection and repo state parsing', () => {
   })
 })
 
+
+describe('GitHub read resilience', () => {
+  it('retries a transient GitHub network failure and succeeds', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      calls.push(url)
+      if (calls.length === 1) throw new TypeError('Failed to fetch')
+      return new Response(JSON.stringify({ content: 'ok' }), { status: 200 })
+    }))
+
+    const output = await executeTool(
+      { id: 'retry-network', name: 'github_read_file', input: { owner: 'DeviousDevv303', repo: 'forgeclaw', path: 'package.json' } },
+      ctx(),
+    )
+
+    expect(calls).toHaveLength(2)
+    expect(output).not.toContain('[TOOL ERROR]')
+  })
+
+  it('retries transient GitHub HTTP statuses and succeeds', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls += 1
+      if (calls === 1) return new Response('', { status: 503 })
+      if (calls === 2) return new Response('', { status: 429 })
+      return new Response(JSON.stringify({ content: 'ok' }), { status: 200 })
+    }))
+
+    const output = await executeTool(
+      { id: 'retry-status', name: 'github_read_file', input: { owner: 'DeviousDevv303', repo: 'forgeclaw', path: 'package.json' } },
+      ctx(),
+    )
+
+    expect(calls).toBe(3)
+    expect(output).not.toContain('[TOOL ERROR]')
+  })
+
+  it('preserves the existing error after exhausting GitHub read retries', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls += 1
+      throw new TypeError('Failed to fetch')
+    }))
+
+    const output = await executeTool(
+      { id: 'retry-exhausted', name: 'github_read_file', input: { owner: 'DeviousDevv303', repo: 'forgeclaw', path: 'package.json' } },
+      ctx(),
+    )
+
+    expect(calls).toBe(3)
+    expect(output).toBe('[TOOL ERROR] Failed to fetch')
+  })
+
+  it('does not retry non-idempotent GitHub requests', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls += 1
+      return new Response('', { status: 503 })
+    }))
+
+    const output = await executeTool(
+      { id: 'no-retry-write', name: 'github_create_issue', input: { owner: 'DeviousDevv303', repo: 'forgeclaw', title: 'x', body: 'x' } },
+      { ...ctx(), ghToken: 'test-token' },
+    )
+
+    expect(calls).toBe(1)
+    expect(output).toContain('[TOOL ERROR]')
+  })
+
+  it('stops GitHub read retries when the run is aborted', async () => {
+    const controller = new AbortController()
+    let calls = 0
+
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls += 1
+      throw new TypeError('Failed to fetch')
+    }))
+
+    const promise = executeTool(
+      { id: 'retry-abort', name: 'github_read_file', input: { owner: 'DeviousDevv303', repo: 'forgeclaw', path: 'package.json' } },
+      { ...ctx(), signal: controller.signal },
+    )
+
+    setTimeout(() => controller.abort(), 10)
+
+    const output = await promise
+    expect(calls).toBe(1)
+    expect(output).toContain('[TOOL ERROR] Run aborted')
+  })
+})
+
 // ─── Live GitHub legs ───────────────────────────────────────────────────────
 // Enabled with FORGECLAW_E2E_GITHUB=1 and a PAT in gh_token / VITE_GITHUB_TOKEN.
 // These are the acceptance assertions: real API, real repository, real HEAD.
