@@ -886,7 +886,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
 
         if (finalRun.status !== 'completed') {
-          return `Shell execution timed out after ${maxWait}s. Run #${finalRun.run_number}\nInvocation: ${invocationId}\nLast status: ${lastStatus}\nURL: ${finalRun.html_url}`
+          return `Shell execution timed out after ${maxWait}s. Run #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nLast status: ${lastStatus}\nConclusion: ${finalRun.conclusion ?? 'unknown'}\nURL: ${finalRun.html_url}`
         }
 
         const jobsRes = await toolFetch(
@@ -901,7 +901,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const job = (jobsData.jobs || []).find(j => j.name === 'execute') || jobsData.jobs?.[0]
 
         if (!job) {
-          return `[TOOL ERROR] Shell execution completed but the execute job was not found.\nRun #${finalRun.run_number}\nConclusion: ${finalRun.conclusion ?? 'unknown'}`
+          return `[TOOL ERROR] Shell execution completed but no job was found.\nRun #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nStatus: ${finalRun.status}\nConclusion: ${finalRun.conclusion ?? 'unknown'}`
         }
 
         const logsRes = await toolFetch(
@@ -909,7 +909,10 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           `https://api.github.com/repos/${sOwner}/${sRepo}/actions/jobs/${job.id}/logs`,
           { headers: sHeaders },
         )
-        const rawLogs = logsRes.ok ? await logsRes.text() : ''
+        if (!logsRes.ok) {
+          return `[TOOL ERROR] Shell execution logs were unavailable (${logsRes.status}).\nRun #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nStatus: ${finalRun.status}\nConclusion: ${finalRun.conclusion ?? 'unknown'}`
+        }
+        const rawLogs = await logsRes.text()
 
         const { commandOutput, exitCode } = parseShellExecutionLog(rawLogs, finalRun.conclusion)
 
