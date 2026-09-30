@@ -46,7 +46,7 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
   local: {
     id: 'local',
-    name: 'Local Inference (Ollama)',
+    name: 'Local Inference (llama.cpp)',
     url: `${DEFAULT_LOCAL_ENDPOINT}/chat/completions`,
     models: localInferenceProvider.models.map(model => ({ ...model })),
     keyPlaceholder: DEFAULT_LOCAL_ENDPOINT,

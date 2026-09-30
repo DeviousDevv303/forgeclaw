@@ -569,7 +569,7 @@ function App() {
   const [anthropicModel, setAnthropicModel] = useState<string>(() => readAnthropicModel())
   const [anthropicWorkspaceId, setAnthropicWorkspaceId] = useState<string>(() => readAnthropicWorkspaceId())
   const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
-  const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:11434/v1')
+  const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
   const [nexusEndpoint, setNexusEndpoint] = useState<string>(() => safeGetItem('fm_nexus_endpoint') || DEFAULT_NEXUS_ENDPOINT)
   const [corpusWebhookUrl, setCorpusWebhookUrl] = useState<string>(() => safeGetItem('fm_corpus_webhook') || '')
   const [corpusSyncStatus, setCorpusSyncStatus] = useState('')
@@ -844,7 +844,7 @@ function App() {
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
     const currentApiKey = activeProvider === 'corpus' || activeProvider === 'local' ? localEndpoint : activeProvider === 'nexus' ? nexusEndpoint : anthropicApiKey
     const currentProviderLabel = activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local inference' : 'Anthropic'
-    const currentKeyFormat = activeProvider === 'corpus' || activeProvider === 'local' ? 'http://127.0.0.1:11434/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : 'sk-ant-...'
+    const currentKeyFormat = activeProvider === 'corpus' || activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : 'sk-ant-...'
 
     if (!currentApiKey) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
@@ -1837,7 +1837,7 @@ function App() {
                   <option value="corpus" style={{ background: '#111' }}>Corpus / NEXUS Local</option>
                   <option value="nexus" style={{ background: '#111' }}>NEXUS/CORPUS (Termux local)</option>
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
-                  <option value="local" style={{ background: '#111' }}>Local Inference (Ollama)</option>
+                  <option value="local" style={{ background: '#111' }}>Local Inference (llama.cpp)</option>
                 </select>
               </div>
 
@@ -1867,7 +1867,7 @@ function App() {
               {activeProvider === 'local' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#a855f7', display: 'inline-block' }} />
-                  <div><div style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold' }}>Local Inference (Ollama)</div><div style={{ color: '#666', fontSize: '10px' }}>Local Ollama inference through the OpenAI-compatible /v1 endpoint.</div></div>
+                  <div><div style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold' }}>Local Inference (llama.cpp)</div><div style={{ color: '#666', fontSize: '10px' }}>Local llama.cpp inference through the OpenAI-compatible /v1 endpoint.</div></div>
                 </div>
               )}
 
@@ -1928,10 +1928,10 @@ function App() {
               {(activeProvider === 'corpus' || activeProvider === 'local') && (
                 <div style={{ marginBottom: '14px' }}>
                   <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>llama.cpp Server Endpoint</label>
-                  <input type="url" placeholder="http://127.0.0.1:11434/v1" value={localEndpoint} onChange={e => { setLocalEndpoint(e.target.value); safeSetItem('fm_local_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                  <input type="url" placeholder="http://127.0.0.1:8080/v1" value={localEndpoint} onChange={e => { setLocalEndpoint(e.target.value); safeSetItem('fm_local_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
                   <button onClick={testLocalEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#a855f7', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST LOCAL ENDPOINT'}</button>
                   {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
-                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{activeProvider === 'corpus' ? `Local corpus records: ${corpusRepository.getInteractionCount()} · approved: ${corpusRepository.getApprovedCount()} · candidates: ${corpusRepository.getCandidateCount()} · version: ${corpusRepository.getVersion()}.` : 'Start Ollama locally with the qwen2.5:1.5b model and its OpenAI-compatible /v1 endpoint.'}</div>
+                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{activeProvider === 'corpus' ? `Local corpus records: ${corpusRepository.getInteractionCount()} · approved: ${corpusRepository.getApprovedCount()} · candidates: ${corpusRepository.getCandidateCount()} · version: ${corpusRepository.getVersion()}.` : 'Start llama-server locally with a Qwen2.5 1.5B GGUF and its OpenAI-compatible /v1 endpoint.'}</div>
                   {activeProvider === 'corpus' && (
                     <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #222' }}>
                       <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Optional Corpus Webhook</label>

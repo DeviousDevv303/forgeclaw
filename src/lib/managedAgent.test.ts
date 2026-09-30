@@ -9,7 +9,7 @@
 // repository tools, token resolution, dispatcher and Guardian gate all existed.
 //
 // `nexus` is the non-native provider (browser-local WebGPU Qwen, supportsTools
-// false); `local` is the native Ollama path. Both are exercised below.
+// false); `local` is the native llama.cpp path. Both are exercised below.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   runSubAgent,
@@ -370,7 +370,7 @@ describe('saved-agent run reaches real tools without native function calling', (
       { text: 'The result is 4.' },
     ])
 
-    const result = await runSubAgent('specialist', 'compute', undefined, 'local', 'qwen2.5:1.5b', 'http://127.0.0.1:11434/v1', FORGE_TOOLS, ctx(), {
+    const result = await runSubAgent('specialist', 'compute', undefined, 'local', 'local-model', 'http://127.0.0.1:8080/v1', FORGE_TOOLS, ctx(), {
       capability: 'coding',
       callProviderFn,
     })
