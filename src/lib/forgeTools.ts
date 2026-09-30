@@ -430,9 +430,80 @@ export function loadToolContext(): ToolContext {
 
 // ─── Executor ─────────────────────────────────────────────────────────────────
 
+const GITHUB_READ_RETRY_DELAYS_MS = [100, 250] as const
+const GITHUB_READ_RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504])
+
+function getRequestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input
+  if (input instanceof URL) return input.toString()
+  return input.url
+}
+
+function getRequestMethod(input: RequestInfo | URL, init: RequestInit): string {
+  if (init.method) return String(init.method).toUpperCase()
+  if (typeof Request !== 'undefined' && input instanceof Request) return input.method.toUpperCase()
+  return 'GET'
+}
+
+function isRetryableGithubRead(input: RequestInfo | URL, init: RequestInit): boolean {
+  const method = getRequestMethod(input, init)
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) return false
+  try {
+    return new URL(getRequestUrl(input)).hostname === 'api.github.com'
+  } catch {
+    return false
+  }
+}
+
+function waitForGithubRetry(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Run aborted', 'AbortError'))
+      return
+    }
+
+    let timer: ReturnType<typeof setTimeout>
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      reject(new DOMException('Run aborted', 'AbortError'))
+    }
+
+    timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 async function toolFetch(ctx: ToolContext, input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
-  return fetch(input, { ...init, signal: ctx.signal ?? init.signal })
+
+  if (!isRetryableGithubRead(input, init)) {
+    return fetch(input, { ...init, signal: ctx.signal ?? init.signal })
+  }
+
+  for (let attempt = 0; ; attempt += 1) {
+    if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
+
+    try {
+      const response = await fetch(input, { ...init, signal: ctx.signal ?? init.signal })
+
+      if (
+        !GITHUB_READ_RETRYABLE_STATUSES.has(response.status) ||
+        attempt >= GITHUB_READ_RETRY_DELAYS_MS.length
+      ) {
+        return response
+      }
+    } catch (error) {
+      if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
+      if (attempt >= GITHUB_READ_RETRY_DELAYS_MS.length) throw error
+    }
+
+    await waitForGithubRetry(GITHUB_READ_RETRY_DELAYS_MS[attempt], ctx.signal)
+  }
 }
 
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
