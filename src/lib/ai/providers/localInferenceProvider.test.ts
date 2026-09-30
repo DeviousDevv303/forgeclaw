@@ -1,6 +1,6 @@
 // @vitest-environment node
 // Updated by MANUS: two assertions in this file called a real local inference server server on
-// 127.0.0.1:11434, so the suite failed with "fetch failed" on any machine without
+// 127.0.0.1:8080, so the suite failed with "fetch failed" on any machine without
 // local inference server running — including CI. The local runtime is untouched; the network tests
 // now skip when no endpoint is reachable instead of reporting a false failure.
 import { describe, expect, it } from 'vitest'
@@ -10,7 +10,7 @@ import { runSubAgent } from '../../managedAgent'
 import { FORGE_TOOLS, executeTool } from '../../forgeTools'
 import { classifyFailure, extractStatus, decideRetry } from '../../agentCore'
 
-const endpoint = process.env.FORGECLAW_LOCAL_ENDPOINT || 'http://127.0.0.1:11434/v1'
+const endpoint = process.env.FORGECLAW_LOCAL_ENDPOINT || 'http://127.0.0.1:8080/v1'
 
 /** Probe the local endpoint so an absent local inference server skips instead of failing. */
 async function localServerReachable(): Promise<boolean> {
@@ -44,7 +44,7 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
     await localInferenceProvider.test(endpoint)
     const result = await callProvider(
       'local',
-      'qwen2.5:1.5b',
+      'local-model',
       'Reply with exactly the word VERIFIED.',
       [{ role: 'user', content: 'Confirm the local inference path.' }],
       endpoint,
@@ -60,7 +60,7 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
       'State the result of a local execution check in one sentence.',
       ['run_js'],
       'local',
-      'qwen2.5:1.5b',
+      'local-model',
       endpoint,
       FORGE_TOOLS,
       { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' },
