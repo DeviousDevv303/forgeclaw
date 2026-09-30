@@ -23,7 +23,7 @@ import {
 import { executeTool, FORGE_TOOLS, loadToolContext } from './forgeTools'
 import { injectToolSchema, injectToolSchemaWithinBudget, parseManualToolCalls, stripToolSyntax, toToolCalls } from './ai/manualToolMode'
 import { boundPrefixByBudget, MAX_NEXUS_CONTEXT_TOKENS, conservativeTokenCount, limitNexusContext } from './ai/nexusContext'
-import { modelSupportsTools } from './modelProviders'
+import { PROVIDERS, modelSupportsTools } from './modelProviders'
 import { hasSuccessfulRepositoryEvidence } from './codingAgentRuntime'
 
 class MemoryStorage implements Storage {
@@ -108,12 +108,14 @@ describe('capability profiles decide tool authority', () => {
     for (const read of CODING_READONLY_TOOL_NAMES) expect(granted).toContain(read)
     expect(granted).toContain('github_write_file')
     expect(granted).toContain('github_verify_commit')
+    // Priority order is preserved so a tight budget keeps the valuable tools.
     expect(granted).toEqual(CODING_TOOL_ORDER.filter(name => FORGE_TOOLS.some(t => t.name === name)))
   })
 
   it('lets a caller narrow a profile but never widen one', () => {
     const narrowed = toolsForCapability('coding', FORGE_TOOLS, ['github_write_file']).map(tool => tool.name)
     expect(narrowed).toEqual(['github_write_file'])
+    // A read-only profile cannot be widened into write authority by naming writes.
     const attempt = toolsForCapability('coding-readonly', FORGE_TOOLS, ['github_write_file', 'github_read_file']).map(tool => tool.name)
     expect(attempt).toEqual(['github_read_file'])
   })
@@ -165,6 +167,7 @@ describe('budget-aware manual tool catalog', () => {
     const bounded = injectToolSchemaWithinBudget('SYSTEM', FORGE_TOOLS, 700)
     expect(bounded.omitted.length).toBeGreaterThan(0)
     expect(bounded.systemPrompt).toContain('NOT AVAILABLE')
+    // Every omitted name is a real registry tool; the runtime never invents one.
     expect(bounded.omitted.every(name => FORGE_TOOLS.some(tool => tool.name === name))).toBe(true)
   })
 
@@ -181,7 +184,8 @@ describe('budget-aware manual tool catalog', () => {
   })
 
   it('survives the provider context limiter with the reserved task turn', () => {
-    const catalog = injectToolSchemaWithinBudget('SYSTEM', toolsForCapability('coding-readonly', FORGE_TOOLS), SUB_AGENT_SYSTEM_RESERVE)
+    const granted = toolsForCapability('coding-readonly', FORGE_TOOLS)
+    const catalog = injectToolSchemaWithinBudget('SYSTEM', granted, SUB_AGENT_SYSTEM_RESERVE)
     const task = 'USER: ' + 'x'.repeat(SUB_AGENT_TASK_RESERVE - 10)
     const bounded = limitNexusContext(catalog.systemPrompt, [{ role: 'user', content: task }], MAX_NEXUS_CONTEXT_TOKENS)
     expect(bounded.systemPrompt).toContain('```tool_call')
@@ -244,6 +248,8 @@ describe('saved-agent run reaches real tools without native function calling', (
   })
 
   it('reports the real unauthenticated failure when no token is configured', async () => {
+    // Wiring check that must not depend on network reachability: the dispatcher
+    // reports a missing credential rather than inventing repository state.
     const { seen, callProviderFn } = makeTransport([
       { text: '```tool_call\n{"name":"github_write_file","arguments":{"path":"x.md","content":"x","message":"docs: x"}}\n```' },
       { text: 'STATUS: BLOCKED — no repository credential is configured.' },
@@ -272,25 +278,38 @@ describe('saved-agent run reaches real tools without native function calling', (
       TASK,
       undefined,
       'nexus',
-      'local-model',
+      'qwen2.5:1.5b',
       '',
       FORGE_TOOLS,
       ctx(),
       { capability: 'coding-readonly', onBudget: report => reports.push(report), callProviderFn },
     )
 
+    // The runtime reported the real tool mode and the offered catalog.
     expect(reports).toHaveLength(1)
     expect(reports[0].nativeTools).toBe(false)
     expect(reports[0].catalogTools).toContain('github_repo_state')
+
+    // A second provider turn happened, which only occurs after a tool result.
     expect(seen).toHaveLength(2)
+    // The requested tool was never sent as a native tool definition.
     expect(seen[0].toolsOffered).toBe(0)
+    // The catalog reached the provider inside the system prompt.
     expect(seen[0].systemPrompt).toContain('```tool_call')
     expect(seen[0].systemPrompt).toContain('github_repo_state')
+
+    // The dispatcher ran the tool and returned its real output to the model. The
+    // exact output depends on network reachability: against a reachable API the
+    // anonymous read returns live repository state, and with no network the
+    // dispatcher reports the failure. Either way it is a real result and never a
+    // fabricated success, which is the property under test.
     const toolTurn = seen[1].messages.find(message => message.role === 'tool')
     expect(toolTurn).toBeDefined()
     expect(String(toolTurn?.content).length).toBeGreaterThan(0)
     const realResult = String(toolTurn?.content)
     expect(realResult.includes('repo:') || realResult.includes('[TOOL ERROR]')).toBe(true)
+
+    // The model's answer is the continuation and carries no raw tool syntax.
     expect(result).toContain('STATUS: COMPLETE')
     expect(result).not.toContain('tool_call')
   })
@@ -317,6 +336,7 @@ describe('saved-agent run reaches real tools without native function calling', (
       { text: 'blocked' },
     ])
 
+    // Tier 1 is armed but no Guardian approval handler is attached to this run.
     await runSubAgent('specialist', 'write a file', undefined, 'nexus', 'qwen', '', FORGE_TOOLS, {
       ...ctx(),
       ghToken: 'test-token',
@@ -355,6 +375,7 @@ describe('saved-agent run reaches real tools without native function calling', (
       callProviderFn,
     })
 
+    // Native path passes real tool definitions and no manual protocol.
     expect(seen[0].toolsOffered).toBeGreaterThan(0)
     expect(seen[0].systemPrompt).not.toContain('```tool_call')
     expect(seen[1].messages.find(message => message.role === 'tool')?.content).toBe('4')
@@ -370,16 +391,55 @@ describe('saved-agent run reaches real tools without native function calling', (
     }, { capability: 'coding' })
     expect(result).toBe('[SUB-AGENT ABORTED]')
   })
-})
 
-describe('modelSupportsTools registry', () => {
-  it('reports local as tool-capable', () => {
-    expect(modelSupportsTools('local', 'local-model')).toBe(true)
+  it('returns the bounded task when the saved prompt is longer than the reserved budget', async () => {
+    const { seen, callProviderFn } = makeTransport([{ text: 'ok' }])
+    await runSubAgent(
+      'P'.repeat(SUB_AGENT_SYSTEM_RESERVE * 2),
+      'T'.repeat(SUB_AGENT_TASK_RESERVE * 2),
+      undefined,
+      'nexus',
+      'qwen',
+      '',
+      FORGE_TOOLS,
+      ctx(),
+      { capability: 'coding-readonly', callProviderFn },
+    )
+    // The catalog and protocol survive an over-long saved prompt.
+    expect(seen[0].systemPrompt).toContain('```tool_call')
+    expect(seen[0].systemPrompt).toContain('github_repo_state')
+    // The task turn is bounded so the provider limiter cannot drop the catalog.
+    expect(conservativeTokenCount(seen[0].messages[0].content)).toBeLessThanOrEqual(SUB_AGENT_TASK_RESERVE)
   })
 })
 
-describe('repository evidence helpers', () => {
-  it('detects successful repository evidence', () => {
+describe('existing systems are untouched', () => {
+  it('keeps the provider registry and its tool-support facts intact', () => {
+    expect(Object.keys(PROVIDERS).sort()).toEqual(['anthropic', 'corpus', 'local', 'nexus'])
+    expect(modelSupportsTools('nexus', 'qwen')).toBe(false)
+    expect(modelSupportsTools('local', 'qwen2.5:1.5b')).toBe(true)
+    expect(Object.keys(PROVIDERS).length).toBe(4)
+  })
+
+  it('keeps every pre-existing tool name in the registry', () => {
+    const names = FORGE_TOOLS.map(tool => tool.name)
+    for (const required of [
+      'github_read_file', 'github_write_file', 'github_list_files', 'github_search_code',
+      'github_create_issue', 'github_run_workflow', 'github_get_run_status', 'github_get_run_logs',
+      'github_repo_state', 'github_verify_commit', 'coding_task_update',
+      'http_fetch', 'memory_write', 'memory_read', 'memory_list', 'send_whatsapp',
+      'run_js', 'web_search', 'gmail_read', 'gmail_send', 'calendar_read', 'calendar_create',
+      'shell_exec', 'spawn_agent',
+    ]) {
+      expect(names).toContain(required)
+    }
+    expect(new Set(names).size).toBe(names.length)
+  })
+})
+
+describe('repository completion safety', () => {
+  it('does not treat model text or failed tools as evidence', () => {
+    expect(hasSuccessfulRepositoryEvidence([])).toBe(false)
     expect(hasSuccessfulRepositoryEvidence([{ name: 'github_repo_state', isError: true }])).toBe(false)
     expect(hasSuccessfulRepositoryEvidence([{ name: 'github_repo_state' }])).toBe(true)
     expect(hasSuccessfulRepositoryEvidence([{ name: 'run_js' }])).toBe(false)
