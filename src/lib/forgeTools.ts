@@ -19,6 +19,7 @@ import {
 } from './codingAgentState'
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign } from './guardianGate'
+import { isCorrelatedShellRun, parseShellExecutionLog, type ShellWorkflowRun } from './shellCorrelation'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -817,125 +818,41 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const workflowUrl = `https://api.github.com/repos/${sOwner}/${sRepo}/actions/workflows/shell-exec.yml`
         const dispatchStartedAt = Date.now()
 
-        // TEMP DIAGNOSTIC SHELL_DIAG_A: isolate dispatch POST failures. Remove after one reproduction.
-        let dispatchRes: Response
-        try {
-          dispatchRes = await toolFetch(ctx, `${workflowUrl}/dispatches`, {
-            method: 'POST',
-            headers: sHeaders,
-            body: JSON.stringify({
-              ref: 'main',
-              inputs: {
-                command,
-                working_directory: workingDir,
-                invocation_id: invocationId,
-              },
-            }),
-          })
-        } catch (err) {
-          const e = err instanceof Error ? err : new Error(String(err))
-          return (
-            `SHELL_DIAG_A
-` +
-            `url=${JSON.stringify(`${workflowUrl}/dispatches`)}
-` +
-            `errorName=${JSON.stringify(e.name)}
-` +
-            `errorMessage=${JSON.stringify(e.message)}
-` +
-            `hasToken=${String(Boolean(sToken))}`
-          )
-        }
+        const dispatchRes = await toolFetch(ctx, `${workflowUrl}/dispatches`, {
+          method: 'POST',
+          headers: sHeaders,
+          body: JSON.stringify({
+            ref: 'main',
+            inputs: {
+              command,
+              working_directory: workingDir,
+              invocation_id: invocationId,
+            },
+          }),
+        })
 
         if (!dispatchRes.ok) {
           throw new Error(`GitHub dispatch ${dispatchRes.status}: ${dispatchRes.statusText}`)
         }
 
-        type WorkflowRun = {
-          id: number
-          name?: string
-          display_title?: string
-          status: string
-          conclusion: string | null
-          created_at: string
-          html_url: string
-          run_number: number
-        }
-
-        const findCorrelatedRun = async (): Promise<WorkflowRun | undefined> => {
-          // TEMP DIAGNOSTIC SHELL_DIAG_B: isolate runs-list GET failures. Remove after one reproduction.
-          let runsRes: Response
-          try {
-            runsRes = await toolFetch(
-              ctx,
-              `${workflowUrl}/runs?event=workflow_dispatch&per_page=20`,
-              { headers: sHeaders },
-            )
-          } catch (err) {
-            const e = err instanceof Error ? err : new Error(String(err))
-            return {
-              __diagnostic: true,
-              __shellDiagB: true,
-              __diagnosticText:
-                `SHELL_DIAG_B
-` +
-                `url=${JSON.stringify(`${workflowUrl}/runs?event=workflow_dispatch&per_page=20`)}
-` +
-                `errorName=${JSON.stringify(e.name)}
-` +
-                `errorMessage=${JSON.stringify(e.message)}`,
-            } as unknown as WorkflowRun
-          }
+        const findCorrelatedRun = async (): Promise<ShellWorkflowRun | undefined> => {
+          const runsRes = await toolFetch(
+            ctx,
+            `${workflowUrl}/runs?event=workflow_dispatch&per_page=20`,
+            { headers: sHeaders },
+          )
           if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
-          const runsData = await runsRes.json() as { workflow_runs?: WorkflowRun[] }
+          const runsData = await runsRes.json() as { workflow_runs?: ShellWorkflowRun[] }
           const runs = runsData.workflow_runs || []
-
-          // TEMP DIAGNOSTIC: remove after one reproduction. Does not alter successful correlation.
-          if (runs.length > 0) {
-            const firstRun = runs[0]
-            const firstTitle = firstRun.display_title || firstRun.name || ""
-            const firstCreatedAt = Date.parse(firstRun.created_at)
-            const firstPredicate = firstTitle.includes(invocationId) && (
-              !Number.isNaN(firstCreatedAt)
-                ? firstCreatedAt >= dispatchStartedAt - 60000
-                : true
-            )
-
-            if (!firstPredicate) {
-              return {
-                __diagnostic: true,
-                __diagnosticText:
-                  `SHELL_CORRELATION_DIAGNOSTIC\n` +
-                  `keys=${JSON.stringify(Object.keys(firstRun))}\n` +
-                  `id=${String(firstRun.id)}\n` +
-                  `name=${JSON.stringify(firstRun.name)}\n` +
-                  `display_title=${JSON.stringify(firstRun.display_title)}\n` +
-                  `created_at=${JSON.stringify(firstRun.created_at)}\n` +
-                  `invocationId=${JSON.stringify(invocationId)}\n` +
-                  `nameMatches=${String(firstRun.name?.includes(invocationId) ?? false)}\n` +
-                  `displayTitleMatches=${String(firstRun.display_title?.includes(invocationId) ?? false)}\n` +
-                  `predicate=${String(firstPredicate)}`
-              } as unknown as WorkflowRun
-            }
-          }
-          return runs.find(run => {
-            const title = run.display_title || run.name || ''
-            const createdAt = Date.parse(run.created_at)
-            return title.includes(invocationId) && (
-              !Number.isNaN(createdAt) ? createdAt >= dispatchStartedAt - 60000 : true
-            )
-          })
+          return runs.find(run => isCorrelatedShellRun(run, invocationId, dispatchStartedAt))
         }
 
         const findDeadline = Date.now() + Math.min(maxWait * 1000, 30000)
-        let run: WorkflowRun | undefined
+        let run: ShellWorkflowRun | undefined
 
         while (!run && Date.now() < findDeadline) {
           if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted while locating shell execution.'
           run = await findCorrelatedRun()
-          if (run && "__diagnostic" in (run as unknown as Record<string, unknown>)) {
-            return String((run as unknown as Record<string, unknown>).__diagnosticText)
-          }
           if (run) break
           await new Promise<void>((resolve) => setTimeout(resolve, 2000))
         }
@@ -961,7 +878,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
             { headers: sHeaders },
           )
           if (!statusRes.ok) throw new Error(`GitHub run status ${statusRes.status}`)
-          const statusData = await statusRes.json() as WorkflowRun
+          const statusData = await statusRes.json() as ShellWorkflowRun
           finalRun = statusData
           lastStatus = statusData.status
           if (statusData.status === 'completed') break
@@ -994,33 +911,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         )
         const rawLogs = logsRes.ok ? await logsRes.text() : ''
 
-        let executionLog = rawLogs
-        const marker = '=== FORGECLAW EXECUTION ==='
-        const markerIndex = rawLogs.indexOf(marker)
-        if (markerIndex >= 0) {
-          executionLog = rawLogs.slice(markerIndex)
-        }
-
-        executionLog = executionLog
-          // eslint-disable-next-line no-control-regex
-          .replace(/\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
-          .split('\n')
-          .map(line => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.+-]+Z\s+/, ''))
-          .join('\n')
-          .trim()
-
-        const exitMatch = executionLog.match(/(?:^|\n)exit_code=(\d+)/)
-        const exitCode = exitMatch ? Number(exitMatch[1]) : (finalRun.conclusion === 'success' ? 0 : 1)
-
-        const outputStart = executionLog.indexOf('\nstart=')
-        const outputAfterStart = outputStart >= 0 ? executionLog.slice(outputStart + 1) : executionLog
-        const exitIndex = outputAfterStart.search(/\nexit_code=\d+/)
-        const commandOutput = (
-          exitIndex >= 0 ? outputAfterStart.slice(0, exitIndex) : outputAfterStart
-        )
-          .replace(/^start=[^\n]*\n?/, '')
-          .replace(/\n?end=[^\n]*$/, '')
-          .trim()
+        const { commandOutput, exitCode } = parseShellExecutionLog(rawLogs, finalRun.conclusion)
 
         if (exitCode !== 0 || finalRun.conclusion !== 'success') {
           return [
