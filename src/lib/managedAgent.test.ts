@@ -23,7 +23,7 @@ import {
 import { executeTool, FORGE_TOOLS, loadToolContext } from './forgeTools'
 import { injectToolSchema, injectToolSchemaWithinBudget, parseManualToolCalls, stripToolSyntax, toToolCalls } from './ai/manualToolMode'
 import { boundPrefixByBudget, MAX_NEXUS_CONTEXT_TOKENS, conservativeTokenCount, limitNexusContext } from './ai/nexusContext'
-import { PROVIDERS, modelSupportsTools } from './modelProviders'
+import { modelSupportsTools } from './modelProviders'
 import { hasSuccessfulRepositoryEvidence } from './codingAgentRuntime'
 
 class MemoryStorage implements Storage {
@@ -108,14 +108,12 @@ describe('capability profiles decide tool authority', () => {
     for (const read of CODING_READONLY_TOOL_NAMES) expect(granted).toContain(read)
     expect(granted).toContain('github_write_file')
     expect(granted).toContain('github_verify_commit')
-    // Priority order is preserved so a tight budget keeps the valuable tools.
     expect(granted).toEqual(CODING_TOOL_ORDER.filter(name => FORGE_TOOLS.some(t => t.name === name)))
   })
 
   it('lets a caller narrow a profile but never widen one', () => {
     const narrowed = toolsForCapability('coding', FORGE_TOOLS, ['github_write_file']).map(tool => tool.name)
     expect(narrowed).toEqual(['github_write_file'])
-    // A read-only profile cannot be widened into write authority by naming writes.
     const attempt = toolsForCapability('coding-readonly', FORGE_TOOLS, ['github_write_file', 'github_read_file']).map(tool => tool.name)
     expect(attempt).toEqual(['github_read_file'])
   })
@@ -167,7 +165,6 @@ describe('budget-aware manual tool catalog', () => {
     const bounded = injectToolSchemaWithinBudget('SYSTEM', FORGE_TOOLS, 700)
     expect(bounded.omitted.length).toBeGreaterThan(0)
     expect(bounded.systemPrompt).toContain('NOT AVAILABLE')
-    // Every omitted name is a real registry tool; the runtime never invents one.
     expect(bounded.omitted.every(name => FORGE_TOOLS.some(tool => tool.name === name))).toBe(true)
   })
 
