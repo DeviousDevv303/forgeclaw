@@ -462,6 +462,8 @@ function waitForGithubRetry(ms: number, signal?: AbortSignal): Promise<void> {
       return
     }
 
+    // `timer` is assigned after `onAbort` is defined because the callback closes over it.
+    // eslint-disable-next-line prefer-const
     let timer: ReturnType<typeof setTimeout>
     const onAbort = () => {
       clearTimeout(timer)
@@ -924,11 +926,23 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const findDeadline = Date.now() + Math.min(maxWait * 1000, 30000)
         let run: ShellWorkflowRun | undefined
 
+        const discoveryDelays = [100, 250, 500, 1000, 2000] as const
+        let discoveryAttempt = 0
+
         while (!run && Date.now() < findDeadline) {
           if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted while locating shell execution.'
           run = await findCorrelatedRun()
           if (run) break
-          await new Promise<void>((resolve) => setTimeout(resolve, 2000))
+
+          const remainingMs = findDeadline - Date.now()
+          if (remainingMs <= 0) break
+
+          const delayMs = Math.min(
+            discoveryDelays[Math.min(discoveryAttempt, discoveryDelays.length - 1)],
+            remainingMs,
+          )
+          discoveryAttempt += 1
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
         }
 
         if (!run) {
@@ -939,7 +953,8 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           return `Shell execution dispatched. Run #${run.run_number} (id: ${run.id})\nInvocation: ${invocationId}\nURL: ${run.html_url}`
         }
 
-        const pollInterval = 5000
+        const statusDelays = [500, 1000, 2000, 3000, 5000] as const
+        let statusAttempt = 0
         const startTime = Date.now()
         let lastStatus = run.status
         let finalRun = run
@@ -956,7 +971,17 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           finalRun = statusData
           lastStatus = statusData.status
           if (statusData.status === 'completed') break
-          await new Promise<void>((resolve) => setTimeout(resolve, pollInterval))
+
+          const elapsedMs = Date.now() - startTime
+          const remainingMs = maxWait * 1000 - elapsedMs
+          if (remainingMs <= 0) break
+
+          const delayMs = Math.min(
+            statusDelays[Math.min(statusAttempt, statusDelays.length - 1)],
+            remainingMs,
+          )
+          statusAttempt += 1
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs))
         }
 
         if (finalRun.status !== 'completed') {
