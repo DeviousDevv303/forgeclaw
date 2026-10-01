@@ -948,8 +948,11 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const findCorrelatedRun = async (): Promise<ShellWorkflowRun | undefined> => {
           const runsRes = await toolFetch(
             ctx,
-            `${workflowUrl}/runs?event=workflow_dispatch&per_page=20`,
-            { headers: sHeaders },
+            `${workflowUrl}/runs?event=workflow_dispatch&per_page=100`,
+            // GitHub caches REST GET responses briefly. Polling the identical
+            // URL without cache bypass can replay the pre-dispatch list until
+            // discovery times out, even though the workflow has already run.
+            { headers: sHeaders, cache: 'no-store' },
           )
           if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
           const runsData = await runsRes.json() as { workflow_runs?: ShellWorkflowRun[] }
