@@ -32,7 +32,9 @@ export function isCorrelatedShellRun(
   if (typeof run.id !== 'number' || !Number.isInteger(run.id) || run.id <= 0) return false
   if (run.event !== 'workflow_dispatch') return false
   if (run.head_branch !== 'main') return false
-  if (run.display_title !== `Shell exec ${invocationId}`) return false
+  // Match invocation ID in name or display_title — GitHub may truncate or vary display_title.
+  const label = `${run.name ?? ""} ${run.display_title ?? ""}`
+  if (!label.includes(invocationId)) return false
   if (typeof run.created_at !== 'string' || run.created_at.length === 0) return false
 
   const createdAt = Date.parse(run.created_at)
