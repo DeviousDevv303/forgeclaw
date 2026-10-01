@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isCorrelatedShellRun,
   MAX_SHELL_OUTPUT_CHARS,
+  normalizeShellWorkingDirectoryInput,
   parseShellExecutionLog,
   resolveShellWorkingDirectory,
   type ShellWorkflowRun,
@@ -88,6 +89,16 @@ describe('Shell working-directory boundary', () => {
     expect(resolveShellWorkingDirectory('..', workspace)).toBeNull()
     expect(resolveShellWorkingDirectory('/tmp', workspace)).toBeNull()
     expect(resolveShellWorkingDirectory('src/../../outside', workspace)).toBeNull()
+  })
+
+  it('normalizes local-model workspace aliases while preserving path traversal protection', () => {
+    expect(normalizeShellWorkingDirectoryInput('/workspace', 'forgeclaw')).toBe('.')
+    expect(normalizeShellWorkingDirectoryInput('/workspace/forgeclaw', 'forgeclaw')).toBe('.')
+    expect(normalizeShellWorkingDirectoryInput('/workspace/forgeclaw/src/lib', 'forgeclaw')).toBe('src/lib')
+    expect(normalizeShellWorkingDirectoryInput('/workspace/src/lib', 'forgeclaw')).toBe('src/lib')
+    expect(normalizeShellWorkingDirectoryInput('/workspace/../outside', 'forgeclaw')).toBeNull()
+    expect(normalizeShellWorkingDirectoryInput('/tmp', 'forgeclaw')).toBeNull()
+    expect(normalizeShellWorkingDirectoryInput('../outside', 'forgeclaw')).toBeNull()
   })
 })
 

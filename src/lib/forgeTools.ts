@@ -19,7 +19,7 @@ import {
 } from './codingAgentState'
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign } from './guardianGate'
-import { isCorrelatedShellRun, parseShellExecutionLog, type ShellWorkflowRun } from './shellCorrelation'
+import { isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, type ShellWorkflowRun } from './shellCorrelation'
 import { corpusRepository } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
@@ -329,7 +329,7 @@ export const FORGE_TOOLS: ToolDef[] = [
       type: 'object',
       properties: {
         command: { type: 'string', description: 'Shell command to execute. Can include &&, ||, pipes, redirects. Runs in bash -c.' },
-        working_directory: { type: 'string', description: 'Repository-relative working directory. Omit this field or use "." for the repository root. NEVER use /workspace or any absolute path.' },
+        working_directory: { type: 'string', description: 'Working directory inside the checked-out repository. Use "." for the root or a relative path like "src/lib". Local models may emit "/workspace" or "/workspace/<repo>"; these are normalized to the repository root. Do not use any other absolute path.' },
         timeout_seconds: { type: 'number', description: 'Maximum seconds to wait for completion. Default: 180. Max: 600.' },
         wait: { type: 'boolean', description: 'If true (default), polls until completion or timeout. If false, dispatches and returns immediately with run ID.' },
         exercise_id: { type: 'string', description: 'Optional stable Shell competency exercise ID. Verified results become an unapproved CORPUS candidate.' },
@@ -900,16 +900,17 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       // ── Shell execution via GitHub Actions ───────────────────────────────────
       case 'shell_exec': {
         const command    = input.command as string
-        const workingDir = (input.working_directory as string) || '.'
-        if (workingDir.startsWith('/')) {
-          throw new Error('shell_exec working_directory must be repository-relative (use "." for the repository root).')
-        }
         const maxWait    = Math.min(parseInt(String(input.timeout_seconds || '180'), 10) || 180, 600)
         const shouldWait = (input.wait as boolean) !== false
 
         const sOwner = (input.owner as string) || ctx.ghOwner
         const sRepo  = (input.repo  as string) || ctx.ghRepo
         const sToken = ctx.ghToken
+        const repositoryName = sRepo.split('/').filter(Boolean).at(-1) || sRepo
+        const workingDir = normalizeShellWorkingDirectoryInput(input.working_directory || '.', repositoryName)
+        if (!workingDir) {
+          throw new Error('shell_exec working_directory must resolve inside the checked-out repository. Use "." for root or a repository-relative path; /workspace paths are normalized automatically.')
+        }
 
         if (!sToken) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
         if (!command) throw new Error('shell_exec requires a command.')
