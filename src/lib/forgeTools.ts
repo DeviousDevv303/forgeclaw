@@ -5,6 +5,7 @@
 // Tool calling is routed through the active provider adapter.
 
 import { safeGetItem, safeSetItem } from './storage'
+import { dispatchShellExecution } from './shellExecution'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -666,114 +667,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
       // ── Shell execution via GitHub Actions ───────────────────────────────────
       case 'shell_exec': {
-        const command     = input.command as string
-        const workingDir  = (input.working_directory as string) || '.'
-        const maxWait     = Math.min(parseInt(String(input.timeout_seconds || '180'), 10) || 180, 600)
-        const shouldWait  = (input.wait as boolean) !== false
-
-        if (!token) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
-
-        const headers = {
-          Authorization: `token ${token}`,
-          Accept: 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json',
-        }
-
-        // ── 1. Dispatch workflow ───────────────────────────────────────────
-        const dispatchRes = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/actions/workflows/shell-exec.yml/dispatches`,
-          {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              ref: 'main',
-              inputs: {
-                command,
-                working_directory: workingDir,
-              },
-            }),
-          }
-        )
-
-        if (!dispatchRes.ok) {
-          if (dispatchRes.status === 404) {
-            throw new Error(
-              'shell-exec.yml workflow not found in repo. ' +
-              'Create .github/workflows/shell-exec.yml with workflow_dispatch trigger accepting "command" and "working_directory" inputs.'
-            )
-          }
-          throw new Error(`GitHub dispatch ${dispatchRes.status}: ${dispatchRes.statusText}`)
-        }
-
-        // ── 2. Wait briefly for GitHub to register the run ───────────────────
-        await new Promise(r => setTimeout(r, 4000))
-
-        // ── 3. Find the run we just created ──────────────────────────────────
-        const runsRes = await fetch(
-          `https://api.github.com/repos/${owner}/${repo}/actions/workflows/shell-exec.yml/runs?per_page=5&event=workflow_dispatch`,
-          { headers }
-        )
-
-        if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
-
-        type WorkflowRun = {
-          id: number
-          status: string
-          conclusion: string | null
-          created_at: string
-          html_url: string
-          run_number: number
-        }
-
-        const runsData = await runsRes.json() as { workflow_runs: WorkflowRun[] }
-        const runs = runsData.workflow_runs
-
-        if (!runs.length) {
-          return `✓ Shell execution dispatched. Command: ${command}\nCould not find run ID immediately (GitHub indexing delay).\nCheck https://github.com/${owner}/${repo}/actions`
-        }
-
-        const run = runs[0]
-
-        if (!shouldWait) {
-          return `✓ Shell execution dispatched. Run #${run.run_number} (id: ${run.id})\nCommand: ${command}\nWorking dir: ${workingDir}\nStatus: ${run.status}\nURL: ${run.html_url}\n\nUse github_get_run_status with run_id="${run.id}" to check completion. Use github_get_run_logs with run_id="${run.id}" to read output.`
-        }
-
-        // ── 4. Poll until complete or timeout ────────────────────────────────
-        const pollInterval = 5000 // 5 seconds
-        const startTime = Date.now()
-        let lastStatus = run.status
-
-        while (Date.now() - startTime < maxWait * 1000) {
-          const statusRes = await fetch(
-            `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
-            { headers }
-          )
-
-          if (!statusRes.ok) throw new Error(`GitHub run status ${statusRes.status}`)
-
-          const statusData = await statusRes.json() as WorkflowRun
-          lastStatus = statusData.status
-
-          if (statusData.status === 'completed') {
-            // Get logs for the run
-            const logsRes = await fetch(
-              `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}/logs`,
-              { headers, redirect: 'follow' }
-            )
-
-            const logs = logsRes.ok
-              ? '[Logs downloaded — see run page for full output]'
-              : '(logs not yet available)'
-
-            return `✓ Shell execution complete. Run #${statusData.run_number} (id: ${statusData.id})\nCommand: ${command}\nWorking dir: ${workingDir}\nStatus: completed\nConclusion: ${statusData.conclusion ?? 'unknown'}\nDuration: ${Math.round((Date.now() - startTime) / 1000)}s\nURL: ${statusData.html_url}\n\n${logs}`
-          }
-
-          // Still running — wait and poll again
-          await new Promise(r => setTimeout(r, pollInterval))
-        }
-
-        // Timeout reached
-        return `⏱ Shell execution timed out after ${maxWait}s. Run #${run.run_number} (id: ${run.id})\nCommand: ${command}\nLast status: ${lastStatus}\nURL: ${run.html_url}\n\nUse github_get_run_status with run_id="${run.id}" to check completion later. Use github_get_run_logs with run_id="${run.id}" to read output.`
+        return await dispatchShellExecution(input, ctx)
       }
 
       // ── Spawn sub-agent ────────────────────────────────────────────────────────
