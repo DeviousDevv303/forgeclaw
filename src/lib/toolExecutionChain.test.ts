@@ -102,6 +102,7 @@ describe('dispatcher integrity (offline)', () => {
 
   it('runs pwd from the repository root when a local model emits /workspace', async () => {
     let invocationId = ''
+    let runListReads = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input))
       if (url.pathname.endsWith('/dispatches')) {
@@ -112,6 +113,10 @@ describe('dispatcher integrity (offline)', () => {
         return new Response(null, { status: 204 })
       }
       if (url.pathname.endsWith('/runs')) {
+        expect(url.searchParams.get('per_page')).toBe('100')
+        expect(init?.cache).toBe('no-store')
+        runListReads += 1
+        if (runListReads === 1) return Response.json({ workflow_runs: [] })
         return Response.json({ workflow_runs: [{
           id: 4242,
           name: `Shell exec ${invocationId}`,
@@ -138,7 +143,8 @@ describe('dispatcher integrity (offline)', () => {
     expect(output).toContain('Shell execution dispatched.')
     expect(output).toContain('id: 4242')
     expect(invocationId).toMatch(/^shell-/)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(runListReads).toBe(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('enforces Guardian at the dispatcher boundary even without an App caller', async () => {
