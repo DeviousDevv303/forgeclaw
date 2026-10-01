@@ -113,6 +113,27 @@ export function isExplicitShellRequest(prompt: string): boolean {
   return /^(?:please\s+)?(?:(?:run|execute)\s+(?:the\s+)?|)(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/.test(text)
 }
 
+/**
+ * Extract a concrete command from an explicit operator request. This is used
+ * only for a small allow-list of familiar CLI entry points; ambiguous prose is
+ * left to the normal agent loop, while a bare `pwd` never depends on the model
+ * deciding to emit a function call.
+ */
+export function extractExplicitShellCommand(prompt: string): string | null {
+  const text = prompt.trim()
+  if (!text) return null
+
+  const inlineCode = text.match(/`([^`\n]+)`/)
+  let command = inlineCode?.[1]?.trim() ?? text
+  command = command.replace(/^```(?:bash|sh)?\s*/i, '').replace(/\s*```$/, '').trim()
+  command = command.replace(/^(?:please\s+)?(?:run|execute)\s+(?:the\s+)?(?:shell\s+command|shell|command|bash)\s*[:：]?\s*/i, '')
+  command = command.replace(/^(?:please\s+)?(?:run|execute)\s+(?:the\s+)?/i, '').trim()
+  command = command.replace(/^`+|`+$/g, '').trim()
+
+  const executable = /^(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/i
+  return executable.test(command) ? command : null
+}
+
 /** Select only the existing Shell tool for explicit Shell requests. */
 export function selectRequestTools(prompt: string, allTools: ToolDef[], defaultTools: ToolDef[]): ToolDef[] {
   return isExplicitShellRequest(prompt)

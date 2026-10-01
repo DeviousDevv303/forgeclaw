@@ -42,6 +42,8 @@ import { resolveGithubToken } from './lib/githubAuth'
 import { persistGithubToken } from './lib/githubAuth'
 import {
   isCodingTaskRequest,
+  isExplicitShellRequest,
+  extractExplicitShellCommand,
   selectRequestTools,
   recordToolProgress,
   recordTaskOutcome,
@@ -985,6 +987,73 @@ function App() {
             tier1Active,
             requestGuardianApproval,
           }),
+      }
+
+      // A short, explicit operator command such as `pwd` must not depend on a
+      // small local model choosing to emit a native function call. Dispatch only
+      // commands extracted from the explicit CLI allow-list, then show the real
+      // tool output verbatim; ambiguous prose stays on the regular model path.
+      const directShellCommand = isExplicitShellRequest(promptText)
+        ? extractExplicitShellCommand(promptText)
+        : null
+      if (directShellCommand) {
+        const call: ToolCall = {
+          id: `direct-shell-${Date.now()}`,
+          name: 'shell_exec',
+          input: { command: directShellCommand, working_directory: '.' },
+        }
+        const activityId = `act_${call.id}`
+        setActivityLog(prev => [...prev.slice(-99), {
+          id: activityId,
+          timestamp: Date.now(),
+          tool: call.name,
+          input: call.input,
+          status: 'running',
+        }])
+        emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
+        emitForge({ type: 'TOOL_START', tool: call.name, iter: 0 })
+        const output = await executeTool(call, toolCtx)
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+
+        const isError = output.startsWith('[TOOL ERROR]')
+        const result: ToolResult = {
+          toolCallId: call.id,
+          name: call.name,
+          output,
+          isError,
+        }
+        setCodingAgentState(recordToolProgress(call.name, output))
+        setActivityLog(prev => prev.map(entry => entry.id === activityId
+          ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' }
+          : entry,
+        ))
+        emitForge({ type: 'THREAD_MERGE', threadId: call.id })
+        if (isError) {
+          emitForge({ type: 'TOOL_FAILURE', tool: call.name, failClass: classifyToolFailure(output) })
+          emitForge({ type: 'MISSION_BLOCKED', reason: 'Explicit shell command failed or was blocked by the runtime' })
+        } else {
+          emitForge({ type: 'TOOL_SUCCESS', tool: call.name })
+          emitForge({ type: 'MISSION_COMPLETE' })
+        }
+        setLastSource(source)
+        setMessages(prev => prev.map(message => message.id === msgId
+          ? {
+              ...message,
+              content: output,
+              streaming: false,
+              provider: activeProvider,
+              model: normalizedActiveModel,
+              agentPhase: isError ? 'BLOCKED' : 'COMPLETE',
+              toolResults: [result],
+            }
+          : message,
+        ))
+        setRequestStatus(isError ? 'blocked' : 'success')
+        setLastRequestError(isError ? output : '')
+        setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+        await logToCorpus(promptText, output, `${activeProvider}:${normalizedActiveModel}`)
+        resolveTask(taskId)
+        return
       }
 
       const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
