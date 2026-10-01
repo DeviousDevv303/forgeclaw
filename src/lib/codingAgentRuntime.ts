@@ -6,6 +6,7 @@
 // failure instead of being smoothed over.
 
 import { executeTool, loadToolContext, type ToolDef } from './forgeTools'
+import { normalizeKnownShellExecutable } from './shellCommand'
 import { CANONICAL_IDENTITY, formatCanonicalIdentity, resolveCanonicalRepository } from './canonicalIdentity'
 import {
   loadCodingAgentState,
@@ -130,13 +131,8 @@ export function extractExplicitShellCommand(prompt: string): string | null {
   command = command.replace(/^(?:please\s+)?(?:run|execute)\s+(?:the\s+)?/i, '').trim()
   command = command.replace(/^`+|`+$/g, '').trim()
 
-  const executable = /^(git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/i
-  const match = executable.exec(command)
-  if (!match) return null
-  // Models commonly emit human-style capitalization (for example `Git clone`).
-  // Bash command names are case-sensitive; normalize only the executable and
-  // preserve arguments, flags, paths, and shell operators exactly as supplied.
-  return `${match[1].toLowerCase()}${command.slice(match[1].length)}`
+  const executable = /^(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/i
+  return executable.test(command) ? normalizeKnownShellExecutable(command) : null
 }
 
 /** True when the user is asking for a repository's authoritative main HEAD. */
