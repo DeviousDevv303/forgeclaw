@@ -137,7 +137,7 @@ describe('dispatcher integrity (offline)', () => {
     const output = await executeTool({
       id: 'pwd-workspace-alias',
       name: 'shell_exec',
-      input: { command: 'pwd', working_directory: '/workspace', wait: false },
+      input: { command: 'Pwd', working_directory: '/workspace', wait: false },
     }, { ...ctx(), ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
 
     expect(output).toContain('Shell execution dispatched.')
@@ -330,6 +330,9 @@ describe('coding task detection and repo state parsing', () => {
     expect(isExplicitShellRequest('git push origin main')).toBe(true)
     expect(isExplicitShellRequest('execute git push origin main')).toBe(true)
     expect(isExplicitShellRequest('pwd')).toBe(true)
+    expect(isExplicitShellRequest('Pwd')).toBe(true)
+    expect(extractExplicitShellCommand('Pwd')).toBe('pwd')
+    expect(extractExplicitShellCommand('Please run PWD')).toBe('pwd')
     const readonlyTools = FORGE_TOOLS.filter(tool => ['github_repo_state', 'github_read_file'].includes(tool.name))
     const selected = selectRequestTools('git push origin main', FORGE_TOOLS, readonlyTools).map(tool => tool.name)
     expect(selected).toEqual(['shell_exec'])

@@ -7,6 +7,7 @@
 import { safeGetItem, safeSetItem } from './storage'
 import { resolveGithubToken } from './githubAuth'
 import { describeGithubDispatchFailure } from './githubDispatchErrors'
+import { normalizeKnownShellExecutable } from './shellCommand'
 import {
   FORGECLAW_AGENT_ID,
   FORGECLAW_AGENT_LABEL,
@@ -900,7 +901,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
       // ── Shell execution via GitHub Actions ───────────────────────────────────
       case 'shell_exec': {
-        const command    = input.command as string
+        const command    = normalizeKnownShellExecutable(typeof input.command === 'string' ? input.command : String(input.command || ''))
         const maxWait    = Math.min(parseInt(String(input.timeout_seconds || '180'), 10) || 180, 600)
         const shouldWait = (input.wait as boolean) !== false
 
