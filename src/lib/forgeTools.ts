@@ -433,7 +433,7 @@ export function loadToolContext(): ToolContext {
 
 const GITHUB_READ_RETRY_DELAYS_MS = [100, 250] as const
 const GITHUB_READ_RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504])
-const GITHUB_READ_TIMEOUT_MS = 10000
+const GITHUB_READ_TIMEOUT_MS = 60000
 
 function getRequestUrl(input: RequestInfo | URL): string {
   if (typeof input === 'string') return input
@@ -902,7 +902,8 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       case 'shell_exec': {
         const rawCommand = input.command as string
         // `PWD` is an environment variable, not a command — bash returns 127.
-        const command    = rawCommand.trim() === 'PWD' ? 'pwd' : rawCommand
+        // Local models emit unpredictable casing (PWD, Pwd, pwd, pWd); normalize all.
+        const command    = /^pwd$/i.test(rawCommand.trim()) ? 'pwd' : rawCommand
         const maxWait    = Math.min(parseInt(String(input.timeout_seconds || '180'), 10) || 180, 600)
         const shouldWait = (input.wait as boolean) !== false
 
