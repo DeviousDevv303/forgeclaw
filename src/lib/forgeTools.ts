@@ -900,7 +900,9 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
       // ── Shell execution via GitHub Actions ───────────────────────────────────
       case 'shell_exec': {
-        const command    = input.command as string
+        const rawCommand = input.command as string
+        // `PWD` is an environment variable, not a command — bash returns 127.
+        const command    = rawCommand.trim() === 'PWD' ? 'pwd' : rawCommand
         const maxWait    = Math.min(parseInt(String(input.timeout_seconds || '180'), 10) || 180, 600)
         const shouldWait = (input.wait as boolean) !== false
 
