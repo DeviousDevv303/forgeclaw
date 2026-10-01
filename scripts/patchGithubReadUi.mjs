@@ -91,13 +91,14 @@ results.push(patch({
   const testLocalEndpoint = async () => {`,
 }))
 
-// 4. Probe button plus the truthful credential-storage notice.
+// 4. Probe button. Insert before the stable repository-owner control rather
+// than matching user-facing token help, which may legitimately change.
 results.push(patch({
-  label: 'read-only probe button and credential notice',
+  label: 'read-only probe button',
   marker: 'TEST GITHUB READ (read-only)',
-  anchor: `                <div style={{ color: '#444', fontSize: '10px', marginBottom: '10px' }}>
-                  Personal access token from github.com → Settings → Developer settings → Personal access tokens. ForgeMind uses this for autonomous GitHub operations.
-                </div>`,
+  anchor: `                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div>
+                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Default Owner / Org</label>`,
   replacement: `                <button
                   type="button"
                   disabled={testingGithubRead || !ghToken.trim()}
@@ -109,9 +110,9 @@ results.push(patch({
                 {githubReadStatus && (
                   <div style={{ color: githubReadStatus.startsWith('OK') ? '#22c55e' : '#eab308', fontSize: '10px', fontFamily: 'monospace', marginBottom: '8px', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>{githubReadStatus}</div>
                 )}
-                <div style={{ color: '#444', fontSize: '10px', marginBottom: '10px' }}>
-                  Personal access token stays in this browser only (localStorage key gh_token). Not committed. A stored token authenticates requests; it does not by itself grant an agent write authority — the agent's capability profile and Guardian decide that. Prefer a fine-scoped PAT.
-                </div>`,
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div>
+                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Default Owner / Org</label>`,
 }))
 
 // 5. Pages-only runtime truth: the selected `nexus` provider is Browser
