@@ -147,6 +147,24 @@ describe('dispatcher integrity (offline)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
+  it('explains a rejected GitHub token after dispatch 401 without leaking it', async () => {
+    const secret = 'ghp_test_secret_must_not_appear'
+    const fetchMock = vi.fn(async () => new Response(null, { status: 401, statusText: 'Unauthorized' }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const output = await executeTool({
+      id: 'shell-auth-401',
+      name: 'shell_exec',
+      input: { command: 'pwd', working_directory: '.', wait: false },
+    }, { ...ctx(), ghToken: secret, ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
+
+    expect(output).toContain('GitHub rejected the saved token (401 Unauthorized)')
+    expect(output).toContain('invalid, expired, revoked, or malformed')
+    expect(output).toContain('Actions: Read and write')
+    expect(output).not.toContain(secret)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('enforces Guardian at the dispatcher boundary even without an App caller', async () => {
     const output = await executeTool(
       { id: 'guardian-boundary', name: 'github_write_file', input: { path: 'x.md', content: 'x', message: 'doc: x' } },

@@ -6,6 +6,7 @@
 
 import { safeGetItem, safeSetItem } from './storage'
 import { resolveGithubToken } from './githubAuth'
+import { describeGithubDispatchFailure } from './githubDispatchErrors'
 import {
   FORGECLAW_AGENT_ID,
   FORGECLAW_AGENT_LABEL,
@@ -942,7 +943,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         })
 
         if (!dispatchRes.ok) {
-          throw new Error(`GitHub dispatch ${dispatchRes.status}: ${dispatchRes.statusText}`)
+          throw new Error(describeGithubDispatchFailure(dispatchRes.status, dispatchRes.statusText))
         }
 
         const findCorrelatedRun = async (): Promise<ShellWorkflowRun | undefined> => {

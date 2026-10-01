@@ -2121,7 +2121,8 @@ function App() {
                   </button>
                 </div>
                 <div style={{ color: '#444', fontSize: '10px', marginBottom: '10px' }}>
-                  Personal access token from github.com → Settings → Developer settings → Personal access tokens. ForgeMind uses this for autonomous GitHub operations.
+                  Shell execution requires a valid token. A GitHub 401 means the saved token was rejected (commonly expired, revoked, or malformed): replace it here privately; never paste it into chat. Fine-grained PAT: select this repository and grant Actions: Read and write. Classic PAT: grant repo scope. Organization approval or SSO may also be required.{' '}
+                  <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer" style={{ color: '#f97316' }}>Manage GitHub tokens</a>.
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <div>
