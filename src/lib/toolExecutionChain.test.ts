@@ -23,6 +23,7 @@ import {
   parseRepoState,
   isCodingTaskRequest,
   isExplicitShellRequest,
+  extractExplicitShellCommand,
   selectRequestTools,
   buildRuntimeRequestContext,
   measureRequestMetrics,
@@ -304,10 +305,21 @@ describe('coding task detection and repo state parsing', () => {
   it('routes an explicit Shell command to shell_exec instead of repository inspection', () => {
     expect(isExplicitShellRequest('git push origin main')).toBe(true)
     expect(isExplicitShellRequest('execute git push origin main')).toBe(true)
+    expect(isExplicitShellRequest('pwd')).toBe(true)
     const readonlyTools = FORGE_TOOLS.filter(tool => ['github_repo_state', 'github_read_file'].includes(tool.name))
     const selected = selectRequestTools('git push origin main', FORGE_TOOLS, readonlyTools).map(tool => tool.name)
     expect(selected).toEqual(['shell_exec'])
     expect(selected).not.toContain('github_repo_state')
+    expect(selectRequestTools('pwd', FORGE_TOOLS, readonlyTools).map(tool => tool.name)).toEqual(['shell_exec'])
+  })
+
+  it('extracts bare pwd and explicitly wrapped CLI commands for deterministic execution', () => {
+    expect(extractExplicitShellCommand('pwd')).toBe('pwd')
+    expect(extractExplicitShellCommand('run pwd')).toBe('pwd')
+    expect(extractExplicitShellCommand('Please run the shell command: `pwd`')).toBe('pwd')
+    expect(extractExplicitShellCommand('```bash\npwd\n```')).toBe('pwd')
+    expect(extractExplicitShellCommand('inspect the repository and report its current directory')).toBeNull()
+    expect(extractExplicitShellCommand('run whatever you think is best')).toBeNull()
   })
 
   it('keeps ordinary repository-state requests on github_repo_state', () => {
