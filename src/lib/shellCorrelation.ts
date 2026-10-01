@@ -69,6 +69,33 @@ export function resolveShellWorkingDirectory(
   return candidate === workspace || candidate.startsWith(`${workspace}/`) ? candidate : null
 }
 
+/**
+ * Map common model/container workspace paths to a GitHub Actions repository-
+ * relative directory. Actions checks the repository out at GITHUB_WORKSPACE,
+ * not /workspace, so `/workspace` is an alias for `.` here.
+ */
+export function normalizeShellWorkingDirectoryInput(
+  value: unknown,
+  repositoryName: string,
+): string | null {
+  if (typeof value !== 'string') return null
+  const requested = value.trim()
+  if (!requested || requested.includes('\0')) return null
+
+  let relative = requested
+  const workspaceRepoPrefix = `/workspace/${repositoryName}/`
+  if (requested === '/workspace' || requested === `/workspace/${repositoryName}`) {
+    relative = '.'
+  } else if (requested.startsWith(workspaceRepoPrefix)) {
+    relative = requested.slice(workspaceRepoPrefix.length)
+  } else if (requested.startsWith('/workspace/')) {
+    relative = requested.slice('/workspace/'.length)
+  }
+
+  // Share the exact traversal semantics used by the workflow boundary.
+  return resolveShellWorkingDirectory(relative, '/repo') === null ? null : relative
+}
+
 export interface ParsedShellOutput {
   commandOutput: string
   exitCode: number

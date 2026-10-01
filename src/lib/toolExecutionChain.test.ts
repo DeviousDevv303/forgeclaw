@@ -99,6 +99,47 @@ describe('dispatcher integrity (offline)', () => {
     expect(output).toContain('No GitHub token configured')
   })
 
+  it('runs pwd from the repository root when a local model emits /workspace', async () => {
+    let invocationId = ''
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/dispatches')) {
+        const payload = JSON.parse(String(init?.body)) as { inputs: { command: string; working_directory: string; invocation_id: string } }
+        expect(payload.inputs.command).toBe('pwd')
+        expect(payload.inputs.working_directory).toBe('.')
+        invocationId = payload.inputs.invocation_id
+        return new Response(null, { status: 204 })
+      }
+      if (url.pathname.endsWith('/runs')) {
+        return Response.json({ workflow_runs: [{
+          id: 4242,
+          name: `Shell exec ${invocationId}`,
+          display_title: `Shell exec ${invocationId}`,
+          event: 'workflow_dispatch',
+          status: 'queued',
+          conclusion: null,
+          created_at: new Date().toISOString(),
+          head_branch: 'main',
+          html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/4242',
+          run_number: 99,
+        }] })
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const output = await executeTool({
+      id: 'pwd-workspace-alias',
+      name: 'shell_exec',
+      input: { command: 'pwd', working_directory: '/workspace', wait: false },
+    }, { ...ctx(), ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
+
+    expect(output).toContain('Shell execution dispatched.')
+    expect(output).toContain('id: 4242')
+    expect(invocationId).toMatch(/^shell-/)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('enforces Guardian at the dispatcher boundary even without an App caller', async () => {
     const output = await executeTool(
       { id: 'guardian-boundary', name: 'github_write_file', input: { path: 'x.md', content: 'x', message: 'doc: x' } },
