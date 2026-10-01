@@ -6,6 +6,7 @@
 // failure instead of being smoothed over.
 
 import { executeTool, loadToolContext, type ToolDef } from './forgeTools'
+import { normalizeKnownShellExecutable } from './shellCommand'
 import { CANONICAL_IDENTITY, formatCanonicalIdentity, resolveCanonicalRepository } from './canonicalIdentity'
 import {
   loadCodingAgentState,
@@ -131,7 +132,7 @@ export function extractExplicitShellCommand(prompt: string): string | null {
   command = command.replace(/^`+|`+$/g, '').trim()
 
   const executable = /^(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/i
-  return executable.test(command) ? command : null
+  return executable.test(command) ? normalizeKnownShellExecutable(command) : null
 }
 
 /** Select only the existing Shell tool for explicit Shell requests. */
