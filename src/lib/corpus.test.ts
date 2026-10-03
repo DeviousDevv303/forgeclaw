@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { CorpusRepository } from './corpus'
+import { CorpusRepository, appendDeepSeekLearning } from './corpus'
 import { corpusProvider } from './ai/providers/corpusProvider'
 import { localInferenceProvider } from './ai/providers/localInferenceProvider'
 import { requiresCoSign } from './guardianGate'
@@ -58,6 +58,15 @@ describe('NEXUS / Corpus Local Mode', () => {
     const rejected = await repository.rejectCandidate(candidate.id, 'lesson failed review')
     expect(rejected?.admissionStatus).toBe('rejected')
     expect(repository.retrieve('recordId')).toHaveLength(0)
+  })
+
+  it('captures a DeepSeek dispatch as an unapproved NEXUS learning candidate', async () => {
+    const result = await appendDeepSeekLearning('Explain routing', 'pending artifact', 'deepseek-test-1', 'private context')
+    expect(result.candidate.admissionStatus).toBe('candidate')
+    expect(result.candidate.runtime).toBe('github-actions')
+    expect(result.candidate.model).toBe('deepseek-16b-instruct')
+    expect(result.candidate.input).toContain('[DEEPSEEK_TASK] Explain routing')
+    expect(result.candidate.generatedResult).toContain('[DEEPSEEK_RESULT]')
   })
 
   it('rejects malformed and tampered candidates', async () => {

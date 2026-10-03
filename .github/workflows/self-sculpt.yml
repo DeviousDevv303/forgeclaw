@@ -1,0 +1,90 @@
+# Directive item 5 — Self-sculpting workflow.
+# Design: content is written through Python environment variables, paths and
+# branches are validated, protected foundation/codex files are blocked, and all
+# changes land on a branch with a pull request rather than mutating main.
+# Remaining: repository branch protection and required reviewers remain the
+# final authority for merging a self-sculpted change.
+
+name: Self Sculpt
+run-name: Self Sculpt ${{ inputs.branch }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_path:
+        description: Repository-relative file path to update
+        required: true
+        type: string
+      content:
+        description: Complete replacement file content
+        required: true
+        type: string
+      reason:
+        description: Reason for the proposed change
+        required: true
+        type: string
+      branch:
+        description: New feature branch name
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sculpt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate inputs and write file
+        env:
+          SCULPT_PATH: ${{ inputs.file_path }}
+          SCULPT_CONTENT: ${{ inputs.content }}
+          SCULPT_BRANCH: ${{ inputs.branch }}
+          SCULPT_REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          case "$SCULPT_PATH" in
+            ''|/*|.*|*'..'*|foundation/codex|foundation/codex/*)
+              echo 'Refusing unsafe or Guardian-protected file path.' >&2
+              exit 2
+              ;;
+          esac
+          case "$SCULPT_BRANCH" in
+            ''|main|master|*/../*|/*|*'..'*)
+              echo 'Refusing unsafe or protected branch name.' >&2
+              exit 2
+              ;;
+          esac
+          mkdir -p "$(dirname -- "$SCULPT_PATH")"
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ['SCULPT_PATH'])
+          resolved = (Path.cwd() / path).resolve()
+          root = Path.cwd().resolve()
+          if root not in resolved.parents and resolved != root:
+              raise SystemExit('path escapes repository')
+          resolved.write_text(os.environ['SCULPT_CONTENT'], encoding='utf-8')
+          PY
+          git checkout -b "$SCULPT_BRANCH"
+          git config user.name 'ForgeClaw'
+          git config user.email 'forgeclaw@local'
+          git add -- "$SCULPT_PATH"
+          git diff --cached --quiet && { echo 'No file changes detected.'; exit 0; }
+          git commit -m "sculpt: $SCULPT_REASON"
+          git push --set-upstream origin "$SCULPT_BRANCH"
+
+      - name: Open pull request
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCULPT_BRANCH: ${{ inputs.branch }}
+          SCULPT_REASON: ${{ inputs.reason }}
+        run: gh pr create --base main --head "$SCULPT_BRANCH" --title "sculpt: $SCULPT_REASON" --body "Automated self-sculpt proposal from ForgeClaw. Review the diff before merging."

@@ -53,6 +53,19 @@ export interface CorpusSyncResult {
   reason?: string
 }
 
+/**
+ * Directive item 3 — NEXUS Learning.
+ * Design decision: DeepSeek output enters the existing raw-interaction and
+ * unapproved-candidate pipeline instead of bypassing integrity/admission.
+ * Remaining work: a later verifier or explicit sync must admit candidates.
+ */
+export interface DeepSeekLearningInput {
+  task: string
+  result: string
+  invocationId: string
+  context?: string
+}
+
 const INDEX_KEY = 'forgeclaw_nexus_index_v1'
 const VERSION_KEY = 'forgeclaw_nexus_version_v1'
 const RECORD_PREFIX = 'forgeclaw_nexus_record_v1:'
@@ -184,6 +197,17 @@ export class CorpusRepository {
       }
       this.saveRecord(candidate, true)
       return { interaction, candidate }
+    })
+  }
+
+  appendDeepSeekLearning(input: DeepSeekLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+    return this.appendInteraction({
+      input: `[DEEPSEEK_TASK] ${input.task}`,
+      context: input.context || `invocation_id=${input.invocationId}`,
+      result: `[DEEPSEEK_RESULT]\n${input.result}`,
+      runtime: 'github-actions',
+      model: 'deepseek-16b-instruct',
+      source: 'deepseek:github-actions',
     })
   }
 
@@ -337,6 +361,16 @@ export class CorpusRepository {
 }
 
 export const corpusRepository = new CorpusRepository()
+
+/** Add a DeepSeek response to the local NEXUS learning ledger. */
+export function appendDeepSeekLearning(
+  task: string,
+  deepseekResult: string,
+  invocationId: string,
+  context = '',
+): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+  return corpusRepository.appendDeepSeekLearning({ task, result: deepseekResult, invocationId, context })
+}
 
 export function formatCorpusContext(records: CorpusRecord[]): string {
   if (!records.length) return ''

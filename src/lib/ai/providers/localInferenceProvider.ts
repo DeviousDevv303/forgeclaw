@@ -73,6 +73,26 @@ function toMessages(systemPrompt: string, messages: AIMessage[]): LocalMessage[]
   ]
 }
 
+/**
+ * Directive item 4 — Smart Router.
+ * Design decision: classification stays deterministic and local; complex work
+ * is delegated through the registered deepseek_reason tool, avoiding another
+ * AI API or a GitHub credential in this provider.
+ * Remaining work: the GitHub workflow must be enabled on the target repository.
+ */
+export function shouldUseLocalModel(messages: AIMessage[]): boolean {
+  const last = messages[messages.length - 1]
+  if (!last || last.role !== 'user' || !last.content?.trim()) return false
+  const content = last.content.trim().toLowerCase()
+  if (content.length > 240) return false
+  if (/^(hi|hello|hey|pwd|ls|echo\b|date\b|whoami\b|read file\b|show me\b)/i.test(content)) return true
+  return /^(what is|define|summarize|list|how do i)\b/i.test(content) && content.length <= 120
+}
+
+export function routeLocalTask(messages: AIMessage[]): 'local' | 'deepseek' {
+  return shouldUseLocalModel(messages) ? 'local' : 'deepseek'
+}
+
 function toTools(tools: NonNullable<AIRequest['tools']>) {
   return tools.map(tool => ({
     type: 'function' as const,
@@ -159,6 +179,10 @@ export const localInferenceProvider: AIProvider = {
     if (request.tools?.length) {
       body.tools = toTools(request.tools)
       body.tool_choice = 'auto'
+      const lastMessage = (body.messages as LocalMessage[])[(body.messages as LocalMessage[]).length - 1]
+      if (routeLocalTask(request.messages) === 'deepseek' && lastMessage?.role === 'user' && typeof lastMessage.content === 'string' && request.tools.some(tool => tool.name === 'deepseek_reason')) {
+        lastMessage.content += '\n\nThis is a complex task. Delegate primary reasoning to the deepseek_reason tool, then use its result to formulate the final response.'
+      }
       // Add grammar to force valid tool call JSON output
       body.grammar = {
         type: 'json',

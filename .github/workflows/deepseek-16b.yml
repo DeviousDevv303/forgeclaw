@@ -1,0 +1,106 @@
+# Directive item 1 — DeepSeek-16B primary reasoning workflow.
+# Design: inputs are passed through environment variables, output is an artifact,
+# and the runner has read-only repository permissions. The browser-side tool
+# records a pending learning candidate until this artifact is verified.
+# Remaining: GitHub-hosted CPU runners may be too constrained for this model;
+# benchmark and adjust quantization/runtime before relying on production latency.
+
+name: DeepSeek 16B
+run-name: DeepSeek 16B ${{ inputs.invocation_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Task for DeepSeek-16B
+        required: true
+        type: string
+      context:
+        description: Additional context
+        required: false
+        default: ''
+        type: string
+      nexus_learning:
+        description: Record this request for NEXUS learning
+        required: false
+        default: 'true'
+        type: string
+      invocation_id:
+        description: Correlation identifier
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache Hugging Face model files
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: deepseek-16b-${{ runner.os }}-${{ hashFiles('.github/workflows/deepseek-16b.yml') }}
+
+      - name: Install inference dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install transformers accelerate
+
+      - name: Run DeepSeek
+        env:
+          TASK: ${{ inputs.task }}
+          CONTEXT: ${{ inputs.context }}
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: |
+          python - <<'PY'
+          import os
+          import torch
+          from transformers import AutoModelForCausalLM, AutoTokenizer
+
+          model_id = 'deepseek-ai/deepseek-coder-16b-instruct'
+          tokenizer = AutoTokenizer.from_pretrained(model_id)
+          model = AutoModelForCausalLM.from_pretrained(
+              model_id,
+              torch_dtype=torch.float32,
+              low_cpu_mem_usage=True,
+          )
+          prompt = (
+              f"Task: {os.environ['TASK']}\n"
+              f"Context: {os.environ.get('CONTEXT', '')}\n"
+              'Provide a detailed, actionable response. Do not claim to have '
+              'performed actions that are not evidenced in the context.'
+          )
+          inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=4096)
+          with torch.no_grad():
+              output = model.generate(
+                  **inputs,
+                  max_new_tokens=2000,
+                  do_sample=False,
+                  pad_token_id=tokenizer.eos_token_id,
+              )
+          generated = output[0][inputs['input_ids'].shape[1]:]
+          result = tokenizer.decode(generated, skip_special_tokens=True).strip()
+          with open('result.txt', 'w', encoding='utf-8') as handle:
+              handle.write(result)
+          print(f'Wrote DeepSeek result for {os.environ["INVOCATION_ID"]}')
+          PY
+
+      - name: Upload result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepseek-${{ inputs.invocation_id }}
+          path: result.txt
+          if-no-files-found: error
+          retention-days: 1

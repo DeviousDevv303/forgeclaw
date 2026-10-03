@@ -4,7 +4,7 @@
 // local inference server running — including CI. The local runtime is untouched; the network tests
 // now skip when no endpoint is reachable instead of reporting a false failure.
 import { describe, expect, it } from 'vitest'
-import { localInferenceProvider } from './localInferenceProvider'
+import { localInferenceProvider, routeLocalTask, shouldUseLocalModel } from './localInferenceProvider'
 import { callProvider } from '../../modelProviders'
 import { runSubAgent } from '../../managedAgent'
 import { FORGE_TOOLS, executeTool } from '../../forgeTools'
@@ -25,6 +25,11 @@ async function localServerReachable(): Promise<boolean> {
 const reachable = await localServerReachable()
 
 describe('ForgeClaw Local Mode v0.1 smoke path', () => {
+  it('routes short routine prompts locally and complex prompts to DeepSeek', () => {
+    expect(shouldUseLocalModel([{ role: 'user', content: 'pwd' }])).toBe(true)
+    expect(routeLocalTask([{ role: 'user', content: 'Design a robust migration plan for the repository and explain tradeoffs.' }])).toBe('deepseek')
+  })
+
   it('exercises the agent-core classification, verification fields, and retry policy', () => {
     expect(classifyFailure('local tool execution failed')).toBe('TOOL_FAILURE')
     expect(extractStatus('STATUS: COMPLETE\nNEXT_ACTION: none')).toBe('COMPLETE')

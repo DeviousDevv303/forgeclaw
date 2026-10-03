@@ -21,7 +21,7 @@ import {
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign } from './guardianGate'
 import { isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, type ShellWorkflowRun } from './shellCorrelation'
-import { corpusRepository } from './corpus'
+import { appendDeepSeekLearning, corpusRepository } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -162,6 +162,34 @@ export const FORGE_TOOLS: ToolDef[] = [
         repo:     { type: 'string', description: 'GitHub repo' },
       },
       required: ['workflow'],
+    },
+  },
+  {
+    name: 'deepseek_reason',
+    description: 'Primary complex-task reasoning via the repository-owned DeepSeek-16B GitHub Actions workflow. The request is recorded as an unapproved NEXUS learning candidate when enabled.',
+    parameters: {
+      type: 'object',
+      properties: {
+        task: { type: 'string', description: 'Task for DeepSeek-16B' },
+        context: { type: 'string', description: 'Additional context for the task' },
+        nexus_learn: { type: 'boolean', description: 'Record the dispatch in the local NEXUS corpus (default true)' },
+        ref: { type: 'string', description: 'Branch or tag to run the workflow from (default main)' },
+      },
+      required: ['task'],
+    },
+  },
+  {
+    name: 'sculpt_self',
+    description: 'Propose a self-modification by dispatching the guarded self-sculpt workflow. Changes are committed to a feature branch and opened as a pull request; main and protected foundation/codex paths are rejected.',
+    parameters: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string', description: 'Repository-relative file path to update' },
+        content: { type: 'string', description: 'Complete replacement file content' },
+        reason: { type: 'string', description: 'Reason for the proposed change' },
+        branch: { type: 'string', description: 'New feature branch name' },
+      },
+      required: ['file_path', 'content', 'reason', 'branch'],
     },
   },
   {
@@ -736,6 +764,77 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, { method: 'POST', headers, body: JSON.stringify({ ref }) })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
         return `✓ Triggered ${workflow} on ${ref} in ${owner}/${repo}`
+      }
+
+      // ── DeepSeek: repository-owned primary reasoning ────────────────────────
+      case 'deepseek_reason': {
+        const task = typeof input.task === 'string' ? input.task.trim() : ''
+        const context = typeof input.context === 'string' ? input.context : ''
+        const ref = typeof input.ref === 'string' && input.ref.trim() ? input.ref.trim() : 'main'
+        const nexusLearn = input.nexus_learn !== false
+        if (!task) throw new Error('DeepSeek task is required.')
+        if (!token) throw new Error('No GitHub token configured.')
+        if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {
+          throw new Error('Invalid workflow ref.')
+        }
+        const invocationId = `deepseek-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const headers = {
+          Authorization: `token ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        }
+        const dispatch = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/deepseek-16b.yml/dispatches`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            ref,
+            inputs: {
+              task,
+              context,
+              nexus_learning: nexusLearn ? 'true' : 'false',
+              invocation_id: invocationId,
+            },
+          }),
+        })
+        if (!dispatch.ok) {
+          const detail = await dispatch.text().catch(() => '')
+          throw new Error(`DeepSeek dispatch failed: ${dispatch.status}${detail ? ` — ${detail.slice(0, 300)}` : ''}`)
+        }
+        if (nexusLearn) {
+          await appendDeepSeekLearning(
+            task,
+            `[PENDING_DEEPSEEK_RESULT]\nInvocation ${invocationId} dispatched to ${owner}/${repo}@${ref}. Retrieve the workflow artifact before admitting this candidate.`,
+            invocationId,
+            context,
+          )
+        }
+        return `✓ DeepSeek-16B dispatched as ${invocationId} on ${owner}/${repo}@${ref}. Result artifact will be available after the workflow completes${nexusLearn ? '; NEXUS recorded an unapproved learning candidate' : ''}.`
+      }
+
+      // ── Self-sculpt: branch + pull request proposal ──────────────────────────
+      case 'sculpt_self': {
+        const filePath = typeof input.file_path === 'string' ? input.file_path.trim() : ''
+        const content = typeof input.content === 'string' ? input.content : ''
+        const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
+        const branch = typeof input.branch === 'string' ? input.branch.trim() : ''
+        if (!filePath || !reason || !branch) throw new Error('file_path, content, reason, and branch are required.')
+        if (content.length > 60_000) throw new Error('Self-sculpt content exceeds the 60KB workflow-input limit.')
+        if (!/^[A-Za-z0-9._/-]+$/.test(filePath) || filePath.startsWith('/') || filePath.startsWith('.') || filePath.includes('..') || filePath === 'foundation/codex' || filePath.startsWith('foundation/codex/')) {
+          throw new Error('Self-sculpt path is unsafe or Guardian-protected.')
+        }
+        if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch === 'main' || branch === 'master' || branch.startsWith('/') || branch.includes('..')) {
+          throw new Error('Self-sculpt branch is unsafe or protected.')
+        }
+        if (!token) throw new Error('No GitHub token configured.')
+        const invocationId = `sculpt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/self-sculpt.yml/dispatches`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ ref: 'main', inputs: { file_path: filePath, content, reason, branch } }),
+        })
+        if (!res.ok) throw new Error(`Self-sculpt dispatch failed: ${res.status}`)
+        return `✓ Self-sculpt ${invocationId} dispatched for ${filePath}; branch ${branch} will be pushed and a pull request opened for review.`
       }
 
       // ── HTTP fetch ───────────────────────────────────────────────────────────
