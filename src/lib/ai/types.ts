@@ -16,6 +16,7 @@ export interface AIRequest {
 export interface AIMessage {
   role: 'user' | 'assistant' | 'tool'
   content: string
+  image_url?: string
   tool_call_id?: string
   tool_calls?: AIToolCall[]
 }

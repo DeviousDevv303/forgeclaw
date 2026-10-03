@@ -25,8 +25,9 @@ async function localServerReachable(): Promise<boolean> {
 const reachable = await localServerReachable()
 
 describe('ForgeClaw Local Mode v0.1 smoke path', () => {
-  it('routes short routine prompts locally and complex prompts to DeepSeek', () => {
-    expect(shouldUseLocalModel([{ role: 'user', content: 'pwd' }])).toBe(true)
+  it('routes both routine and complex prompts to DeepSeek', () => {
+    expect(shouldUseLocalModel([{ role: 'user', content: 'pwd' }])).toBe(false)
+    expect(routeLocalTask([{ role: 'user', content: 'pwd' }])).toBe('deepseek')
     expect(routeLocalTask([{ role: 'user', content: 'Design a robust migration plan for the repository and explain tradeoffs.' }])).toBe('deepseek')
   })
 

@@ -44,6 +44,7 @@ export interface CorpusInteractionInput {
   runtime: string
   model: string
   source?: string
+  metadata?: Record<string, string>
 }
 
 export interface CorpusSyncResult {
@@ -64,6 +65,14 @@ export interface DeepSeekLearningInput {
   result: string
   invocationId: string
   context?: string
+}
+
+export interface NexusKnowledge {
+  content: string
+  source: string
+  recordId: string
+  score: number
+  metadata: Record<string, string>
 }
 
 const INDEX_KEY = 'forgeclaw_nexus_index_v1'
@@ -90,6 +99,30 @@ function writeIndex(key: string, ids: string[]): void {
 
 function tokenise(value: string): string[] {
   return Array.from(new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length >= 2)))
+}
+
+function taskCategory(task: string): string {
+  const value = task.toLowerCase()
+  if (/\b(code|coding|typescript|javascript|python|bug|debug|function|api|test)\b/.test(value)) return 'code'
+  if (/\b(architecture|design|system|workflow|infrastructure|repository)\b/.test(value)) return 'architecture'
+  if (/\b(analy[sz]|compare|evaluate|research|investigate|tradeoff)\b/.test(value)) return 'analysis'
+  if (/\b(write|draft|email|summarize|rewrite|translate)\b/.test(value)) return 'writing'
+  return 'general'
+}
+
+function taskComplexity(task: string, context = ''): string {
+  const size = task.length + context.length
+  if (size > 700 || /\b(architecture|migration|multi[- ]step|deep|comprehensive|production)\b/i.test(task)) return 'complex'
+  if (size > 180 || /\b(explain|debug|compare|design|analy[sz]e|implement)\b/i.test(task)) return 'moderate'
+  return 'simple'
+}
+
+function deepSeekMetadata(task: string, context: string): Record<string, string> {
+  return {
+    keywords: tokenise(`${task} ${context}`).slice(0, 24).join(','),
+    taskType: taskCategory(task),
+    complexity: taskComplexity(task, context),
+  }
 }
 
 function fallbackHash(value: string): string {
@@ -180,7 +213,7 @@ export class CorpusRepository {
         recordType: 'interaction',
         integrity,
         admissionStatus: 'raw',
-        metadata: { input: input.input, runtime: input.runtime, model: input.model },
+        metadata: { input: input.input, runtime: input.runtime, model: input.model, ...(input.metadata || {}) },
       }
       this.saveRecord(interaction)
       const candidate: LearningCandidate = {
@@ -208,6 +241,7 @@ export class CorpusRepository {
       runtime: 'github-actions',
       model: 'deepseek-16b-instruct',
       source: 'deepseek:github-actions',
+      metadata: deepSeekMetadata(input.task, input.context || ''),
     })
   }
 
@@ -223,6 +257,15 @@ export class CorpusRepository {
       if (score > 0) matches.push({ record, score })
     }
     return matches.sort((a, b) => b.score - a.score || b.record.timestamp.localeCompare(a.record.timestamp)).slice(0, limit).map(item => item.record)
+  }
+
+  checkNexusKnowledge(task: string): NexusKnowledge | null {
+    const match = this.retrieve(task, 1)[0]
+    if (!match) return null
+    const queryTokens = tokenise(task)
+    const haystack = tokenise(`${match.content} ${Object.values(match.metadata).join(' ')}`)
+    const score = queryTokens.reduce((total, token) => total + (haystack.includes(token) ? 1 : 0), 0)
+    return { content: match.content, source: match.source, recordId: match.id, score, metadata: match.metadata }
   }
 
   async admitCandidate(candidateId: string): Promise<CorpusRecord | null> {
@@ -370,6 +413,11 @@ export function appendDeepSeekLearning(
   context = '',
 ): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
   return corpusRepository.appendDeepSeekLearning({ task, result: deepseekResult, invocationId, context })
+}
+
+/** Return an approved local answer when NEXUS has a matching learned record. */
+export function checkNexusKnowledge(task: string): NexusKnowledge | null {
+  return corpusRepository.checkNexusKnowledge(task)
 }
 
 export function formatCorpusContext(records: CorpusRecord[]): string {

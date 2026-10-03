@@ -6,6 +6,7 @@
 // llama.cpp internals. Start llama-server with a GGUF model and expose /v1.
 
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
+import { checkNexusKnowledge } from '../../corpus'
 
 export const DEFAULT_LOCAL_ENDPOINT = 'http://127.0.0.1:8080/v1'
 export const DEFAULT_LOCAL_MODEL = 'local-model'
@@ -22,6 +23,7 @@ export const LOCAL_MODELS = [
 type LocalMessage = {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string | null
+  image_url?: string
   tool_call_id?: string
   tool_calls?: Array<{
     id: string
@@ -68,25 +70,18 @@ function toMessages(systemPrompt: string, messages: AIMessage[]): LocalMessage[]
           })),
         }
       }
-      return { role: 'user', content: message.content }
+      return { role: 'user', content: message.content, image_url: message.image_url }
     }),
   ]
 }
 
 /**
- * Directive item 4 — Smart Router.
- * Design decision: classification stays deterministic and local; complex work
- * is delegated through the registered deepseek_reason tool, avoiding another
- * AI API or a GitHub credential in this provider.
- * Remaining work: the GitHub workflow must be enabled on the target repository.
+ * DeepSeek-primary mode: NEXUS is a knowledge layer and never the reasoning
+ * engine. It may only return an approved answer already present in the corpus.
  */
 export function shouldUseLocalModel(messages: AIMessage[]): boolean {
-  const last = messages[messages.length - 1]
-  if (!last || last.role !== 'user' || !last.content?.trim()) return false
-  const content = last.content.trim().toLowerCase()
-  if (content.length > 240) return false
-  if (/^(hi|hello|hey|pwd|ls|echo\b|date\b|whoami\b|read file\b|show me\b)/i.test(content)) return true
-  return /^(what is|define|summarize|list|how do i)\b/i.test(content) && content.length <= 120
+  void messages
+  return false
 }
 
 export function routeLocalTask(messages: AIMessage[]): 'local' | 'deepseek' {
@@ -161,6 +156,12 @@ export const localInferenceProvider: AIProvider = {
 
   async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
     const model = request.model || DEFAULT_LOCAL_MODEL
+    const lastUserMessage = [...request.messages].reverse().find(message => message.role === 'user')
+    const learned = lastUserMessage && !lastUserMessage.image_url ? checkNexusKnowledge(lastUserMessage.content) : null
+    if (learned) {
+      return { text: learned.content, provider: 'nexus-memory', model: 'nexus-memory', stopReason: 'knowledge-hit' }
+    }
+    const hasImages = request.messages.some(message => Boolean(message.image_url) || /data:image\//i.test(message.content))
     const body: Record<string, unknown> = {
       model,
       messages: toMessages(request.systemPrompt, request.messages),
@@ -171,14 +172,21 @@ export const localInferenceProvider: AIProvider = {
     
     // If task involves writing files, constrain output to only tool call JSON
     const lastUserMsg = request.messages[request.messages.length - 1]
-    if (lastUserMsg?.role === 'user' && /write|create|commit|branch/i.test(lastUserMsg.content || '')) {
+    if (!hasImages && lastUserMsg?.role === 'user' && /write|create|commit|branch/i.test(lastUserMsg.content || '')) {
       // Force JSON mode if supported
       body.response_format = { type: 'json_object' }
       body.temperature = 0.0  // Maximum determinism
     }
     if (request.tools?.length) {
       body.tools = toTools(request.tools)
-      body.tool_choice = 'auto'
+      const hasToolResult = request.messages.some(message => message.role === 'tool')
+      const hasDeepSeekTool = request.tools.some(tool => tool.name === 'deepseek_reason')
+      const hasImageTool = request.tools.some(tool => tool.name === 'analyze_image')
+      body.tool_choice = !hasToolResult && hasImages && hasImageTool
+        ? { type: 'function', function: { name: 'analyze_image' } }
+        : !hasToolResult && hasDeepSeekTool
+          ? { type: 'function', function: { name: 'deepseek_reason' } }
+          : 'auto'
       const lastMessage = (body.messages as LocalMessage[])[(body.messages as LocalMessage[]).length - 1]
       if (routeLocalTask(request.messages) === 'deepseek' && lastMessage?.role === 'user' && typeof lastMessage.content === 'string' && request.tools.some(tool => tool.name === 'deepseek_reason')) {
         lastMessage.content += '\n\nThis is a complex task. Delegate primary reasoning to the deepseek_reason tool, then use its result to formulate the final response.'
@@ -276,6 +284,7 @@ export const localInferenceProvider: AIProvider = {
       if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
         lastMsg.content += `\n\nIf you need to use a tool, you MUST respond with ONLY this exact JSON format (no other text, no explanation):\n{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"TOOL_NAME","arguments":"{\\"param\\":\\"value\\"}"}}]}\n\nReplace TOOL_NAME with the actual tool name and fill in the parameters.`
       }
+      if (hasImages) delete body.grammar
     }
 
     const response = await fetch(`${endpoint(apiKey)}/chat/completions`, {

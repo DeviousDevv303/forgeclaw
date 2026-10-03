@@ -920,7 +920,8 @@ function App() {
     })
 
     // Always include core tools
-    const coreToolNames = ['github_repo_state', 'coding_task_update', 'shell_exec']
+    const coreToolNames = ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason']
+    if (imageUrl) coreToolNames.push('analyze_image')
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
 
@@ -928,7 +929,10 @@ function App() {
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'
-    const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}`
+    const primaryInstruction = imageUrl
+      ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
+      : '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for every user task. NEXUS is an orchestration and approved-knowledge layer only; it must not answer a new task directly.'
+    const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
     
     const finalSystemPrompt = relevant.length > 0
       ? baseSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
@@ -1081,18 +1085,18 @@ function App() {
 
       const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
         m.role === 'user' || m.role === 'assistant'
-          ? [{ role: m.role, content: m.content }]
+          ? [{ role: m.role, content: m.content, ...(m.imageUrl ? { image_url: m.imageUrl } : {}) }]
           : []
       )
       // Only project the minimum runtime state required for this request. Full
       // task state remains in storage and is surfaced by the UI, not token stream.
-      effectivePrompt = `${promptText}\n\n${buildRuntimeRequestContext({
+      effectivePrompt = `${promptText}${imageUrl ? `\n\n[IMAGE_ATTACHMENT]\n${imageUrl}` : ''}\n\n${buildRuntimeRequestContext({
         owner,
         repo,
         taskStatus: codingAgentState.taskStatus,
         requiresRepositoryTool: codingTask,
       })}`
-      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt }]
+      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt, ...(imageUrl ? { image_url: imageUrl } : {}) }]
       const allToolResults: ToolResult[] = []
       const toolAttempts: Array<{ name: string; input: string }> = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
