@@ -911,6 +911,8 @@ function App() {
       'shell_exec': ['run', 'execute', 'test', 'build', 'command', 'shell'],
       'github_search_code': ['search', 'find', 'grep', 'lookup'],
       'github_repo_state': ['state', 'status', 'head', 'branch'],
+      'generate_image': ['generate', 'image', 'logo', 'illustration', 'picture', 'artwork'],
+      'analyze_image': ['analyze', 'image', 'photo', 'picture', 'vision'],
     }
 
     const messageLower = (promptText || '').toLowerCase()

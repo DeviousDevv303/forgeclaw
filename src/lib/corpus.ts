@@ -67,6 +67,14 @@ export interface DeepSeekLearningInput {
   context?: string
 }
 
+export interface ImageGenerationLearningInput {
+  prompt: string
+  style: string
+  width: number
+  height: number
+  invocationId: string
+}
+
 export interface NexusKnowledge {
   content: string
   source: string
@@ -245,6 +253,23 @@ export class CorpusRepository {
     })
   }
 
+  appendImageGenerationLearning(input: ImageGenerationLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+    const context = `style=${input.style}; size=${input.width}x${input.height}; invocation_id=${input.invocationId}`
+    return this.appendInteraction({
+      input: `[IMAGE_GENERATION_PROMPT] ${input.prompt}`,
+      context,
+      result: `[FLUX_GENERATION_REQUEST]\n${context}`,
+      runtime: 'github-actions',
+      model: 'FLUX.1-dev',
+      source: 'flux:github-actions',
+      metadata: {
+        keywords: tokenise(`${input.prompt} ${input.style}`).slice(0, 24).join(','),
+        taskType: 'image-generation',
+        complexity: 'moderate',
+      },
+    })
+  }
+
   retrieve(query: string, limit = 3): CorpusRecord[] {
     const queryTokens = tokenise(query)
     if (!queryTokens.length) return []
@@ -418,6 +443,11 @@ export function appendDeepSeekLearning(
 /** Return an approved local answer when NEXUS has a matching learned record. */
 export function checkNexusKnowledge(task: string): NexusKnowledge | null {
   return corpusRepository.checkNexusKnowledge(task)
+}
+
+/** Record a FLUX generation request as an unapproved local learning candidate. */
+export function appendImageGenerationLearning(input: ImageGenerationLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+  return corpusRepository.appendImageGenerationLearning(input)
 }
 
 export function formatCorpusContext(records: CorpusRecord[]): string {

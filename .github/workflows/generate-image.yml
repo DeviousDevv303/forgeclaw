@@ -1,0 +1,123 @@
+# Directive: sovereign FLUX image generation.
+# Design: the workflow produces an artifact in the user's repository-owned
+# GitHub Actions run; prompts and dimensions arrive through environment variables
+# rather than shell interpolation. FLUX.1-dev may require HF_TOKEN and is
+# computationally heavy on standard CPU runners; benchmark before production use.
+
+name: Generate Image FLUX
+run-name: Generate Image FLUX ${{ inputs.invocation_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: Image description
+        required: true
+        type: string
+      style:
+        description: Style such as realistic, artistic, or cartoon
+        required: false
+        default: realistic
+        type: string
+      width:
+        description: Width in pixels; must be 256-1536 and divisible by 8
+        required: false
+        default: '1024'
+        type: string
+      height:
+        description: Height in pixels; must be 256-1536 and divisible by 8
+        required: false
+        default: '1024'
+        type: string
+      invocation_id:
+        description: Correlation identifier
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache model files
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: flux-dev-${{ runner.os }}-${{ hashFiles('.github/workflows/generate-image.yml') }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install diffusers transformers accelerate safetensors sentencepiece
+
+      - name: Generate image
+        env:
+          PROMPT: ${{ inputs.prompt }}
+          STYLE: ${{ inputs.style }}
+          WIDTH: ${{ inputs.width }}
+          HEIGHT: ${{ inputs.height }}
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import torch
+          from diffusers import FluxPipeline
+
+          prompt = os.environ['PROMPT'].strip()
+          style = os.environ.get('STYLE', 'realistic').strip() or 'realistic'
+          width = int(os.environ.get('WIDTH', '1024'))
+          height = int(os.environ.get('HEIGHT', '1024'))
+          if not prompt or len(prompt) > 4000:
+              raise SystemExit('prompt must contain 1-4000 characters')
+          if not (256 <= width <= 1536 and 256 <= height <= 1536):
+              raise SystemExit('width and height must be between 256 and 1536')
+          if width % 8 or height % 8:
+              raise SystemExit('width and height must be divisible by 8')
+
+          model_id = 'black-forest-labs/FLUX.1-dev'
+          load_options = {'torch_dtype': torch.float32, 'use_safetensors': True}
+          if os.environ.get('HF_TOKEN'):
+              load_options['token'] = os.environ['HF_TOKEN']
+          pipe = FluxPipeline.from_pretrained(model_id, **load_options)
+          pipe.enable_attention_slicing()
+          image = pipe(
+              prompt=f'{prompt}, {style} style, high quality, detailed',
+              width=width,
+              height=height,
+              num_inference_steps=50,
+              guidance_scale=7.5,
+          ).images[0]
+
+          output_path = Path(f'generated_{width}x{height}.png')
+          image.save(output_path)
+          Path('generation_metadata.txt').write_text(
+              f'Prompt: {prompt}\nStyle: {style}\nSize: {width}x{height}\n'
+              f'Model: {model_id}\nInvocation: {os.environ["INVOCATION_ID"]}\n',
+              encoding='utf-8',
+          )
+          print(f'Saved {output_path}')
+          PY
+
+      - name: Upload generated artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-image-${{ inputs.invocation_id }}
+          path: |
+            generated_*.png
+            generation_metadata.txt
+          if-no-files-found: error
+          retention-days: 7
