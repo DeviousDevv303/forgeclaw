@@ -191,6 +191,24 @@ export function parseManualToolCalls(text: string): ManualToolAction[] {
         name?: unknown
         arguments?: unknown
         input?: unknown
+        tool_calls?: unknown
+        toolcalls?: unknown
+      }
+      const envelope = parsed.tool_calls || parsed.toolcalls
+      if (Array.isArray(envelope)) {
+        for (const call of envelope) {
+          if (!call || typeof call !== 'object') continue
+          const value = call as { id?: unknown; name?: unknown; arguments?: unknown; function?: { name?: unknown; arguments?: unknown } }
+          const name = value.function?.name ?? value.name
+          const args = value.function?.arguments ?? value.arguments
+          if (typeof name !== 'string' || args === null || typeof args !== 'string') continue
+          try {
+            const params = JSON.parse(args) as unknown
+            if (params && typeof params === 'object' && !Array.isArray(params)) {
+              actions.push({ toolName: name === 'generateimage' ? 'generate_image' : name, params: params as Record<string, unknown>, rawOutput: rawJson })
+            }
+          } catch { /* skip malformed envelope member */ }
+        }
       }
       const params = parsed.arguments ?? parsed.input
       if (
@@ -287,7 +305,8 @@ export function stripToolSyntax(text: string): string {
   // ordinary JSON prose must remain visible.
   if (stripped.startsWith('{') && stripped.endsWith('}')) {
     try {
-      const parsed = JSON.parse(stripped) as { name?: unknown; arguments?: unknown; input?: unknown }
+      const parsed = JSON.parse(stripped) as { name?: unknown; arguments?: unknown; input?: unknown; tool_calls?: unknown; toolcalls?: unknown }
+      if (Array.isArray(parsed.tool_calls) || Array.isArray(parsed.toolcalls)) return ''
       const params = parsed.arguments ?? parsed.input
       if (typeof parsed.name === 'string' && params !== null && typeof params === 'object' && !Array.isArray(params)) {
         return ''

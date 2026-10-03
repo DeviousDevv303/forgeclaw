@@ -208,10 +208,13 @@ export const localInferenceProvider: AIProvider = {
     if (!response.ok) throw new Error(await responseError(response))
 
     if (request.onToken) {
+      const streamedText = await readStream(response, request.onToken)
+      const streamedToolCalls = extractToolCallsFromText(streamedText)
       return {
-        text: await readStream(response, request.onToken),
+        text: streamedText,
         provider: 'local',
         model,
+        toolCalls: streamedToolCalls.length ? streamedToolCalls : undefined,
         stopReason: 'stop',
       }
     }

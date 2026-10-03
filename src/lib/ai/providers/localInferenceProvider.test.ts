@@ -8,6 +8,7 @@ import { localInferenceProvider, routeLocalTask, shouldUseLocalModel } from './l
 import { callProvider } from '../../modelProviders'
 import { runSubAgent } from '../../managedAgent'
 import { FORGE_TOOLS, executeTool } from '../../forgeTools'
+import { parseManualToolCalls } from '../manualToolMode'
 import { classifyFailure, extractStatus, decideRetry } from '../../agentCore'
 
 const endpoint = process.env.FORGECLAW_LOCAL_ENDPOINT || 'http://127.0.0.1:8080/v1'
@@ -75,6 +76,29 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
         name: 'generate_image',
         input: { prompt: 'Rick and Morty', style: 'cartoon', width: 256, height: 256 },
       }])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('parses streamed toolcalls before returning text to the renderer', async () => {
+    const originalFetch = globalThis.fetch
+    const payload = '{"toolcalls":[{"id":"call1","type":"function","function":{"name":"generateimage","arguments":"{\\"prompt\\":\\"Rick and Morty\\",\\"style\\":\\"cartoon\\",\\"width\\":256,\\"height\\":256}"}}]}'
+    globalThis.fetch = (async () => new Response([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: payload } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n'), { status: 200 })) as typeof fetch
+    try {
+      const result = await localInferenceProvider.send({
+        systemPrompt: 'system',
+        messages: [{ role: 'user', content: 'Generate an image' }],
+        model: 'local-model',
+        tools: [{ name: 'generate_image', description: 'Generate', parameters: { type: 'object' } }],
+        onToken: () => undefined,
+      }, 'http://127.0.0.1:8080/v1')
+      expect(result.toolCalls?.[0]?.name).toBe('generate_image')
+      expect(parseManualToolCalls(payload)[0]?.toolName).toBe('generate_image')
     } finally {
       globalThis.fetch = originalFetch
     }
