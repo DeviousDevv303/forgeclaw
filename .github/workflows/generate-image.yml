@@ -1,9 +1,7 @@
-# Directive: sovereign FLUX image generation.
-# Design: the workflow produces an artifact in the user's repository-owned
-# GitHub Actions run; prompts and dimensions arrive through environment variables
-# rather than shell interpolation. FLUX.1-dev may require HF_TOKEN and is
-# computationally heavy on standard CPU runners; benchmark before production use.
-
+# Sovereign image generation through the repository-owned GitHub Actions workflow.
+# FLUX.1-dev remains primary when an authorized HF_TOKEN is available. If access
+# is missing or denied, use an ungated, MIT-licensed LCM Diffusers checkpoint.
+# Prompts and dimensions arrive through environment variables, never shell interpolation.
 name: Generate Image FLUX
 run-name: Generate Image FLUX ${{ inputs.invocation_id }}
 
@@ -54,7 +52,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: flux-dev-${{ runner.os }}-${{ hashFiles('.github/workflows/generate-image.yml') }}
+          key: image-models-${{ runner.os }}-${{ hashFiles('.github/workflows/generate-image.yml') }}
 
       - name: Install dependencies
         run: |
@@ -75,7 +73,7 @@ jobs:
           import os
           from pathlib import Path
           import torch
-          from diffusers import FluxPipeline
+          from diffusers import DiffusionPipeline, FluxPipeline
 
           prompt = os.environ['PROMPT'].strip()
           style = os.environ.get('STYLE', 'realistic').strip() or 'realistic'
@@ -88,28 +86,72 @@ jobs:
           if width % 8 or height % 8:
               raise SystemExit('width and height must be divisible by 8')
 
-          model_id = 'black-forest-labs/FLUX.1-dev'
-          load_options = {'torch_dtype': torch.float32, 'use_safetensors': True}
-          if os.environ.get('HF_TOKEN'):
-              load_options['token'] = os.environ['HF_TOKEN']
-          pipe = FluxPipeline.from_pretrained(model_id, **load_options)
+          flux_model_id = 'black-forest-labs/FLUX.1-dev'
+          fallback_model_id = 'SimianLuo/LCM_Dreamshaper_v7'
+          hf_token = os.environ.get('HF_TOKEN', '').strip() or None
+          pipe = None
+          model_id = flux_model_id
+          fallback_reason = ''
+
+          if not hf_token:
+              fallback_reason = 'HF_TOKEN is not configured'
+          else:
+              try:
+                  pipe = FluxPipeline.from_pretrained(
+                      flux_model_id,
+                      torch_dtype=torch.float32,
+                      use_safetensors=True,
+                      token=hf_token,
+                  )
+              except Exception as error:
+                  # Do not mask unrelated outages, bad model files, or code errors.
+                  error_text = f'{type(error).__name__}: {error}'.lower()
+                  access_denied = any(marker in error_text for marker in (
+                      'gatedrepoerror', '401 unauthorized', '403 forbidden',
+                      'access to model', 'restricted repo', 'not authorized',
+                  ))
+                  if not access_denied:
+                      raise
+                  fallback_reason = f'FLUX model access denied ({type(error).__name__})'
+
+          if pipe is None:
+              print(f'{fallback_reason}; using public fallback {fallback_model_id}')
+              model_id = fallback_model_id
+              pipe = DiffusionPipeline.from_pretrained(
+                  fallback_model_id,
+                  torch_dtype=torch.float32,
+                  use_safetensors=True,
+              )
+
           pipe.enable_attention_slicing()
-          image = pipe(
-              prompt=f'{prompt}, {style} style, high quality, detailed',
-              width=width,
-              height=height,
-              num_inference_steps=50,
-              guidance_scale=7.5,
+          generation_prompt = f'{prompt}, {style} style, high quality, detailed'
+          if model_id == fallback_model_id:
+              image = pipe(
+                  prompt=generation_prompt,
+                  width=width,
+                  height=height,
+                  num_inference_steps=4,
+                  guidance_scale=8.0,
+                  lcm_origin_steps=50,
           ).images[0]
+          else:
+              image = pipe(
+                  prompt=generation_prompt,
+                  width=width,
+                  height=height,
+                  num_inference_steps=50,
+                  guidance_scale=7.5,
+              ).images[0]
 
           output_path = Path(f'generated_{width}x{height}.png')
           image.save(output_path)
           Path('generation_metadata.txt').write_text(
               f'Prompt: {prompt}\nStyle: {style}\nSize: {width}x{height}\n'
-              f'Model: {model_id}\nInvocation: {os.environ["INVOCATION_ID"]}\n',
+              f'Model: {model_id}\nInvocation: {os.environ["INVOCATION_ID"]}\n'
+              f'Fallback reason: {fallback_reason or "not used"}\n',
               encoding='utf-8',
           )
-          print(f'Saved {output_path}')
+          print(f'Saved {output_path} with {model_id}')
           PY
 
       - name: Upload generated artifact
