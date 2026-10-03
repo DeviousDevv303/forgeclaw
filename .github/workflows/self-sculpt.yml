@@ -1,9 +1,10 @@
-# Directive item 5 — Self-sculpting workflow.
-# Design: content is written through Python environment variables, paths and
-# branches are validated, protected foundation/codex files are blocked, and all
-# changes land on a branch with a pull request rather than mutating main.
-# Remaining: repository branch protection and required reviewers remain the
-# final authority for merging a self-sculpted change.
+# Directive item 5 — Self-sculpting workflow for autonomous code modification.
+# Design decisions: every proposal starts from origin/main, uses a sculpt/* branch,
+# blocks Guardian/workflow/package-control paths, validates and builds before push,
+# and opens a reviewable pull request instead of mutating main.
+# Remaining: repository branch protection and required reviewers remain the final
+# authority for merging; this workflow does not auto-merge or run arbitrary tests
+# supplied by the model.
 
 name: Self Sculpt
 run-name: Self Sculpt ${{ inputs.branch }}
@@ -12,21 +13,25 @@ on:
   workflow_dispatch:
     inputs:
       file_path:
-        description: Repository-relative file path to update
+        description: Repository-relative source file path to update
         required: true
         type: string
       content:
-        description: Complete replacement file content
+        description: Complete replacement file content (maximum 60000 characters)
         required: true
         type: string
       reason:
-        description: Reason for the proposed change
+        description: One-line reason for the proposed change
         required: true
         type: string
       branch:
-        description: New feature branch name
+        description: New feature branch; must match sculpt/*
         required: true
         type: string
+
+concurrency:
+  group: self-sculpt-${{ inputs.branch }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -35,13 +40,15 @@ permissions:
 jobs:
   sculpt:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Check out repository
+      - name: Check out current main
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
-      - name: Validate inputs and write file
+      - name: Validate proposal inputs
         env:
           SCULPT_PATH: ${{ inputs.file_path }}
           SCULPT_CONTENT: ${{ inputs.content }}
@@ -49,42 +56,110 @@ jobs:
           SCULPT_REASON: ${{ inputs.reason }}
         run: |
           set -euo pipefail
-          case "$SCULPT_PATH" in
-            ''|/*|.*|*'..'*|foundation/codex|foundation/codex/*)
-              echo 'Refusing unsafe or Guardian-protected file path.' >&2
-              exit 2
-              ;;
-          esac
-          case "$SCULPT_BRANCH" in
-            ''|main|master|*/../*|/*|*'..'*)
-              echo 'Refusing unsafe or protected branch name.' >&2
-              exit 2
-              ;;
-          esac
-          mkdir -p "$(dirname -- "$SCULPT_PATH")"
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path_text = os.environ['SCULPT_PATH'].strip()
+          branch = os.environ['SCULPT_BRANCH'].strip()
+          content = os.environ['SCULPT_CONTENT']
+          reason = os.environ['SCULPT_REASON'].strip()
+          path = Path(path_text)
+
+          if not path_text or path.is_absolute() or '..' in path.parts:
+              raise SystemExit('Refusing an empty, absolute, or traversal path.')
+          if any(part in {'.git', ''} for part in path.parts):
+              raise SystemExit('Refusing a hidden or Git-internal path.')
+          protected = {
+              '.github/workflows',
+              'package.json',
+              'package-lock.json',
+              'src/lib/guardianGate.ts',
+              'src/lib/forgeTools.ts',
+          }
+          normalized = path.as_posix()
+          if normalized in protected or normalized.startswith('.github/workflows/'):
+              raise SystemExit('Refusing a protected Guardian, workflow, or package-control path.')
+          if not re.fullmatch(r'sculpt/[a-z0-9][a-z0-9._/-]{0,60}', branch) or '..' in branch or branch.endswith('/'):
+              raise SystemExit('Branch must match sculpt/<lowercase-safe-name>.')
+          if not content or len(content) > 60000:
+              raise SystemExit('Content must contain 1-60000 characters.')
+          if not reason or len(reason) > 240 or any(ord(char) < 32 and char not in '\t' for char in reason):
+              raise SystemExit('Reason must be a one-line message of at most 240 characters.')
+          print(f'Validated {normalized} -> {branch}')
+          PY
+
+      - name: Create isolated sculpt branch
+        env:
+          SCULPT_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git switch --create "$SCULPT_BRANCH" origin/main
+
+      - name: Write proposal and validate build
+        id: proposal
+        env:
+          SCULPT_PATH: ${{ inputs.file_path }}
+          SCULPT_CONTENT: ${{ inputs.content }}
+        run: |
+          set -euo pipefail
           python - <<'PY'
           import os
           from pathlib import Path
 
-          path = Path(os.environ['SCULPT_PATH'])
-          resolved = (Path.cwd() / path).resolve()
           root = Path.cwd().resolve()
-          if root not in resolved.parents and resolved != root:
-              raise SystemExit('path escapes repository')
-          resolved.write_text(os.environ['SCULPT_CONTENT'], encoding='utf-8')
+          path = (root / os.environ['SCULPT_PATH']).resolve()
+          if root not in path.parents:
+              raise SystemExit('Resolved path escapes repository.')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(os.environ['SCULPT_CONTENT'], encoding='utf-8')
           PY
-          git checkout -b "$SCULPT_BRANCH"
+          git add -- "$SCULPT_PATH"
+          if git diff --cached --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'No file changes detected.'
+            exit 0
+          fi
+          npm ci --ignore-scripts
+          npm run build
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push proposal branch
+        if: steps.proposal.outputs.changed == 'true'
+        env:
+          SCULPT_REASON: ${{ inputs.reason }}
+          SCULPT_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          reason="$(printf '%s' "$SCULPT_REASON" | tr '\n\r' '  ' | cut -c1-240)"
           git config user.name 'ForgeClaw'
           git config user.email 'forgeclaw@local'
-          git add -- "$SCULPT_PATH"
-          git diff --cached --quiet && { echo 'No file changes detected.'; exit 0; }
-          git commit -m "sculpt: $SCULPT_REASON"
+          git commit -m "sculpt: $reason"
           git push --set-upstream origin "$SCULPT_BRANCH"
 
-      - name: Open pull request
-        if: success()
+      - name: Open pull request for review
+        if: steps.proposal.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           SCULPT_BRANCH: ${{ inputs.branch }}
           SCULPT_REASON: ${{ inputs.reason }}
-        run: gh pr create --base main --head "$SCULPT_BRANCH" --title "sculpt: $SCULPT_REASON" --body "Automated self-sculpt proposal from ForgeClaw. Review the diff before merging."
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          reason = ' '.join(os.environ['SCULPT_REASON'].split())[:240]
+          Path('/tmp/self-sculpt-pr-body.md').write_text(
+              'Automated self-sculpt proposal from ForgeClaw.\n\n'
+              f'Reason: {reason}\n\n'
+              'Build validation passed. Review the diff and required checks before merging; this workflow never auto-merges.\n',
+              encoding='utf-8',
+          )
+          PY
+          gh pr create \
+            --base main \
+            --head "$SCULPT_BRANCH" \
+            --title "sculpt: $(printf '%s' "$SCULPT_REASON" | tr '\n\r' '  ' | cut -c1-240)" \
+            --body-file /tmp/self-sculpt-pr-body.md

@@ -137,6 +137,22 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
     }
   })
 
+  it('blocks self-sculpt changes to protected paths and unsafe branches', async () => {
+    const context = { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' }
+    const protectedPath = await executeTool({
+      id: 'sculpt-protected',
+      name: 'sculpt_self',
+      input: { file_path: 'src/lib/guardianGate.ts', content: 'tamper', reason: 'test', branch: 'sculpt/test' },
+    }, context)
+    const unsafeBranch = await executeTool({
+      id: 'sculpt-branch',
+      name: 'sculpt_self',
+      input: { file_path: 'src/lib/example.ts', content: 'change', reason: 'test', branch: 'main' },
+    }, context)
+    expect(protectedPath).toContain('unsafe or Guardian-protected')
+    expect(unsafeBranch).toContain('unsafe or protected')
+  })
+
   it('exercises the agent-core classification, verification fields, and retry policy', () => {
     expect(classifyFailure('local tool execution failed')).toBe('TOOL_FAILURE')
     expect(extractStatus('STATUS: COMPLETE\nNEXT_ACTION: none')).toBe('COMPLETE')

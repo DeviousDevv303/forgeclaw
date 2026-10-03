@@ -180,7 +180,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'sculpt_self',
-    description: 'Propose a self-modification by dispatching the guarded self-sculpt workflow. Changes are committed to a feature branch and opened as a pull request; main and protected foundation/codex paths are rejected.',
+    description: 'Propose a self-modification by dispatching the guarded self-sculpt workflow. Changes are build-validated, committed to a sculpt/* feature branch, and opened as a pull request; Guardian, workflow, and package-control paths are rejected.',
     parameters: {
       type: 'object',
       properties: {
@@ -839,10 +839,11 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const branch = typeof input.branch === 'string' ? input.branch.trim() : ''
         if (!filePath || !reason || !branch) throw new Error('file_path, content, reason, and branch are required.')
         if (content.length > 60_000) throw new Error('Self-sculpt content exceeds the 60KB workflow-input limit.')
-        if (!/^[A-Za-z0-9._/-]+$/.test(filePath) || filePath.startsWith('/') || filePath.startsWith('.') || filePath.includes('..') || filePath === 'foundation/codex' || filePath.startsWith('foundation/codex/')) {
+        const protectedPath = filePath === 'package.json' || filePath === 'package-lock.json' || filePath === 'src/lib/guardianGate.ts' || filePath === 'src/lib/forgeTools.ts' || filePath === '.github/workflows' || filePath.startsWith('.github/workflows/')
+        if (!/^[A-Za-z0-9._/-]+$/.test(filePath) || filePath.startsWith('/') || filePath.startsWith('.') || filePath.includes('..') || filePath === 'foundation/codex' || filePath.startsWith('foundation/codex/') || protectedPath) {
           throw new Error('Self-sculpt path is unsafe or Guardian-protected.')
         }
-        if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch === 'main' || branch === 'master' || branch.startsWith('/') || branch.includes('..')) {
+        if (!/^sculpt\/[a-z0-9][a-z0-9._/-]{0,60}$/.test(branch) || branch.endsWith('/') || branch.includes('..')) {
           throw new Error('Self-sculpt branch is unsafe or protected.')
         }
         if (!token) throw new Error('No GitHub token configured.')
