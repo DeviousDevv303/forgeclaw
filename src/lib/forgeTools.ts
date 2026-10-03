@@ -610,13 +610,19 @@ async function toolFetch(ctx: ToolContext, input: RequestInfo | URL, init: Reque
 }
 
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
-  const { name, input } = call
+  const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'deepseekreason' ? 'deepseek_reason' : call.name
+  const input = { ...call.input }
+  if (name === 'deepseek_reason' && input.nexus_learn === undefined) {
+    if (input.nexuslearn !== undefined) input.nexus_learn = input.nexuslearn
+    else if (input.nexusLearn !== undefined) input.nexus_learn = input.nexusLearn
+  }
+  const normalizedCall = name === call.name && input === call.input ? call : { ...call, name, input }
   if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted before tool execution.'
-  if (requiresCoSign(call, Boolean(ctx.tier1Active))) {
+  if (requiresCoSign(normalizedCall, Boolean(ctx.tier1Active))) {
     if (!ctx.requestGuardianApproval) {
       return `[GUARDIAN BLOCK] ${name} requires Guardian co-sign approval, but no project-owned approval handler is attached.`
     }
-    const approved = await ctx.requestGuardianApproval(call)
+    const approved = await ctx.requestGuardianApproval(normalizedCall)
     if (!approved || ctx.signal?.aborted) return `[GUARDIAN REJECTED] ${name} was not executed.`
   }
   const loadState = () => loadPersistedCodingAgentState(ctx.agentId)

@@ -139,6 +139,16 @@ async function readStream(response: Response, onToken: (token: string) => void):
   return text
 }
 
+function normalizeToolCall(call: AIToolCall): AIToolCall {
+  const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'deepseekreason' ? 'deepseek_reason' : call.name
+  const input = { ...call.input }
+  if (name === 'deepseek_reason' && input.nexus_learn === undefined) {
+    if (input.nexuslearn !== undefined) input.nexus_learn = input.nexuslearn
+    else if (input.nexusLearn !== undefined) input.nexus_learn = input.nexusLearn
+  }
+  return { ...call, name, input }
+}
+
 export const localInferenceProvider: AIProvider = {
   id: 'local',
   label: 'Local Inference (llama.cpp)',
@@ -231,7 +241,7 @@ export const localInferenceProvider: AIProvider = {
       input: (() => {
         try { return JSON.parse(call.function?.arguments || '{}') as Record<string, unknown> } catch { return {} }
       })(),
-    })).filter(call => call.id && call.name)
+    })).filter(call => call.id && call.name).map(normalizeToolCall)
     
     // FALLBACK: Extract tool calls from text if model didn't emit native tool_calls
     if (!toolCalls.length && message?.content) {
@@ -277,9 +287,9 @@ function extractToolCallsFromText(text: string): AIToolCall[] {
                 return typeof args === 'string' ? JSON.parse(args) : args
               } catch { return {} }
             })(),
-          })).filter((tc: { name?: string }) => tc.name)
+          })).filter((tc: { name?: string }) => tc.name).map(normalizeToolCall)
         } else if (parsed.name) {
-          return [{
+          return [normalizeToolCall({
             id: 'call_' + Date.now(),
             name: parsed.name,
             input: (() => {
@@ -288,7 +298,7 @@ function extractToolCallsFromText(text: string): AIToolCall[] {
                 return typeof args === 'string' ? JSON.parse(args) : args
               } catch { return {} }
             })(),
-          }]
+          })]
         }
       } catch {
         continue

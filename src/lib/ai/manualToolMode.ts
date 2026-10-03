@@ -205,7 +205,10 @@ export function parseManualToolCalls(text: string): ManualToolAction[] {
           try {
             const params = JSON.parse(args) as unknown
             if (params && typeof params === 'object' && !Array.isArray(params)) {
-              actions.push({ toolName: name === 'generateimage' ? 'generate_image' : name, params: params as Record<string, unknown>, rawOutput: rawJson })
+              const canonicalName = name === 'generateimage' ? 'generate_image' : name === 'deepseekreason' ? 'deepseek_reason' : name
+              const canonicalParams = params as Record<string, unknown>
+              if (canonicalName === 'deepseek_reason' && canonicalParams.nexus_learn === undefined && canonicalParams.nexuslearn !== undefined) canonicalParams.nexus_learn = canonicalParams.nexuslearn
+              actions.push({ toolName: canonicalName, params: canonicalParams, rawOutput: rawJson })
             }
           } catch { /* skip malformed envelope member */ }
         }

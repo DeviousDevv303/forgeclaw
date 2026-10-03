@@ -104,6 +104,39 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
     }
   })
 
+  it('normalizes deepseekreason and nexuslearn aliases', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: '{"toolcalls":[{"id":"call1","type":"function","function":{"name":"deepseekreason","arguments":"{\\"task\\":\\"find capital of France\\",\\"context\\":\\"The user asked for the capital of France.\\",\\"nexuslearn\\":false,\\"ref\\":\\"main\\"}"}}]}',
+        },
+        finish_reason: 'stop',
+      }],
+    }), { status: 200 })) as typeof fetch
+    try {
+      const result = await localInferenceProvider.send({
+        systemPrompt: 'system',
+        messages: [{ role: 'user', content: 'What is the capital of France?' }],
+        model: 'local-model',
+        tools: [{ name: 'deepseek_reason', description: 'Reason', parameters: { type: 'object' } }],
+      }, 'http://127.0.0.1:8080/v1')
+      expect(result.toolCalls).toEqual([{
+        id: 'call1',
+        name: 'deepseek_reason',
+        input: {
+          task: 'find capital of France',
+          context: 'The user asked for the capital of France.',
+          nexuslearn: false,
+          nexus_learn: false,
+          ref: 'main',
+        },
+      }])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('exercises the agent-core classification, verification fields, and retry policy', () => {
     expect(classifyFailure('local tool execution failed')).toBe('TOOL_FAILURE')
     expect(extractStatus('STATUS: COMPLETE\nNEXT_ACTION: none')).toBe('COMPLETE')
