@@ -253,7 +253,7 @@ export const localInferenceProvider: AIProvider = {
 
 function extractToolCallsFromText(text: string): AIToolCall[] {
   const patterns = [
-    /\{"tool_calls":\s*\[(.*?)\]\}/s,
+    /\{"tool[_]?calls":\s*\[(.*?)\]\}/s,
     /\{"name":\s*"(\w+)",\s*"arguments":\s*(\{.*?\})\}/s,
     /(\w+)\s*\((\{.*?\})\)/s,
   ]
@@ -263,10 +263,11 @@ function extractToolCallsFromText(text: string): AIToolCall[] {
     if (match) {
       try {
         const parsed = JSON.parse(match[0])
-        if (parsed.tool_calls) {
-          return parsed.tool_calls.map((tc: { id?: string; function?: { name?: string; arguments?: string }; name?: string; arguments?: string | Record<string, unknown> }) => ({
+        const parsedToolCalls = parsed.tool_calls || parsed.toolcalls
+        if (parsedToolCalls) {
+          return parsedToolCalls.map((tc: { id?: string; function?: { name?: string; arguments?: string }; name?: string; arguments?: string | Record<string, unknown> }) => ({
             id: tc.id || 'call_' + Date.now(),
-            name: tc.function?.name || tc.name,
+            name: tc.function?.name === 'generateimage' ? 'generate_image' : tc.function?.name || (tc.name === 'generateimage' ? 'generate_image' : tc.name),
             input: (() => {
               try {
                 const args = tc.function?.arguments || tc.arguments || '{}'

@@ -53,6 +53,33 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
     }
   })
 
+  it('parses the model toolcalls envelope and normalizes generateimage', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: '{"toolcalls":[{"id":"call1","type":"function","function":{"name":"generateimage","arguments":"{\\"prompt\\":\\"Rick and Morty\\",\\"style\\":\\"cartoon\\",\\"width\\":256,\\"height\\":256}"}}]}',
+        },
+        finish_reason: 'stop',
+      }],
+    }), { status: 200 })) as typeof fetch
+    try {
+      const result = await localInferenceProvider.send({
+        systemPrompt: 'system',
+        messages: [{ role: 'user', content: 'Generate an image' }],
+        model: 'local-model',
+        tools: [{ name: 'generate_image', description: 'Generate', parameters: { type: 'object' } }],
+      }, 'http://127.0.0.1:8080/v1')
+      expect(result.toolCalls).toEqual([{
+        id: 'call1',
+        name: 'generate_image',
+        input: { prompt: 'Rick and Morty', style: 'cartoon', width: 256, height: 256 },
+      }])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('exercises the agent-core classification, verification fields, and retry policy', () => {
     expect(classifyFailure('local tool execution failed')).toBe('TOOL_FAILURE')
     expect(extractStatus('STATUS: COMPLETE\nNEXT_ACTION: none')).toBe('COMPLETE')
