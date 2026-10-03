@@ -69,6 +69,7 @@ import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
 import type { AgentPhase } from './types/forgeOps'
 import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from './lib/deepseekCommand'
+import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -943,6 +944,32 @@ function App() {
           setLoading(false)
         }
       }
+      return
+    }
+
+    const arithmeticResult = !imageUrl && activeProvider !== 'anthropic'
+      ? evaluateSimpleArithmetic(promptText)
+      : null
+    if (arithmeticResult !== null) {
+      const answer = Number.isInteger(arithmeticResult) ? String(arithmeticResult) : String(Number(arithmeticResult.toPrecision(12)))
+      const answerId = `${Date.now() + 1}`
+      setMessages(prev => [...prev, userMsg, {
+        id: answerId,
+        role: 'assistant',
+        content: answer,
+        timestamp: Date.now(),
+        source: 'local',
+        provider: 'ForgeClaw',
+        model: 'deterministic arithmetic',
+        agentPhase: 'COMPLETE',
+      }])
+      setRequestStatus('success')
+      setLastRequestError('')
+      setLastRequestLatencyMs(0)
+      setLastSource('local')
+      emitForge({ type: 'OBJECTIVE_RECEIVED', objective: promptText })
+      emitForge({ type: 'PHASE_CHANGE', phase: 'EXECUTION' })
+      emitForge({ type: 'MISSION_COMPLETE' })
       return
     }
 
