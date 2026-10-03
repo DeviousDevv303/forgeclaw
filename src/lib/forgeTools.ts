@@ -354,10 +354,24 @@ export const FORGE_TOOLS: ToolDef[] = [
     },
   },
 
-  // ── Coding agent: repository state, verification, persistence ───────────────
+  
+  {
+    name: 'analyze_image',
+    description: 'Analyze image via free GitHub Actions vision model',
+    parameters: {
+      type: 'object',
+      properties: {
+        image_url: { type: 'string', description: 'Public image URL' },
+        prompt: { type: 'string', description: 'What to analyze' }
+      },
+      required: ['image_url']
+    }
+  },
+
+// ── Coding agent: repository state, verification, persistence ───────────────
   {
     name: 'github_repo_state',
-    description: 'Read the live repository state: metadata, default branch, current HEAD commit, and a file sample. Use this to identify the current HEAD before making changes.',
+    description: 'Read the live repository state: metadata, default branch, current HEAD commit, and a file sample. Use this to identify the current HEAD before making changes. IMPORTANT: Leave branch empty to use the repository default branch (usually main, not master).',
     parameters: {
       type: 'object',
       properties: {
@@ -1127,7 +1141,21 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       }
 
       // ── Spawn sub-agent ────────────────────────────────────────────────────────
-      case 'spawn_agent': {
+      
+      case 'analyze_image': {
+        const imageUrl = input.image_url as string
+        const prompt = (input.prompt as string) || 'Describe this image'
+        const invocationId = `img-${Date.now()}`
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/image-analyze.yml/dispatches`, {
+          method: 'POST',
+          headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' },
+          body: JSON.stringify({ ref: 'main', inputs: { image_url: imageUrl, prompt: prompt, invocation_id: invocationId } })
+        })
+        if (!res.ok) throw new Error(`GitHub ${res.status}`)
+        return `Dispatched: ${invocationId}. Check artifacts in ~2 min.`
+      }
+
+case 'spawn_agent': {
         if (!ctx.spawnAgent) throw new Error('Sub-agent support not initialized.')
         const systemPrompt = input.system_prompt as string
         const task         = input.task          as string
@@ -1143,7 +1171,9 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const metaRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}`, { headers })
         if (!metaRes.ok) throw new Error(`GitHub repo ${metaRes.status} — check owner/repo and token scope`)
         const meta = await metaRes.json() as { default_branch: string; html_url: string; private: boolean; pushed_at: string }
-        const branch = ((input.branch as string) || meta.default_branch).trim()
+        // Always use the repo's default branch unless explicitly overridden with a valid branch
+        const requestedBranch = (input.branch as string)?.trim()
+        const branch = (!requestedBranch || requestedBranch === 'master') ? meta.default_branch : requestedBranch
         const commitRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(branch)}`, { headers })
         if (!commitRes.ok) throw new Error(`GitHub commit ${commitRes.status} — branch "${branch}" may not exist`)
         const commit = await commitRes.json() as {

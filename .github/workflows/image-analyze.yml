@@ -1,0 +1,55 @@
+name: Analyze Image
+on:
+  workflow_dispatch:
+    inputs:
+      image_url:
+        description: 'URL of image to analyze'
+        required: true
+      prompt:
+        description: 'What to analyze'
+        default: 'Describe this image in detail'
+      invocation_id:
+        description: 'Unique ID for this request'
+        required: true
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: qwen2-vl-model
+      - name: Install deps
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install transformers accelerate pillow requests
+      - name: Analyze
+        env:
+          IMAGE_URL: ${{ github.event.inputs.image_url }}
+          PROMPT: ${{ github.event.inputs.prompt }}
+        run: |
+          python3 -c "
+          import os, torch, requests
+          from PIL import Image
+          from transformers import AutoProcessor, AutoModelForVision2Seq
+          model = AutoModelForVision2Seq.from_pretrained('Qwen/Qwen2-VL-2B-Instruct', torch_dtype=torch.float32)
+          processor = AutoProcessor.from_pretrained('Qwen/Qwen2-VL-2B-Instruct')
+          img = Image.open(requests.get(os.environ['IMAGE_URL'], stream=True).raw).convert('RGB')
+          prompt = f'<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{os.environ[\"PROMPT\"]}<|im_end|>\n<|im_start|>assistant\n'
+          inputs = processor(images=img, text=prompt, return_tensors='pt')
+          with torch.no_grad():
+              out = model.generate(**inputs, max_new_tokens=500)
+          result = processor.batch_decode(out, skip_special_tokens=True)[0]
+          open('result.txt','w').write(result)
+          print(result[:200])
+          "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-analysis-${{ github.event.inputs.invocation_id }}
+          path: result.txt
+          retention-days: 1
