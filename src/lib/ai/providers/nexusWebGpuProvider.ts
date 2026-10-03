@@ -1,6 +1,7 @@
 import type { InitProgressReport, MLCEngineInterface } from '@mlc-ai/web-llm'
 import type { AIProvider, AIRequest, AIResponse } from '../types'
 import { adaptNexusMessages, limitNexusContext } from '../nexusContext'
+import { parseManualToolCalls, toToolCalls } from '../manualToolMode'
 
 export const DEFAULT_NEXUS_WEBGPU_MODEL = 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'
 export const NEXUS_WEBGPU_MODELS = [
@@ -154,7 +155,15 @@ export const nexusWebGpuProvider: AIProvider = {
       }
     }
     publish({ status: 'ready', progress: 1, text: 'NEXUS WebGPU model ready' })
-    return { text, provider: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL, stopReason: 'stop' }
+    const manualActions = parseManualToolCalls(text)
+    const toolCalls = toToolCalls(manualActions)
+    return {
+      text,
+      provider: 'nexus',
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      toolCalls: toolCalls.length ? toolCalls : undefined,
+      stopReason: 'stop',
+    }
   },
   async test(apiKey: string, workspaceId?: string): Promise<void> {
     void apiKey

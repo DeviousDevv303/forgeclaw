@@ -63,6 +63,17 @@ describe('NEXUS provider adapter (Browser WebGPU path)', () => {
     expect(cleaned).toContain('STATUS: IN_PROGRESS')
   })
 
+  it('parses the raw NEXUS FLUX envelope instead of displaying it', () => {
+    const emitted = '{"toolcalls":[{"id":"call1","type":"function","function":{"name":"generateimage","arguments":"{\\"prompt\\":\\"Rick and Morty\\",\\"style\\":\\"cartoon\\",\\"width\\":256,\\"height\\":256}"}}]}'
+    const actions = parseManualToolCalls(emitted)
+    expect(actions).toHaveLength(1)
+    expect(actions[0]).toMatchObject({
+      toolName: 'generate_image',
+      params: { prompt: 'Rick and Morty', style: 'cartoon', width: 256, height: 256 },
+    })
+    expect(stripToolSyntax(emitted)).toBe('')
+  })
+
   it('keeps the next WebGPU request user/tool-safe after a real tool result', () => {
     const adapted = adaptNexusMessages([
       { role: 'user', content: 'Check the repository.' },
