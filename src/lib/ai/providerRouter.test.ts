@@ -43,6 +43,21 @@ describe('provider router runtime passthrough', () => {
     vi.unstubAllGlobals()
   })
 
+  it('routes image intent even when manual fallback provides no tools', async () => {
+    globalThis.fetch = (async () => new Response('', { status: 503 })) as typeof fetch
+    const result = await sendViaRouter({
+      model: 'webgpu-fallback',
+      systemPrompt: 'manual tool protocol exactly',
+      messages: [{ role: 'user', content: 'Create a watercolor image of a lighthouse at dusk' }],
+      tools: undefined,
+    }, 'http://127.0.0.1:8080/v1', 'nexus')
+    expect(result).toMatchObject({
+      success: true,
+      response: { stopReason: 'direct-image-intent', toolCalls: [{ name: 'generate_image', input: { style: 'watercolor', width: 512, height: 512 } }] },
+    })
+    vi.unstubAllGlobals()
+  })
+
   it('falls from local inference to WebGPU 3B then WebGPU 1.5B when available', async () => {
     const originalFetch = globalThis.fetch
     vi.stubGlobal('navigator', { gpu: {} })

@@ -126,8 +126,10 @@ export async function sendViaRouter(
   // local/WebGPU model to decide whether to emit a tool call: malformed prose
   // or token soup must never be rendered as a successful image response.
   const lastUserMessage = [...request.messages].reverse().find(message => message.role === 'user')
-  const imageTool = request.tools?.some(tool => tool.name === 'generate_image' || tool.name === 'generateimage')
-  if (imageTool && lastUserMessage && isImageGenerationRequest(lastUserMessage.content)) {
+  // This check must not depend on request.tools: the WebGPU/manual fallback
+  // intentionally strips tools before calling the model, which was the exact
+  // path that previously rendered malformed token soup to the user.
+  if (lastUserMessage && isImageGenerationRequest(lastUserMessage.content)) {
     const prompt = extractImagePrompt(lastUserMessage.content)
     return success({
       text: '',
