@@ -410,14 +410,14 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'generate_image',
-    description: 'Generate an image with FLUX.1-dev through the repository-owned GitHub Actions workflow. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request is recorded as an unapproved NEXUS learning candidate.',
+    description: 'Generate an image with public Stable Diffusion v1.5 through the repository-owned GitHub Actions workflow. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request is recorded as an unapproved NEXUS learning candidate.',
     parameters: {
       type: 'object',
       properties: {
         prompt: { type: 'string', description: 'Image description, up to 4000 characters' },
         style: { type: 'string', description: 'Style such as realistic, artistic, or cartoon' },
-        width: { type: 'number', description: 'Width in pixels, 256-1536, divisible by 8' },
-        height: { type: 'number', description: 'Height in pixels, 256-1536, divisible by 8' },
+        width: { type: 'number', description: 'Width in pixels, 256-1024, divisible by 8; defaults to 512' },
+        height: { type: 'number', description: 'Height in pixels, 256-1024, divisible by 8; defaults to 512' },
       },
       required: ['prompt'],
     },
@@ -1297,16 +1297,16 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       case 'generateimage': { // Compatibility alias; canonical schema name remains generate_image.
         const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : ''
         const style = typeof input.style === 'string' && input.style.trim() ? input.style.trim() : 'realistic'
-        const width = input.width === undefined ? 1024 : Number(input.width)
-        const height = input.height === undefined ? 1024 : Number(input.height)
+        const width = input.width === undefined ? 512 : Number(input.width)
+        const height = input.height === undefined ? 512 : Number(input.height)
         if (!prompt || prompt.length > 4000) throw new Error('Image prompt must contain 1-4000 characters.')
         if (style.length > 100) throw new Error('Image style must be at most 100 characters.')
-        if (!Number.isInteger(width) || !Number.isInteger(height) || width < 256 || width > 1536 || height < 256 || height > 1536 || width % 8 !== 0 || height % 8 !== 0) {
-          throw new Error('Image width and height must be integers from 256 to 1536 and divisible by 8.')
+        if (!Number.isInteger(width) || !Number.isInteger(height) || width < 256 || width > 1024 || height < 256 || height > 1024 || width % 8 !== 0 || height % 8 !== 0) {
+          throw new Error('Image width and height must be integers from 256 to 1024 and divisible by 8.')
         }
         if (!token) throw new Error('No GitHub token configured.')
         const improved = suggestImprovedPrompt(prompt, style)
-        const invocationId = `flux-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const invocationId = `sd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/generate-image.yml/dispatches`, {
           method: 'POST',
           headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
@@ -1317,10 +1317,10 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         })
         if (!res.ok) {
           const detail = await res.text().catch(() => '')
-          throw new Error(`FLUX dispatch failed: ${res.status}${detail ? ` — ${detail.slice(0, 300)}` : ''}`)
+          throw new Error(`Image workflow dispatch failed: ${res.status}${detail ? ` — ${detail.slice(0, 300)}` : ''}`)
         }
         await appendImageGenerationLearning({ prompt: improved.prompt, style, width, height, invocationId })
-        return `✓ FLUX image generation dispatched as ${invocationId}; enhanced prompt: "${improved.prompt}"; artifact will contain a ${width}x${height} ${style} image after the workflow completes.`
+        return `✓ Image generation dispatched as ${invocationId}; enhanced prompt: "${improved.prompt}"; artifact will contain a ${width}x${height} ${style} image after the workflow completes.`
       }
 
       case 'analyze_image': {

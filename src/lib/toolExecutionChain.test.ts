@@ -173,6 +173,31 @@ describe('dispatcher integrity (offline)', () => {
   })
 
   it('explains a rejected GitHub token after dispatch 401 without leaking it', async () => {
+    let dispatchedUrl = ''
+    let payload: { ref: string; inputs: { prompt: string; style: string; width: string; height: string; invocation_id: string } } | undefined
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      dispatchedUrl = String(input)
+      payload = JSON.parse(String(init?.body)) as typeof payload
+      return new Response(null, { status: 204 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const output = await executeTool({
+      id: 'direct-image-test',
+      name: 'generate_image',
+      input: { prompt: 'a red fox in a forge', style: 'artistic' },
+    }, { ...ctx(), ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
+
+    expect(dispatchedUrl).toBe('https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/generate-image.yml/dispatches')
+    expect(payload?.inputs.style).toBe('artistic')
+    expect(payload?.inputs.width).toBe('512')
+    expect(payload?.inputs.height).toBe('512')
+    expect(payload?.inputs.invocation_id).toMatch(/^sd-/)
+    expect(output).toContain('Image generation dispatched')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('explains a rejected GitHub token after dispatch 401 without leaking it', async () => {
     const secret = 'ghp_test_secret_must_not_appear'
     const fetchMock = vi.fn(async () => new Response(null, { status: 401, statusText: 'Unauthorized' }))
     vi.stubGlobal('fetch', fetchMock)

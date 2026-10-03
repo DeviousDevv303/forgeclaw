@@ -18,6 +18,7 @@ import {
 } from './providers/nexusWebGpuProvider'
 import { injectToolSchemaWithinBudget } from './manualToolMode'
 import { MAX_NEXUS_CONTEXT_TOKENS } from './nexusContext'
+import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 
 // ─── Registry ───────────────────────────────────────────────────────────────
 
@@ -119,6 +120,26 @@ export async function sendViaRouter(
         retryable: false,
       },
     }
+  }
+
+  // Image generation is an explicit external side effect. Do not ask a small
+  // local/WebGPU model to decide whether to emit a tool call: malformed prose
+  // or token soup must never be rendered as a successful image response.
+  const lastUserMessage = [...request.messages].reverse().find(message => message.role === 'user')
+  const imageTool = request.tools?.some(tool => tool.name === 'generate_image' || tool.name === 'generateimage')
+  if (imageTool && lastUserMessage && isImageGenerationRequest(lastUserMessage.content)) {
+    const prompt = extractImagePrompt(lastUserMessage.content)
+    return success({
+      text: '',
+      provider: selectedProviderId,
+      model: choice.model,
+      toolCalls: [{
+        id: `direct-image-${Date.now()}`,
+        name: 'generate_image',
+        input: { prompt, style: inferImageStyle(prompt), width: 512, height: 512 },
+      }],
+      stopReason: 'direct-image-intent',
+    })
   }
 
   if (!provider.isConfigured(apiKey)) {

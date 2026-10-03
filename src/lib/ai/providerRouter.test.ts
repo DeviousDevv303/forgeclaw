@@ -28,6 +28,21 @@ describe('provider router runtime passthrough', () => {
     vi.unstubAllGlobals()
   })
 
+  it('turns explicit image intent into a direct generate_image tool call', async () => {
+    globalThis.fetch = (async () => new Response('', { status: 503 })) as typeof fetch
+    const result = await sendViaRouter({
+      model: 'local-model',
+      systemPrompt: 'system',
+      messages: [{ role: 'user', content: 'Generate an artistic image of a red fox in a forge' }],
+      tools: [{ name: 'generate_image', description: 'Generate', parameters: { type: 'object', properties: {}, required: [] } }],
+    }, 'http://127.0.0.1:8080/v1', 'local')
+    expect(result).toMatchObject({
+      success: true,
+      response: { stopReason: 'direct-image-intent', toolCalls: [{ name: 'generate_image', input: { style: 'artistic', width: 512, height: 512 } }] },
+    })
+    vi.unstubAllGlobals()
+  })
+
   it('falls from local inference to WebGPU 3B then WebGPU 1.5B when available', async () => {
     const originalFetch = globalThis.fetch
     vi.stubGlobal('navigator', { gpu: {} })

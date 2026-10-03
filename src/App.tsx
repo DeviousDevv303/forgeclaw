@@ -1371,6 +1371,14 @@ for (const call of result.toolCalls) {
         }
         allToolResults.push(...iterResults)
 
+        // The router deterministically dispatched an explicit image request;
+        // render the real workflow result and do not ask the small model to
+        // summarize it, which could reintroduce malformed token output.
+        if (result.toolCalls.some(call => call.id.startsWith('direct-image-'))) {
+          finalText = iterResults.map(toolResult => toolResult.output).join('\n\n')
+          break
+        }
+
         // Show progress in the streaming message
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
 
