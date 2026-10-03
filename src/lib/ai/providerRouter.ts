@@ -52,13 +52,17 @@ async function localEndpointAvailable(apiKey: string): Promise<boolean> {
   }
 }
 
+/** Detect the best runtime in order: llama.cpp, browser WebGPU, explicit local error path. */
+export async function detectBestProvider(apiKey = '', preferredModel = DEFAULT_LOCAL_MODEL): Promise<ProviderChoice> {
+  if (await localEndpointAvailable(apiKey)) return { providerId: 'local', model: preferredModel, level: 2 }
+  if (isNexusWebGpuAvailable()) return { providerId: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL, level: 3 }
+  return { providerId: 'local', model: preferredModel, level: 2 }
+}
+
 /** Direct command is level 1 and bypasses this router; ordinary local mode starts at level 2. */
 export async function getBestProvider(apiKey: string, preferred: ProviderId = 'local', preferredModel = DEFAULT_LOCAL_MODEL): Promise<ProviderChoice> {
   if (preferred !== 'local') return { providerId: preferred, model: preferredModel, level: 1 }
-  if (await localEndpointAvailable(apiKey)) return { providerId: 'local', model: preferredModel, level: 2 }
-  if (isNexusWebGpuAvailable()) return { providerId: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL, level: 3 }
-  // Keep the explicit configured local endpoint as the honest final error path when WebGPU is unavailable.
-  return { providerId: 'local', model: preferredModel, level: 2 }
+  return detectBestProvider(apiKey, preferredModel)
 }
 
 function requestForWebGpuFallback(request: AIRequest, model: string): AIRequest {

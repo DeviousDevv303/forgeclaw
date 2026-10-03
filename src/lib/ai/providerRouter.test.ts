@@ -1,7 +1,7 @@
 // @vitest-environment node
 // MANUS acceptance coverage: the router must transport the runtime request as-is.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getBestProvider, providers, sendViaRouter } from './providerRouter'
+import { detectBestProvider, getBestProvider, providers, sendViaRouter } from './providerRouter'
 import { DEFAULT_NEXUS_WEBGPU_MODEL, LEGACY_NEXUS_WEBGPU_MODEL } from './providers/nexusWebGpuProvider'
 
 afterEach(() => vi.restoreAllMocks())
@@ -17,6 +17,15 @@ describe('provider router runtime passthrough', () => {
     } finally {
       globalThis.fetch = originalFetch
     }
+  })
+
+  it('detects WebGPU after llama.cpp is unavailable', async () => {
+    vi.stubGlobal('navigator', { gpu: {} })
+    globalThis.fetch = (async () => new Response('', { status: 503 })) as typeof fetch
+    await expect(detectBestProvider('http://127.0.0.1:8080/v1')).resolves.toMatchObject({
+      providerId: 'nexus', level: 3,
+    })
+    vi.unstubAllGlobals()
   })
 
   it('falls from local inference to WebGPU 3B then WebGPU 1.5B when available', async () => {
