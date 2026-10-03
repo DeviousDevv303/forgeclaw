@@ -164,34 +164,34 @@ export function appendActivity(
 
 /** Format state for injection into the model context after reload. */
 export function formatCodingAgentStateForContext(state: CodingAgentState): string {
-  if (state.taskStatus === 'idle' && !state.task) {
-    return '[CODING_AGENT_STATE] No active coding task.[/CODING_AGENT_STATE]'
-  }
-  const tests = state.lastTestRuns.length
-    ? state.lastTestRuns.map(run => `${run.command} → ${run.conclusion}`).join(' | ')
-    : '(none)'
-  return `[CODING_AGENT_STATE]
-agent: ${state.agentLabel} (${state.agentId})
-repo: ${state.owner}/${state.repo}
-branch: ${state.branch}
-HEAD: ${state.headShaShort || state.headSha || '(unknown)'}
-taskStatus: ${state.taskStatus}
-task: ${state.task}
-instructions: ${state.taskInstructions}
-completedSteps: ${state.completedSteps.join(' | ') || '(none)'}
-pendingSteps: ${state.pendingSteps.join(' | ') || '(none)'}
-filesModified: ${state.filesModified.join(', ') || '(none)'}
-lastCommit: ${state.lastCommitSha ? `${state.lastCommitSha.slice(0, 7)} — ${state.lastCommitMessage}` : '(none)'}
-verification: ${state.verificationResults.join(' | ') || '(none)'}
-tests: ${tests}
-errors: ${state.errors.join(' | ') || '(none)'}
-blockers: ${state.blockers.join(' | ') || '(none)'}
-continuation: ${state.continuationNotes || '(none)'}
-updatedAt: ${state.updatedAt}
-[/CODING_AGENT_STATE]`
+  return compressCodingAgentState(state)
 }
 
 export const CODING_AGENT_STATE_KEY = STATE_KEY
 export function codingAgentStateKey(agentId = FORGECLAW_AGENT_ID): string {
   return stateKey(agentId)
+}
+
+
+/**
+ * Compress coding agent state for context-constrained models.
+ * Returns a minimal summary instead of full state.
+ */
+export function compressCodingAgentState(state: CodingAgentState): string {
+  const completed = state.completedSteps.slice(-3)
+  const pending = state.pendingSteps.slice(0, 3)
+  
+  return [
+    `Task: ${state.task.slice(0, 100)}`,
+    `Status: ${state.taskStatus}`,
+    `Branch: ${state.branch}`,
+    `HEAD: ${state.headShaShort}`,
+    '',
+    'Recent:',
+    ...completed.map(s => `  ✓ ${s.slice(0, 60)}`),
+    '',
+    'Next:',
+    ...pending.map(s => `  → ${s.slice(0, 60)}`),
+    state.blockers.length ? `\nBlockers: ${state.blockers.join('; ').slice(0, 100)}` : '',
+  ].filter(Boolean).join('\n')
 }

@@ -146,10 +146,112 @@ export const localInferenceProvider: AIProvider = {
       messages: toMessages(request.systemPrompt, request.messages),
       max_tokens: request.maxTokens ?? 2048,
       stream: !!request.onToken,
+      temperature: 0.1,  // Low temperature for deterministic output
+    }
+    
+    // If task involves writing files, constrain output to only tool call JSON
+    const lastUserMsg = request.messages[request.messages.length - 1]
+    if (lastUserMsg?.role === 'user' && /write|create|commit|branch/i.test(lastUserMsg.content || '')) {
+      // Force JSON mode if supported
+      body.response_format = { type: 'json_object' }
+      body.temperature = 0.0  // Maximum determinism
     }
     if (request.tools?.length) {
       body.tools = toTools(request.tools)
       body.tool_choice = 'auto'
+      // Add grammar to force valid tool call JSON output
+      body.grammar = {
+        type: 'json',
+        schema: {
+          type: 'object',
+          properties: {
+            tool_calls: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  type: { type: 'string', enum: ['function'] },
+                  function: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string', enum: request.tools.map(t => t.name) },
+                      arguments: { type: 'string' }
+                    },
+                    required: ['name', 'arguments']
+                  }
+                },
+                required: ['id', 'type', 'function']
+              }
+            }
+          },
+          required: ['tool_calls']
+        }
+      }
+      // Add grammar to force valid tool call JSON output
+      body.grammar = {
+        type: 'json',
+        schema: {
+          type: 'object',
+          properties: {
+            tool_calls: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  type: { type: 'string', enum: ['function'] },
+                  function: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string', enum: request.tools.map(t => t.name) },
+                      arguments: { type: 'string' }
+                    },
+                    required: ['name', 'arguments']
+                  }
+                },
+                required: ['id', 'type', 'function']
+              }
+            }
+          },
+          required: ['tool_calls']
+        }
+      }
+      // Add grammar to force valid tool call JSON
+      body.grammar = {
+        type: 'json',
+        schema: {
+          type: 'object',
+          properties: {
+            tool_calls: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  type: { type: 'string', enum: ['function'] },
+                  function: {
+                    type: 'object',
+                    properties: {
+                      name: { type: 'string' },
+                      arguments: { type: 'string' }
+                    },
+                    required: ['name', 'arguments']
+                  }
+                },
+                required: ['id', 'type', 'function']
+              }
+            }
+          },
+          required: ['tool_calls']
+        }
+      }
+      // Force tool call format for small local models that don't reliably emit tool_calls
+      const messages = body.messages as Array<{ role: string; content: string }>
+      const lastMsg = messages[messages.length - 1]
+      if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
+        lastMsg.content += `\n\nIf you need to use a tool, you MUST respond with ONLY this exact JSON format (no other text, no explanation):\n{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"TOOL_NAME","arguments":"{\\"param\\":\\"value\\"}"}}]}\n\nReplace TOOL_NAME with the actual tool name and fill in the parameters.`
+      }
     }
 
     const response = await fetch(`${endpoint(apiKey)}/chat/completions`, {
@@ -173,13 +275,20 @@ export const localInferenceProvider: AIProvider = {
     if (data.error) throw new Error(typeof data.error === 'string' ? data.error : data.error.message || 'Local inference error')
     const choice = data.choices?.[0]
     const message = choice?.message
-    const toolCalls: AIToolCall[] = (message?.tool_calls ?? []).map(call => ({
+    
+    // Parse native tool_calls from model
+    let toolCalls: AIToolCall[] = (message?.tool_calls ?? []).map(call => ({
       id: call.id,
       name: call.function?.name || '',
       input: (() => {
         try { return JSON.parse(call.function?.arguments || '{}') as Record<string, unknown> } catch { return {} }
       })(),
     })).filter(call => call.id && call.name)
+    
+    // FALLBACK: Extract tool calls from text if model didn't emit native tool_calls
+    if (!toolCalls.length && message?.content) {
+      toolCalls = extractToolCallsFromText(message.content)
+    }
 
     return {
       text: message?.content ?? '',
@@ -194,4 +303,48 @@ export const localInferenceProvider: AIProvider = {
     const response = await fetch(`${endpoint(apiKey)}/models`)
     if (!response.ok) throw new Error(await responseError(response))
   },
+}
+
+
+function extractToolCallsFromText(text: string): AIToolCall[] {
+  const patterns = [
+    /\{"tool_calls":\s*\[(.*?)\]\}/s,
+    /\{"name":\s*"(\w+)",\s*"arguments":\s*(\{.*?\})\}/s,
+    /(\w+)\s*\((\{.*?\})\)/s,
+  ]
+  
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match) {
+      try {
+        const parsed = JSON.parse(match[0])
+        if (parsed.tool_calls) {
+          return parsed.tool_calls.map((tc: { id?: string; function?: { name?: string; arguments?: string }; name?: string; arguments?: string | Record<string, unknown> }) => ({
+            id: tc.id || 'call_' + Date.now(),
+            name: tc.function?.name || tc.name,
+            input: (() => {
+              try {
+                const args = tc.function?.arguments || tc.arguments || '{}'
+                return typeof args === 'string' ? JSON.parse(args) : args
+              } catch { return {} }
+            })(),
+          })).filter((tc: { name?: string }) => tc.name)
+        } else if (parsed.name) {
+          return [{
+            id: 'call_' + Date.now(),
+            name: parsed.name,
+            input: (() => {
+              try {
+                const args = parsed.arguments || '{}'
+                return typeof args === 'string' ? JSON.parse(args) : args
+              } catch { return {} }
+            })(),
+          }]
+        }
+      } catch {
+        continue
+      }
+    }
+  }
+  return []
 }

@@ -34,6 +34,7 @@ import {
   saveCodingAgentState,
   restoreCodingAgentState,
   appendActivity,
+  compressCodingAgentState,
 } from './lib/codingAgentState'
 import type { CodingAgentState } from './lib/codingAgentState'
 import { CodingAgentStatePanel } from './components/CodingAgentStatePanel'
@@ -44,7 +45,6 @@ import {
   isCodingTaskRequest,
   isExplicitShellRequest,
   extractExplicitShellCommand,
-  selectRequestTools,
   recordToolProgress,
   recordTaskOutcome,
   recordVerification,
@@ -68,6 +68,9 @@ import { useForgeOps } from './hooks/useForgeOps'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
 import type { AgentPhase } from './types/forgeOps'
+
+// Global loop detection tracking
+let globalRecentToolCalls: string[] = []
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -901,11 +904,27 @@ function App() {
     const relevant = findRelevant(corpus, promptText, 3)
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
     const codingTask = isCodingTaskRequest(promptText)
-    const runtimeTools = selectRequestTools(
-      promptText,
-      ATTRIBUTED_TOOLS,
-      codingTask ? applyAttributionContract(toolsForCapability('coding-readonly', FORGE_TOOLS)) : ATTRIBUTED_TOOLS,
-    )
+    // Progressive tool disclosure: filter tools based on task
+    const keywords: Record<string, string[]> = {
+      'github_read_file': ['read', 'show', 'view', 'file', 'get'],
+      'github_write_file': ['write', 'edit', 'create', 'fix', 'update', 'add'],
+      'shell_exec': ['run', 'execute', 'test', 'build', 'command', 'shell'],
+      'github_search_code': ['search', 'find', 'grep', 'lookup'],
+      'github_repo_state': ['state', 'status', 'head', 'branch'],
+    }
+
+    const messageLower = (promptText || '').toLowerCase()
+    const relevantTools = FORGE_TOOLS.filter(tool => {
+      const toolKeywords = keywords[tool.name] || []
+      return toolKeywords.some((kw: string) => messageLower.includes(kw))
+    })
+
+    // Always include core tools
+    const coreToolNames = ['github_repo_state', 'coding_task_update', 'shell_exec']
+    const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
+    const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
+
+    const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding-readonly', finalTools)) : finalTools
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'
@@ -969,6 +988,9 @@ function App() {
       // Streaming placeholder
       setMessages(prev => [...prev, { id: msgId, role: 'assistant', content: '', timestamp: Date.now(), source: 'cloud', streaming: true }])
 
+      // Compress coding agent state for context-constrained models
+      const compressedState = codingAgentState.task ? compressCodingAgentState(codingAgentState) : ''
+      
       const toolCtx = {
         ...loadToolContext(),
         sessionId,
@@ -977,6 +999,7 @@ function App() {
         signal: controller.signal,
         tier1Active,
         requestGuardianApproval,
+        codingAgentState: compressedState,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
           runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, currentApiKey, ATTRIBUTED_TOOLS, {
             ...loadToolContext(),
@@ -1151,7 +1174,28 @@ function App() {
 
         // Tool calls → executeTool owns Guardian enforcement and side effects.
         const iterResults: ToolResult[] = []
-        for (const call of result.toolCalls) {
+        // Loop detection: track recent tool calls across ALL iterations
+        if (!globalRecentToolCalls) globalRecentToolCalls = []
+        const MAX_REPEATED_CALLS = 3
+
+for (const call of result.toolCalls) {
+  // Check for loop
+  const callKey = `${call.name}:${JSON.stringify(call.input)}`
+  globalRecentToolCalls.push(callKey)
+  if (globalRecentToolCalls.length > 20) globalRecentToolCalls.shift()
+  
+  const repeats = globalRecentToolCalls.filter(k => k === callKey).length
+  if (repeats >= MAX_REPEATED_CALLS) {
+    console.warn('[GUARDIAN] Detected tool call loop:', callKey)
+    iterResults.push({
+      toolCallId: call.id,
+      name: call.name,
+      output: '[GUARDIAN BLOCKED] Detected repeated tool call loop. Task paused to prevent infinite loop.',
+      isError: true,
+      reasoningStepId: 'guardian_block'
+    })
+    continue
+  }
           const actEntryId = `act_${call.id}_${Date.now()}`
           setActivityLog(prev => [...prev.slice(-99), { id: actEntryId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
           emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
