@@ -10,6 +10,7 @@ const ALWAYS_COSIGN = new Set([
   'github_run_workflow', // triggers production pipelines
   'sculpt_self',         // creates a self-modification pull request
   'generate_image',      // dispatches external image generation compute
+  'generateimage',       // execution alias for generate_image
   'gmail_send',          // external email, irreversible
   'calendar_create',     // creates real calendar events
   'shell_exec',          // dispatches GitHub Actions runner — real external execution

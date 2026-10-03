@@ -397,7 +397,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'generate_image',
-    description: 'Generate an image with FLUX.1-dev through the repository-owned GitHub Actions workflow. The result is returned as a short-lived workflow artifact and the request is recorded as an unapproved NEXUS learning candidate.',
+    description: 'Generate an image with FLUX.1-dev through the repository-owned GitHub Actions workflow. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request is recorded as an unapproved NEXUS learning candidate.',
     parameters: {
       type: 'object',
       properties: {
@@ -1269,7 +1269,8 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
       // ── Spawn sub-agent ────────────────────────────────────────────────────────
       
-      case 'generate_image': {
+      case 'generate_image':
+      case 'generateimage': { // Compatibility alias; canonical schema name remains generate_image.
         const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : ''
         const style = typeof input.style === 'string' && input.style.trim() ? input.style.trim() : 'realistic'
         const width = input.width === undefined ? 1024 : Number(input.width)
