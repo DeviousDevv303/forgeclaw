@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { CorpusRepository, appendDeepSeekLearning } from './corpus'
+import { CorpusRepository, appendDeepSeekLearning, extractImagePatterns, suggestImprovedPrompt } from './corpus'
 import { corpusProvider } from './ai/providers/corpusProvider'
 import { localInferenceProvider } from './ai/providers/localInferenceProvider'
 import { requiresCoSign } from './guardianGate'
@@ -67,6 +67,20 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(result.candidate.model).toBe('deepseek-16b-instruct')
     expect(result.candidate.input).toContain('[DEEPSEEK_TASK] Explain routing')
     expect(result.candidate.generatedResult).toContain('[DEEPSEEK_RESULT]')
+  })
+
+  it('extracts image patterns and suggests improvements only from approved learning', async () => {
+    const patterns = extractImagePatterns('a serene beach at sunset, wide shot, golden hour, warm tones', 'realistic')
+    expect(patterns.subjects).toContain('beach')
+    expect(patterns.composition).toContain('wide shot')
+    expect(patterns.lighting).toContain('golden hour')
+    expect(patterns.colorPalette).toContain('warm tones')
+
+    const repository = new CorpusRepository()
+    const { candidate } = await repository.appendImageGenerationLearning({ prompt: 'sunset beach', style: 'realistic', width: 1024, height: 1024, invocationId: 'flux-test-1' })
+    expect(suggestImprovedPrompt('sunset beach').prompt).toBe('sunset beach')
+    await repository.admitCandidate(candidate.id)
+    expect(suggestImprovedPrompt('beach').prompt).toContain('beach')
   })
 
   it('rejects malformed and tampered candidates', async () => {

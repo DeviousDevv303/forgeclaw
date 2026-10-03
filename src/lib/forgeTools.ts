@@ -21,7 +21,7 @@ import {
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign } from './guardianGate'
 import { isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, type ShellWorkflowRun } from './shellCorrelation'
-import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository } from './corpus'
+import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -1280,21 +1280,22 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           throw new Error('Image width and height must be integers from 256 to 1536 and divisible by 8.')
         }
         if (!token) throw new Error('No GitHub token configured.')
+        const improved = suggestImprovedPrompt(prompt, style)
         const invocationId = `flux-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/generate-image.yml/dispatches`, {
           method: 'POST',
           headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ref: 'main',
-            inputs: { prompt, style, width: String(width), height: String(height), invocation_id: invocationId },
+            inputs: { prompt: improved.prompt, style, width: String(width), height: String(height), invocation_id: invocationId },
           }),
         })
         if (!res.ok) {
           const detail = await res.text().catch(() => '')
           throw new Error(`FLUX dispatch failed: ${res.status}${detail ? ` — ${detail.slice(0, 300)}` : ''}`)
         }
-        await appendImageGenerationLearning({ prompt, style, width, height, invocationId })
-        return `✓ FLUX image generation dispatched as ${invocationId}; artifact will contain a ${width}x${height} ${style} image after the workflow completes.`
+        await appendImageGenerationLearning({ prompt: improved.prompt, style, width, height, invocationId })
+        return `✓ FLUX image generation dispatched as ${invocationId}; enhanced prompt: "${improved.prompt}"; artifact will contain a ${width}x${height} ${style} image after the workflow completes.`
       }
 
       case 'analyze_image': {

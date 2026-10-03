@@ -75,6 +75,15 @@ export interface ImageGenerationLearningInput {
   invocationId: string
 }
 
+export interface ImagePatterns {
+  subjects: string[]
+  descriptors: string[]
+  composition: string[]
+  lighting: string[]
+  colorPalette: string[]
+  styleRules: string[]
+}
+
 export interface NexusKnowledge {
   content: string
   source: string
@@ -130,6 +139,39 @@ function deepSeekMetadata(task: string, context: string): Record<string, string>
     keywords: tokenise(`${task} ${context}`).slice(0, 24).join(','),
     taskType: taskCategory(task),
     complexity: taskComplexity(task, context),
+  }
+}
+
+const IMAGE_STOPWORDS = new Set(['generate', 'image', 'create', 'please', 'with', 'and', 'the', 'a', 'an', 'for', 'style', 'high', 'quality'])
+const IMAGE_COMPOSITION = ['close-up', 'portrait', 'wide shot', 'landscape', 'overhead', 'isometric', 'centered', 'symmetrical', 'rule of thirds', 'cinematic']
+const IMAGE_LIGHTING = ['golden hour', 'soft light', 'dramatic lighting', 'natural light', 'studio lighting', 'neon lighting', 'backlit', 'rim light', 'low key', 'high key']
+const IMAGE_COLORS = ['warm tones', 'cool tones', 'vibrant', 'muted', 'pastel', 'monochrome', 'black and white', 'teal and orange', 'earth tones', 'golden']
+
+export function extractImagePatterns(prompt: string, style = ''): ImagePatterns {
+  const text = `${prompt} ${style}`.toLowerCase()
+  const words = tokenise(text).filter(word => !IMAGE_STOPWORDS.has(word))
+  const subjects = words.filter(word => !/^(realistic|artistic|cartoon|digital|photorealistic|detailed|beautiful|high|quality)$/.test(word)).slice(0, 8)
+  const descriptors = words.filter(word => /^(beautiful|detailed|vibrant|minimalist|serene|dramatic|realistic|artistic|cartoon|photorealistic|futuristic|organic|cozy|elegant)$/.test(word)).slice(0, 8)
+  const findPhrases = (phrases: string[]) => phrases.filter(phrase => text.includes(phrase))
+  return {
+    subjects,
+    descriptors,
+    composition: findPhrases(IMAGE_COMPOSITION),
+    lighting: findPhrases(IMAGE_LIGHTING),
+    colorPalette: findPhrases(IMAGE_COLORS),
+    styleRules: style.trim() ? [style.trim().toLowerCase()] : [],
+  }
+}
+
+function mergeImagePatterns(patterns: ImagePatterns[]): ImagePatterns {
+  const unique = (values: string[]) => Array.from(new Set(values)).slice(0, 12)
+  return {
+    subjects: unique(patterns.flatMap(pattern => pattern.subjects)),
+    descriptors: unique(patterns.flatMap(pattern => pattern.descriptors)),
+    composition: unique(patterns.flatMap(pattern => pattern.composition)),
+    lighting: unique(patterns.flatMap(pattern => pattern.lighting)),
+    colorPalette: unique(patterns.flatMap(pattern => pattern.colorPalette)),
+    styleRules: unique(patterns.flatMap(pattern => pattern.styleRules)),
   }
 }
 
@@ -255,6 +297,7 @@ export class CorpusRepository {
 
   appendImageGenerationLearning(input: ImageGenerationLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
     const context = `style=${input.style}; size=${input.width}x${input.height}; invocation_id=${input.invocationId}`
+    const patterns = extractImagePatterns(input.prompt, input.style)
     return this.appendInteraction({
       input: `[IMAGE_GENERATION_PROMPT] ${input.prompt}`,
       context,
@@ -266,6 +309,7 @@ export class CorpusRepository {
         keywords: tokenise(`${input.prompt} ${input.style}`).slice(0, 24).join(','),
         taskType: 'image-generation',
         complexity: 'moderate',
+        imagePatterns: JSON.stringify(patterns),
       },
     })
   }
@@ -291,6 +335,17 @@ export class CorpusRepository {
     const haystack = tokenise(`${match.content} ${Object.values(match.metadata).join(' ')}`)
     const score = queryTokens.reduce((total, token) => total + (haystack.includes(token) ? 1 : 0), 0)
     return { content: match.content, source: match.source, recordId: match.id, score, metadata: match.metadata }
+  }
+
+  getImageGenerationKnowledge(prompt: string, limit = 5): ImagePatterns {
+    const records = this.retrieve(prompt, limit * 3).filter(record => record.source === 'flux:github-actions')
+    const learned = records.flatMap(record => {
+      try {
+        const parsed = JSON.parse(record.metadata.imagePatterns || '') as ImagePatterns
+        return parsed && Array.isArray(parsed.subjects) ? [parsed] : []
+      } catch { return [] }
+    })
+    return mergeImagePatterns(learned)
   }
 
   async admitCandidate(candidateId: string): Promise<CorpusRecord | null> {
@@ -448,6 +503,21 @@ export function checkNexusKnowledge(task: string): NexusKnowledge | null {
 /** Record a FLUX generation request as an unapproved local learning candidate. */
 export function appendImageGenerationLearning(input: ImageGenerationLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
   return corpusRepository.appendImageGenerationLearning(input)
+}
+
+/** Enhance a new image prompt with patterns learned from approved generations. */
+export function suggestImprovedPrompt(prompt: string, style = ''): { prompt: string; patterns: ImagePatterns } {
+  const patterns = corpusRepository.getImageGenerationKnowledge(prompt)
+  const additions = [
+    ...patterns.descriptors,
+    ...patterns.composition,
+    ...patterns.lighting,
+    ...patterns.colorPalette,
+  ].filter(Boolean)
+  const uniqueAdditions = Array.from(new Set(additions)).filter(value => !prompt.toLowerCase().includes(value.toLowerCase())).slice(0, 6)
+  const stylePart = style.trim() || patterns.styleRules[0] || ''
+  const enhanced = [prompt.trim(), stylePart, ...uniqueAdditions].filter(Boolean).join(', ')
+  return { prompt: enhanced, patterns }
 }
 
 export function formatCorpusContext(records: CorpusRecord[]): string {

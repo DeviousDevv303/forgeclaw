@@ -31,6 +31,28 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
     expect(routeLocalTask([{ role: 'user', content: 'Design a robust migration plan for the repository and explain tradeoffs.' }])).toBe('deepseek')
   })
 
+  it('does not send custom grammar with image tool requests', async () => {
+    const originalFetch = globalThis.fetch
+    let captured: Record<string, unknown> | undefined
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      captured = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [] }, finish_reason: 'stop' }] }), { status: 200 })
+    }) as typeof fetch
+    try {
+      await localInferenceProvider.send({
+        systemPrompt: 'system',
+        messages: [{ role: 'user', content: 'Generate an image', image_url: 'data:image/png;base64,abc' }],
+        model: 'local-model',
+        tools: [{ name: 'analyze_image', description: 'Analyze', parameters: { type: 'object' } }],
+      }, 'http://127.0.0.1:8080/v1')
+      expect(captured).toBeDefined()
+      expect(captured).not.toHaveProperty('grammar')
+      expect(captured?.tool_choice).toEqual({ type: 'function', function: { name: 'analyze_image' } })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('exercises the agent-core classification, verification fields, and retry policy', () => {
     expect(classifyFailure('local tool execution failed')).toBe('TOOL_FAILURE')
     expect(extractStatus('STATUS: COMPLETE\nNEXT_ACTION: none')).toBe('COMPLETE')

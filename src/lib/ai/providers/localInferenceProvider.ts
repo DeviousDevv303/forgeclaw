@@ -191,100 +191,12 @@ export const localInferenceProvider: AIProvider = {
       if (routeLocalTask(request.messages) === 'deepseek' && lastMessage?.role === 'user' && typeof lastMessage.content === 'string' && request.tools.some(tool => tool.name === 'deepseek_reason')) {
         lastMessage.content += '\n\nThis is a complex task. Delegate primary reasoning to the deepseek_reason tool, then use its result to formulate the final response.'
       }
-      // Add grammar to force valid tool call JSON output
-      body.grammar = {
-        type: 'json',
-        schema: {
-          type: 'object',
-          properties: {
-            tool_calls: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: { type: 'string' },
-                  type: { type: 'string', enum: ['function'] },
-                  function: {
-                    type: 'object',
-                    properties: {
-                      name: { type: 'string', enum: request.tools.map(t => t.name) },
-                      arguments: { type: 'string' }
-                    },
-                    required: ['name', 'arguments']
-                  }
-                },
-                required: ['id', 'type', 'function']
-              }
-            }
-          },
-          required: ['tool_calls']
-        }
-      }
-      // Add grammar to force valid tool call JSON output
-      body.grammar = {
-        type: 'json',
-        schema: {
-          type: 'object',
-          properties: {
-            tool_calls: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: { type: 'string' },
-                  type: { type: 'string', enum: ['function'] },
-                  function: {
-                    type: 'object',
-                    properties: {
-                      name: { type: 'string', enum: request.tools.map(t => t.name) },
-                      arguments: { type: 'string' }
-                    },
-                    required: ['name', 'arguments']
-                  }
-                },
-                required: ['id', 'type', 'function']
-              }
-            }
-          },
-          required: ['tool_calls']
-        }
-      }
-      // Add grammar to force valid tool call JSON
-      body.grammar = {
-        type: 'json',
-        schema: {
-          type: 'object',
-          properties: {
-            tool_calls: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  id: { type: 'string' },
-                  type: { type: 'string', enum: ['function'] },
-                  function: {
-                    type: 'object',
-                    properties: {
-                      name: { type: 'string' },
-                      arguments: { type: 'string' }
-                    },
-                    required: ['name', 'arguments']
-                  }
-                },
-                required: ['id', 'type', 'function']
-              }
-            }
-          },
-          required: ['tool_calls']
-        }
-      }
       // Force tool call format for small local models that don't reliably emit tool_calls
       const messages = body.messages as Array<{ role: string; content: string }>
       const lastMsg = messages[messages.length - 1]
       if (lastMsg?.role === 'user' && typeof lastMsg.content === 'string') {
         lastMsg.content += `\n\nIf you need to use a tool, you MUST respond with ONLY this exact JSON format (no other text, no explanation):\n{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"TOOL_NAME","arguments":"{\\"param\\":\\"value\\"}"}}]}\n\nReplace TOOL_NAME with the actual tool name and fill in the parameters.`
       }
-      if (hasImages) delete body.grammar
     }
 
     const response = await fetch(`${endpoint(apiKey)}/chat/completions`, {
