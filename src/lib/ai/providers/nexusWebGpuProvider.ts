@@ -1,14 +1,16 @@
 import type { InitProgressReport, MLCEngineInterface } from '@mlc-ai/web-llm'
 import type { AIProvider, AIRequest, AIResponse } from '../types'
-import { adaptNexusMessages, limitNexusContext } from '../nexusContext'
+import { adaptNexusMessages, limitNexusContext, MAX_NEXUS_CONTEXT_TOKENS } from '../nexusContext'
 import { parseManualToolCalls, toToolCalls } from '../manualToolMode'
 
-export const DEFAULT_NEXUS_WEBGPU_MODEL = 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'
+export const DEFAULT_NEXUS_WEBGPU_MODEL = 'Qwen2.5-3B-Instruct-q4f16_1-MLC'
+export const LEGACY_NEXUS_WEBGPU_MODEL = 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'
+export const NEXUS_CACHE_VERSION = 'qwen2.5-3b-v2'
 export const NEXUS_WEBGPU_MODELS = [
   {
     id: DEFAULT_NEXUS_WEBGPU_MODEL,
-    label: 'Qwen2.5 1.5B Instruct Q4 (Browser WebGPU)',
-    contextK: 4,
+    label: 'Qwen2.5 3B Instruct Q4 (Browser WebGPU)',
+    contextK: 8,
     note: 'Browser-local WebLLM/WebGPU; model assets cached in IndexedDB',
   },
 ]
@@ -22,8 +24,66 @@ export interface NexusWebGpuState {
 }
 
 let state: NexusWebGpuState = { status: 'idle', progress: 0, text: 'WebGPU not initialized' }
-let enginePromise: Promise<MLCEngineInterface> | undefined
+const enginePromises = new Map<string, Promise<MLCEngineInterface>>()
 const listeners = new Set<(next: NexusWebGpuState) => void>()
+const CACHE_VERSION_KEY = 'forgeclaw_nexus_cache_version'
+// These are the three scopes used by WebLLM's indexeddb cacheBackend.
+const WEBLLM_CACHE_SCOPES = ['webllm/model', 'webllm/config', 'webllm/wasm']
+
+export function shouldUpgradeNexusCache(storedVersion: string | null): boolean {
+  return storedVersion !== NEXUS_CACHE_VERSION
+}
+
+function readNexusCacheVersion(): string | null {
+  try { return globalThis.localStorage?.getItem(CACHE_VERSION_KEY) ?? null } catch { return null }
+}
+
+function writeNexusCacheVersion(version: string): void {
+  try { globalThis.localStorage?.setItem(CACHE_VERSION_KEY, version) } catch { /* storage may be disabled */ }
+}
+
+function clearLegacyModelEntries(databaseName: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === 'undefined') { resolve(); return }
+    let createdByThisCall = false
+    const open = indexedDB.open(databaseName)
+    open.onupgradeneeded = event => {
+      createdByThisCall = (event as IDBVersionChangeEvent).oldVersion === 0
+    }
+    open.onerror = () => reject(open.error)
+    open.onsuccess = () => {
+      const db = open.result
+      if (createdByThisCall || !db.objectStoreNames.contains('urls')) {
+        db.close()
+        if (!createdByThisCall) { resolve(); return }
+        const deletion = indexedDB.deleteDatabase(databaseName)
+        deletion.onsuccess = () => resolve()
+        deletion.onerror = () => reject(deletion.error)
+        deletion.onblocked = () => reject(new Error(`Cache cleanup blocked for ${databaseName}`))
+        return
+      }
+      const transaction = db.transaction('urls', 'readwrite')
+      const request = transaction.objectStore('urls').openCursor()
+      request.onsuccess = () => {
+        const cursor = request.result
+        if (!cursor) return
+        const url = typeof cursor.value?.url === 'string' ? cursor.value.url : ''
+        if (url.includes(LEGACY_NEXUS_WEBGPU_MODEL)) cursor.delete()
+        cursor.continue()
+      }
+      transaction.oncomplete = () => { db.close(); resolve() }
+      transaction.onerror = () => { db.close(); reject(transaction.error) }
+      transaction.onabort = () => { db.close(); reject(transaction.error ?? new Error(`Cache cleanup aborted for ${databaseName}`)) }
+    }
+  })
+}
+
+async function upgradeNexusCacheIfNeeded(): Promise<void> {
+  if (!shouldUpgradeNexusCache(readNexusCacheVersion())) return
+  if (typeof indexedDB === 'undefined') return
+  for (const databaseName of WEBLLM_CACHE_SCOPES) await clearLegacyModelEntries(databaseName)
+  writeNexusCacheVersion(NEXUS_CACHE_VERSION)
+}
 
 function publish(next: NexusWebGpuState): void {
   state = next
@@ -67,51 +127,49 @@ export function isNexusWebGpuAvailable(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator && Boolean(navigator.gpu)
 }
 
-async function createEngine(): Promise<MLCEngineInterface> {
+async function createEngine(model: string): Promise<MLCEngineInterface> {
   const { CreateMLCEngine, prebuiltAppConfig } = await import('@mlc-ai/web-llm')
   // IndexedDB avoids Cache.add() failures common on mobile when caching HF model shards.
   const appConfig = {
     ...prebuiltAppConfig,
     cacheBackend: 'indexeddb' as const,
   }
-  return CreateMLCEngine(DEFAULT_NEXUS_WEBGPU_MODEL, {
+  return CreateMLCEngine(model, {
     appConfig,
     initProgressCallback: (report: InitProgressReport) => publish(progressState(report)),
   })
 }
 
-async function getEngine(): Promise<MLCEngineInterface> {
+async function getEngine(model: string): Promise<MLCEngineInterface> {
   if (!isNexusWebGpuAvailable()) {
     const message = 'NEXUS WebGPU is unavailable in this browser. Enable WebGPU or use a WebGPU-capable browser.'
     publish({ status: 'error', progress: 0, text: message, error: message })
     throw new Error(message)
   }
-  if (!enginePromise) {
+  if (!enginePromises.has(model)) {
     publish({ status: 'initializing', progress: 0, text: 'Checking WebGPU and initializing NEXUS (IndexedDB cache)' })
-    enginePromise = (async () => {
+    const enginePromise = (async () => {
       try {
-        return await createEngine()
+        await upgradeNexusCacheIfNeeded()
+        return await createEngine(model)
       } catch {
         // One automatic retry — transient HF/CDN races are common on phones.
-        publish({
-          status: 'initializing',
-          progress: 0,
-          text: 'Retrying model load after cache/network error…',
-        })
+        publish({ status: 'initializing', progress: 0, text: 'Retrying model load after cache/network error…' })
         await new Promise(resolve => setTimeout(resolve, 1500))
-        return await createEngine()
+        return await createEngine(model)
       }
     })().then(engine => {
-      publish({ status: 'ready', progress: 1, text: 'NEXUS WebGPU model ready' })
+      publish({ status: 'ready', progress: 1, text: `NEXUS ${model.includes('3B') ? '3B' : '1.5B'} WebGPU model ready` })
       return engine
     }).catch(error => {
-      enginePromise = undefined
+      enginePromises.delete(model)
       const message = friendlyLoadError(error)
       publish({ status: 'error', progress: 0, text: message, error: message })
       throw new Error(message)
     })
+    enginePromises.set(model, enginePromise)
   }
-  return enginePromise
+  return enginePromises.get(model)!
 }
 
 export const nexusWebGpuProvider: AIProvider = {
@@ -132,15 +190,18 @@ export const nexusWebGpuProvider: AIProvider = {
     if (request.tools?.length) {
       throw new Error('NEXUS WebGPU does not grant tool authority to local inference')
     }
-    const engine = await getEngine()
+    const model = request.model === LEGACY_NEXUS_WEBGPU_MODEL
+      ? LEGACY_NEXUS_WEBGPU_MODEL
+      : DEFAULT_NEXUS_WEBGPU_MODEL
+    const engine = await getEngine(model)
     const bounded = limitNexusContext(request.systemPrompt, request.messages)
-    publish({ status: 'generating', progress: 1, text: `Generating within ${bounded.tokenCount}/4096 conservative prompt tokens` })
+    publish({ status: 'generating', progress: 1, text: `Generating within ${bounded.tokenCount}/${MAX_NEXUS_CONTEXT_TOKENS} conservative prompt tokens` })
     const messages = [
       { role: 'system' as const, content: bounded.systemPrompt },
       ...adaptNexusMessages(bounded.messages),
     ]
     const stream = await engine.chatCompletion({
-      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      model,
       messages,
       stream: true,
       max_tokens: request.maxTokens ?? 512,
@@ -154,13 +215,13 @@ export const nexusWebGpuProvider: AIProvider = {
         request.onToken?.(delta)
       }
     }
-    publish({ status: 'ready', progress: 1, text: 'NEXUS WebGPU model ready' })
+    publish({ status: 'ready', progress: 1, text: `NEXUS ${model.includes('3B') ? '3B' : '1.5B'} WebGPU model ready` })
     const manualActions = parseManualToolCalls(text)
     const toolCalls = toToolCalls(manualActions)
     return {
       text,
       provider: 'nexus',
-      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      model,
       toolCalls: toolCalls.length ? toolCalls : undefined,
       stopReason: 'stop',
     }

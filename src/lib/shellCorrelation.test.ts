@@ -40,6 +40,7 @@ describe('Shell workflow correlation', () => {
     delete missingBranch.head_branch
     const missingTitle = run() as Partial<ShellWorkflowRun>
     delete missingTitle.display_title
+    delete missingTitle.name
     const missingTimestamp = run() as Partial<ShellWorkflowRun>
     delete missingTimestamp.created_at
 
@@ -50,8 +51,8 @@ describe('Shell workflow correlation', () => {
   })
 
   it('rejects an unrelated run even when it is the newest listed run', () => {
-    expect(isCorrelatedShellRun(run({ display_title: 'Shell exec another-invocation' }), invocationId, dispatchedAt, now)).toBe(false)
-    expect(isCorrelatedShellRun(run({ display_title: undefined }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ name: 'Shell exec another-invocation', display_title: 'Shell exec another-invocation' }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ display_title: undefined }), invocationId, dispatchedAt, now)).toBe(true)
   })
 
   it('correlates concurrent dispatches independently regardless of result ordering', () => {

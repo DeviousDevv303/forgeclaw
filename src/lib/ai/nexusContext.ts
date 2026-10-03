@@ -13,7 +13,7 @@ export function adaptNexusMessages(messages: AIMessage[]): NexusMessage[] {
 }
 
 /** Hard upper bound for the browser-local NEXUS prompt budget. */
-export const MAX_NEXUS_CONTEXT_TOKENS = 4096
+export const MAX_NEXUS_CONTEXT_TOKENS = 8192
 
 /**
  * UTF-8 byte count is a conservative token upper bound: byte-level tokenizers

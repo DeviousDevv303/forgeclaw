@@ -4,7 +4,7 @@
 // local inference server running — including CI. The local runtime is untouched; the network tests
 // now skip when no endpoint is reachable instead of reporting a false failure.
 import { describe, expect, it } from 'vitest'
-import { localInferenceProvider, routeLocalTask, shouldUseLocalModel } from './localInferenceProvider'
+import { localInferenceProvider, routeLocalTask, shouldCheckNexusKnowledge, shouldUseLocalModel } from './localInferenceProvider'
 import { callProvider } from '../../modelProviders'
 import { runSubAgent } from '../../managedAgent'
 import { FORGE_TOOLS, executeTool } from '../../forgeTools'
@@ -30,6 +30,12 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
     expect(shouldUseLocalModel([{ role: 'user', content: 'pwd' }])).toBe(false)
     expect(routeLocalTask([{ role: 'user', content: 'pwd' }])).toBe('deepseek')
     expect(routeLocalTask([{ role: 'user', content: 'Design a robust migration plan for the repository and explain tradeoffs.' }])).toBe('deepseek')
+  })
+
+  it('skips NEXUS knowledge matching for complex tasks', () => {
+    expect(shouldCheckNexusKnowledge('Analyze the architecture and explain trade-offs')).toBe(false)
+    expect(shouldCheckNexusKnowledge('What is the capital of France?')).toBe(true)
+    expect(shouldCheckNexusKnowledge('Analyze this image', true)).toBe(false)
   })
 
   it('does not send custom grammar with image tool requests', async () => {

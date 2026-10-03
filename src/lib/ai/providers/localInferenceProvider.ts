@@ -7,6 +7,7 @@
 
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
 import { checkNexusKnowledge } from '../../corpus'
+import { shouldDispatchComplexTaskToDeepSeek } from '../../deepseekCommand'
 
 export const DEFAULT_LOCAL_ENDPOINT = 'http://127.0.0.1:8080/v1'
 export const DEFAULT_LOCAL_MODEL = 'local-model'
@@ -88,6 +89,10 @@ export function routeLocalTask(messages: AIMessage[]): 'local' | 'deepseek' {
   return shouldUseLocalModel(messages) ? 'local' : 'deepseek'
 }
 
+export function shouldCheckNexusKnowledge(task: string, hasImage = false): boolean {
+  return !hasImage && !shouldDispatchComplexTaskToDeepSeek(task)
+}
+
 function toTools(tools: NonNullable<AIRequest['tools']>) {
   return tools.map(tool => ({
     type: 'function' as const,
@@ -167,7 +172,9 @@ export const localInferenceProvider: AIProvider = {
   async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
     const model = request.model || DEFAULT_LOCAL_MODEL
     const lastUserMessage = [...request.messages].reverse().find(message => message.role === 'user')
-    const learned = lastUserMessage && !lastUserMessage.image_url ? checkNexusKnowledge(lastUserMessage.content) : null
+    const learned = lastUserMessage && shouldCheckNexusKnowledge(lastUserMessage.content, Boolean(lastUserMessage.image_url))
+      ? checkNexusKnowledge(lastUserMessage.content)
+      : null
     if (learned) {
       return { text: learned.content, provider: 'nexus-memory', model: 'nexus-memory', stopReason: 'knowledge-hit' }
     }

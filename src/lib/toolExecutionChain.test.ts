@@ -58,7 +58,7 @@ describe('dispatcher integrity (offline)', () => {
     for (const required of [
       'github_read_file', 'github_write_file', 'github_list_files', 'github_search_code',
       'github_repo_state', 'github_verify_commit', 'coding_task_update',
-      'run_js', 'memory_write', 'memory_read', 'spawn_agent',
+      'run_js', 'memory_write', 'memory_read', 'spawn_agent', 'ask_deepseek',
     ]) {
       expect(toolNames).toContain(required)
     }
@@ -145,6 +145,31 @@ describe('dispatcher integrity (offline)', () => {
     expect(invocationId).toMatch(/^shell-/)
     expect(runListReads).toBe(2)
     expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('dispatches ask_deepseek directly to the fixed workflow without NEXUS learning', async () => {
+    let dispatchedUrl = ''
+    let payload: { ref: string; inputs: { task: string; nexus_learning: string; invocation_id: string } } | undefined
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      dispatchedUrl = String(input)
+      payload = JSON.parse(String(init?.body)) as typeof payload
+      return new Response(null, { status: 204 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const output = await executeTool({
+      id: 'direct-deepseek-test',
+      name: 'ask_deepseek',
+      input: { question: 'What is the capital of France?' },
+    }, { ...ctx(), ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
+
+    expect(dispatchedUrl).toBe('https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/deepseek-16b.yml/dispatches')
+    expect(payload?.inputs.task).toBe('What is the capital of France?')
+    expect(payload?.inputs.nexus_learning).toBe('false')
+    expect(payload?.inputs.invocation_id).toMatch(/^deepseek-/)
+    expect(output).toContain('DeepSeek-16B dispatched')
+    expect(output).not.toContain('learning candidate')
+    expect(fetchMock).toHaveBeenCalledOnce()
   })
 
   it('explains a rejected GitHub token after dispatch 401 without leaking it', async () => {

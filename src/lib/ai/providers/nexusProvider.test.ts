@@ -7,10 +7,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_NEXUS_ENDPOINT,
+  DEFAULT_NEXUS_MODEL,
   nexusProvider,
   isNexusWebGpuAvailable,
   NEXUS_MODELS,
 } from './nexusProvider'
+import { NEXUS_CACHE_VERSION, shouldUpgradeNexusCache } from './nexusWebGpuProvider'
 import { FORGE_TOOLS } from '../../forgeTools'
 import { injectToolSchema, parseManualToolCalls, toToolCalls, stripToolSyntax } from '../manualToolMode'
 import { adaptNexusMessages, limitNexusContext } from '../nexusContext'
@@ -20,6 +22,12 @@ describe('NEXUS provider adapter (Browser WebGPU path)', () => {
     expect(nexusProvider.id).toBe('nexus')
     expect(nexusProvider.label).toContain('WebGPU')
     expect(NEXUS_MODELS.length).toBeGreaterThan(0)
+    expect(DEFAULT_NEXUS_MODEL).toBe('Qwen2.5-3B-Instruct-q4f16_1-MLC')
+    expect(NEXUS_MODELS[0]).toMatchObject({ label: 'Qwen2.5 3B Instruct Q4 (Browser WebGPU)', contextK: 8 })
+    expect(NEXUS_CACHE_VERSION).toBe('qwen2.5-3b-v2')
+    expect(shouldUpgradeNexusCache(null)).toBe(true)
+    expect(shouldUpgradeNexusCache('old-model-version')).toBe(true)
+    expect(shouldUpgradeNexusCache(NEXUS_CACHE_VERSION)).toBe(false)
     expect(DEFAULT_NEXUS_ENDPOINT.startsWith('webgpu://')).toBe(true)
   })
 

@@ -68,6 +68,7 @@ import { useForgeOps } from './hooks/useForgeOps'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
 import type { AgentPhase } from './types/forgeOps'
+import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from './lib/deepseekCommand'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -589,6 +590,18 @@ function App() {
     : activeProvider === 'anthropic'
       ? anthropicProvider.models.find(m => m.id === anthropicModel)?.label ?? anthropicModel
       : localModel
+  const lastRuntimeMessage = [...messages].reverse().find(message => message.role === 'assistant' && message.provider && message.model)
+  const lastRuntimeRoute = lastRuntimeMessage
+    ? lastRuntimeMessage.provider === 'GitHub Actions'
+      ? 'Level 1 · direct DeepSeek dispatch'
+      : (lastRuntimeMessage.provider === 'nexus' || lastRuntimeMessage.provider === 'corpus') && lastRuntimeMessage.model?.includes('1.5B')
+        ? 'Level 4 · WebGPU 1.5B fallback'
+        : lastRuntimeMessage.provider === 'nexus' || lastRuntimeMessage.provider === 'corpus'
+          ? 'Level 3 · WebGPU 3B fallback'
+          : lastRuntimeMessage.provider === 'local'
+            ? 'Level 2 · llama.cpp'
+            : `${lastRuntimeMessage.provider} · ${lastRuntimeMessage.model}`
+    : 'No completed route yet'
   const [requestStatus, setRequestStatus] = useState<'idle' | 'running' | 'success' | 'error' | 'blocked'>('idle')
   const [lastRequestError, setLastRequestError] = useState('')
   const [lastRequestLatencyMs, setLastRequestLatencyMs] = useState<number | null>(null)
@@ -852,6 +865,87 @@ function App() {
     const currentProviderLabel = activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local inference' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'corpus' || activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'nexus' ? DEFAULT_NEXUS_ENDPOINT : 'sk-ant-...'
 
+    const explicitDeepSeek = !imageUrl ? parseDirectDeepSeekCommand(promptText) : null
+    const complexDeepSeekFastPath = !imageUrl && activeProvider !== 'anthropic' && shouldDispatchComplexTaskToDeepSeek(promptText)
+    if (explicitDeepSeek || complexDeepSeekFastPath) {
+      const question = explicitDeepSeek ? explicitDeepSeek.question : promptText.trim()
+      const startedAt = performance.now()
+      const runId = `deepseek-run-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const controller = new AbortController()
+      const msgId = `${Date.now() + 1}`
+      const callId = `direct-deepseek-${Date.now()}`
+      activeRunRef.current = { id: runId, controller, messageId: msgId }
+      setMessages(prev => [...prev, userMsg, {
+        id: msgId,
+        role: 'assistant',
+        content: question ? 'Dispatching directly to DeepSeek-16B…' : 'Usage: /deepseek <question>',
+        timestamp: Date.now(),
+        source: 'cloud',
+        provider: 'GitHub Actions',
+        model: 'DeepSeek 16B workflow dispatch',
+        streaming: Boolean(question),
+      }])
+      if (!question) {
+        setRequestStatus('blocked')
+        setLastRequestError('A question is required. Usage: /deepseek <question>')
+        setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
+        activeRunRef.current = null
+        return
+      }
+      setLoading(true)
+      setRequestStatus('running')
+      setLastRequestError('')
+      setLastRequestLatencyMs(null)
+      emitForge({ type: 'OBJECTIVE_RECEIVED', objective: question })
+      emitForge({ type: 'PHASE_CHANGE', phase: 'EXECUTION' })
+      const call: ToolCall = { id: callId, name: 'ask_deepseek', input: { question } }
+      const activityId = `act_${callId}`
+      setActivityLog(prev => [...prev.slice(-99), { id: activityId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
+      emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
+      emitForge({ type: 'TOOL_START', tool: call.name, iter: 0 })
+      try {
+        const output = await executeTool(call, {
+          ...loadToolContext(),
+          ghToken,
+          ghOwner: ghOwner || CANONICAL_IDENTITY.owner,
+          ghRepo: ghRepo || CANONICAL_IDENTITY.repository,
+          signal: controller.signal,
+        })
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        const isError = output.startsWith('[TOOL ERROR]')
+        setActivityLog(prev => prev.map(entry => entry.id === activityId
+          ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' }
+          : entry,
+        ))
+        emitForge({ type: 'THREAD_MERGE', threadId: call.id })
+        if (isError) emitForge({ type: 'TOOL_FAILURE', tool: call.name, failClass: classifyToolFailure(output) })
+        else emitForge({ type: 'TOOL_SUCCESS', tool: call.name })
+        emitForge(isError
+          ? { type: 'MISSION_BLOCKED', reason: 'Direct DeepSeek workflow dispatch failed' }
+          : { type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
+        setMessages(prev => prev.map(message => message.id === msgId
+          ? { ...message, content: output, streaming: false, provider: 'GitHub Actions', model: 'DeepSeek 16B workflow dispatch', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [{ toolCallId: call.id, name: call.name, output, isError }] }
+          : message,
+        ))
+        setRequestStatus(isError ? 'blocked' : 'success')
+        setLastRequestError(isError ? output : '')
+        setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
+      } catch (error) {
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        const message = error instanceof Error ? error.message : String(error)
+        setMessages(prev => prev.map(item => item.id === msgId ? { ...item, content: `[ERROR] ${message}`, streaming: false } : item))
+        setRequestStatus('error')
+        setLastRequestError(message)
+        setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
+      } finally {
+        if (activeRunRef.current?.id === runId) {
+          activeRunRef.current = null
+          setLoading(false)
+        }
+      }
+      return
+    }
+
     if (!currentApiKey) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
       setRequestStatus('blocked')
@@ -922,7 +1016,7 @@ function App() {
     })
 
     // Always include core tools
-    const coreToolNames = ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason']
+    const coreToolNames = ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
     if (imageUrl) coreToolNames.push('analyze_image')
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
@@ -1103,6 +1197,8 @@ function App() {
       const toolAttempts: Array<{ name: string; input: string }> = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
       const chainStartedAt = new Date().toISOString()
+      let resolvedProvider = activeProvider
+      let resolvedModel = normalizedActiveModel
       let finalText = ''
       const toolRetryCounts = new Map<string, number>()
       const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
@@ -1158,6 +1254,8 @@ function App() {
         }
         setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'success', lastError: null, lastLatencyMs: latency }))
         const result = routerResult.response
+        resolvedProvider = result.provider === 'nexus' ? 'nexus' : result.provider === 'corpus' ? 'corpus' : result.provider === 'local' ? 'local' : activeProvider
+        resolvedModel = result.model || currentModel
 
         // No tool calls → final answer
         if (!result.toolCalls?.length) {
@@ -1283,7 +1381,7 @@ for (const call of result.toolCalls) {
         : hasUnresolvedToolFailure
           ? 'STATUS: BLOCKED\nA requested tool execution failed and was not successfully resolved; the task was not accepted as complete.'
           : ''
-      await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${activeProvider}:${normalizedActiveModel}`)
+      await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`)
       // Sync plan to ForgeOps + emit terminal event
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (completionBlocked) emitForge({ type: 'MISSION_BLOCKED', reason: 'Repository evidence required, but no GitHub tool returned successfully' })
@@ -1291,13 +1389,13 @@ for (const call of result.toolCalls) {
       else if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       const messageContent = [cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)', completionSafetyNotice].filter(Boolean).join('\n\n')
-      const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${activeProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
+      const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${resolvedProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase: effectiveAgentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
 
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: messageContent, plan, agentPhase: effectiveAgentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: activeProvider, model: normalizedActiveModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
+        ? { ...m, content: messageContent, plan, agentPhase: effectiveAgentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: resolvedProvider, model: resolvedModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
       setRequestStatus(completionBlocked || hasUnresolvedToolFailure ? 'blocked' : 'success')
@@ -2053,7 +2151,7 @@ for (const call of result.toolCalls) {
                   <input type="url" placeholder="http://127.0.0.1:8080/v1" value={localEndpoint} onChange={e => { setLocalEndpoint(e.target.value); safeSetItem('fm_local_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
                   <button onClick={testLocalEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#a855f7', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST LOCAL ENDPOINT'}</button>
                   {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
-                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{activeProvider === 'corpus' ? `Local corpus records: ${corpusRepository.getInteractionCount()} · approved: ${corpusRepository.getApprovedCount()} · candidates: ${corpusRepository.getCandidateCount()} · version: ${corpusRepository.getVersion()}.` : 'Start llama-server locally with a Qwen2.5 1.5B GGUF and its OpenAI-compatible /v1 endpoint.'}</div>
+                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{activeProvider === 'corpus' ? `Local corpus records: ${corpusRepository.getInteractionCount()} · approved: ${corpusRepository.getApprovedCount()} · candidates: ${corpusRepository.getCandidateCount()} · version: ${corpusRepository.getVersion()}.` : 'Start llama-server locally with a Qwen2.5 3B GGUF and its configured OpenAI-compatible /v1 endpoint.'}</div>
                   {activeProvider === 'corpus' && (
                     <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #222' }}>
                       <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Optional Corpus Webhook</label>
@@ -2081,6 +2179,7 @@ for (const call of result.toolCalls) {
                 {[
                   ['runtime provider', activeProvider === 'corpus' ? 'Corpus Local' : activeProvider === 'nexus' ? 'NEXUS/CORPUS' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],
                   ['runtime model', activeModelLabel],
+                  ['last route level', lastRuntimeRoute],
                   ['auth state', activeProvider === 'corpus' || activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'nexus' ? (nexusEndpoint ? 'endpoint configured' : 'missing') : anthropicApiKey ? 'present' : 'missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
@@ -2598,7 +2697,7 @@ for (const call of result.toolCalls) {
                   >
                     {chatListening ? 'REC' : 'MIC'}
                   </button>
-                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything..." value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
+                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything… or /deepseek <question>" value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
                   {loading ? (
                     <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '6px 14px', borderRadius: '5px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={stopGeneration} aria-label="Stop generation">STOP</button>
                   ) : (

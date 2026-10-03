@@ -179,6 +179,19 @@ export const FORGE_TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'ask_deepseek',
+    description: 'Ask DeepSeek-16B directly. No routing delay.',
+    parameters: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'Question to dispatch directly to the DeepSeek-16B workflow' },
+        context: { type: 'string', description: 'Optional additional context' },
+        ref: { type: 'string', description: 'Branch or tag for the workflow (default main)' },
+      },
+      required: ['question'],
+    },
+  },
+  {
     name: 'sculpt_self',
     description: 'Propose a self-modification by dispatching the guarded self-sculpt workflow. Changes are build-validated, committed to a sculpt/* feature branch, and opened as a pull request; Guardian, workflow, and package-control paths are rejected.',
     parameters: {
@@ -610,8 +623,12 @@ async function toolFetch(ctx: ToolContext, input: RequestInfo | URL, init: Reque
 }
 
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
-  const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'deepseekreason' ? 'deepseek_reason' : call.name
+  const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'deepseekreason' || call.name === 'ask_deepseek' ? 'deepseek_reason' : call.name
   const input = { ...call.input }
+  if (call.name === 'ask_deepseek') {
+    input.task = typeof input.question === 'string' ? input.question : ''
+    input.nexus_learn = false
+  }
   if (name === 'deepseek_reason' && input.nexus_learn === undefined) {
     if (input.nexuslearn !== undefined) input.nexus_learn = input.nexuslearn
     else if (input.nexusLearn !== undefined) input.nexus_learn = input.nexusLearn

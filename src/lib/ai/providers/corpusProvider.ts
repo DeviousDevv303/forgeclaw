@@ -18,8 +18,8 @@ export const corpusProvider: AIProvider = {
   requiresKey: false,
   models: [{
     id: DEFAULT_NEXUS_WEBGPU_MODEL,
-    label: 'Corpus + Qwen2.5 1.5B (Browser WebGPU)',
-    contextK: 4,
+    label: 'Corpus + Qwen2.5 3B (Browser WebGPU)',
+    contextK: 8,
     note: 'Browser-local WebLLM/WebGPU with optional corpus context',
   }],
 
