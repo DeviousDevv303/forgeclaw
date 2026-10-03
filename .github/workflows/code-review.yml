@@ -1,0 +1,52 @@
+name: Code Review
+on:
+  workflow_dispatch:
+    inputs:
+      code_content:
+        description: 'Code to review'
+        required: true
+      language:
+        description: 'Programming language'
+        default: 'typescript'
+      invocation_id:
+        description: 'Unique ID'
+        required: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: codellama-model
+      - name: Install deps
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install transformers accelerate
+      - name: Review code
+        env:
+          CODE: ${{ github.event.inputs.code_content }}
+          LANG: ${{ github.event.inputs.language }}
+        run: |
+          python3 -c "
+          import os, torch
+          from transformers import AutoTokenizer, AutoModelForCausalLM
+          model = AutoModelForCausalLM.from_pretrained('codellama/CodeLlama-7b-Instruct-hf', torch_dtype=torch.float32)
+          tokenizer = AutoTokenizer.from_pretrained('codellama/CodeLlama-7b-Instruct-hf')
+          prompt = f'Review this {os.environ[\"LANG\"]} code. Identify bugs, suggest improvements, rate quality 1-10:\n\n{os.environ[\"CODE\"]}'
+          inputs = tokenizer(prompt, return_tensors='pt')
+          with torch.no_grad():
+              out = model.generate(**inputs, max_new_tokens=1000)
+          result = tokenizer.decode(out[0], skip_special_tokens=True)
+          open('review.txt','w').write(result)
+          "
+      - uses: actions/upload-artifact@v4
+        with:
+          name: code-review-${{ github.event.inputs.invocation_id }}
+          path: review.txt
+          retention-days: 1

@@ -368,6 +368,20 @@ export const FORGE_TOOLS: ToolDef[] = [
     }
   },
 
+
+  {
+    name: 'review_code',
+    description: 'Review code quality via GitHub Actions CodeLlama-7B',
+    parameters: {
+      type: 'object',
+      properties: {
+        code: { type: 'string', description: 'Code to review' },
+        language: { type: 'string', description: 'Programming language' }
+      },
+      required: ['code']
+    }
+  },
+
 // ── Coding agent: repository state, verification, persistence ───────────────
   {
     name: 'github_repo_state',
@@ -1153,6 +1167,20 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
         return `Dispatched: ${invocationId}. Check artifacts in ~2 min.`
+      }
+
+
+      case 'review_code': {
+        const code = input.code as string
+        const language = (input.language as string) || 'typescript'
+        const invocationId = `review-${Date.now()}`
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/code-review.yml/dispatches`, {
+          method: 'POST',
+          headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' },
+          body: JSON.stringify({ ref: 'main', inputs: { code_content: code, language: language, invocation_id: invocationId } })
+        })
+        if (!res.ok) throw new Error(`GitHub ${res.status}`)
+        return `Code review dispatched: ${invocationId}. Check artifacts in ~3 min.`
       }
 
 case 'spawn_agent': {
