@@ -257,6 +257,9 @@ describe('dispatcher integrity (offline)', () => {
     }, { ...ctx(), ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
 
     expect(dispatchedUrl).toBe('https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/generate-image.yml/dispatches')
+    expect(payload?.inputs.prompt).toContain('a red fox in a forge')
+    expect(payload?.inputs.prompt).not.toContain('APPLICATIONIDENTITY')
+    expect(payload?.inputs.prompt).not.toContain('RUNTIMESTATE')
     expect(payload?.inputs.style).toBe('artistic')
     expect(payload?.inputs.width).toBe('512')
     expect(payload?.inputs.height).toBe('512')

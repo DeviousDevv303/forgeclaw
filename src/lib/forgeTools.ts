@@ -25,6 +25,18 @@ import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
+
+// These runtime envelopes are for the chat/model boundary only. They must not
+// become part of a user-facing image prompt, where Stable Diffusion may render
+// the labels as visible text or use them as semantic prompt content.
+function cleanImagePrompt(prompt: string): string {
+  return prompt
+    .replace(/\[APPLICATIONIDENTITY\b[^\]]*\][\s\S]*?\[\/APPLICATIONIDENTITY\]/gi, '')
+    .replace(/\[RUNTIMESTATE\b[^\]]*\][\s\S]*?\[\/RUNTIMESTATE\]/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ToolParam {
@@ -1296,7 +1308,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       
       case 'generate_image':
       case 'generateimage': { // Compatibility alias; canonical schema name remains generate_image.
-        const prompt = typeof input.prompt === 'string' ? input.prompt.trim() : ''
+        const prompt = typeof input.prompt === 'string' ? cleanImagePrompt(input.prompt) : ''
         const style = typeof input.style === 'string' && input.style.trim() ? input.style.trim() : 'realistic'
         const width = input.width === undefined ? 512 : Number(input.width)
         const height = input.height === undefined ? 512 : Number(input.height)
