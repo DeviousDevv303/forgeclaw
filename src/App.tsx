@@ -55,6 +55,7 @@ import {
 import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
 import { extractThinking } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
+import { takeGeneratedImage } from './lib/imageArtifact'
 import { runSubAgent, toolsForCapability } from './lib/managedAgent'
 import {
   MAX_AGENT_ITERATIONS,
@@ -1227,6 +1228,7 @@ function App() {
       let resolvedProvider = activeProvider
       let resolvedModel = normalizedActiveModel
       let finalText = ''
+      let generatedImageUrl: string | undefined
       const toolRetryCounts = new Map<string, number>()
       const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
 
@@ -1376,6 +1378,10 @@ for (const call of result.toolCalls) {
         // summarize it, which could reintroduce malformed token output.
         if (result.toolCalls.some(call => call.id.startsWith('direct-image-'))) {
           finalText = iterResults.map(toolResult => toolResult.output).join('\n\n')
+          const invocationMatch = finalText.match(/Invocation:\s*(sd-[A-Za-z0-9-]+)/)
+          if (invocationMatch?.[1]) {
+            generatedImageUrl = takeGeneratedImage(invocationMatch[1])
+          }
           break
         }
 
@@ -1430,7 +1436,7 @@ for (const call of result.toolCalls) {
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase: effectiveAgentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
 
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: messageContent, plan, agentPhase: effectiveAgentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: resolvedProvider, model: resolvedModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
+        ? { ...m, content: messageContent, imageUrl: generatedImageUrl, plan, agentPhase: effectiveAgentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: resolvedProvider, model: resolvedModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
       setRequestStatus(completionBlocked || hasUnresolvedToolFailure ? 'blocked' : 'success')
