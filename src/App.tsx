@@ -1043,8 +1043,12 @@ function App() {
       return toolKeywords.some((kw: string) => messageLower.includes(kw))
     })
 
-    // Always include core tools
-    const coreToolNames = ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
+    // Keep ordinary chat free of the execution catalog; small WebGPU models
+    // can emit code-token soup when a large tool protocol is injected for a
+    // request that does not need tools.
+    const coreToolNames = codingTask || imageUrl
+      ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
+      : []
     if (imageUrl) coreToolNames.push('analyze_image')
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
@@ -1087,9 +1091,12 @@ function App() {
           runtimeTools,
           MAX_NEXUS_CONTEXT_TOKENS - 1024,
         )
-    const activeSystemPrompt = supportsNativeTools
-      ? finalSystemPrompt
-      : manualToolInjection?.systemPrompt ?? finalSystemPrompt
+    const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.`
+    const activeSystemPrompt = runtimeTools.length === 0
+      ? conversationalSystemPrompt
+      : supportsNativeTools
+        ? finalSystemPrompt
+        : manualToolInjection?.systemPrompt ?? finalSystemPrompt
 
     // ── Runtime-owned repository identity ────────────────────────────────────
     // Do not pre-read or serialize HEAD/repository contents into the prompt. The

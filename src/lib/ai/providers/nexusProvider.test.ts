@@ -24,7 +24,7 @@ describe('NEXUS provider adapter (Browser WebGPU path)', () => {
     expect(NEXUS_MODELS.length).toBeGreaterThan(0)
     expect(DEFAULT_NEXUS_MODEL).toBe('Qwen2.5-3B-Instruct-q4f16_1-MLC')
     expect(NEXUS_MODELS[0]).toMatchObject({ label: 'Qwen2.5 3B Instruct Q4 (Browser WebGPU)', contextK: 8 })
-    expect(NEXUS_CACHE_VERSION).toBe('qwen2.5-3b-v2')
+    expect(NEXUS_CACHE_VERSION).toBe('qwen2.5-3b-v3')
     expect(shouldUpgradeNexusCache(null)).toBe(true)
     expect(shouldUpgradeNexusCache('old-model-version')).toBe(true)
     expect(shouldUpgradeNexusCache(NEXUS_CACHE_VERSION)).toBe(false)

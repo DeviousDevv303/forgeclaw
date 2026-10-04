@@ -5,7 +5,7 @@ import { parseManualToolCalls, toToolCalls } from '../manualToolMode'
 
 export const DEFAULT_NEXUS_WEBGPU_MODEL = 'Qwen2.5-3B-Instruct-q4f16_1-MLC'
 export const LEGACY_NEXUS_WEBGPU_MODEL = 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'
-export const NEXUS_CACHE_VERSION = 'qwen2.5-3b-v2'
+export const NEXUS_CACHE_VERSION = 'qwen2.5-3b-v3'
 export const NEXUS_WEBGPU_MODELS = [
   {
     id: DEFAULT_NEXUS_WEBGPU_MODEL,
@@ -42,7 +42,7 @@ function writeNexusCacheVersion(version: string): void {
   try { globalThis.localStorage?.setItem(CACHE_VERSION_KEY, version) } catch { /* storage may be disabled */ }
 }
 
-function clearLegacyModelEntries(databaseName: string): Promise<void> {
+function clearStaleModelEntries(databaseName: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') { resolve(); return }
     let createdByThisCall = false
@@ -68,7 +68,7 @@ function clearLegacyModelEntries(databaseName: string): Promise<void> {
         const cursor = request.result
         if (!cursor) return
         const url = typeof cursor.value?.url === 'string' ? cursor.value.url : ''
-        if (url.includes(LEGACY_NEXUS_WEBGPU_MODEL)) cursor.delete()
+        if (url.includes(DEFAULT_NEXUS_WEBGPU_MODEL) || url.includes(LEGACY_NEXUS_WEBGPU_MODEL)) cursor.delete()
         cursor.continue()
       }
       transaction.oncomplete = () => { db.close(); resolve() }
@@ -81,7 +81,7 @@ function clearLegacyModelEntries(databaseName: string): Promise<void> {
 async function upgradeNexusCacheIfNeeded(): Promise<void> {
   if (!shouldUpgradeNexusCache(readNexusCacheVersion())) return
   if (typeof indexedDB === 'undefined') return
-  for (const databaseName of WEBLLM_CACHE_SCOPES) await clearLegacyModelEntries(databaseName)
+  for (const databaseName of WEBLLM_CACHE_SCOPES) await clearStaleModelEntries(databaseName)
   writeNexusCacheVersion(NEXUS_CACHE_VERSION)
 }
 
