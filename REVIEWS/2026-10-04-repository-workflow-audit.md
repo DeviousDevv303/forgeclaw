@@ -6,10 +6,10 @@ Remaining: PR #31 requires normal review and merge decision; all Tier 2 proposal
 
 # ForgeClaw Repository + Workflow Audit
 
-**Audit date:** 2026-10-04  
-**Repository:** `DeviousDevv303/forgeclaw`  
-**Base audited:** `main` at `6228c5a` (`fix: pass chat template inputs to DeepSeek`)  
-**Working branch:** `audit/tier1-autonomous-fixes`  
+**Audit date:** 2026-10-04
+**Repository:** `DeviousDevv303/forgeclaw`
+**Base audited:** `main` at `6228c5a` (`fix: pass chat template inputs to DeepSeek`)
+**Working branch:** `audit/tier1-autonomous-fixes`
 **Scope:** application source, tests, GitHub Actions workflows, and the requested Guardian/Tier 2 surfaces.
 
 ## Executive result
