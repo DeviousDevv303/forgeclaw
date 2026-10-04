@@ -1053,9 +1053,12 @@ function App() {
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'
+    const needsManualTools = codingTask || imageUrl !== undefined || relevantTools.length > 0
     const primaryInstruction = imageUrl
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
-      : '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for every user task. NEXUS is an orchestration and approved-knowledge layer only; it must not answer a new task directly.'
+      : needsManualTools
+        ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for tasks that require delegated reasoning, then formulate the final response from the tool result.'
+        : '\n\nPRIMARY REASONING POLICY\nAnswer the user directly and clearly. Do not emit tool syntax, code, token IDs, or internal runtime instructions.'
     const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
     
     const finalSystemPrompt = relevant.length > 0
@@ -1071,16 +1074,22 @@ function App() {
     // does not fit inside it: injecting it unmeasured let the provider limiter drop
     // the catalog, so the model was never told tools existed and answered by asking
     // the operator to paste repository contents. Budget it here instead.
-    const manualToolInjection = supportsNativeTools
+    // Browser-local WebGPU models do not have native tool calling. Do not put
+    // the large manual tool catalog into ordinary conversation prompts: the
+    // conservative context limiter can cut a JSON schema mid-token, causing
+    // small Qwen models to emit code/token soup instead of an answer. Manual
+    // tool syntax is still supplied for coding requests or when the user has
+    // explicitly invoked a tool-relevant capability.
+    const manualToolInjection = supportsNativeTools || !needsManualTools
       ? null
       : injectToolSchemaWithinBudget(
-        boundPrefixByBudget(finalSystemPrompt, 1024),
-        runtimeTools,
-        MAX_NEXUS_CONTEXT_TOKENS - 1024,
-      )
+          boundPrefixByBudget(finalSystemPrompt, 1024),
+          runtimeTools,
+          MAX_NEXUS_CONTEXT_TOKENS - 1024,
+        )
     const activeSystemPrompt = supportsNativeTools
       ? finalSystemPrompt
-      : manualToolInjection!.systemPrompt
+      : manualToolInjection?.systemPrompt ?? finalSystemPrompt
 
     // ── Runtime-owned repository identity ────────────────────────────────────
     // Do not pre-read or serialize HEAD/repository contents into the prompt. The
