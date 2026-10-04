@@ -94,7 +94,8 @@ export { CANONICAL_IDENTITY }
  * A request is treated as a coding task only when it names a code/repo target AND
  * an action. This keeps ordinary conversation from opening repository work.
  */
-export function isCodingTaskRequest(prompt: string): boolean {
+export function isCodingTaskRequest(prompt: string, options?: { hasAttachment?: boolean }): boolean {
+  if (options?.hasAttachment) return false
   const t = prompt.toLowerCase()
   const hasTarget = /\b(repo|repository|codebase|forgeclaw|source|file|files|branch|commit|head|github)\b/.test(t)
   const hasAction = /\b(check|inspect|read|fix|implement|add|change|modify|update|refactor|test|build|lint|commit|push|verify|debug|repair|write|create|feedback)\b/.test(t)
