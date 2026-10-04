@@ -18,6 +18,8 @@ jobs:
       - run: npm ci
       - name: Check for merge conflict markers
         run: npm run check:conflicts
+      - name: Run test suite
+        run: npm run test:run
       - run: npm run build
       - name: Verify build artifact exists
         run: test -d dist && echo "Build artifact confirmed" || exit 1
