@@ -75,6 +75,14 @@ export interface ImageGenerationLearningInput {
   invocationId: string
 }
 
+export interface AutonomousFixLearningInput {
+  filesChanged: string[]
+  description: string
+  testCountBefore: number
+  testCountAfter: number
+  prUrl: string
+}
+
 export interface ImagePatterns {
   subjects: string[]
   descriptors: string[]
@@ -314,6 +322,23 @@ export class CorpusRepository {
     })
   }
 
+  appendAutonomousFixLearning(input: AutonomousFixLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+    return this.appendInteraction({
+      input: JSON.stringify({ filesChanged: input.filesChanged, description: input.description }),
+      context: JSON.stringify({ testCountBefore: input.testCountBefore, testCountAfter: input.testCountAfter }),
+      result: JSON.stringify({ prUrl: input.prUrl }),
+      runtime: 'github-actions',
+      model: 'forgeclaw-autonomous-fix',
+      source: 'autonomous-fix',
+      metadata: {
+        filesChanged: JSON.stringify(input.filesChanged),
+        testCountBefore: String(input.testCountBefore),
+        testCountAfter: String(input.testCountAfter),
+        prUrl: input.prUrl,
+      },
+    })
+  }
+
   retrieve(query: string, limit = 3): CorpusRecord[] {
     const queryTokens = tokenise(query)
     if (!queryTokens.length) return []
@@ -503,6 +528,11 @@ export function checkNexusKnowledge(task: string): NexusKnowledge | null {
 /** Record a FLUX generation request as an unapproved local learning candidate. */
 export function appendImageGenerationLearning(input: ImageGenerationLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
   return corpusRepository.appendImageGenerationLearning(input)
+}
+
+/** Record verified autonomous-fix facts as an unapproved learning candidate. */
+export function appendAutonomousFixLearning(input: AutonomousFixLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+  return corpusRepository.appendAutonomousFixLearning(input)
 }
 
 /** Enhance a new image prompt with patterns learned from approved generations. */
