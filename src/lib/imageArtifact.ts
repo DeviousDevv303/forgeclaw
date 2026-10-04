@@ -38,6 +38,7 @@ export interface ArtifactInfo {
 
 export const IMAGE_WORKFLOW_ID = 'generate-image.yml'
 export const IMAGE_ARTIFACT_PREFIX = 'generated-image-'
+export const IMAGE_MIRROR_BRANCH = 'generated-images'
 export const IMAGE_MAX_WAIT_MS = 40 * 60 * 1000
 const IMAGE_DISCOVERY_TIMEOUT_MS = 30_000
 
@@ -153,6 +154,28 @@ async function imageStage<T>(label: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+function imageMirrorUrl(owner: string, repo: string, invocationId: string): string {
+  return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${IMAGE_MIRROR_BRANCH}/generated-images/${encodeURIComponent(invocationId)}.png`
+}
+
+async function blobToDataUrl(pngBlob: Blob): Promise<string> {
+  const pngBuffer = await imageStage('image-bytes', () => pngBlob.arrayBuffer())
+  const bytes = new Uint8Array(pngBuffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+  return imageStage('image-base64', async () => `data:image/png;base64,${btoa(binary)}`)
+}
+
+async function pngDimensions(pngBlob: Blob): Promise<{ width: number; height: number }> {
+  const header = new Uint8Array(await pngBlob.slice(16, 24).arrayBuffer())
+  if (header.length !== 8) return { width: 0, height: 0 }
+  const view = new DataView(header.buffer)
+  return { width: view.getUint32(0), height: view.getUint32(4) }
+}
+
 export async function downloadImagePng(
   ctx: ToolContext,
   owner: string,
@@ -160,6 +183,28 @@ export async function downloadImagePng(
   runId: number,
   invocationId: string,
 ): Promise<{ dataUrl: string; width: number; height: number; bytes: number }> {
+  // GitHub's artifact endpoint returns a 303 redirect to Azure Blob Storage.
+  // The redirected response is not CORS-readable from GitHub Pages. New runs
+  // publish the same PNG to raw.githubusercontent.com, which is browser-safe.
+  try {
+    const mirrorRes = await fetch(imageMirrorUrl(owner, repo, invocationId), {
+      cache: 'no-store',
+      signal: ctx.signal,
+    })
+    if (mirrorRes.ok) {
+      const pngBlob = await imageStage('image-mirror-bytes', () => mirrorRes.blob())
+      const dimensions = await pngDimensions(pngBlob)
+      return {
+        dataUrl: await blobToDataUrl(pngBlob),
+        width: dimensions.width,
+        height: dimensions.height,
+        bytes: pngBlob.size,
+      }
+    }
+  } catch {
+    // Older runs do not have a mirror; use the artifact bridge below.
+  }
+
   const artifactsRes = await imageStage("artifact-list", () => fetch(
     `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/artifacts?per_page=100`,
     { headers: ghHeaders(ctx), signal: ctx.signal },
@@ -213,19 +258,7 @@ export async function downloadImagePng(
   const width = sizeMatch ? Number(sizeMatch[1]) : 0
   const height = sizeMatch ? Number(sizeMatch[2]) : 0
 
-  const pngBuffer = await imageStage("artifact-png-bytes", () => pngBlob.arrayBuffer())
-  const bytes = new Uint8Array(pngBuffer)
-
-  let binary = ''
-  const chunkSize = 0x8000
-
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
-  }
-
-  const dataUrl = await imageStage("artifact-base64", async () =>
-    `data:image/png;base64,${btoa(binary)}`
-  )
+  const dataUrl = await blobToDataUrl(pngBlob)
 
   return {
     dataUrl,

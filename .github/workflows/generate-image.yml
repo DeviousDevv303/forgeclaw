@@ -29,7 +29,7 @@ on:
         required: true
         type: string
 permissions:
-  contents: read
+  contents: write
 jobs:
   generate:
     runs-on: ubuntu-latest
@@ -108,6 +108,29 @@ jobs:
           )
           print(f'Saved {output_path}')
           PY
+      - name: Publish browser-readable image mirror
+        env:
+          IMAGE_PATH: generated_${{ inputs.width }}x${{ inputs.height }}.png
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: |
+          set -euo pipefail
+          git config user.name 'ForgeClaw Image Generator'
+          git config user.email 'forgeclaw-image@local'
+          git fetch origin main generated-images || true
+          rm -rf /tmp/generated-images-worktree
+          if git show-ref --verify --quiet refs/remotes/origin/generated-images; then
+            git worktree add /tmp/generated-images-worktree origin/generated-images
+            git -C /tmp/generated-images-worktree checkout -B generated-images
+          else
+            git worktree add --detach /tmp/generated-images-worktree origin/main
+            git -C /tmp/generated-images-worktree checkout --orphan generated-images
+            git -C /tmp/generated-images-worktree rm -rf . || true
+          fi
+          mkdir -p /tmp/generated-images-worktree/generated-images
+          cp "$IMAGE_PATH" "/tmp/generated-images-worktree/generated-images/${INVOCATION_ID}.png"
+          git -C /tmp/generated-images-worktree add "generated-images/${INVOCATION_ID}.png"
+          git -C /tmp/generated-images-worktree commit -m "image: publish ${INVOCATION_ID}"
+          git -C /tmp/generated-images-worktree push origin HEAD:generated-images
       - name: Upload generated artifact
         uses: actions/upload-artifact@v4
         with:

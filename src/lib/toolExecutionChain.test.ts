@@ -267,7 +267,8 @@ describe('dispatcher integrity (offline)', () => {
     expect(output).toContain('Image generated (512x512')
     expect(output).toContain(`Invocation: ${invocationId}`)
     expect(output).toContain('Run: https://github.com/DeviousDevv303/forgeclaw/actions/runs/42')
-    expect(fetchMock).toHaveBeenCalledTimes(5)
+    // The runtime probes the CORS-safe raw mirror before this legacy artifact fixture.
+    expect(fetchMock).toHaveBeenCalledTimes(6)
 
     const { takeGeneratedImage } = await import('./imageArtifact')
     expect(takeGeneratedImage(invocationId)).toMatch(/^data:image\/png;base64,/)
