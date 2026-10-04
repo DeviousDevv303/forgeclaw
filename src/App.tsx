@@ -1229,6 +1229,7 @@ function App() {
       let resolvedModel = normalizedActiveModel
       let finalText = ''
       let generatedImageUrl: string | undefined
+      let directImageCompleted = false
       const toolRetryCounts = new Map<string, number>()
       const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
 
@@ -1377,11 +1378,15 @@ for (const call of result.toolCalls) {
         // render the real workflow result and do not ask the small model to
         // summarize it, which could reintroduce malformed token output.
         if (result.toolCalls.some(call => call.id.startsWith('direct-image-'))) {
-          finalText = iterResults.map(toolResult => toolResult.output).join('\n\n')
-          const invocationMatch = finalText.match(/Invocation:\s*(sd-[A-Za-z0-9-]+)/)
+          const imageToolOutput = iterResults.map(toolResult => toolResult.output).join('\n\n')
+          const invocationMatch = imageToolOutput.match(/Invocation:\s*(sd-[A-Za-z0-9-]+)/)
           if (invocationMatch?.[1]) {
             generatedImageUrl = takeGeneratedImage(invocationMatch[1])
           }
+          directImageCompleted = Boolean(generatedImageUrl)
+          // Keep run URLs, invocation IDs, and enhanced prompts in the
+          // execution trace, not in the visible chat bubble beside the image.
+          finalText = directImageCompleted ? '' : imageToolOutput
           break
         }
 
@@ -1429,7 +1434,10 @@ for (const call of result.toolCalls) {
       else if (hasUnresolvedToolFailure) emitForge({ type: 'MISSION_BLOCKED', reason: 'A requested tool execution failed and was not successfully resolved' })
       else if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
-      const messageContent = [cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)', completionSafetyNotice].filter(Boolean).join('\n\n')
+      const visibleText = directImageCompleted
+        ? ''
+        : cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)'
+      const messageContent = [visibleText, completionSafetyNotice].filter(Boolean).join('\n\n')
       const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${resolvedProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace
