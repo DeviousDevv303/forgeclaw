@@ -144,6 +144,15 @@ export async function waitForImageRun(
   return finalRun
 }
 
+async function imageStage<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`[${label}] ${message}`)
+  }
+}
+
 export async function downloadImagePng(
   ctx: ToolContext,
   owner: string,
@@ -151,10 +160,10 @@ export async function downloadImagePng(
   runId: number,
   invocationId: string,
 ): Promise<{ dataUrl: string; width: number; height: number; bytes: number }> {
-  const artifactsRes = await fetch(
+  const artifactsRes = await imageStage("artifact-list", () => fetch(
     `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/artifacts?per_page=100`,
     { headers: ghHeaders(ctx), signal: ctx.signal },
-  )
+  ))
 
   if (!artifactsRes.ok) {
     throw new Error(`GitHub artifact list ${artifactsRes.status}`)
@@ -172,11 +181,11 @@ export async function downloadImagePng(
     )
   }
 
-  const zipRes = await fetch(artifact.archive_download_url, {
+  const zipRes = await imageStage("artifact-download", () => fetch(artifact.archive_download_url, {
     headers: ghHeaders(ctx),
     signal: ctx.signal,
     redirect: 'follow',
-  })
+  }))
 
   if (!zipRes.ok) {
     throw new Error(
@@ -184,8 +193,8 @@ export async function downloadImagePng(
     )
   }
 
-  const zipBytes = await zipRes.arrayBuffer()
-  const zip = await JSZip.loadAsync(zipBytes)
+  const zipBytes = await imageStage("artifact-download-bytes", () => zipRes.arrayBuffer())
+  const zip = await imageStage("artifact-unzip", () => JSZip.loadAsync(zipBytes))
 
   const pngEntry = Object.values(zip.files).find(
     entry =>
@@ -199,12 +208,12 @@ export async function downloadImagePng(
     )
   }
 
-  const pngBlob = await pngEntry.async('blob')
+  const pngBlob = await imageStage("artifact-png-extract", () => pngEntry.async('blob'))
   const sizeMatch = pngEntry.name.match(/generated_(\d+)x(\d+)\.png/i)
   const width = sizeMatch ? Number(sizeMatch[1]) : 0
   const height = sizeMatch ? Number(sizeMatch[2]) : 0
 
-  const pngBuffer = await pngBlob.arrayBuffer()
+  const pngBuffer = await imageStage("artifact-png-bytes", () => pngBlob.arrayBuffer())
   const bytes = new Uint8Array(pngBuffer)
 
   let binary = ''
@@ -214,7 +223,9 @@ export async function downloadImagePng(
     binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
   }
 
-  const dataUrl = `data:image/png;base64,${btoa(binary)}`
+  const dataUrl = await imageStage("artifact-base64", async () =>
+    `data:image/png;base64,${btoa(binary)}`
+  )
 
   return {
     dataUrl,
