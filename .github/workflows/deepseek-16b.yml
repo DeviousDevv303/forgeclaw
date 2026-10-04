@@ -2,8 +2,9 @@
 # Design: inputs are passed through environment variables, output is an artifact,
 # and the runner has read-only repository permissions. The browser-side tool
 # records a pending learning candidate until this artifact is verified.
-# Remaining: GitHub-hosted CPU runners may be too constrained for this model;
-# benchmark and adjust quantization/runtime before relying on production latency.
+# The original deepseek-coder-16b-instruct identifier is not a public Hugging
+# Face model. Keep the DeepSeek-16B route/API contract while using the verified
+# public 6.7B instruct checkpoint that fits a CPU runner.
 
 name: DeepSeek 16B
 run-name: DeepSeek 16B ${{ inputs.invocation_id }}
@@ -69,24 +70,33 @@ jobs:
           import torch
           from transformers import AutoModelForCausalLM, AutoTokenizer
 
-          model_id = 'deepseek-ai/deepseek-coder-16b-instruct'
+          model_id = 'deepseek-ai/deepseek-coder-6.7b-instruct'
           tokenizer = AutoTokenizer.from_pretrained(model_id)
           model = AutoModelForCausalLM.from_pretrained(
               model_id,
-              torch_dtype=torch.float32,
+              torch_dtype=torch.float16,
               low_cpu_mem_usage=True,
           )
-          prompt = (
-              f"Task: {os.environ['TASK']}\n"
-              f"Context: {os.environ.get('CONTEXT', '')}\n"
-              'Provide a detailed, actionable response. Do not claim to have '
+          task = os.environ['TASK'].strip()
+          context = os.environ.get('CONTEXT', '').strip()
+          user_content = (
+              f"{task}\n\nContext:\n{context}\n\n"
+              'Provide a concise, actionable response. Do not claim to have '
               'performed actions that are not evidenced in the context.'
           )
-          inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=4096)
+          messages = [{'role': 'user', 'content': user_content}]
+          if getattr(tokenizer, 'chat_template', None):
+              encoded = tokenizer.apply_chat_template(
+                  messages, add_generation_prompt=True, return_tensors='pt'
+              )
+              inputs = {'input_ids': encoded, 'attention_mask': torch.ones_like(encoded)}
+          else:
+              prompt = f"### Instruction:\n{user_content}\n### Response:\n"
+              inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=4096)
           with torch.no_grad():
               output = model.generate(
                   **inputs,
-                  max_new_tokens=2000,
+                  max_new_tokens=768,
                   do_sample=False,
                   pad_token_id=tokenizer.eos_token_id,
               )
