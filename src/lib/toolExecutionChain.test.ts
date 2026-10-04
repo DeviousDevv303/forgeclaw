@@ -152,7 +152,7 @@ describe('dispatcher integrity (offline)', () => {
     let payload: { ref: string; inputs: { task: string; nexus_learning: string; invocation_id: string } } | undefined
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       dispatchedUrl = String(input)
-      payload = JSON.parse(String(init?.body)) as typeof payload
+      payload = JSON.parse(String(init?.body)) as NonNullable<typeof payload>
       return new Response(null, { status: 204 })
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -172,14 +172,82 @@ describe('dispatcher integrity (offline)', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
-  it('explains a rejected GitHub token after dispatch 401 without leaking it', async () => {
+  it('generates an image through the complete dispatch, run, artifact, and registry pipeline', async () => {
+    const JSZip = (await import('jszip')).default
     let dispatchedUrl = ''
     let payload: { ref: string; inputs: { prompt: string; style: string; width: string; height: string; invocation_id: string } } | undefined
+    let invocationId = ''
+
+    const zip = new JSZip()
+    zip.file('generated_512x512.png', new Uint8Array([
+      137, 80, 78, 71, 13, 10, 26, 10,
+    ]))
+    const zipBytes = await zip.generateAsync({ type: 'arraybuffer' })
+
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      dispatchedUrl = String(input)
-      payload = JSON.parse(String(init?.body)) as typeof payload
-      return new Response(null, { status: 204 })
+      const url = String(input)
+
+      if (url.endsWith('/actions/workflows/generate-image.yml/dispatches')) {
+        dispatchedUrl = url
+        payload = JSON.parse(String(init?.body)) as NonNullable<typeof payload>
+        invocationId = payload.inputs.invocation_id
+        return new Response(null, { status: 204 })
+      }
+
+      if (url.includes('/actions/workflows/generate-image.yml/runs?')) {
+        return new Response(JSON.stringify({
+          workflow_runs: [{
+            id: 42,
+            name: 'generate-image',
+            display_title: `Generate image ${invocationId}`,
+            event: 'workflow_dispatch',
+            status: 'completed',
+            conclusion: 'success',
+            created_at: new Date(Date.now() + 1000).toISOString(),
+            head_branch: 'main',
+            html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/42',
+            run_number: 42,
+          }],
+        }), { status: 200 })
+      }
+
+      if (url.endsWith('/actions/runs/42')) {
+        return new Response(JSON.stringify({
+          id: 42,
+          name: 'generate-image',
+          display_title: `Generate image ${invocationId}`,
+          event: 'workflow_dispatch',
+          status: 'completed',
+          conclusion: 'success',
+          created_at: new Date(Date.now() + 1000).toISOString(),
+          head_branch: 'main',
+          html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/42',
+          run_number: 42,
+        }), { status: 200 })
+      }
+
+      if (url.endsWith('/actions/runs/42/artifacts?per_page=100')) {
+        return new Response(JSON.stringify({
+          artifacts: [{
+            id: 7,
+            name: `generated-image-${invocationId}`,
+            size_in_bytes: zipBytes.byteLength,
+            archive_download_url: 'https://example.test/generated-image.zip',
+            expired: false,
+          }],
+        }), { status: 200 })
+      }
+
+      if (url === 'https://example.test/generated-image.zip') {
+        return new Response(zipBytes, {
+          status: 200,
+          headers: { 'Content-Type': 'application/zip' },
+        })
+      }
+
+      throw new Error(`Unexpected fetch URL: ${url}`)
     })
+
     vi.stubGlobal('fetch', fetchMock)
 
     const output = await executeTool({
@@ -193,8 +261,14 @@ describe('dispatcher integrity (offline)', () => {
     expect(payload?.inputs.width).toBe('512')
     expect(payload?.inputs.height).toBe('512')
     expect(payload?.inputs.invocation_id).toMatch(/^sd-/)
-    expect(output).toContain('Image generation dispatched')
-    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(output).toContain('Image generated (512x512')
+    expect(output).toContain(`Invocation: ${invocationId}`)
+    expect(output).toContain('Run: https://github.com/DeviousDevv303/forgeclaw/actions/runs/42')
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+
+    const { takeGeneratedImage } = await import('./imageArtifact')
+    expect(takeGeneratedImage(invocationId)).toMatch(/^data:image\/png;base64,/)
+    expect(takeGeneratedImage(invocationId)).toBeUndefined()
   })
 
   it('explains a rejected GitHub token after dispatch 401 without leaking it', async () => {

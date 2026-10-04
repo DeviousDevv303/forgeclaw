@@ -24,6 +24,7 @@ import { isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellEx
 import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
+import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ToolParam {
@@ -1305,8 +1306,11 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           throw new Error('Image width and height must be integers from 256 to 1024 and divisible by 8.')
         }
         if (!token) throw new Error('No GitHub token configured.')
+
         const improved = suggestImprovedPrompt(prompt, style)
         const invocationId = `sd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const dispatchStartedAt = Date.now()
+
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/generate-image.yml/dispatches`, {
           method: 'POST',
           headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
@@ -1315,12 +1319,24 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
             inputs: { prompt: improved.prompt, style, width: String(width), height: String(height), invocation_id: invocationId },
           }),
         })
+
         if (!res.ok) {
           const detail = await res.text().catch(() => '')
           throw new Error(`Image workflow dispatch failed: ${res.status}${detail ? ` — ${detail.slice(0, 300)}` : ''}`)
         }
+
+        const run = await waitForImageRun(ctx, owner, repo, invocationId, dispatchStartedAt)
+        const image = await downloadImagePng(ctx, owner, repo, run.id, invocationId)
+        registerGeneratedImage(invocationId, image.dataUrl)
+
         await appendImageGenerationLearning({ prompt: improved.prompt, style, width, height, invocationId })
-        return `✓ Image generation dispatched as ${invocationId}; enhanced prompt: "${improved.prompt}"; artifact will contain a ${width}x${height} ${style} image after the workflow completes.`
+
+        return [
+          `✓ Image generated (${image.width}x${image.height}, ${Math.round(image.bytes / 1024)} KB) via run #${run.run_number}.`,
+          `Invocation: ${invocationId}`,
+          `Enhanced prompt: "${improved.prompt}"`,
+          `Run: ${run.html_url}`,
+        ].join('\n')
       }
 
       case 'analyze_image': {
