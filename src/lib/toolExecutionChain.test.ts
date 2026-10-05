@@ -526,6 +526,9 @@ describe('coding task detection and repo state parsing', () => {
     expect(isCodingTaskRequest('resume the unfinished task')).toBe(false)
     expect(isCodingTaskRequest('what is the weather today')).toBe(false)
   })
+  it('does not treat an attached file update as a repository coding task', () => {
+    expect(isCodingTaskRequest('[File: ForgeClaw_Repository_+_Workflow_Audit.pdf]\n[PDF: ForgeClaw_Repository_+_Workflow_Audit.pdf]\nThis is your new update', { hasAttachment: true })).toBe(false)
+  })
 
   it('uses one canonical identity and keeps repository evidence out of the runtime envelope', () => {
     expect(CANONICAL_IDENTITY).toEqual({
