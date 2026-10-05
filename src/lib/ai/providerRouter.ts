@@ -335,16 +335,6 @@ function shouldBootstrapDeepSeekReasoning(request: AIRequest, providerId: Provid
   const latestToolResult = latestCurrentToolResult(request)
   if (latestToolResult) return latestToolResult.name !== 'deepseek_reason'
 
-  // Deterministic tool requests (e.g. "Use github_repo_state to check...") name
-  // their tool explicitly. Dispatch directly to that tool instead of routing
-  // through DeepSeek reasoning first; the tool result is the answer.
-  const latestUser = [...request.messages].reverse().find(message => message.role === 'user')
-  const userText = latestUser?.content ?? ''
-  const deterministicTools = ['github_repo_state', 'github_verify_commit']
-  if (deterministicTools.some(tool => new RegExp(`\\b${tool}\\b`, 'i').test(userText))) {
-    return false
-  }
-
   // In the default CORPUS/NEXUS duo, DeepSeek is the primary reasoning engine
   // even for ordinary prompts. Qwen WebGPU remains the local synthesis/backup.
   return true
