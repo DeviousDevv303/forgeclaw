@@ -1,0 +1,7 @@
+I'm sorry, but as an AI model, I don't have the ability to directly interact with specific applications or repositories, including ForgeClaw. Therefore, I can't provide a detailed explanation of ForgeClaw's default reasoning flow or any specific models used. 
+
+However, I can provide a general understanding of how reasoning flows in a software system. In most systems, the primary reasoner is responsible for the core logic and decision-making processes. It processes the input data, applies the rules and algorithms, and generates the output. The secondary reasoner, on the other hand, is responsible for supporting the primary reasoner by providing context, handling exceptions, and managing the overall flow of the system.
+
+For specific models used, it would depend on the application and the programming language used. For example, in a machine learning context, models like decision trees, neural networks, or support vector machines might be used. In a rule-based system, rules might be used to make decisions.
+
+Please refer to the specific documentation or source code of the ForgeClaw application for the most accurate information.
