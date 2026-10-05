@@ -55,22 +55,48 @@ async function sendSecondaryWithTimeout(
   apiKey: string,
   label: string,
 ): Promise<AIResponse> {
+  if (request.signal?.aborted) throw new DOMException('Generation aborted', 'AbortError')
   const controller = new AbortController()
   const parentSignal = request.signal
-  const onParentAbort = () => controller.abort()
-  parentSignal?.addEventListener('abort', onParentAbort, { once: true })
-  const timer = setTimeout(() => controller.abort(), SECONDARY_SYNTHESIS_TIMEOUT_MS)
+  let timedOut = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onParentAbort: (() => void) | undefined
+
+  // WebLLM can spend minutes inside engine initialization / shader compilation
+  // without observing an AbortSignal. Aborting alone therefore did not bound
+  // this await and allowed the chat UI to remain on "Processing…" forever.
+  // Race the provider promise against a real deadline and parent cancellation;
+  // the signal is still aborted so providers that support cancellation stop too.
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+      reject(new Error(`${label} timed out after ${Math.round(SECONDARY_SYNTHESIS_TIMEOUT_MS / 60000)}m`))
+    }, SECONDARY_SYNTHESIS_TIMEOUT_MS)
+  })
+  const cancelled = new Promise<never>((_, reject) => {
+    onParentAbort = () => {
+      controller.abort()
+      reject(new DOMException('Generation aborted', 'AbortError'))
+    }
+    parentSignal?.addEventListener('abort', onParentAbort, { once: true })
+  })
+
   try {
-    return await provider.send({ ...request, signal: controller.signal }, apiKey)
+    return await Promise.race([
+      provider.send({ ...request, signal: controller.signal }, apiKey),
+      deadline,
+      cancelled,
+    ])
   } catch (error) {
     if (parentSignal?.aborted) throw error
-    if (controller.signal.aborted) {
+    if (timedOut) {
       throw new Error(`${label} timed out after ${Math.round(SECONDARY_SYNTHESIS_TIMEOUT_MS / 60000)}m`)
     }
     throw error
   } finally {
-    clearTimeout(timer)
-    parentSignal?.removeEventListener('abort', onParentAbort)
+    if (timer !== undefined) clearTimeout(timer)
+    if (onParentAbort) parentSignal?.removeEventListener('abort', onParentAbort)
   }
 }
 

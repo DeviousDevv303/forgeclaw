@@ -1,7 +1,7 @@
 // @vitest-environment node
 // MANUS acceptance coverage: the router must transport the runtime request as-is.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { detectBestProvider, getBestProvider, providers, providerSupportsTools, sendViaRouter } from './providerRouter'
+import { detectBestProvider, getBestProvider, providers, providerSupportsTools, sendViaRouter, SECONDARY_SYNTHESIS_TIMEOUT_MS } from './providerRouter'
 import { DEFAULT_NEXUS_WEBGPU_MODEL, LEGACY_NEXUS_WEBGPU_MODEL } from './providers/nexusWebGpuProvider'
 
 afterEach(() => vi.restoreAllMocks())
@@ -178,6 +178,45 @@ describe('provider router runtime passthrough', () => {
     }, '')
     expect(result).toMatchObject({ success: true, response: { provider: 'deepseek', text: deepSeekResult, stopReason: 'webgpu-secondary-unavailable' } })
     expect(send.mock.calls.map(([request]) => request.model)).toEqual([DEFAULT_NEXUS_WEBGPU_MODEL, LEGACY_NEXUS_WEBGPU_MODEL])
+  })
+
+  it('hard-times out a secondary provider even when model initialization ignores AbortSignal', async () => {
+    vi.useFakeTimers()
+    const neverSettles = new Promise<never>(() => undefined)
+    const signals: AbortSignal[] = []
+    const send = vi.spyOn(providers.corpus, 'send').mockImplementation(async request => {
+      if (request.signal) signals.push(request.signal)
+      return neverSettles
+    })
+    const deepSeekResult = 'Actual DeepSeek workflow output.'
+    const task = sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Synthesize only from the real DeepSeek result.',
+      messages: [
+        { role: 'user', content: 'Explain the architecture.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'deepseek-timeout', name: 'deepseek_reason', input: { task: 'Explain the architecture.' } }] },
+        { role: 'tool', content: deepSeekResult, tool_call_id: 'deepseek-timeout' },
+      ],
+      tools: [{ name: 'deepseek_reason', description: 'DeepSeek primary', parameters: { type: 'object', properties: {}, required: [] } }],
+    }, '', 'corpus')
+
+    try {
+      // First deadline rejects the 3B attempt and starts the legacy model.
+      await vi.advanceTimersByTimeAsync(SECONDARY_SYNTHESIS_TIMEOUT_MS + 1)
+      expect(send).toHaveBeenCalledTimes(2)
+      expect(signals[0]?.aborted).toBe(true)
+
+      // The second deadline also wins even though the mocked model never settles.
+      await vi.advanceTimersByTimeAsync(SECONDARY_SYNTHESIS_TIMEOUT_MS + 1)
+      const result = await task
+      expect(result).toMatchObject({
+        success: true,
+        response: { provider: 'deepseek', text: deepSeekResult, stopReason: 'webgpu-secondary-unavailable' },
+      })
+      expect(signals[1]?.aborted).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps ordinary NEXUS chat free of the full tool catalog', async () => {
