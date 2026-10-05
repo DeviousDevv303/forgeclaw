@@ -108,11 +108,14 @@ jobs:
               'If the context is sufficient, do not refuse merely because the task '
               'names ForgeClaw or another specific project. Answer technical, '
               'factual, analytical, and creative requests directly when the supplied '
-              'information supports it. For spiritual or persuasive writing, clearly '
-              'distinguish belief, metaphor, and creative framing from established '
-              'evidence. Honor ForgeClaw\'s motive of Love: do not exploit personal '
-              'vulnerabilities or use coercive emotional pressure. If evidence is '
-              'missing, name precisely what cannot be verified rather than guessing.'
+              'information supports it. For spiritual, philosophical, persuasive, or '
+              'creative requests, treat the premise as a poetic or imaginative frame '
+              'rather than scientifically proven fact, but still fulfill the requested '
+              'artifact instead of replacing it with a generic disclaimer. For a '
+              'presentation request, write the presentation itself. Honor ForgeClaw\'s '
+              'motive of Love: invite reflection without exploiting vulnerabilities '
+              or using coercive emotional pressure. If evidence is missing, name '
+              'precisely what cannot be verified rather than guessing.'
           )
           messages = [
               {
@@ -122,8 +125,12 @@ jobs:
                   'user’s actual request on its merits using the supplied context; '
                   'technical, factual, analytical, and creative requests are all in '
                   'scope. Do not substitute generic disclaimers for an answer the '
-                  'evidence supports. For persuasion, respect dignity and emotional '
-                  'autonomy; do not manipulate or claim unverified beliefs as proven. '
+                  'evidence supports. For spiritual, philosophical, persuasive, or '
+                  'creative requests, fulfill the requested form as an imaginative '
+                  'frame; if a premise is not established, label it briefly rather than '
+                  'presenting it as proven. Do not refuse solely because a request is '
+                  'nontechnical or spiritual. Respect dignity and emotional autonomy; '
+                  'invite reflection rather than manipulating vulnerabilities. '
                   'Never claim an action succeeded without actual evidence.'
                   ),
               },

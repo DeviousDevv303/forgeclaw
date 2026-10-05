@@ -41,10 +41,19 @@ function getWebGpuApi(): WebGpuApiProbe | null {
 
 let state: NexusWebGpuState = { status: 'idle', progress: 0, text: 'WebGPU not initialized', stage: 'webgpu-detection' }
 const enginePromises = new Map<string, Promise<MLCEngineInterface>>()
+const engineWorkers = new Map<string, Worker>()
 const listeners = new Set<(next: NexusWebGpuState) => void>()
 const CACHE_VERSION_KEY = 'forgeclaw_nexus_cache_version'
 // These are the three scopes used by WebLLM's indexeddb cacheBackend.
 const WEBLLM_CACHE_SCOPES = ['webllm/model', 'webllm/config', 'webllm/wasm']
+
+function terminateEngineWorker(model: string, expectedWorker?: Worker): void {
+  const worker = engineWorkers.get(model)
+  if (!worker || (expectedWorker && worker !== expectedWorker)) return
+  worker.terminate()
+  engineWorkers.delete(model)
+  enginePromises.delete(model)
+}
 
 export function shouldUpgradeNexusCache(storedVersion: string | null): boolean {
   return storedVersion !== NEXUS_CACHE_VERSION
@@ -226,14 +235,17 @@ export function isNexusWebGpuAvailable(): boolean {
   return typeof navigator !== 'undefined' && 'gpu' in navigator && Boolean(navigator.gpu)
 }
 
-async function createEngine(model: string, attempt: number): Promise<MLCEngineInterface> {
+async function createEngine(model: string, attempt: number, signal?: AbortSignal): Promise<MLCEngineInterface> {
   let stage: NexusWebGpuStage = 'webgpu-detection'
+  let progressStage: NexusWebGpuStage = stage
+  let worker: Worker | undefined
   try {
+    if (signal?.aborted) throw new DOMException('Qwen model initialization aborted', 'AbortError')
     if (!isNexusWebGpuAvailable()) throw new Error('NEXUS WebGPU is unavailable in this browser; navigator.gpu is not exposed')
 
     stage = 'webllm-import'
     publish({ status: 'initializing', progress: 0, text: 'Loading WebLLM runtime', stage, model, attempt })
-    const { CreateMLCEngine, prebuiltAppConfig } = await import('@mlc-ai/web-llm')
+    const { CreateWebWorkerMLCEngine, prebuiltAppConfig } = await import('@mlc-ai/web-llm')
 
     stage = 'model-config'
     const modelConfig = prebuiltAppConfig.model_list.find(entry => entry.model_id === model)
@@ -254,20 +266,51 @@ async function createEngine(model: string, attempt: number): Promise<MLCEngineIn
     stage = 'indexeddb-cache'
     publish({ status: 'initializing', progress: 0, text: 'Checking ForgeClaw-owned IndexedDB model cache', stage, model, attempt })
     await upgradeNexusCacheIfNeeded()
+    if (signal?.aborted) throw new DOMException('Qwen model initialization aborted', 'AbortError')
 
     stage = 'model-initialization'
     publish({ status: 'initializing', progress: 0, text: `Initializing ${model}`, stage, model, attempt })
     const appConfig = { ...prebuiltAppConfig, cacheBackend: 'indexeddb' as const }
-    let progressStage: NexusWebGpuStage = stage
-    return await CreateMLCEngine(model, {
-      appConfig,
-      initProgressCallback: (report: InitProgressReport) => {
-        const next = progressState(report, model, attempt)
-        progressStage = next.stage || 'model-initialization'
-        publish(next)
-      },
-    }).catch(error => { throw stageFailure(progressStage, model, attempt, error) })
+    worker = new Worker(new URL('./nexusWebGpuWorker.ts', import.meta.url), { type: 'module' })
+    engineWorkers.set(model, worker)
+
+    let rejectWorkerFailure: ((reason?: unknown) => void) | undefined
+    let rejectAbort: ((reason?: unknown) => void) | undefined
+    const workerFailed = new Promise<never>((_resolve, reject) => { rejectWorkerFailure = reject })
+    const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject })
+    const onWorkerError = (event: ErrorEvent) => {
+      rejectWorkerFailure?.(new Error(event.message || 'WebLLM worker failed during model initialization'))
+    }
+    const onAbort = () => {
+      if (worker) terminateEngineWorker(model, worker)
+      rejectAbort?.(new DOMException('Qwen model initialization aborted', 'AbortError'))
+    }
+    worker.addEventListener('error', onWorkerError, { once: true })
+    signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      if (signal?.aborted) throw new DOMException('Qwen model initialization aborted', 'AbortError')
+      const enginePromise = CreateWebWorkerMLCEngine(worker, model, {
+        appConfig,
+        initProgressCallback: (report: InitProgressReport) => {
+          const next = progressState(report, model, attempt)
+          progressStage = next.stage || 'model-initialization'
+          publish(next)
+        },
+      }).catch(error => { throw stageFailure(progressStage, model, attempt, error) })
+      const pending: Promise<MLCEngineInterface>[] = [enginePromise, workerFailed]
+      if (signal) pending.push(aborted)
+      return await Promise.race(pending)
+    } catch (error) {
+      if (worker) terminateEngineWorker(model, worker)
+      if (signal?.aborted) throw error
+      if (error instanceof Error && error.message.startsWith('NEXUS_WEBGPU_FAILURE ')) throw error
+      throw stageFailure(progressStage, model, attempt, error)
+    } finally {
+      worker.removeEventListener('error', onWorkerError)
+      signal?.removeEventListener('abort', onAbort)
+    }
   } catch (error) {
+    if (signal?.aborted) throw error
     if (error instanceof Error && error.message.startsWith('NEXUS_WEBGPU_FAILURE ')) throw error
     throw stageFailure(stage, model, attempt, error)
   }
@@ -278,21 +321,25 @@ function shouldRetryInitialization(error: unknown): boolean {
   return !stage || !['webgpu-detection', 'webgpu-capability', 'webllm-import', 'model-config'].includes(stage)
 }
 
-async function getEngine(model: string): Promise<MLCEngineInterface> {
+async function getEngine(model: string, signal?: AbortSignal): Promise<MLCEngineInterface> {
+  if (signal?.aborted) throw new DOMException('Qwen model initialization aborted', 'AbortError')
   if (!enginePromises.has(model)) {
     const enginePromise = (async () => {
       let firstError: unknown
       try {
-        return await createEngine(model, 1)
+        return await createEngine(model, 1, signal)
       } catch (error) {
         firstError = error
+        if (signal?.aborted) throw error
         if (!shouldRetryInitialization(error)) throw error
       }
       publish({ status: 'initializing', progress: 0, text: 'Retrying the same Qwen model once after its first load failure', stage: stageFromError(firstError) || 'model-initialization', model, attempt: 2, error: sanitizeNexusWebGpuDiagnostic(firstError) })
       await new Promise(resolve => setTimeout(resolve, 1500))
       try {
-        return await createEngine(model, 2)
+        if (signal?.aborted) throw new DOMException('Qwen model initialization aborted', 'AbortError')
+        return await createEngine(model, 2, signal)
       } catch (secondError) {
+        if (signal?.aborted) throw secondError
         const stage = stageFromError(secondError) || stageFromError(firstError) || 'model-initialization'
         const message = `NEXUS_WEBGPU_FAILURE stage=${stage} model=${model} attempt=2: first attempt: ${sanitizeNexusWebGpuDiagnostic(firstError)}; retry: ${sanitizeNexusWebGpuDiagnostic(secondError)}`
         publish({ status: 'error', progress: 0, text: message, stage, model, attempt: 2, error: message })
@@ -336,7 +383,12 @@ export const nexusWebGpuProvider: AIProvider = {
     const model = request.model === LEGACY_NEXUS_WEBGPU_MODEL
       ? LEGACY_NEXUS_WEBGPU_MODEL
       : DEFAULT_NEXUS_WEBGPU_MODEL
-    const engine = await getEngine(model)
+    const engine = await getEngine(model, request.signal)
+    if (request.signal?.aborted) throw new DOMException('Qwen request aborted', 'AbortError')
+    const interruptOnAbort = () => {
+      try { void Promise.resolve(engine.interruptGenerate()).catch(() => undefined) } catch { /* worker may already be shutting down */ }
+    }
+    request.signal?.addEventListener('abort', interruptOnAbort, { once: true })
     const bounded = limitNexusContext(request.systemPrompt, request.messages)
     const attempt = state.model === model ? state.attempt || 1 : 1
     publish({ status: 'generating', progress: 1, text: `Preparing Qwen chat completion within ${bounded.tokenCount}/${MAX_NEXUS_CONTEXT_TOKENS} conservative prompt tokens`, stage: 'chat-completion', model, attempt })
@@ -353,7 +405,11 @@ export const nexusWebGpuProvider: AIProvider = {
         max_tokens: request.maxTokens ?? 512,
       })
     } catch (error) {
-      if (request.signal?.aborted) throw error
+      request.signal?.removeEventListener('abort', interruptOnAbort)
+      if (request.signal?.aborted) {
+        interruptOnAbort()
+        throw error
+      }
       throw stageFailure('chat-completion', model, attempt, error)
     }
     publish({ status: 'generating', progress: 1, text: `Generating with ${model}`, stage: 'generation', model, attempt })
@@ -367,9 +423,14 @@ export const nexusWebGpuProvider: AIProvider = {
         }
       }
     } catch (error) {
-      if (request.signal?.aborted) throw error
+      request.signal?.removeEventListener('abort', interruptOnAbort)
+      if (request.signal?.aborted) {
+        interruptOnAbort()
+        throw error
+      }
       throw stageFailure('generation', model, attempt, error)
     }
+    request.signal?.removeEventListener('abort', interruptOnAbort)
     if (!text.trim()) throw stageFailure('generation', model, attempt, new Error('Qwen completed without emitting any text tokens'))
     const userTask = [...request.messages].reverse().find(message => message.role === 'user')?.content ?? ''
     const quality = assessNexusOutputQuality(text, userTask)
