@@ -24,7 +24,7 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 The default is a combined runtime: CORPUS provides memory/context, NEXUS is the user-facing browser/WebGPU layer, and the existing DeepSeek GitHub Actions workflow is the primary reasoner for ordinary and complex requests. Qwen2.5 WebGPU is secondary local synthesis/fallback, not the primary reasoner. Local llama.cpp and Anthropic remain explicit provider choices.
 
-**Default flow:** `User → CORPUS context → DeepSeek workflow → (optional ForgeTools execution → real results → DeepSeek continuation) → Qwen/NEXUS synthesis → response`. Side effects stay in ForgeTools and its existing Guardian checks; NEXUS WebGPU does not receive tool authority. The workflow retains the DeepSeek-16B route/API contract but currently loads the public `deepseek-ai/deepseek-coder-6.7b-instruct` checkpoint. No actual 16B browser/WebGPU runtime is present.
+**Default flow:** `User → CORPUS context → DeepSeek workflow → (optional ForgeTools execution → real results → DeepSeek continuation) → Qwen/NEXUS synthesis → response`. Side effects stay in ForgeTools and its existing Guardian checks; NEXUS WebGPU does not receive tool authority. The workflow retains the DeepSeek-16B route/API contract but currently loads `deepseek-ai/deepseek-llm-7b-chat` as primary with `deepseek-ai/deepseek-coder-1.3b-instruct` as fallback. No actual 16B browser/WebGPU runtime is present.
 
 The operator supplies provider credentials through the application's settings flow. Credentials are not intended to be committed to the repository.
 

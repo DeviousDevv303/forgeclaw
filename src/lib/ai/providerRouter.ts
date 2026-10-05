@@ -15,6 +15,7 @@ import {
   DEFAULT_NEXUS_WEBGPU_MODEL,
   LEGACY_NEXUS_WEBGPU_MODEL,
   isNexusWebGpuAvailable,
+  isWebGpuDeviceLossError,
   sanitizeNexusWebGpuDiagnostic,
 } from './providers/nexusWebGpuProvider'
 import { injectToolSchemaWithinBudget } from './manualToolMode'
@@ -213,10 +214,18 @@ function secondarySynthesisAttempt(model: string, error: unknown) {
   return { model, stage, message: sanitizeNexusWebGpuDiagnostic(error) }
 }
 
-function shouldSkipLegacyAfterPrimaryFailure(attempt: { stage: string }): boolean {
+function shouldSkipLegacyAfterPrimaryFailure(attempt: { stage: string; message: string }): boolean {
   // The legacy checkpoint shares the same browser adapter/runtime. Do not launch
   // a second download/engine while the first timed-out load may still be running.
-  return ['timeout', 'webgpu-detection', 'webgpu-capability', 'webllm-import'].includes(attempt.stage)
+  if (['timeout', 'webgpu-detection', 'webgpu-capability', 'webllm-import'].includes(attempt.stage)) {
+    return true
+  }
+  // A dead GPU device/instance cannot serve the legacy model either. Fail fast
+  // instead of stalling through a second doomed load + 8-minute timeout.
+  if (isWebGpuDeviceLossError(attempt.message)) {
+    return true
+  }
+  return false
 }
 
 const CLEAN_DEEPSEEK_FALLBACK_SYSTEM_PROMPT = [
@@ -246,13 +255,23 @@ function primaryReasoningFailure(content: string) {
   return { status: 'failed' as const, stage, message: message.slice(0, 500) }
 }
 
-function cleanOriginalTaskRequest(request: AIRequest, model: string): AIRequest | null {
+function cleanOriginalTaskRequest(
+  request: AIRequest,
+  model: string,
+  primaryFailure?: { stage: string; message: string },
+): AIRequest | null {
   const originalUserMessage = [...currentTurnMessages(request)].reverse().find(message => message.role === 'user')
   const task = extractOriginalDeepSeekTask(originalUserMessage?.content ?? '')
   if (!task) return null
+  // Tell the fallback model what went wrong so it avoids repeating the pattern
+  // (e.g. repetitive loops, transport timeout). Additive only; the base prompt
+  // is unchanged when no failure context is available.
+  const systemPrompt = primaryFailure
+    ? `${CLEAN_DEEPSEEK_FALLBACK_SYSTEM_PROMPT} Primary reasoner failed at stage "${primaryFailure.stage}": ${primaryFailure.message.slice(0, 200)}. Do not repeat this failure pattern.`
+    : CLEAN_DEEPSEEK_FALLBACK_SYSTEM_PROMPT
   return {
     model,
-    systemPrompt: CLEAN_DEEPSEEK_FALLBACK_SYSTEM_PROMPT,
+    systemPrompt,
     messages: [{ role: 'user', content: task }],
     maxTokens: Math.min(request.maxTokens ?? 512, 768),
     signal: request.signal,
@@ -264,7 +283,7 @@ async function sendCleanFallbackAfterDeepSeekFailure(
   apiKey: string,
   primaryFailure: ReturnType<typeof primaryReasoningFailure>,
 ): Promise<AIResponse> {
-  const cleanRequest = cleanOriginalTaskRequest(request, DEFAULT_NEXUS_WEBGPU_MODEL)
+  const cleanRequest = cleanOriginalTaskRequest(request, DEFAULT_NEXUS_WEBGPU_MODEL, primaryFailure)
   if (!cleanRequest) throw new Error(`DeepSeek primary failed at ${primaryFailure.stage}; the original user request was unavailable for a clean fallback.`)
 
   let preferredError: unknown
@@ -281,7 +300,7 @@ async function sendCleanFallbackAfterDeepSeekFailure(
     }
   }
 
-  const legacyRequest = cleanOriginalTaskRequest(request, LEGACY_NEXUS_WEBGPU_MODEL)
+  const legacyRequest = cleanOriginalTaskRequest(request, LEGACY_NEXUS_WEBGPU_MODEL, primaryFailure)
   if (!legacyRequest) throw preferredError
   try {
     const response = await sendSecondaryWithTimeout(nexusProvider, legacyRequest, apiKey, 'Clean-request Qwen legacy fallback')
@@ -315,6 +334,16 @@ function shouldBootstrapDeepSeekReasoning(request: AIRequest, providerId: Provid
   if (failedDeepSeekToolResult(request)) return false
   const latestToolResult = latestCurrentToolResult(request)
   if (latestToolResult) return latestToolResult.name !== 'deepseek_reason'
+
+  // Deterministic tool requests (e.g. "Use github_repo_state to check...") name
+  // their tool explicitly. Dispatch directly to that tool instead of routing
+  // through DeepSeek reasoning first; the tool result is the answer.
+  const latestUser = [...request.messages].reverse().find(message => message.role === 'user')
+  const userText = latestUser?.content ?? ''
+  const deterministicTools = ['github_repo_state', 'github_verify_commit']
+  if (deterministicTools.some(tool => new RegExp(`\\b${tool}\\b`, 'i').test(userText))) {
+    return false
+  }
 
   // In the default CORPUS/NEXUS duo, DeepSeek is the primary reasoning engine
   // even for ordinary prompts. Qwen WebGPU remains the local synthesis/backup.

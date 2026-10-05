@@ -1457,6 +1457,19 @@ for (const call of result.toolCalls) {
       })
       const effectiveAgentPhase: AgentPhase =
         completionBlocked || hasUnresolvedToolFailure ? 'BLOCKED' : agentPhase
+      // Deterministic tool requests: when the required repository evidence was
+      // obtained from a real tool result and nothing failed, the work is complete
+      // even if the model did not emit an explicit STATUS: COMPLETE tag. This
+      // prevents phantom in_progress tasks and resumable continuations for work
+      // that already finished.
+      const deterministicComplete =
+        !completionBlocked &&
+        !hasUnresolvedToolFailure &&
+        repositoryEvidenceRequired &&
+        repositoryEvidenceObserved &&
+        !nextAction
+      const completionPhase: AgentPhase =
+        effectiveAgentPhase === 'BLOCKED' ? 'BLOCKED' : deterministicComplete ? 'COMPLETE' : effectiveAgentPhase
       const completionSafetyNotice = completionBlocked
         ? 'STATUS: BLOCKED\nRepository evidence was not obtained from an actual GitHub tool result; the model response was not accepted as completion.'
         : hasUnresolvedToolFailure
@@ -1492,7 +1505,7 @@ for (const call of result.toolCalls) {
           recordVerification(`${verified} commit verification(s) returned by github_verify_commit`)
         }
         setCodingAgentState(recordTaskOutcome(
-          effectiveAgentPhase === 'COMPLETE' ? 'complete' : effectiveAgentPhase === 'BLOCKED' ? 'blocked' : 'in_progress',
+          completionPhase === 'COMPLETE' ? 'complete' : completionPhase === 'BLOCKED' ? 'blocked' : 'in_progress',
           completionBlocked ? 'Repository evidence required, but no GitHub tool returned successfully.' : nextAction || undefined,
         ))
       }

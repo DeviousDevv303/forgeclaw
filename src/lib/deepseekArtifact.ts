@@ -87,7 +87,38 @@ export function normalizeDeepSeekOutput(text: string): string {
     .replace(/^\s*Dear\s*,?[ \t]*(?:\r?\n)+/im, '')
     .replace(/^Best regards,[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*ForgeClaw[ \t]*$/im, '')
 
-  return normalized.trim()
+  const trimmed = normalized.trim()
+  // DeepSeek-7B on CPU with greedy decoding can emit repetitive loops
+  // ("the answer is the answer is...") that pass the marker cleanup.
+  // Throw a specific quality error (not a generic empty-result) so the
+  // Activity log distinguishes "model produced garbage" from transport
+  // failures, and the Qwen fallback activates with accurate diagnostics.
+  if (isRepetitiveWordLoop(trimmed)) {
+    throw new Error('DeepSeek output failed quality validation: repetitive word loop detected')
+  }
+
+  return trimmed
+}
+
+/**
+ * Detect word-level repetitive loops: a 7B model stuck in greedy decoding
+ * repeats n-grams. Bounded and deterministic; preserves legitimate prose,
+ * code, and multilingual text (which don't exhibit 30%+ n-gram duplication).
+ */
+function isRepetitiveWordLoop(text: string): boolean {
+  const words = text.split(/\s+/).filter(Boolean)
+  if (words.length < 20) return false
+  for (const n of [3, 4, 5]) {
+    if (words.length < n + 1) continue
+    const grams: string[] = []
+    for (let i = 0; i <= words.length - n; i++) {
+      grams.push(words.slice(i, i + n).join(' '))
+    }
+    const unique = new Set(grams)
+    const dupRatio = 1 - unique.size / grams.length
+    if (dupRatio > 0.3) return true
+  }
+  return false
 }
 
 function ghHeaders(ctx: ToolContext): Record<string, string> {

@@ -8,7 +8,10 @@
 
 export const GITHUB_READ_RETRY_DELAYS_MS = [100, 250] as const
 export const GITHUB_READ_RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504])
-export const GITHUB_READ_TIMEOUT_MS = 60_000
+// 30s default: GitHub API reads that hang longer are unlikely to recover;
+// fail fast so the DeepSeek→Qwen fallback activates promptly instead of
+// leaving the user on "Processing…" for a full minute per attempt.
+export const GITHUB_READ_TIMEOUT_MS = 30_000
 
 /** Minimal structural context: anything carrying a run AbortSignal and optional per-stage deadline. */
 export interface GithubFetchContext {

@@ -40,6 +40,16 @@ describe('DeepSeek output normalization', () => {
   it('leaves ordinary prose unchanged apart from trimming whitespace', () => {
     expect(normalizeDeepSeekOutput('  A normal answer.  ')).toBe('A normal answer.')
   })
+
+  it('rejects word-level repetitive loops from greedy decoding', () => {
+    const looped = Array(30).fill('the answer is the answer is').join(' ')
+    expect(() => normalizeDeepSeekOutput(looped)).toThrow('repetitive word loop')
+  })
+
+  it('preserves legitimate repeated phrases in normal prose', () => {
+    const prose = 'The repository state shows the main branch at the expected commit. The branch is clean and the working tree matches.'
+    expect(normalizeDeepSeekOutput(prose)).toBe(prose)
+  })
 })
 
 describe('DeepSeek result retrieval', () => {
