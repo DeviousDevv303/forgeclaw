@@ -83,10 +83,12 @@ jobs:
           import torch
           from transformers import AutoModelForCausalLM, AutoTokenizer
 
-          # Primary checkpoint matches the workflow's documented 6.7B contract.
-          # The fallback is the smaller public DeepSeek instruct checkpoint, used
+          # Use DeepSeek's general conversational checkpoint for the primary
+          # reasoner; the code-specialized Coder model repeatedly refused safe
+          # creative requests even after a same-model retry.
+          # The fallback remains a smaller DeepSeek Instruct checkpoint, used
           # only when the primary cannot run on this CPU runner.
-          PRIMARY_MODEL = 'deepseek-ai/deepseek-coder-6.7b-instruct'
+          PRIMARY_MODEL = 'deepseek-ai/deepseek-llm-7b-chat'
           FALLBACK_MODEL = 'deepseek-ai/deepseek-coder-1.3b-instruct'
 
           task = os.environ['TASK'].strip()
@@ -171,6 +173,22 @@ jobs:
                   loaded_models[model_id] = (tokenizer, model)
               else:
                   tokenizer, model = loaded
+              if model_id == PRIMARY_MODEL:
+                  # The official DeepSeek-LLM 7B Chat model card warns that
+                  # system-role messages are not compatible with this model.
+                  # Preserve the separation in plain text but send one user turn.
+                  system_text = '\n\n'.join(
+                      message['content'] for message in active_messages
+                      if message['role'] == 'system'
+                  )
+                  user_text = '\n\n'.join(
+                      message['content'] for message in active_messages
+                      if message['role'] == 'user'
+                  )
+                  active_messages = [{
+                      'role': 'user',
+                      'content': f'ForgeClaw instructions and context:\n{system_text}\n\n{user_text}',
+                  }]
               if getattr(tokenizer, 'chat_template', None):
                   encoded = tokenizer.apply_chat_template(
                       active_messages,

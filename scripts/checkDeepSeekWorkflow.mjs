@@ -10,6 +10,9 @@ const requiredMarkers = [
   'def is_generic_scope_refusal(text):',
   'creative_retry_attempted = False',
   'retry_result = run_inference(model_used, retry_messages)',
+  "PRIMARY_MODEL = 'deepseek-ai/deepseek-llm-7b-chat'",
+  'if model_id == PRIMARY_MODEL:',
+  'system-role messages are not compatible with this model',
 ]
 for (const marker of requiredMarkers) {
   if (!workflow.includes(marker)) {
