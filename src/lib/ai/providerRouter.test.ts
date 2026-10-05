@@ -58,6 +58,19 @@ describe('provider router runtime passthrough', () => {
     vi.unstubAllGlobals()
   })
 
+  it('bootstraps repository evidence when WebGPU is the coding fallback', async () => {
+    const result = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Repository evidence comes from GitHub tools.',
+      messages: [{ role: 'user', content: 'Please inspect the ForgeClaw repository and fix the current issue.' }],
+      tools: [{ name: 'github_repo_state', description: 'Read repository state', parameters: { type: 'object', properties: {}, required: [] } }],
+    }, '', 'nexus')
+    expect(result).toMatchObject({
+      success: true,
+      response: { stopReason: 'deterministic-repository-evidence', toolCalls: [{ name: 'github_repo_state', input: {} }] },
+    })
+  })
+
   it('falls from local inference to WebGPU 3B then WebGPU 1.5B when available', async () => {
     const originalFetch = globalThis.fetch
     vi.stubGlobal('navigator', { gpu: {} })

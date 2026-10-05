@@ -99,6 +99,15 @@ function success(response: AIResponse): { success: true; response: AIResponse } 
   return { success: true, response }
 }
 
+function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: ProviderId): boolean {
+  if (providerId !== 'nexus' && providerId !== 'corpus') return false
+  if (!request.tools?.some(tool => tool.name === 'github_repo_state')) return false
+  if (request.messages.some(message => message.role === 'tool')) return false
+  const latestUser = [...request.messages].reverse().find(message => message.role === 'user')
+  const text = latestUser?.content ?? ''
+  return /repository evidence comes from github tools|\b(repo|repository|codebase|forgeclaw|source|file|branch|commit|github)\b/i.test(text)
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────
 
 export async function sendViaRouter(
@@ -141,6 +150,19 @@ export async function sendViaRouter(
         input: { prompt, style: inferImageStyle(prompt), width: 512, height: 512 },
       }],
       stopReason: 'direct-image-intent',
+    })
+  }
+
+  // Browser-local models do not reliably emit their first manual tool call.
+  // Coding requests must establish live repository evidence before any model
+  // prose can be accepted, so bootstrap the read-only probe deterministically.
+  if (shouldBootstrapRepositoryEvidence(request, selectedProviderId)) {
+    return success({
+      text: '',
+      provider: selectedProviderId,
+      model: choice.model,
+      toolCalls: [{ id: `bootstrap-repo-state-${Date.now()}`, name: 'github_repo_state', input: {} }],
+      stopReason: 'deterministic-repository-evidence',
     })
   }
 

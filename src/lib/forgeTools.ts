@@ -25,6 +25,7 @@ import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
+import { waitForDeepSeekResult } from './deepseekArtifact'
 
 // These runtime envelopes are for the chat/model boundary only. They must not
 // become part of a user-facing image prompt, where Stable Diffusion may render
@@ -828,6 +829,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           throw new Error('Invalid workflow ref.')
         }
         const invocationId = `deepseek-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const dispatchedAt = Date.now()
         const headers = {
           Authorization: `token ${token}`,
           Accept: 'application/vnd.github.v3+json',
@@ -850,15 +852,16 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           const detail = await dispatch.text().catch(() => '')
           throw new Error(`DeepSeek dispatch failed: ${dispatch.status}${detail ? ` — ${detail.slice(0, 300)}` : ''}`)
         }
+        const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
         if (nexusLearn) {
           await appendDeepSeekLearning(
             task,
-            `[PENDING_DEEPSEEK_RESULT]\nInvocation ${invocationId} dispatched to ${owner}/${repo}@${ref}. Retrieve the workflow artifact before admitting this candidate.`,
+            completed.result,
             invocationId,
             context,
           )
         }
-        return `✓ DeepSeek-16B dispatched as ${invocationId} on ${owner}/${repo}@${ref}. Result artifact will be available after the workflow completes${nexusLearn ? '; NEXUS recorded an unapproved learning candidate' : ''}.`
+        return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\nRun: ${completed.run.html_url}\n\n${completed.result}${nexusLearn ? '\n\nNEXUS recorded this result as an unapproved learning candidate.' : ''}`
       }
 
       // ── Self-sculpt: branch + pull request proposal ──────────────────────────
