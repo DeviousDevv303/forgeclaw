@@ -148,12 +148,41 @@ describe('dispatcher integrity (offline)', () => {
   })
 
   it('dispatches ask_deepseek directly to the fixed workflow without NEXUS learning', async () => {
+    const JSZip = (await import('jszip')).default
+    const zip = new JSZip()
+    zip.file('result.txt', 'The capital of France is Paris.')
+    const zipBytes = await zip.generateAsync({ type: 'arraybuffer' })
     let dispatchedUrl = ''
     let payload: { ref: string; inputs: { task: string; nexus_learning: string; invocation_id: string } } | undefined
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      dispatchedUrl = String(input)
-      payload = JSON.parse(String(init?.body)) as NonNullable<typeof payload>
-      return new Response(null, { status: 204 })
+      const url = String(input)
+      if (url.endsWith('/deepseek-16b.yml/dispatches')) {
+        dispatchedUrl = url
+        payload = JSON.parse(String(init?.body)) as NonNullable<typeof payload>
+        return new Response(null, { status: 204 })
+      }
+      if (url.includes('/deepseek-16b.yml/runs?')) {
+        return Response.json({ workflow_runs: [{
+          id: 84,
+          name: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
+          display_title: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
+          event: 'workflow_dispatch',
+          status: 'completed',
+          conclusion: 'success',
+          created_at: new Date().toISOString(),
+          head_branch: 'main',
+          html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/84',
+          run_number: 84,
+        }] })
+      }
+      if (url.endsWith('/actions/runs/84')) {
+        return Response.json({ id: 84, name: 'DeepSeek 16B', display_title: `DeepSeek 16B ${payload?.inputs.invocation_id}`, event: 'workflow_dispatch', status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/84', run_number: 84 })
+      }
+      if (url.endsWith('/actions/runs/84/artifacts?per_page=100')) {
+        return Response.json({ artifacts: [{ name: `deepseek-${payload?.inputs.invocation_id}`, archive_download_url: 'https://example.test/deepseek.zip', expired: false }] })
+      }
+      if (url === 'https://example.test/deepseek.zip') return new Response(zipBytes, { status: 200 })
+      throw new Error(`Unexpected fetch URL: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -167,9 +196,10 @@ describe('dispatcher integrity (offline)', () => {
     expect(payload?.inputs.task).toBe('What is the capital of France?')
     expect(payload?.inputs.nexus_learning).toBe('false')
     expect(payload?.inputs.invocation_id).toMatch(/^deepseek-/)
-    expect(output).toContain('DeepSeek-16B dispatched')
+    expect(output).toContain('DeepSeek-16B completed')
+    expect(output).toContain('The capital of France is Paris.')
     expect(output).not.toContain('learning candidate')
-    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(5)
   })
 
   it('generates an image through the complete dispatch, run, artifact, and registry pipeline', async () => {
