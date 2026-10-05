@@ -145,6 +145,10 @@ The repository's local commit hook can enforce the project commit format and val
 - **Portable implementation:** the project should remain understandable and runnable without proprietary platform dependencies.
 - **Evidence over claims:** documentation should describe implemented behavior, not planned behavior as if it already exists.
 
+## Founder’s Principle, Motive, and completion standard
+
+ForgeClaw’s foundational governance distinguishes evolving capability from immutable authority: **Founder’s principles → Codex Anima / Guardian foundation → ForgeClaw / NEXUS behavior**. The canonical wording, scope, and relationship to CORPUS are maintained in [Founder’s Principle, Motive, and Completion Standard](docs/founder-principles.md). This is foundational governance, not ordinary runtime configuration, and is also presented read-only in the product Settings surface.
+
 ## License
 
 ForgeClaw is released under the MIT License. See [LICENSE](LICENSE).
