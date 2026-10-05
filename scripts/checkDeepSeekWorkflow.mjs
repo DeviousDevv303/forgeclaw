@@ -7,9 +7,13 @@ const startMarker = "          python - <<'PY'\n"
 const endMarker = '\n          PY\n'
 const requiredMarkers = [
   'def is_creative_task(task_text):',
+  'def is_presentation_task(task_text):',
+  'def clean_model_output(text):',
+  'def has_presentation_structure(text):',
   'def is_generic_scope_refusal(text):',
   'creative_retry_attempted = False',
-  'retry_result = run_inference(model_used, retry_messages)',
+  'retry_result = run_inference(model_used, retry_messages, max_new_tokens=512)',
+  'output_cleanup_applied=',
   "PRIMARY_MODEL = 'deepseek-ai/deepseek-llm-7b-chat'",
   'if model_id == PRIMARY_MODEL:',
   'system-role messages are not compatible with this model',

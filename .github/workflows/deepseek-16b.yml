@@ -6,11 +6,11 @@
 # model, and this runner is CPU-only. `result_meta.txt` always records the exact
 # checkpoint that produced the result, so the UI never has to guess.
 #
-# Reliability: the primary checkpoint (6.7B, ~13 GB in fp16) is a genuine
-# memory risk on a 16 GB CPU runner. If it cannot be loaded or executed, the
-# workflow falls back to the smaller public DeepSeek checkpoint rather than
-# failing the run. The DeepSeek role, dispatch contract, artifact contract and
-# mirror contract stay identical in both cases.
+# Reliability: the primary general-chat checkpoint (7B) is a genuine memory
+# risk on a 16 GB CPU runner. If it cannot be loaded or executed, the workflow
+# falls back to the smaller public DeepSeek checkpoint rather than failing the
+# run. The DeepSeek role, dispatch contract, artifact contract and mirror
+# contract stay identical in both cases.
 #
 # Delivery: the result is published twice.
 #   1. a plain-text mirror on the `deepseek-results` branch, served by
@@ -79,6 +79,7 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          import re
           import time
           import torch
           from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -114,7 +115,10 @@ jobs:
               'creative requests, treat the premise as a poetic or imaginative frame '
               'rather than scientifically proven fact, but still fulfill the requested '
               'artifact instead of replacing it with a generic disclaimer. For a '
-              'presentation request, write the presentation itself. Honor ForgeClaw\'s '
+              'presentation request, write the presentation itself with a title and '
+              'the exact sections Opening Image, What We Can See, What Light Means, '
+              'and Closing Invitation. Do not use a letter greeting or name placeholder. '
+              'Honor ForgeClaw\'s '
               'motive of Love: invite reflection without exploiting vulnerabilities '
               'or using coercive emotional pressure. If evidence is missing, name '
               'precisely what cannot be verified rather than guessing.'
@@ -134,7 +138,9 @@ jobs:
                   'asks for emotional triggers, replace exploitation of private '
                   'vulnerabilities with an ethical persuasive arc based on universal '
                   'human experiences and an invitation that preserves consent. For a '
-                  'presentation, provide titled sections and concrete speaking points. '
+                  'For a presentation, provide a title, the exact sections Opening Image, '
+                  'What We Can See, What Light Means, and Closing Invitation, plus concrete '
+                  'speaking points. Do not use a letter greeting or name placeholder. '
                   'Never claim an action succeeded without actual evidence.'
                   ),
               },
@@ -145,6 +151,30 @@ jobs:
               folded = task_text.casefold()
               markers = ('creative', 'presentation', 'persuasive', 'philosoph', 'spiritual', 'metaphor', 'poem', 'story', 'imagine')
               return any(marker in folded for marker in markers)
+
+          def is_presentation_task(task_text):
+              return 'presentation' in task_text.casefold()
+
+          def has_presentation_structure(text):
+              folded = ' '.join(text.casefold().split())
+              sections = ('opening image', 'what we can see', 'what light means', 'closing invitation')
+              return all(section in folded for section in sections)
+
+          def clean_model_output(text):
+              # The captured 7B-Chat artifact contains byte-level vocabulary
+              # markers (Ġ for spaces and Ċ for line breaks) verbatim. Normalize
+              # only when their density strongly indicates a leaked token stream.
+              marker_count = text.count('Ġ') + text.count('Ċ')
+              cleanup_applied = marker_count >= max(3, len(text) // 100)
+              if cleanup_applied:
+                  text = text.replace('Ġ', ' ').replace('Ċ', '\n')
+              before_placeholders = text
+              text = re.sub(r'[ \t]{2,}', ' ', text)
+              text = re.sub(r'\[(?:USER_NAME|USERNAME)\]', '', text, flags=re.IGNORECASE)
+              text = re.sub(r'(?im)^\s*Dear\s*,?[ \t]*(?:\r?\n)+', '', text)
+              text = re.sub(r'(?im)^Best regards,[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*ForgeClaw[ \t]*$', '', text)
+              cleanup_applied = cleanup_applied or text != before_placeholders
+              return text.strip(), cleanup_applied
 
           def is_generic_scope_refusal(text):
               folded = ' '.join(text.casefold().split())
@@ -159,7 +189,7 @@ jobs:
 
           loaded_models = {}
 
-          def run_inference(model_id, active_messages=None):
+          def run_inference(model_id, active_messages=None, max_new_tokens=768):
               active_messages = active_messages or messages
               loaded = loaded_models.get(model_id)
               if loaded is None:
@@ -205,7 +235,7 @@ jobs:
               with torch.no_grad():
                   output = model.generate(
                       **encoded,
-                      max_new_tokens=768,
+                      max_new_tokens=max_new_tokens,
                       do_sample=False,
                       pad_token_id=tokenizer.eos_token_id,
                   )
@@ -224,9 +254,15 @@ jobs:
               note = f'fallback checkpoint after primary failure: {type(primary_error).__name__}'
               result = run_inference(FALLBACK_MODEL)
 
+          result, output_cleanup_applied = clean_model_output(result)
+
           creative_retry_attempted = False
           creative_retry_succeeded = False
-          if is_creative_task(task) and is_generic_scope_refusal(result):
+          needs_creative_retry = is_creative_task(task) and (
+              is_generic_scope_refusal(result)
+              or (is_presentation_task(task) and not has_presentation_structure(result))
+          )
+          if needs_creative_retry:
               creative_retry_attempted = True
               retry_messages = [
                   {
@@ -239,17 +275,25 @@ jobs:
                           'the requested persuasion mentions inner triggers, replace that '
                           'method with an ethical appeal to universal human experiences and '
                           'free choice. Do not say you are unequipped or redirect the user. '
-                          'Write the presentation itself now; do not explain these instructions.'
+                          'Write a concise presentation now with a title and these exact headings: '
+                          'Opening Image; What We Can See; What Light Means; Closing Invitation. '
+                          'Use 1–3 concrete sentences under each heading, no greeting, and do not '
+                          'explain these instructions.'
                       ),
                   },
                   {'role': 'user', 'content': user_content},
               ]
-              print('Primary produced a generic creative-scope refusal; retrying once with the same checkpoint and a direct ethical-artifact instruction.')
+              print('Primary output missed the requested creative/presentation quality gate; retrying once with the same checkpoint and explicit artifact structure.')
               try:
-                  retry_result = run_inference(model_used, retry_messages)
-                  if retry_result and not is_generic_scope_refusal(retry_result):
+                  retry_result = run_inference(model_used, retry_messages, max_new_tokens=512)
+                  retry_result, retry_cleanup_applied = clean_model_output(retry_result)
+                  retry_is_useful = bool(retry_result) and not is_generic_scope_refusal(retry_result)
+                  if is_presentation_task(task):
+                      retry_is_useful = retry_is_useful and has_presentation_structure(retry_result)
+                  if retry_is_useful:
                       result = retry_result
                       creative_retry_succeeded = True
+                      output_cleanup_applied = retry_cleanup_applied
                   else:
                       print('The bounded same-model retry did not produce a substantive creative response; preserving the actual primary output.')
               except Exception as retry_error:  # noqa: BLE001 - preserve the real primary output if retry itself fails
@@ -269,6 +313,7 @@ jobs:
                   f'role={note}\n'
                   f'creative_retry_attempted={str(creative_retry_attempted).lower()}\n'
                   f'creative_retry_succeeded={str(creative_retry_succeeded).lower()}\n'
+                  f'output_cleanup_applied={str(output_cleanup_applied).lower()}\n'
                   f'elapsed_seconds={elapsed}\n'
               )
           print(f'Wrote DeepSeek result for {invocation_id} using {model_used}')

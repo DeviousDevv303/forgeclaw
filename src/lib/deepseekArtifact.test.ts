@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeTool, type ToolContext } from './forgeTools'
 import { describeGithubTransportFailure, isBrowserNetworkFailure } from './githubFetch'
-import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, waitForDeepSeekRun } from './deepseekArtifact'
+import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, normalizeDeepSeekOutput, waitForDeepSeekRun } from './deepseekArtifact'
 
 function ctx(): ToolContext {
   return { ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' }
@@ -26,6 +26,20 @@ async function resultZip(text: string): Promise<ArrayBuffer> {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
+})
+
+describe('DeepSeek output normalization', () => {
+  it('decodes a leaked ByteLevel token stream and removes its name placeholder', () => {
+    const leaked = 'Dear Ġ[USER_NAME],ĊĊAs ĠForgeClaw, Ġthis Ġis Ġa Ġreadable Ġsentence.ĊĊFirst, Ġa Ġpoint.'
+    const normalized = normalizeDeepSeekOutput(leaked)
+
+    expect(normalized).toBe('As ForgeClaw, this is a readable sentence.\n\nFirst, a point.')
+    expect(normalized).not.toMatch(/[ĠĊ]|\[USER_NAME\]/)
+  })
+
+  it('leaves ordinary prose unchanged apart from trimming whitespace', () => {
+    expect(normalizeDeepSeekOutput('  A normal answer.  ')).toBe('A normal answer.')
+  })
 })
 
 describe('DeepSeek result retrieval', () => {

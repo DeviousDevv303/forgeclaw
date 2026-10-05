@@ -69,6 +69,27 @@ function parseResultMetadata(text: string): Pick<DeepSeekResultDelivery, 'model'
   }
 }
 
+/**
+ * Remove a tokenizer leak observed in DeepSeek-LLM-7B-Chat results. Its
+ * ByteLevel whitespace markers appeared literally in the workflow artifact;
+ * normalize only when their density makes a leaked token stream unambiguous.
+ */
+export function normalizeDeepSeekOutput(text: string): string {
+  const markerCount = (text.match(/[ĠĊ]/g) ?? []).length
+  const isLeakedByteLevelText = markerCount >= Math.max(3, Math.floor(text.length / 100))
+  let normalized = isLeakedByteLevelText
+    ? text.replaceAll('Ġ', ' ').replaceAll('Ċ', '\n')
+    : text
+
+  normalized = normalized
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\[(?:USER_NAME|USERNAME)\]/gi, '')
+    .replace(/^\s*Dear\s*,?[ \t]*(?:\r?\n)+/im, '')
+    .replace(/^Best regards,[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*ForgeClaw[ \t]*$/im, '')
+
+  return normalized.trim()
+}
+
 function ghHeaders(ctx: ToolContext): Record<string, string> {
   return { Authorization: `token ${ctx.ghToken}`, Accept: 'application/vnd.github.v3+json' }
 }
@@ -140,7 +161,7 @@ export async function readDeepSeekMirror(ctx: ToolContext, owner: string, repo: 
       cache: 'no-store',
     })
     if (!response.ok) return undefined
-    const text = (await response.text()).trim()
+    const text = normalizeDeepSeekOutput(await response.text())
     if (!text) return undefined
     let metadata: Pick<DeepSeekResultDelivery, 'model' | 'role' | 'elapsedSeconds'> = {}
     try {
@@ -186,7 +207,7 @@ export async function downloadDeepSeekArtifact(ctx: ToolContext, owner: string, 
   const zip = await githubStage('deepseek-artifact-unzip', () => JSZip.loadAsync(zipBytes))
   const result = Object.values(zip.files).find(entry => !entry.dir && entry.name.split('/').pop() === 'result.txt')
   if (!result) throw new Error(`deepseek-artifact-unzip: artifact "${artifact.name}" did not contain result.txt.`)
-  const text = (await githubStage('deepseek-result-extract', () => result.async('text'))).trim()
+  const text = normalizeDeepSeekOutput(await githubStage('deepseek-result-extract', () => result.async('text')))
   if (!text) throw new Error(`deepseek-result-extract: run #${runId} completed without a non-empty result.`)
   const metadataFile = Object.values(zip.files).find(entry => !entry.dir && entry.name.split('/').pop() === 'result_meta.txt')
   const metadataText = metadataFile ? await githubStage('deepseek-result-metadata-extract', () => metadataFile.async('text')) : ''
