@@ -1128,7 +1128,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
 
         if (finalRun.status !== 'completed') {
-          return `Shell execution timed out after ${maxWait}s. Run #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nLast status: ${lastStatus}\nConclusion: ${finalRun.conclusion ?? 'unknown'}\nURL: ${finalRun.html_url}`
+          return `[TOOL ERROR] Shell execution timed out after ${maxWait}s. Run #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nLast status: ${lastStatus}\nConclusion: ${finalRun.conclusion ?? 'unknown'}\nURL: ${finalRun.html_url}`
         }
 
         const jobsRes = await toolFetch(

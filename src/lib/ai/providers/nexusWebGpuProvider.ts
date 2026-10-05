@@ -155,6 +155,16 @@ function stageFromError(error: unknown): NexusWebGpuStage | undefined {
   return match?.[1] as NexusWebGpuStage | undefined
 }
 
+/**
+ * Detect a dead WebGPU device/instance (e.g. after page reload, device loss,
+ * or context invalidation). Retrying on the same adapter cannot succeed; the
+ * failure must surface fast so the intended fallback runs instead of stalling.
+ */
+export function isWebGpuDeviceLossError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /valid external instance reference no longer exists|device(?: was)? lost|GPUDevice lost/i.test(message)
+}
+
 const OUTPUT_SCRIPT_PATTERNS = [
   /\p{Script=Latin}/u,
   /\p{Script=Cyrillic}/u,
@@ -193,6 +203,13 @@ export function assessNexusOutputQuality(text: string, userTask = ''): { valid: 
     return { valid: false, reason: 'unexpected control-character density' }
   }
 
+  // Corrupt token streams often emit long runs of a single repeated character
+  // (e.g. dozens of '/' or '=' in a row). Legitimate prose, code, and markdown
+  // never repeat one non-whitespace character this many times consecutively.
+  if (/([^\s])\1{39,}/.test(output)) {
+    return { valid: false, reason: 'unusually long run of a repeated character suggests a corrupt token stream' }
+  }
+
   const words = output.match(/[\p{L}\p{N}_$]+/gu) || []
   const mixedScriptWords = words.filter(word => {
     const letters = word.match(/\p{L}/gu) || []
@@ -223,6 +240,20 @@ function stageFailure(stage: NexusWebGpuStage, model: string, attempt: number, e
 
 export function getNexusWebGpuState(): NexusWebGpuState {
   return state
+}
+
+/**
+ * Drop the cached engine for a model so the next request builds a fresh one.
+ * Called when the GPU device/instance is known dead; reusing the stale engine
+ * would repeat the same mapAsync/instance failure.
+ */
+export function invalidateNexusEngine(model: string): void {
+  const worker = engineWorkers.get(model)
+  if (worker) {
+    try { worker.terminate() } catch { /* already gone */ }
+    engineWorkers.delete(model)
+  }
+  enginePromises.delete(model)
 }
 
 export function subscribeNexusWebGpu(listener: (next: NexusWebGpuState) => void): () => void {
@@ -410,6 +441,9 @@ export const nexusWebGpuProvider: AIProvider = {
         interruptOnAbort()
         throw error
       }
+      // A dead GPU instance poisons the cached engine; drop it so the next
+      // request builds fresh instead of replaying the same mapAsync failure.
+      if (isWebGpuDeviceLossError(error)) invalidateNexusEngine(model)
       throw stageFailure('chat-completion', model, attempt, error)
     }
     publish({ status: 'generating', progress: 1, text: `Generating with ${model}`, stage: 'generation', model, attempt })
@@ -428,6 +462,7 @@ export const nexusWebGpuProvider: AIProvider = {
         interruptOnAbort()
         throw error
       }
+      if (isWebGpuDeviceLossError(error)) invalidateNexusEngine(model)
       throw stageFailure('generation', model, attempt, error)
     }
     request.signal?.removeEventListener('abort', interruptOnAbort)
