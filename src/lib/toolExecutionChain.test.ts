@@ -181,6 +181,8 @@ describe('dispatcher integrity (offline)', () => {
       if (url.endsWith('/actions/runs/84/artifacts?per_page=100')) {
         return Response.json({ artifacts: [{ name: `deepseek-${payload?.inputs.invocation_id}`, archive_download_url: 'https://example.test/deepseek.zip', expired: false }] })
       }
+      // The mirror is probed first; a missing mirror falls through to the artifact.
+      if (url.includes('raw.githubusercontent.com')) return new Response('', { status: 404 })
       if (url === 'https://example.test/deepseek.zip') return new Response(zipBytes, { status: 200 })
       throw new Error(`Unexpected fetch URL: ${url}`)
     })
@@ -199,7 +201,8 @@ describe('dispatcher integrity (offline)', () => {
     expect(output).toContain('DeepSeek-16B completed')
     expect(output).toContain('The capital of France is Paris.')
     expect(output).not.toContain('learning candidate')
-    expect(fetchMock).toHaveBeenCalledTimes(5)
+    // dispatch + runs list + run status + mirror probe + artifact list + artifact zip
+    expect(fetchMock).toHaveBeenCalledTimes(6)
   })
 
   it('generates an image through the complete dispatch, run, artifact, and registry pipeline', async () => {

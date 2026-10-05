@@ -1019,6 +1019,9 @@ function App() {
 
     let source: 'local' | 'cloud' = activeProvider === 'corpus' || activeProvider === 'local' || activeProvider === 'nexus' ? 'local' : 'cloud'
     let cloudMsgId: string | null = null
+    // Declared outside the try so a terminal failure can still attach the real
+    // tool outcomes the run produced (Activity/Diagnostics must reflect reality).
+    const runToolResults: ToolResult[] = []
 
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
     const relevant = findRelevant(corpus, promptText, 3)
@@ -1220,7 +1223,7 @@ function App() {
         requiresRepositoryTool: codingTask,
       })}`
       const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt, ...(imageUrl ? { image_url: imageUrl } : {}) }]
-      const allToolResults: ToolResult[] = []
+      const allToolResults: ToolResult[] = runToolResults
       const toolAttempts: Array<{ name: string; input: string }> = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
       const chainStartedAt = new Date().toISOString()
@@ -1480,14 +1483,23 @@ for (const call of result.toolCalls) {
       setRequestStatus('error')
       setLastRequestError(msg)
       emitFailure({ source: 'forgemind', severity: 'error', message: rawMsg, context: { provider: activeProvider, promptLength: promptText.length } })
+      const failedToolResults = runToolResults.length ? runToolResults : undefined
       if (cloudMsgId) {
         setMessages(prev => prev.map(m => {
           if (m.id !== cloudMsgId) return m
           const hasContent = m.content && m.content.trim() !== '' && m.content !== 'Processing…'
-          return { ...m, content: hasContent ? m.content : `[ERROR]: ${msg}`, streaming: false }
+          return {
+            ...m,
+            content: hasContent ? m.content : `[ERROR]: ${msg}`,
+            streaming: false,
+            // Keep the real execution record visible even when the run failed:
+            // a failed DeepSeek dispatch must not read as "0 TOOL CALLS".
+            agentPhase: 'BLOCKED' as const,
+            toolResults: m.toolResults ?? failedToolResults,
+          }
         }))
       } else {
-        setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source }])
+        setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source, agentPhase: 'BLOCKED' as const, toolResults: failedToolResults }])
       }
       // Auth/runtime failures are surfaced to the operator. No hidden provider fallback occurs.
       const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)

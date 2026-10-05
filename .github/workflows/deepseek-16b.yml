@@ -1,10 +1,22 @@
-# Directive item 1 — DeepSeek-16B primary reasoning workflow.
-# Design: inputs are passed through environment variables, output is an artifact,
-# and the runner has read-only repository permissions. The browser-side tool
-# records a pending learning candidate until this artifact is verified.
-# The original deepseek-coder-16b-instruct identifier is not a public Hugging
-# Face model. Keep the DeepSeek-16B route/API contract while using the verified
-# public 6.7B instruct checkpoint that fits a CPU runner.
+# Directive item 1 — DeepSeek primary reasoning workflow.
+#
+# Truthfulness: the route/API name is "DeepSeek 16B" for continuity, but the
+# checkpoint that actually runs is a public DeepSeek instruct model. The
+# original deepseek-coder-16b-instruct identifier is not a public Hugging Face
+# model, and this runner is CPU-only. `result_meta.txt` always records the exact
+# checkpoint that produced the result, so the UI never has to guess.
+#
+# Reliability: the primary checkpoint (6.7B, ~13 GB in fp16) is a genuine
+# memory risk on a 16 GB CPU runner. If it cannot be loaded or executed, the
+# workflow falls back to the smaller public DeepSeek checkpoint rather than
+# failing the run. The DeepSeek role, dispatch contract, artifact contract and
+# mirror contract stay identical in both cases.
+#
+# Delivery: the result is published twice.
+#   1. a plain-text mirror on the `deepseek-results` branch, served by
+#      raw.githubusercontent.com — CORS-safe and directly readable from the
+#      deployed GitHub Pages browser (same pattern as generated-images);
+#   2. an uploaded artifact (`deepseek-<invocation_id>`) as the durable fallback.
 
 name: DeepSeek 16B
 run-name: DeepSeek 16B ${{ inputs.invocation_id }}
@@ -13,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       task:
-        description: Task for DeepSeek-16B
+        description: Task for the DeepSeek reasoning workflow
         required: true
         type: string
       context:
@@ -32,7 +44,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   process:
@@ -67,52 +79,125 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          import time
           import torch
           from transformers import AutoModelForCausalLM, AutoTokenizer
 
-          model_id = 'deepseek-ai/deepseek-coder-6.7b-instruct'
-          tokenizer = AutoTokenizer.from_pretrained(model_id)
-          model = AutoModelForCausalLM.from_pretrained(
-              model_id,
-              torch_dtype=torch.float16,
-              low_cpu_mem_usage=True,
-          )
+          # Primary checkpoint matches the workflow's documented 6.7B contract.
+          # The fallback is the smaller public DeepSeek instruct checkpoint, used
+          # only when the primary cannot run on this CPU runner.
+          PRIMARY_MODEL = 'deepseek-ai/deepseek-coder-6.7b-instruct'
+          FALLBACK_MODEL = 'deepseek-ai/deepseek-coder-1.3b-instruct'
+
           task = os.environ['TASK'].strip()
           context = os.environ.get('CONTEXT', '').strip()
+          invocation_id = os.environ['INVOCATION_ID']
+
+          torch.set_num_threads(min(4, os.cpu_count() or 1))
+
           user_content = (
               f"{task}\n\nContext:\n{context}\n\n"
-              'Provide a concise, actionable response. Do not claim to have '
+              'Answer the request directly and concretely. Do not claim to have '
               'performed actions that are not evidenced in the context.'
           )
-          messages = [{'role': 'user', 'content': user_content}]
-          if getattr(tokenizer, 'chat_template', None):
-              inputs = tokenizer.apply_chat_template(
-                  messages,
-                  add_generation_prompt=True,
-                  return_tensors='pt',
-                  return_dict=True,
+          messages = [
+              {
+                  'role': 'system',
+                  'content': (
+                      'You are the primary reasoning engine of an autonomous '
+                      'software system. Answer technical questions on their '
+                      'merits and never refuse merely because the question '
+                      'mentions a specific project or repository.'
+                  ),
+              },
+              {'role': 'user', 'content': user_content},
+          ]
+
+          def run_inference(model_id):
+              tokenizer = AutoTokenizer.from_pretrained(model_id)
+              model = AutoModelForCausalLM.from_pretrained(
+                  model_id,
+                  torch_dtype=torch.float16,
+                  low_cpu_mem_usage=True,
               )
-          else:
-              prompt = f"### Instruction:\n{user_content}\n### Response:\n"
-              inputs = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=4096)
-          with torch.no_grad():
-              output = model.generate(
-                  **inputs,
-                  max_new_tokens=768,
-                  do_sample=False,
-                  pad_token_id=tokenizer.eos_token_id,
-              )
-          generated = output[0][inputs['input_ids'].shape[1]:]
-          result = tokenizer.decode(generated, skip_special_tokens=True).strip()
+              model.eval()
+              if getattr(tokenizer, 'chat_template', None):
+                  encoded = tokenizer.apply_chat_template(
+                      messages,
+                      add_generation_prompt=True,
+                      return_tensors='pt',
+                      return_dict=True,
+                  )
+              else:
+                  prompt = f"### Instruction:\n{user_content}\n### Response:\n"
+                  encoded = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=4096)
+              with torch.no_grad():
+                  output = model.generate(
+                      **encoded,
+                      max_new_tokens=768,
+                      do_sample=False,
+                      pad_token_id=tokenizer.eos_token_id,
+                  )
+              generated = output[0][encoded['input_ids'].shape[1]:]
+              return tokenizer.decode(generated, skip_special_tokens=True).strip()
+
+          model_used = PRIMARY_MODEL
+          note = 'primary checkpoint'
+          started = time.time()
+          try:
+              result = run_inference(PRIMARY_MODEL)
+          except Exception as primary_error:  # noqa: BLE001 - any load/run failure is a fallback trigger
+              print(f'Primary checkpoint unavailable ({type(primary_error).__name__}: {primary_error}); '
+                    f'falling back to {FALLBACK_MODEL}')
+              model_used = FALLBACK_MODEL
+              note = f'fallback checkpoint after primary failure: {type(primary_error).__name__}'
+              result = run_inference(FALLBACK_MODEL)
+          elapsed = round(time.time() - started, 1)
+
+          if not result:
+              result = '(DeepSeek produced an empty response)'
+
           with open('result.txt', 'w', encoding='utf-8') as handle:
               handle.write(result)
-          print(f'Wrote DeepSeek result for {os.environ["INVOCATION_ID"]}')
+          with open('result_meta.txt', 'w', encoding='utf-8') as handle:
+              handle.write(
+                  f'invocation_id={invocation_id}\n'
+                  f'model={model_used}\n'
+                  f'role={note}\n'
+                  f'elapsed_seconds={elapsed}\n'
+              )
+          print(f'Wrote DeepSeek result for {invocation_id} using {model_used}')
           PY
+
+      - name: Publish browser-readable result mirror
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: |
+          set -euo pipefail
+          git config user.name 'ForgeClaw DeepSeek Runner'
+          git config user.email 'forgeclaw-deepseek@local'
+          git fetch origin main deepseek-results || true
+          rm -rf /tmp/deepseek-results-worktree
+          if git show-ref --verify --quiet refs/remotes/origin/deepseek-results; then
+            git worktree add /tmp/deepseek-results-worktree origin/deepseek-results
+            git -C /tmp/deepseek-results-worktree checkout -B deepseek-results
+          else
+            git worktree add --detach /tmp/deepseek-results-worktree origin/main
+            git -C /tmp/deepseek-results-worktree checkout --orphan deepseek-results
+            git -C /tmp/deepseek-results-worktree rm -rf . || true
+          fi
+          mkdir -p /tmp/deepseek-results-worktree/deepseek-results
+          cp result.txt "/tmp/deepseek-results-worktree/deepseek-results/${INVOCATION_ID}.txt"
+          git -C /tmp/deepseek-results-worktree add "deepseek-results/${INVOCATION_ID}.txt"
+          git -C /tmp/deepseek-results-worktree commit -m "deepseek: publish ${INVOCATION_ID}"
+          git -C /tmp/deepseek-results-worktree push origin HEAD:deepseek-results
 
       - name: Upload result artifact
         uses: actions/upload-artifact@v4
         with:
           name: deepseek-${{ inputs.invocation_id }}
-          path: result.txt
+          path: |
+            result.txt
+            result_meta.txt
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7

@@ -7,6 +7,7 @@
 import { safeGetItem, safeSetItem } from './storage'
 import { resolveGithubToken } from './githubAuth'
 import { describeGithubDispatchFailure } from './githubDispatchErrors'
+import { describeGithubTransportFailure, toolFetch } from './githubFetch'
 import {
   FORGECLAW_AGENT_ID,
   FORGECLAW_AGENT_LABEL,
@@ -527,114 +528,11 @@ export function loadToolContext(): ToolContext {
 }
 
 // ─── Executor ─────────────────────────────────────────────────────────────────
+// The hardened browser → api.github.com boundary lives in ./githubFetch so the
+// DeepSeek path shares exactly the same timeout, retry, cache and abort
+// behaviour as every other GitHub tool. Re-exported here for existing callers.
 
-const GITHUB_READ_RETRY_DELAYS_MS = [100, 250] as const
-const GITHUB_READ_RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504])
-const GITHUB_READ_TIMEOUT_MS = 60000
-
-function getRequestUrl(input: RequestInfo | URL): string {
-  if (typeof input === 'string') return input
-  if (input instanceof URL) return input.toString()
-  return input.url
-}
-
-function getRequestMethod(input: RequestInfo | URL, init: RequestInit): string {
-  if (init.method) return String(init.method).toUpperCase()
-  if (typeof Request !== 'undefined' && input instanceof Request) return input.method.toUpperCase()
-  return 'GET'
-}
-
-function isRetryableGithubRead(input: RequestInfo | URL, init: RequestInit): boolean {
-  const method = getRequestMethod(input, init)
-  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) return false
-  try {
-    return new URL(getRequestUrl(input)).hostname === 'api.github.com'
-  } catch {
-    return false
-  }
-}
-
-function waitForGithubRetry(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new DOMException('Run aborted', 'AbortError'))
-      return
-    }
-
-    // `timer` is assigned after `onAbort` is defined because the callback closes over it.
-    // eslint-disable-next-line prefer-const
-    let timer: ReturnType<typeof setTimeout>
-    const onAbort = () => {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-      reject(new DOMException('Run aborted', 'AbortError'))
-    }
-
-    timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-
-    signal?.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
-async function toolFetch(ctx: ToolContext, input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
-
-  if (!isRetryableGithubRead(input, init)) {
-    return fetch(input, { ...init, signal: ctx.signal ?? init.signal })
-  }
-
-  for (let attempt = 0; ; attempt += 1) {
-    if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
-
-    const controller = new AbortController()
-    const parentSignal = ctx.signal ?? init.signal
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, GITHUB_READ_TIMEOUT_MS)
-
-    const onParentAbort = () => controller.abort()
-
-    if (parentSignal?.aborted) {
-      throw new DOMException('Run aborted', 'AbortError')
-    }
-
-    parentSignal?.addEventListener('abort', onParentAbort, { once: true })
-
-    try {
-      const response = await fetch(input, {
-        ...init,
-        signal: controller.signal,
-      })
-
-      if (
-        !GITHUB_READ_RETRYABLE_STATUSES.has(response.status) ||
-        attempt >= GITHUB_READ_RETRY_DELAYS_MS.length
-      ) {
-        return response
-      }
-    } catch (error) {
-      if (parentSignal?.aborted) {
-        throw new DOMException('Run aborted', 'AbortError')
-      }
-
-      if (timedOut) {
-        throw new Error(`GitHub read timed out after ${GITHUB_READ_TIMEOUT_MS}ms`)
-      }
-
-      if (attempt >= GITHUB_READ_RETRY_DELAYS_MS.length) throw error
-    } finally {
-      clearTimeout(timer)
-      parentSignal?.removeEventListener('abort', onParentAbort)
-    }
-
-    await waitForGithubRetry(GITHUB_READ_RETRY_DELAYS_MS[attempt], ctx.signal)
-  }
-}
+export { toolFetch } from './githubFetch'
 
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
   const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'deepseekreason' || call.name === 'ask_deepseek' ? 'deepseek_reason' : call.name
@@ -835,7 +733,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           Accept: 'application/vnd.github.v3+json',
           'Content-Type': 'application/json',
         }
-        const dispatch = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/deepseek-16b.yml/dispatches`, {
+        const dispatchRequest = {
           method: 'POST',
           headers,
           body: JSON.stringify({
@@ -847,19 +745,35 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
               invocation_id: invocationId,
             },
           }),
-        })
+        } as const
+        let dispatch: Response
+        try {
+          dispatch = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/deepseek-16b.yml/dispatches`, dispatchRequest)
+        } catch (dispatchError) {
+          throw new Error(describeGithubTransportFailure('deepseek-dispatch', dispatchError))
+        }
         if (!dispatch.ok) {
+          // Reuse the proven dispatch classifier so a 401/403/404 reads the same
+          // way here as it does in shell_exec, then keep GitHub's own message.
           const detail = await dispatch.text().catch(() => '')
-          throw new Error(`DeepSeek dispatch failed: ${dispatch.status}${detail ? ` — ${detail.slice(0, 300)}` : ''}`)
+          const explanation = describeGithubDispatchFailure(dispatch.status, dispatch.statusText)
+          throw new Error(`${explanation}${detail ? ` DeepSeek dispatch response: ${detail.slice(0, 300)}` : ''}`)
         }
         const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
         if (nexusLearn) {
-          await appendDeepSeekLearning(
-            task,
-            completed.result,
-            invocationId,
-            context,
-          )
+          // Learning persistence is its own stage: a corpus write failure must
+          // never be reported as a DeepSeek result failure.
+          try {
+            await appendDeepSeekLearning(
+              task,
+              completed.result,
+              invocationId,
+              context,
+            )
+          } catch (learningError) {
+            const detail = learningError instanceof Error ? learningError.message : String(learningError)
+            throw new Error(`deepseek-learning-persistence: the DeepSeek result was received but the NEXUS learning candidate could not be recorded (${detail}). DeepSeek output: ${completed.result.slice(0, 500)}`)
+          }
         }
         return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\nRun: ${completed.run.html_url}\n\n${completed.result}${nexusLearn ? '\n\nNEXUS recorded this result as an unapproved learning candidate.' : ''}`
       }

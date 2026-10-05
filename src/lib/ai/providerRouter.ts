@@ -40,6 +40,40 @@ export interface ProviderChoice {
 
 export const LOCAL_PROVIDER_TIMEOUT_MS = 4_000
 
+// NEXUS/WebGPU secondary synthesis (including first-time model load) is
+// browser-local and can stall indefinitely — a failed primary reasoner must
+// still reach a terminal UI state instead of leaving the user on "Processing…".
+// Bounded generously so a legitimately slow generation still completes.
+export const SECONDARY_SYNTHESIS_TIMEOUT_MS = 8 * 60 * 1000
+
+type Provider = (typeof providers)[ProviderId]
+
+/** Send through a local/WebGPU provider that must never run unbounded. */
+async function sendSecondaryWithTimeout(
+  provider: Provider,
+  request: AIRequest,
+  apiKey: string,
+  label: string,
+): Promise<AIResponse> {
+  const controller = new AbortController()
+  const parentSignal = request.signal
+  const onParentAbort = () => controller.abort()
+  parentSignal?.addEventListener('abort', onParentAbort, { once: true })
+  const timer = setTimeout(() => controller.abort(), SECONDARY_SYNTHESIS_TIMEOUT_MS)
+  try {
+    return await provider.send({ ...request, signal: controller.signal }, apiKey)
+  } catch (error) {
+    if (parentSignal?.aborted) throw error
+    if (controller.signal.aborted) {
+      throw new Error(`${label} timed out after ${Math.round(SECONDARY_SYNTHESIS_TIMEOUT_MS / 60000)}m`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
+    parentSignal?.removeEventListener('abort', onParentAbort)
+  }
+}
+
 async function localEndpointAvailable(apiKey: string): Promise<boolean> {
   const base = (apiKey.trim() || DEFAULT_LOCAL_ENDPOINT).replace(/\/+$/, '')
   const controller = new AbortController()
@@ -254,11 +288,11 @@ export async function sendViaRouter(
   try {
     if (selectedProviderId === 'nexus' || selectedProviderId === 'corpus') {
       try {
-        return success(await provider.send(requestForWebGpuFallback(request, choice.model), apiKey))
+        return success(await sendSecondaryWithTimeout(provider, requestForWebGpuFallback(request, choice.model), apiKey, 'WebGPU secondary synthesis'))
       } catch (primaryError) {
         if (request.signal?.aborted) throw primaryError
         try {
-          const response = await provider.send(requestForWebGpuFallback(request, LEGACY_NEXUS_WEBGPU_MODEL), apiKey)
+          const response = await sendSecondaryWithTimeout(provider, requestForWebGpuFallback(request, LEGACY_NEXUS_WEBGPU_MODEL), apiKey, 'WebGPU legacy secondary synthesis')
           return success(response)
         } catch (fallbackError) {
           const workflowResult = latestCurrentToolResult(request)
@@ -278,11 +312,11 @@ export async function sendViaRouter(
     } catch (primaryError) {
       if (selectedProviderId !== 'local' || request.signal?.aborted || !isNexusWebGpuAvailable()) throw primaryError
       try {
-        return success(await nexusProvider.send(requestForWebGpuFallback(request, DEFAULT_NEXUS_WEBGPU_MODEL), apiKey))
+        return success(await sendSecondaryWithTimeout(nexusProvider, requestForWebGpuFallback(request, DEFAULT_NEXUS_WEBGPU_MODEL), apiKey, 'WebGPU secondary synthesis'))
       } catch (webGpuError) {
         if (request.signal?.aborted) throw webGpuError
         try {
-          return success(await nexusProvider.send(requestForWebGpuFallback(request, LEGACY_NEXUS_WEBGPU_MODEL), apiKey))
+          return success(await sendSecondaryWithTimeout(nexusProvider, requestForWebGpuFallback(request, LEGACY_NEXUS_WEBGPU_MODEL), apiKey, 'WebGPU legacy secondary synthesis'))
         } catch (legacyError) {
           throw new Error(`llama.cpp failed (${primaryError instanceof Error ? primaryError.message : String(primaryError)}); WebGPU 3B failed (${webGpuError instanceof Error ? webGpuError.message : String(webGpuError)}); WebGPU 1.5B failed (${legacyError instanceof Error ? legacyError.message : String(legacyError)})`)
         }
