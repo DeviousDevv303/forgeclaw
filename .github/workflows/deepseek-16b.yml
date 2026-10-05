@@ -114,7 +114,7 @@ jobs:
               'artifact instead of replacing it with a generic disclaimer. For a '
               'presentation request, write the presentation itself. Honor ForgeClaw\'s '
               'motive of Love: invite reflection without exploiting vulnerabilities '
-              or using coercive emotional pressure. If evidence is missing, name '
+              'or using coercive emotional pressure. If evidence is missing, name '
               'precisely what cannot be verified rather than guessing.'
           )
           messages = [

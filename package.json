@@ -8,6 +8,7 @@
   "type": "module",
   "scripts": {
     "check:conflicts": "grep -rn '^<<<<<<< \\|^>>>>>>> \\|^=======$' src/ --include='*.ts' --include='*.tsx' && echo 'CONFLICT MARKERS FOUND' && exit 1 || exit 0",
+    "check:deepseek-workflow": "node scripts/checkDeepSeekWorkflow.mjs",
     "prebuild": "npm run check:conflicts && npm run lint",
     "dev": "vite",
     "build": "tsc -b && vite build",
