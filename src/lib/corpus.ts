@@ -289,7 +289,7 @@ export class CorpusRepository {
       context: input.context || `invocation_id=${input.invocationId}`,
       result: `[DEEPSEEK_RESULT]\n${input.result}`,
       runtime: 'github-actions',
-      model: 'deepseek-16b-instruct',
+      model: 'deepseek-ai/deepseek-coder-6.7b-instruct',
       source: 'deepseek:github-actions',
       metadata: deepSeekMetadata(input.task, input.context || ''),
     })

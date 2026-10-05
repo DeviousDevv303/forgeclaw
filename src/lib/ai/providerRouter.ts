@@ -1,8 +1,8 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Provider Router ────────────────────────────────────────────────────────
-// Local-first provider routing: llama.cpp → WebGPU 3B → WebGPU 1.5B.
-// The explicit /deepseek command bypasses this router in App.tsx.
+// The default duo is CORPUS/NEXUS with DeepSeek as primary reasoner.
+// Side effects stay ForgeTools-dispatched; Qwen WebGPU is secondary synthesis/fallback.
 
 import type { AIRequest, AIResponse, AIError } from './types'
 import type { ToolDef } from '../forgeTools'
@@ -19,6 +19,7 @@ import {
 import { injectToolSchemaWithinBudget } from './manualToolMode'
 import { MAX_NEXUS_CONTEXT_TOKENS } from './nexusContext'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
+import { DEFAULT_PROVIDER } from '../providerDefaults'
 
 // ─── Registry ───────────────────────────────────────────────────────────────
 
@@ -53,17 +54,20 @@ async function localEndpointAvailable(apiKey: string): Promise<boolean> {
   }
 }
 
-/** Detect the best runtime in order: llama.cpp, browser WebGPU, explicit local error path. */
+/** Explicit Local Inference detection may use NEXUS as a fallback; it never changes the default. */
 export async function detectBestProvider(apiKey = '', preferredModel = DEFAULT_LOCAL_MODEL): Promise<ProviderChoice> {
   if (await localEndpointAvailable(apiKey)) return { providerId: 'local', model: preferredModel, level: 2 }
   if (isNexusWebGpuAvailable()) return { providerId: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL, level: 3 }
   return { providerId: 'local', model: preferredModel, level: 2 }
 }
 
-/** Direct command is level 1 and bypasses this router; ordinary local mode starts at level 2. */
-export async function getBestProvider(apiKey: string, preferred: ProviderId = 'local', preferredModel = DEFAULT_LOCAL_MODEL): Promise<ProviderChoice> {
-  if (preferred !== 'local') return { providerId: preferred, model: preferredModel, level: 1 }
-  return detectBestProvider(apiKey, preferredModel)
+/** Explicit provider choices are honored; only an explicit Local Inference choice uses endpoint detection. */
+export async function getBestProvider(apiKey: string, preferred: ProviderId = DEFAULT_PROVIDER, preferredModel = ''): Promise<ProviderChoice> {
+  if (preferred !== 'local') {
+    const model = preferredModel || providers[preferred].models[0]?.id || DEFAULT_NEXUS_WEBGPU_MODEL
+    return { providerId: preferred, model, level: 1 }
+  }
+  return detectBestProvider(apiKey, preferredModel || DEFAULT_LOCAL_MODEL)
 }
 
 function requestForWebGpuFallback(request: AIRequest, model: string): AIRequest {
@@ -99,13 +103,67 @@ function success(response: AIResponse): { success: true; response: AIResponse } 
   return { success: true, response }
 }
 
+function currentTurnMessages(request: AIRequest) {
+  let latestUserIndex = -1
+  request.messages.forEach((message, index) => { if (message.role === 'user') latestUserIndex = index })
+  return latestUserIndex >= 0 ? request.messages.slice(latestUserIndex) : request.messages
+}
+
+function hasToolResult(request: AIRequest, toolName: string): boolean {
+  const turn = currentTurnMessages(request)
+  const completedCallIds = new Set(turn
+    .filter(message => message.role === 'tool' && typeof message.tool_call_id === 'string')
+    .map(message => message.tool_call_id))
+  return turn.some(message =>
+    message.role === 'assistant' &&
+    message.tool_calls?.some(call => call.name === toolName && completedCallIds.has(call.id)),
+  )
+}
+
+function latestCurrentToolResult(request: AIRequest): { name: string; content: string } | undefined {
+  const turn = currentTurnMessages(request)
+  const callNamesById = new Map<string, string>()
+  for (const message of turn) {
+    if (message.role === 'assistant') for (const call of message.tool_calls ?? []) callNamesById.set(call.id, call.name)
+  }
+  const result = [...turn].reverse().find(message => message.role === 'tool' && message.tool_call_id)
+  if (!result?.tool_call_id) return undefined
+  return { name: callNamesById.get(result.tool_call_id) || '', content: result.content }
+}
+
 function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: ProviderId): boolean {
   if (providerId !== 'nexus' && providerId !== 'corpus') return false
   if (!request.tools?.some(tool => tool.name === 'github_repo_state')) return false
-  if (request.messages.some(message => message.role === 'tool')) return false
+  if (hasToolResult(request, 'github_repo_state')) return false
   const latestUser = [...request.messages].reverse().find(message => message.role === 'user')
   const text = latestUser?.content ?? ''
   return /repository evidence comes from github tools|\b(repo|repository|codebase|forgeclaw|source|file|branch|commit|github)\b/i.test(text)
+}
+
+function shouldBootstrapDeepSeekReasoning(request: AIRequest, providerId: ProviderId): boolean {
+  if (providerId !== 'nexus' && providerId !== 'corpus') return false
+  if (!request.tools?.some(tool => tool.name === 'deepseek_reason')) return false
+  const latestToolResult = latestCurrentToolResult(request)
+  if (latestToolResult) return latestToolResult.name !== 'deepseek_reason'
+
+  // In the default CORPUS/NEXUS duo, DeepSeek is the primary reasoning engine
+  // even for ordinary prompts. Qwen WebGPU remains the local synthesis/backup.
+  return true
+}
+
+function buildDeepSeekToolInput(request: AIRequest): { task: string; context?: string } {
+  const turn = currentTurnMessages(request)
+  const task = [...turn].reverse().find(message => message.role === 'user')?.content || ''
+  const callNamesById = new Map<string, string>()
+  for (const message of turn) {
+    if (message.role === 'assistant') for (const call of message.tool_calls ?? []) callNamesById.set(call.id, call.name)
+  }
+  const context = turn
+    .filter(message => message.role === 'tool' && message.tool_call_id)
+    .map(message => `${callNamesById.get(message.tool_call_id!) || 'tool'} result:\n${message.content}`)
+    .join('\n\n')
+    .slice(-12000)
+  return context ? { task, context } : { task }
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────
@@ -113,9 +171,9 @@ function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: Provi
 export async function sendViaRouter(
   request: AIRequest,
   apiKey: string,
-  providerId: ProviderId = 'local',
+  providerId: ProviderId = DEFAULT_PROVIDER,
 ): Promise<{ success: true; response: AIResponse } | { success: false; error: AIError }> {
-  const choice = await getBestProvider(apiKey, providerId, request.model || DEFAULT_LOCAL_MODEL)
+  const choice = await getBestProvider(apiKey, providerId, request.model || '')
   const selectedProviderId = choice.providerId
   const provider = providers[selectedProviderId]
 
@@ -153,9 +211,7 @@ export async function sendViaRouter(
     })
   }
 
-  // Browser-local models do not reliably emit their first manual tool call.
-  // Coding requests must establish live repository evidence before any model
-  // prose can be accepted, so bootstrap the read-only probe deterministically.
+  // Repository tasks must establish live evidence before reasoning starts.
   if (shouldBootstrapRepositoryEvidence(request, selectedProviderId)) {
     return success({
       text: '',
@@ -163,6 +219,23 @@ export async function sendViaRouter(
       model: choice.model,
       toolCalls: [{ id: `bootstrap-repo-state-${Date.now()}`, name: 'github_repo_state', input: {} }],
       stopReason: 'deterministic-repository-evidence',
+    })
+  }
+
+  // Use the existing DeepSeek workflow through executeTool, then let the main
+  // NEXUS/CORPUS loop synthesize from its actual result. Repository evidence
+  // above always wins as the first tool action when both apply.
+  if (shouldBootstrapDeepSeekReasoning(request, selectedProviderId)) {
+    return success({
+      text: '',
+      provider: selectedProviderId,
+      model: choice.model,
+      toolCalls: [{
+        id: `bootstrap-deepseek-${Date.now()}`,
+        name: 'deepseek_reason',
+        input: buildDeepSeekToolInput(request),
+      }],
+      stopReason: 'deterministic-deepseek-reasoning',
     })
   }
 
@@ -188,6 +261,10 @@ export async function sendViaRouter(
           const response = await provider.send(requestForWebGpuFallback(request, LEGACY_NEXUS_WEBGPU_MODEL), apiKey)
           return success(response)
         } catch (fallbackError) {
+          const workflowResult = latestCurrentToolResult(request)
+          if (workflowResult?.name === 'deepseek_reason' && !workflowResult.content.startsWith('[TOOL ERROR]')) {
+            return success({ text: workflowResult.content, provider: 'deepseek', model: 'deepseek-16b-workflow (6.7B checkpoint)', stopReason: 'webgpu-secondary-unavailable' })
+          }
           throw new Error(`WebGPU 3B fallback failed (${primaryError instanceof Error ? primaryError.message : String(primaryError)}); 1.5B fallback failed (${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)})`)
         }
       }
@@ -219,17 +296,17 @@ export async function sendViaRouter(
 
 // ─── Convenience ──────────────────────────────────────────────────────────
 
-export function isProviderConfigured(apiKey: string = '', providerId: ProviderId = 'local'): boolean {
+export function isProviderConfigured(apiKey: string = '', providerId: ProviderId = DEFAULT_PROVIDER): boolean {
   return providers[providerId].isConfigured(apiKey)
 }
 
-export function providerSupportsTools(modelId: string, providerId: ProviderId = 'local'): boolean {
+export function providerSupportsTools(modelId: string, providerId: ProviderId = DEFAULT_PROVIDER): boolean {
   const provider = providers[providerId]
   if (!provider) return false
   return provider.supportsTools(modelId)
 }
 
-export async function testProviderKey(apiKey: string = '', providerId: ProviderId = 'local', workspaceId?: string): Promise<void> {
+export async function testProviderKey(apiKey: string = '', providerId: ProviderId = DEFAULT_PROVIDER, workspaceId?: string): Promise<void> {
   await providers[providerId].test(apiKey, workspaceId)
 }
 

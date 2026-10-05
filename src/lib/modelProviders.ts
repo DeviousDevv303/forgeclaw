@@ -8,8 +8,10 @@ import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL, localInferenceProvider } f
 import { corpusProvider } from './ai/providers/corpusProvider'
 import { DEFAULT_NEXUS_ENDPOINT, DEFAULT_NEXUS_MODEL, nexusProvider } from './ai/providers/nexusProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
+import type { ProviderId } from './providerDefaults'
 
-export type ProviderId = 'corpus' | 'anthropic' | 'local' | 'nexus'
+export { DEFAULT_PROVIDER, resolveInitialProvider } from './providerDefaults'
+export type { ProviderId } from './providerDefaults'
 
 export interface ModelOption {
   id: string
@@ -31,10 +33,10 @@ export interface ProviderConfig {
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   corpus: {
     id: 'corpus',
-    name: 'Corpus / NEXUS Local',
-    url: `${DEFAULT_LOCAL_ENDPOINT}/chat/completions`,
+    name: 'DeepSeek + CORPUS/NEXUS default duo',
+    url: DEFAULT_NEXUS_ENDPOINT,
     models: corpusProvider.models.map(model => ({ ...model })),
-    keyPlaceholder: DEFAULT_LOCAL_ENDPOINT,
+    keyPlaceholder: 'No API key required; DeepSeek workflow uses GitHub authorization',
   },
   anthropic: {
     id: 'anthropic',
@@ -53,17 +55,16 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
   nexus: {
     id: 'nexus',
-    name: 'NEXUS/CORPUS (Termux local)',
+    name: 'NEXUS WebGPU (secondary local runtime)',
     url: DEFAULT_NEXUS_ENDPOINT,
     models: nexusProvider.models.map(model => ({ ...model })),
-    keyPlaceholder: DEFAULT_NEXUS_ENDPOINT,
+    keyPlaceholder: 'No API key required',
   },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['nexus', 'local', 'corpus', 'anthropic']
-export const DEFAULT_PROVIDER: ProviderId = 'nexus'
+export const PROVIDER_ORDER: ProviderId[] = ['corpus', 'nexus', 'local', 'anthropic']
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
-  corpus: DEFAULT_LOCAL_MODEL,
+  corpus: DEFAULT_NEXUS_MODEL,
   anthropic: DEFAULT_ANTHROPIC_MODEL,
   local: DEFAULT_LOCAL_MODEL,
   nexus: DEFAULT_NEXUS_MODEL,
@@ -105,7 +106,7 @@ export async function callProvider(
   }
 
   if (providerId === 'corpus') {
-    const response = await corpusProvider.send({ ...request, model: model || DEFAULT_LOCAL_MODEL }, apiKey)
+    const response = await corpusProvider.send({ ...request, model: model || DEFAULT_NEXUS_MODEL }, apiKey)
     return { text: response.text, provider: 'corpus', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
   }
   if (providerId === 'anthropic') {

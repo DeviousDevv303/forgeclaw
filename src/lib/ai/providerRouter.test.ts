@@ -1,7 +1,7 @@
 // @vitest-environment node
 // MANUS acceptance coverage: the router must transport the runtime request as-is.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { detectBestProvider, getBestProvider, providers, sendViaRouter } from './providerRouter'
+import { detectBestProvider, getBestProvider, providers, providerSupportsTools, sendViaRouter } from './providerRouter'
 import { DEFAULT_NEXUS_WEBGPU_MODEL, LEGACY_NEXUS_WEBGPU_MODEL } from './providers/nexusWebGpuProvider'
 
 afterEach(() => vi.restoreAllMocks())
@@ -28,6 +28,18 @@ describe('provider router runtime passthrough', () => {
     vi.unstubAllGlobals()
   })
 
+  it('uses CORPUS/NEXUS as the canonical runtime and dispatches DeepSeek first without probing localhost', async () => {
+    await expect(getBestProvider('')).resolves.toEqual({ providerId: 'corpus', model: DEFAULT_NEXUS_WEBGPU_MODEL, level: 1 })
+    const task = 'Explain ForgeClaw briefly.'
+    const result = await sendViaRouter({
+      model: '',
+      systemPrompt: 'Answer naturally.',
+      messages: [{ role: 'user', content: task }],
+      tools: [{ name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } }],
+    }, '')
+    expect(result).toMatchObject({ success: true, response: { provider: 'corpus', stopReason: 'deterministic-deepseek-reasoning', toolCalls: [{ name: 'deepseek_reason', input: { task } }] } })
+  })
+
   it('turns explicit image intent into a direct generate_image tool call', async () => {
     globalThis.fetch = (async () => new Response('', { status: 503 })) as typeof fetch
     const result = await sendViaRouter({
@@ -50,7 +62,7 @@ describe('provider router runtime passthrough', () => {
       systemPrompt: 'manual tool protocol exactly',
       messages: [{ role: 'user', content: 'Create a watercolor image of a lighthouse at dusk' }],
       tools: undefined,
-    }, 'http://127.0.0.1:8080/v1', 'nexus')
+    }, '', 'nexus')
     expect(result).toMatchObject({
       success: true,
       response: { stopReason: 'direct-image-intent', toolCalls: [{ name: 'generate_image', input: { style: 'watercolor', width: 512, height: 512 } }] },
@@ -69,6 +81,115 @@ describe('provider router runtime passthrough', () => {
       success: true,
       response: { stopReason: 'deterministic-repository-evidence', toolCalls: [{ name: 'github_repo_state', input: {} }] },
     })
+  })
+
+  it('bootstraps GitHub evidence before prose even when an unrelated tool result already exists', async () => {
+    const result = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Repository evidence comes from GitHub tools.',
+      messages: [
+        { role: 'user', content: 'Read the ForgeClaw repository.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'memory-1', name: 'memory_read', input: {} }] },
+        { role: 'tool', content: 'Prior memory result.', tool_call_id: 'memory-1' },
+      ],
+      tools: [{ name: 'github_repo_state', description: 'Read repository state', parameters: { type: 'object', properties: {}, required: [] } }],
+    }, '', 'nexus')
+    expect(result).toMatchObject({ success: true, response: { stopReason: 'deterministic-repository-evidence', toolCalls: [{ name: 'github_repo_state' }] } })
+  })
+
+  it('passes actual GitHub evidence to DeepSeek before NEXUS/CORPUS synthesis', async () => {
+    const realResult = 'repo: DeviousDevv303/forgeclaw\nHEAD: abc123\nREADME evidence follows.'
+    const request = {
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Reason from tool results.',
+      messages: [
+        { role: 'user' as const, content: 'Inspect the ForgeClaw repository.' },
+        { role: 'assistant' as const, content: '', tool_calls: [{ id: 'repo-state-1', name: 'github_repo_state', input: {} }] },
+        { role: 'tool' as const, content: realResult, tool_call_id: 'repo-state-1' },
+      ],
+      tools: [
+        { name: 'github_repo_state', description: 'Read repository state', parameters: { type: 'object', properties: {}, required: [] } },
+        { name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } },
+      ],
+    }
+    const result = await sendViaRouter(request, '', 'nexus')
+    expect(result).toMatchObject({
+      success: true,
+      response: { stopReason: 'deterministic-deepseek-reasoning', toolCalls: [{ name: 'deepseek_reason', input: { task: 'Inspect the ForgeClaw repository.', context: expect.stringContaining(realResult) } }] },
+    })
+  })
+
+  it('injects a compact manual protocol for NEXUS without claiming native tools or parsing output in the provider', async () => {
+    expect(providerSupportsTools(DEFAULT_NEXUS_WEBGPU_MODEL, 'nexus')).toBe(false)
+    const rawManualCall = '```tool_call\n{"name":"github_read_file","arguments":{"path":"README.md"}}\n```'
+    const send = vi.spyOn(providers.nexus, 'send').mockResolvedValue({ text: rawManualCall, provider: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL })
+    const result = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Answer the request.',
+      messages: [{ role: 'user', content: 'Help me code a small todo list.' }],
+      tools: [{
+        name: 'github_read_file',
+        description: 'Read a repository file',
+        parameters: { type: 'object', properties: { path: { type: 'string', description: 'Path' } }, required: ['path'] },
+      }],
+    }, '', 'nexus')
+    expect(send).toHaveBeenCalledOnce()
+    expect(send.mock.calls[0][0].systemPrompt).toContain('```tool_call')
+    expect(send.mock.calls[0][0].systemPrompt).toContain('github_read_file(path*:string)')
+    expect(send.mock.calls[0][0].tools).toBeUndefined()
+    expect(result).toMatchObject({ success: true, response: { text: rawManualCall } })
+    expect(result.success && 'toolCalls' in result.response).toBe(false)
+  })
+
+  it('routes complex reasoning through the existing DeepSeek tool and returns its result to NEXUS', async () => {
+    const task = 'Analyze this architecture and explain the trade-offs.'
+    const tools = [{ name: 'deepseek_reason', description: 'DeepSeek reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } }]
+    const first = await sendViaRouter({ model: DEFAULT_NEXUS_WEBGPU_MODEL, systemPrompt: 'Use DeepSeek when appropriate.', messages: [{ role: 'user', content: task }], tools }, '', 'nexus')
+    expect(first).toMatchObject({ success: true, response: { stopReason: 'deterministic-deepseek-reasoning', toolCalls: [{ name: 'deepseek_reason', input: { task } }] } })
+
+    const deepSeekResult = 'Actual DeepSeek workflow output: three trade-offs.'
+    const send = vi.spyOn(providers.nexus, 'send').mockResolvedValue({ text: 'Concise synthesis.', provider: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL })
+    const continued = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Continue from tool results.',
+      messages: [
+        { role: 'user', content: task },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'deepseek-1', name: 'deepseek_reason', input: { task } }] },
+        { role: 'tool', content: deepSeekResult, tool_call_id: 'deepseek-1' },
+      ],
+      tools,
+    }, '', 'nexus')
+    expect(continued).toMatchObject({ success: true, response: { text: 'Concise synthesis.' } })
+    expect(send.mock.calls[0][0].messages.at(-1)).toMatchObject({ role: 'tool', content: deepSeekResult, tool_call_id: 'deepseek-1' })
+  })
+
+  it('returns the real DeepSeek result if the secondary Qwen WebGPU runtime cannot synthesize', async () => {
+    const deepSeekResult = 'Actual DeepSeek workflow answer, not invented by local inference.'
+    const send = vi.spyOn(providers.corpus, 'send').mockRejectedValue(new Error('WebGPU unavailable'))
+    const result = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Synthesize from the actual DeepSeek result.',
+      messages: [
+        { role: 'user', content: 'Explain the architecture.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'deepseek-final', name: 'deepseek_reason', input: { task: 'Explain the architecture.' } }] },
+        { role: 'tool', content: deepSeekResult, tool_call_id: 'deepseek-final' },
+      ],
+      tools: [{ name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } }],
+    }, '')
+    expect(result).toMatchObject({ success: true, response: { provider: 'deepseek', text: deepSeekResult, stopReason: 'webgpu-secondary-unavailable' } })
+    expect(send.mock.calls.map(([request]) => request.model)).toEqual([DEFAULT_NEXUS_WEBGPU_MODEL, LEGACY_NEXUS_WEBGPU_MODEL])
+  })
+
+  it('keeps ordinary NEXUS chat free of the full tool catalog', async () => {
+    const send = vi.spyOn(providers.nexus, 'send').mockResolvedValue({ text: 'ForgeClaw is an operator-controlled workspace.', provider: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL })
+    await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Answer directly.',
+      messages: [{ role: 'user', content: 'Explain what ForgeClaw is in one short paragraph.' }],
+      tools: undefined,
+    }, '', 'nexus')
+    expect(send.mock.calls[0][0].systemPrompt).not.toContain('AVAILABLE TOOLS')
+    expect(send.mock.calls[0][0].tools).toBeUndefined()
   })
 
   it('falls from local inference to WebGPU 3B then WebGPU 1.5B when available', async () => {

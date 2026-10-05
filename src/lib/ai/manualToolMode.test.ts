@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseManualToolCalls, stripToolSyntax } from './manualToolMode'
+import { parseManualToolCalls, stripToolSyntax, toToolCalls } from './manualToolMode'
 
 describe('parseManualToolCalls', () => {
   it('parses Format A fenced tool calls', () => {
@@ -10,6 +10,15 @@ describe('parseManualToolCalls', () => {
         rawOutput: '```tool_call\n{"name":"github_read_file","arguments":{"path":"package.json"}}\n```',
       },
     ])
+  })
+
+  it('normalizes one manual call into exactly one ordinary ToolCall and sanitizes its syntax', () => {
+    const emitted = 'I will inspect the file.\n```tool_call\n{"name":"github_read_file","arguments":{"path":"README.md"}}\n```'
+    const actions = parseManualToolCalls(emitted)
+    const calls = toToolCalls(actions)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toMatchObject({ name: 'github_read_file', input: { path: 'README.md' } })
+    expect(stripToolSyntax(emitted)).toBe('I will inspect the file.')
   })
 
   it('parses fenced JSON tool calls', () => {

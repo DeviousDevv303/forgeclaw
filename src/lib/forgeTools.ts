@@ -180,11 +180,11 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'deepseek_reason',
-    description: 'Primary complex-task reasoning via the repository-owned DeepSeek-16B GitHub Actions workflow. The request is recorded as an unapproved NEXUS learning candidate when enabled.',
+    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained, while the workflow currently runs the public deepseek-ai/deepseek-coder-6.7b-instruct checkpoint. The request is recorded as an unapproved NEXUS learning candidate when enabled.',
     parameters: {
       type: 'object',
       properties: {
-        task: { type: 'string', description: 'Task for DeepSeek-16B' },
+        task: { type: 'string', description: 'Task for the DeepSeek reasoning workflow' },
         context: { type: 'string', description: 'Additional context for the task' },
         nexus_learn: { type: 'boolean', description: 'Record the dispatch in the local NEXUS corpus (default true)' },
         ref: { type: 'string', description: 'Branch or tag to run the workflow from (default main)' },
@@ -194,11 +194,11 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'ask_deepseek',
-    description: 'Ask DeepSeek-16B directly. No routing delay.',
+    description: 'Ask the existing DeepSeek reasoning workflow directly. No routing delay; it currently runs the public 6.7B instruct checkpoint.',
     parameters: {
       type: 'object',
       properties: {
-        question: { type: 'string', description: 'Question to dispatch directly to the DeepSeek-16B workflow' },
+        question: { type: 'string', description: 'Question to dispatch directly to the DeepSeek reasoning workflow' },
         context: { type: 'string', description: 'Optional additional context' },
         ref: { type: 'string', description: 'Branch or tag for the workflow (default main)' },
       },

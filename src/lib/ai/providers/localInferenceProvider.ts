@@ -77,8 +77,9 @@ function toMessages(systemPrompt: string, messages: AIMessage[]): LocalMessage[]
 }
 
 /**
- * DeepSeek-primary mode: NEXUS is a knowledge layer and never the reasoning
- * engine. It may only return an approved answer already present in the corpus.
+ * Legacy Local Inference routing hook: this explicit adapter delegates to the
+ * repository DeepSeek workflow rather than silently selecting NEXUS. The default
+ * NEXUS/CORPUS path has its own orchestration and memory/context responsibilities.
  */
 export function shouldUseLocalModel(messages: AIMessage[]): boolean {
   void messages

@@ -64,7 +64,7 @@ describe('NEXUS / Corpus Local Mode', () => {
     const result = await appendDeepSeekLearning('Explain routing', 'pending artifact', 'deepseek-test-1', 'private context')
     expect(result.candidate.admissionStatus).toBe('candidate')
     expect(result.candidate.runtime).toBe('github-actions')
-    expect(result.candidate.model).toBe('deepseek-16b-instruct')
+    expect(result.candidate.model).toBe('deepseek-ai/deepseek-coder-6.7b-instruct')
     expect(result.candidate.input).toContain('[DEEPSEEK_TASK] Explain routing')
     expect(result.candidate.generatedResult).toContain('[DEEPSEEK_RESULT]')
   })

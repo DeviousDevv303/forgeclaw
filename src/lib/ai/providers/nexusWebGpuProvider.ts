@@ -1,7 +1,6 @@
 import type { InitProgressReport, MLCEngineInterface } from '@mlc-ai/web-llm'
 import type { AIProvider, AIRequest, AIResponse } from '../types'
 import { adaptNexusMessages, limitNexusContext, MAX_NEXUS_CONTEXT_TOKENS } from '../nexusContext'
-import { parseManualToolCalls, toToolCalls } from '../manualToolMode'
 
 export const DEFAULT_NEXUS_WEBGPU_MODEL = 'Qwen2.5-3B-Instruct-q4f16_1-MLC'
 export const LEGACY_NEXUS_WEBGPU_MODEL = 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC'
@@ -9,7 +8,7 @@ export const NEXUS_CACHE_VERSION = 'qwen2.5-3b-v3'
 export const NEXUS_WEBGPU_MODELS = [
   {
     id: DEFAULT_NEXUS_WEBGPU_MODEL,
-    label: 'Qwen2.5 3B Instruct Q4 (Browser WebGPU)',
+    label: 'Qwen2.5 3B Instruct Q4 (Browser WebGPU · secondary)',
     contextK: 8,
     note: 'Browser-local WebLLM/WebGPU; model assets cached in IndexedDB',
   },
@@ -174,7 +173,7 @@ async function getEngine(model: string): Promise<MLCEngineInterface> {
 
 export const nexusWebGpuProvider: AIProvider = {
   id: 'nexus',
-  label: 'NEXUS/CORPUS (Browser WebGPU)',
+  label: 'NEXUS WebGPU (secondary local runtime)',
   requiresKey: false,
   models: NEXUS_WEBGPU_MODELS,
   isConfigured(apiKey: string): boolean {
@@ -216,13 +215,10 @@ export const nexusWebGpuProvider: AIProvider = {
       }
     }
     publish({ status: 'ready', progress: 1, text: `NEXUS ${model.includes('3B') ? '3B' : '1.5B'} WebGPU model ready` })
-    const manualActions = parseManualToolCalls(text)
-    const toolCalls = toToolCalls(manualActions)
     return {
       text,
       provider: 'nexus',
       model,
-      toolCalls: toolCalls.length ? toolCalls : undefined,
       stopReason: 'stop',
     }
   },

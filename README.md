@@ -1,6 +1,6 @@
 # ForgeClaw
 
-> **A local-first, operator-controlled AI development and automation console.**
+> **An operator-controlled AI development and automation console with the DeepSeek + NEXUS/CORPUS reasoning duo as its default.**
 >
 > ForgeClaw combines structured agent workflows, a provider-backed AI runtime, GitHub operations, browser-automation runners, safety checks, and failure visibility in one browser-based workspace.
 
@@ -22,7 +22,9 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 ## Current runtime
 
-The active application path supports Anthropic, Moonshot, and Local Inference through shared provider interfaces. Local Inference is the default provider and uses a separately managed llama.cpp server.
+The default is a combined runtime: CORPUS provides memory/context, NEXUS is the user-facing browser/WebGPU layer, and the existing DeepSeek GitHub Actions workflow is the primary reasoner for ordinary and complex requests. Qwen2.5 WebGPU is secondary local synthesis/fallback, not the primary reasoner. Local llama.cpp and Anthropic remain explicit provider choices.
+
+**Default flow:** `User → CORPUS context → DeepSeek workflow → (optional ForgeTools execution → real results → DeepSeek continuation) → Qwen/NEXUS synthesis → response`. Side effects stay in ForgeTools and its existing Guardian checks; NEXUS WebGPU does not receive tool authority. The workflow retains the DeepSeek-16B route/API contract but currently loads the public `deepseek-ai/deepseek-coder-6.7b-instruct` checkpoint. No actual 16B browser/WebGPU runtime is present.
 
 The operator supplies provider credentials through the application's settings flow. Credentials are not intended to be committed to the repository.
 
@@ -88,7 +90,7 @@ scripts/
 | Build | Vite |
 | Styling | Tailwind CSS |
 | State | Zustand |
-| AI runtime | Provider interface with Anthropic, Moonshot, and Local Inference adapters |
+| AI runtime | DeepSeek workflow + CORPUS/NEXUS Browser WebGPU default duo; optional llama.cpp and Anthropic adapters |
 | GitHub API | Octokit REST |
 | Optional backend | Supabase Edge Function |
 | Browser automation | Playwright |

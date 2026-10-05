@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Corpus / NEXUS Local Provider ───────────────────────────────────────────
-// Offline corpus retrieval + Browser WebGPU inference (Choice A).
+// Offline corpus retrieval + secondary Browser WebGPU synthesis/fallback.
 // Does not require Termux, Ollama, or nexusd. Does not fall back to cloud.
 
 import type { AIProvider, AIRequest, AIResponse } from '../types'
@@ -14,13 +14,13 @@ import {
 
 export const corpusProvider: AIProvider = {
   id: 'corpus',
-  label: 'Corpus / NEXUS (Browser WebGPU)',
+  label: 'DeepSeek + CORPUS/NEXUS default duo',
   requiresKey: false,
   models: [{
     id: DEFAULT_NEXUS_WEBGPU_MODEL,
-    label: 'Corpus + Qwen2.5 3B (Browser WebGPU)',
+    label: 'CORPUS + Qwen2.5 3B WebGPU (secondary)',
     contextK: 8,
-    note: 'Browser-local WebLLM/WebGPU with optional corpus context',
+    note: 'Secondary browser-local WebLLM/WebGPU synthesis with CORPUS context',
   }],
 
   isConfigured(apiKey: string): boolean {
