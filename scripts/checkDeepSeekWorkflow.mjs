@@ -5,6 +5,18 @@ const workflowPath = new URL('../.github/workflows/deepseek-16b.yml', import.met
 const workflow = readFileSync(workflowPath, 'utf8')
 const startMarker = "          python - <<'PY'\n"
 const endMarker = '\n          PY\n'
+const requiredMarkers = [
+  'def is_creative_task(task_text):',
+  'def is_generic_scope_refusal(text):',
+  'creative_retry_attempted = False',
+  'retry_result = run_inference(model_used, retry_messages)',
+]
+for (const marker of requiredMarkers) {
+  if (!workflow.includes(marker)) {
+    console.error(`DeepSeek workflow validator: required primary retry contract is missing: ${marker}`)
+    process.exit(1)
+  }
+}
 const start = workflow.indexOf(startMarker)
 if (start < 0) {
   console.error('DeepSeek workflow validator: Python heredoc opener was not found')

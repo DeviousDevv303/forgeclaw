@@ -124,36 +124,65 @@ jobs:
                   'You are the primary reasoning engine of ForgeClaw. Answer the '
                   'user’s actual request on its merits using the supplied context; '
                   'technical, factual, analytical, and creative requests are all in '
-                  'scope. Do not substitute generic disclaimers for an answer the '
-                  'evidence supports. For spiritual, philosophical, persuasive, or '
-                  'creative requests, fulfill the requested form as an imaginative '
-                  'frame; if a premise is not established, label it briefly rather than '
-                  'presenting it as proven. Do not refuse solely because a request is '
-                  'nontechnical or spiritual. Respect dignity and emotional autonomy; '
-                  'invite reflection rather than manipulating vulnerabilities. '
+                  'scope. For safe philosophical, spiritual, persuasive, or creative '
+                  'requests, label an unsupported premise briefly as metaphor or belief '
+                  'when needed, then still produce the actual requested artifact. Do '
+                  'not replace safe creative work with a claim that you are not equipped, '
+                  'a redirect to another source, or a technical lecture. If the user '
+                  'asks for emotional triggers, replace exploitation of private '
+                  'vulnerabilities with an ethical persuasive arc based on universal '
+                  'human experiences and an invitation that preserves consent. For a '
+                  'presentation, provide titled sections and concrete speaking points. '
                   'Never claim an action succeeded without actual evidence.'
                   ),
               },
               {'role': 'user', 'content': user_content},
           ]
 
-          def run_inference(model_id):
-              tokenizer = AutoTokenizer.from_pretrained(model_id)
-              model = AutoModelForCausalLM.from_pretrained(
-                  model_id,
-                  torch_dtype=torch.float16,
-                  low_cpu_mem_usage=True,
+          def is_creative_task(task_text):
+              folded = task_text.casefold()
+              markers = ('creative', 'presentation', 'persuasive', 'philosoph', 'spiritual', 'metaphor', 'poem', 'story', 'imagine')
+              return any(marker in folded for marker in markers)
+
+          def is_generic_scope_refusal(text):
+              folded = ' '.join(text.casefold().split())
+              markers = (
+                  'not equipped to engage in philosophical, spiritual, or creative discussions',
+                  'not equipped to provide a presentation that would convince',
+                  "i'm not equipped to engage in philosophical",
+                  'i am not equipped to engage in philosophical',
+                  'seek help from a source that specializes in these areas',
               )
-              model.eval()
+              return any(marker in folded for marker in markers)
+
+          loaded_models = {}
+
+          def run_inference(model_id, active_messages=None):
+              active_messages = active_messages or messages
+              loaded = loaded_models.get(model_id)
+              if loaded is None:
+                  tokenizer = AutoTokenizer.from_pretrained(model_id)
+                  model = AutoModelForCausalLM.from_pretrained(
+                      model_id,
+                      torch_dtype=torch.float16,
+                      low_cpu_mem_usage=True,
+                  )
+                  model.eval()
+                  loaded_models[model_id] = (tokenizer, model)
+              else:
+                  tokenizer, model = loaded
               if getattr(tokenizer, 'chat_template', None):
                   encoded = tokenizer.apply_chat_template(
-                      messages,
+                      active_messages,
                       add_generation_prompt=True,
                       return_tensors='pt',
                       return_dict=True,
                   )
               else:
-                  prompt = f"### Instruction:\n{user_content}\n### Response:\n"
+                  prompt = '\n\n'.join(
+                      f"{message['role'].capitalize()}:\n{message['content']}"
+                      for message in active_messages
+                  ) + '\n\nAssistant:\n'
                   encoded = tokenizer(prompt, return_tensors='pt', truncation=True, max_length=4096)
               with torch.no_grad():
                   output = model.generate(
@@ -176,6 +205,38 @@ jobs:
               model_used = FALLBACK_MODEL
               note = f'fallback checkpoint after primary failure: {type(primary_error).__name__}'
               result = run_inference(FALLBACK_MODEL)
+
+          creative_retry_attempted = False
+          creative_retry_succeeded = False
+          if is_creative_task(task) and is_generic_scope_refusal(result):
+              creative_retry_attempted = True
+              retry_messages = [
+                  {
+                      'role': 'system',
+                      'content': messages[0]['content'] + (
+                          ' A prior draft incorrectly refused a safe creative task. This is a '
+                          'bounded retry using the same primary model, not a request to claim '
+                          'unsupported facts. Treat the premise as an imaginative metaphor, '
+                          'briefly label it as such, then deliver the requested artifact. If '
+                          'the requested persuasion mentions inner triggers, replace that '
+                          'method with an ethical appeal to universal human experiences and '
+                          'free choice. Do not say you are unequipped or redirect the user. '
+                          'Write the presentation itself now; do not explain these instructions.'
+                      ),
+                  },
+                  {'role': 'user', 'content': user_content},
+              ]
+              print('Primary produced a generic creative-scope refusal; retrying once with the same checkpoint and a direct ethical-artifact instruction.')
+              try:
+                  retry_result = run_inference(model_used, retry_messages)
+                  if retry_result and not is_generic_scope_refusal(retry_result):
+                      result = retry_result
+                      creative_retry_succeeded = True
+                  else:
+                      print('The bounded same-model retry did not produce a substantive creative response; preserving the actual primary output.')
+              except Exception as retry_error:  # noqa: BLE001 - preserve the real primary output if retry itself fails
+                  print(f'Creative-scope retry failed ({type(retry_error).__name__}); preserving the actual primary output.')
+
           elapsed = round(time.time() - started, 1)
 
           if not result:
@@ -188,6 +249,8 @@ jobs:
                   f'invocation_id={invocation_id}\n'
                   f'model={model_used}\n'
                   f'role={note}\n'
+                  f'creative_retry_attempted={str(creative_retry_attempted).lower()}\n'
+                  f'creative_retry_succeeded={str(creative_retry_succeeded).lower()}\n'
                   f'elapsed_seconds={elapsed}\n'
               )
           print(f'Wrote DeepSeek result for {invocation_id} using {model_used}')
