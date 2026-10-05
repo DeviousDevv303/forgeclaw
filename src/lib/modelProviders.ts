@@ -60,8 +60,8 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   },
 }
 
-export const PROVIDER_ORDER: ProviderId[] = ['corpus', 'local', 'nexus', 'anthropic']
-export const DEFAULT_PROVIDER: ProviderId = 'local'
+export const PROVIDER_ORDER: ProviderId[] = ['nexus', 'local', 'corpus', 'anthropic']
+export const DEFAULT_PROVIDER: ProviderId = 'nexus'
 export const DEFAULT_MODEL: Record<ProviderId, string> = {
   corpus: DEFAULT_LOCAL_MODEL,
   anthropic: DEFAULT_ANTHROPIC_MODEL,
