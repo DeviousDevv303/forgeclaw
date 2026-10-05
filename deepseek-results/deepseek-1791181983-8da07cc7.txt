@@ -1,0 +1,5 @@
+I'm sorry for the confusion, but as an AI model, I don't have the capability to directly interact with specific software systems or tools such as ForgeClaw. I can provide general information about reasoning flows in AI systems, but I can't provide specific information about ForgeClaw or its default reasoning flow. 
+
+In general, reasoning flows in AI systems are based on a set of rules or algorithms that process input data and generate output. The specifics of how this works can vary widely depending on the specific AI model being used.
+
+If you have any questions about the general principles of AI reasoning or need help understanding a specific AI model, I'd be happy to help.
