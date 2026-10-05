@@ -1054,7 +1054,7 @@ function App() {
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
 
-    const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding-readonly', finalTools)) : finalTools
+    const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding', finalTools)) : finalTools
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'The selected model does not support native tool calling. Use manual tool mode or switch to a tool-capable model.'
