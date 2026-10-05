@@ -71,6 +71,7 @@ import { ReasoningTrace } from './components/ReasoningTrace'
 import type { AgentPhase } from './types/forgeOps'
 import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from './lib/deepseekCommand'
 import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
+import { FOUNDER_PRINCIPLES } from './lib/founderPrinciples'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -2110,6 +2111,33 @@ for (const call of result.toolCalls) {
         {activeTab === 'settings' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
+
+              {/* ── Foundational governance: read-only canonical projection ── */}
+              <section aria-labelledby="founder-principles-heading" style={{ marginBottom: '18px', background: '#101010', border: '1px solid #3b2415', borderRadius: '6px', padding: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px', marginBottom: '6px' }}>
+                  <h2 id="founder-principles-heading" style={{ margin: 0, color: '#f97316', fontSize: '13px', letterSpacing: '1px', textTransform: 'uppercase' }}>Founder / Guardian Principles</h2>
+                  <span style={{ color: '#777', fontSize: '9px', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>READ-ONLY FOUNDATION</span>
+                </div>
+                <div style={{ color: '#999', fontSize: '10px', lineHeight: 1.5, marginBottom: '10px' }}>
+                  Foundational governance — not an editable runtime setting. Capability may evolve through verified reality; authority remains with the constitution.
+                </div>
+                <div style={{ display: 'grid', gap: '10px' }}>
+                  {[
+                    ['The Founder’s Principle', FOUNDER_PRINCIPLES.principle],
+                    ['The Motive', FOUNDER_PRINCIPLES.motive],
+                    ['Completion standard', FOUNDER_PRINCIPLES.completionStandard],
+                  ].map(([title, content]) => (
+                    <details key={title} open style={{ borderTop: '1px solid #292929', paddingTop: '8px' }}>
+                      <summary style={{ color: '#ddd', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>{title}</summary>
+                      <div style={{ color: '#aaa', fontSize: '10px', lineHeight: 1.6, marginTop: '8px', whiteSpace: 'pre-wrap' }}>{content}</div>
+                    </details>
+                  ))}
+                </div>
+                <div style={{ borderTop: '1px solid #292929', marginTop: '12px', paddingTop: '9px', color: '#777', fontSize: '10px', lineHeight: 1.5 }}>
+                  Hierarchy: Founder’s principles → Codex Anima / Guardian foundation → ForgeClaw / NEXUS behavior. CORPUS may supply learning candidates, never authority over these principles.
+                  <br />Canonical source: <a href="https://github.com/DeviousDevv303/forgeclaw/blob/main/docs/founder-principles.md" target="_blank" rel="noreferrer" style={{ color: '#f97316' }}>{FOUNDER_PRINCIPLES.sourcePath}</a>
+                </div>
+              </section>
 
               {/* Provider Selector */}
               <div style={{ marginBottom: '14px' }}>
