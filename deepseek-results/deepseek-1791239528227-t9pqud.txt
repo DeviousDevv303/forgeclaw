@@ -1,0 +1,23 @@
+##1.OBJECTIVE
+
+Eliminate pseudo-text generation ("lorem ipsum" artifacts/distorted OCR characters) across all UI rendering pipelines, wireframe exports, and visual mockups. Ensure all rendered interfaces display crisp, human-readable system fonts and structured component layouts.
+
+##2. CORETASKS & REQUIREMENTS
+
+### Task 2.1: Typography & Font Rendering Overhaul
+
+* Replace all generative text synthesis modules with deterministic font rendering engines.
+* Standardized dark-mode interface typography using crisp system fonts (e.g., Inter, Roboto, or system monospaced fonts for technical logs).
+* Ensure strict contrast ratios (WCAG AAA) for header text, body paragraphs, and accent elements (e.g., golden-yellow tags).
+
+### Task 2.2: Structural UI Component Mapping
+
+* Re-architect wireframe layouts into clean, modular CSS/HTML components:
+ * Header Bar: Clear top-level navigation title and subtitle hierarchy.
+ * Navigation Panel (Left Sidebar): Structured 3-card stack for profile/categories, status items with icons/badges, and metadata footers.
+ * Main Content Area: Discreet main content view, detail pane, and aligned log/description blocks.
+
+### Task 2.3: SVG & Canvas Rendering Rules
+
+* If generating SVG or Canvas diagrams, enforce explicit text node bounds with exact font-family, font-weight, and font-size attributes.
+* Disable rasterized text distortion layers and spatial noise on UI exports.
