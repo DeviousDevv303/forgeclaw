@@ -181,7 +181,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'deepseek_reason',
-    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained, while the workflow currently runs the public deepseek-ai/deepseek-coder-6.7b-instruct checkpoint. The request is recorded as an unapproved NEXUS learning candidate when enabled.',
+    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained; the workflow currently runs deepseek-ai/deepseek-llm-7b-chat as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request is recorded as an unapproved NEXUS learning candidate when enabled.',
     parameters: {
       type: 'object',
       properties: {
@@ -195,7 +195,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'ask_deepseek',
-    description: 'Ask the existing DeepSeek reasoning workflow directly. No routing delay; it currently runs the public 6.7B instruct checkpoint.',
+    description: 'Ask the existing DeepSeek reasoning workflow directly. No routing delay; deepseek-ai/deepseek-llm-7b-chat is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.',
     parameters: {
       type: 'object',
       properties: {
