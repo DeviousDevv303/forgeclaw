@@ -1,0 +1,4 @@
+invocation_id=deepseek-1791188246218-7ohw43
+model=deepseek-ai/deepseek-coder-6.7b-instruct
+role=primary checkpoint
+elapsed_seconds=712.1
