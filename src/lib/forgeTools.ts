@@ -26,7 +26,7 @@ import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
-import { waitForDeepSeekResult } from './deepseekArtifact'
+import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, waitForDeepSeekResult } from './deepseekArtifact'
 
 // These runtime envelopes are for the chat/model boundary only. They must not
 // become part of a user-facing image prompt, where Stable Diffusion may render
@@ -748,34 +748,41 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         } as const
         let dispatch: Response
         try {
-          dispatch = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/deepseek-16b.yml/dispatches`, dispatchRequest)
+          dispatch = await toolFetch({ ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS }, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/deepseek-16b.yml/dispatches`, dispatchRequest)
         } catch (dispatchError) {
-          throw new Error(describeGithubTransportFailure('deepseek-dispatch', dispatchError))
+          throw new Error(describeGithubTransportFailure('deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches', dispatchError))
         }
         if (!dispatch.ok) {
           // Reuse the proven dispatch classifier so a 401/403/404 reads the same
           // way here as it does in shell_exec, then keep GitHub's own message.
           const detail = await dispatch.text().catch(() => '')
           const explanation = describeGithubDispatchFailure(dispatch.status, dispatch.statusText)
-          throw new Error(`${explanation}${detail ? ` DeepSeek dispatch response: ${detail.slice(0, 300)}` : ''}`)
+          throw new Error(`deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: ${explanation}${detail ? ` DeepSeek dispatch response: ${detail.slice(0, 300)}` : ''}`)
         }
         const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
+        let learningStatus = 'not requested'
+        let learningWarning = ''
         if (nexusLearn) {
-          // Learning persistence is its own stage: a corpus write failure must
-          // never be reported as a DeepSeek result failure.
+          // Learning persistence is independent of reasoning success. Preserve
+          // the actual workflow result and report a separate write warning.
           try {
             await appendDeepSeekLearning(
               task,
-              completed.result,
+            completed.result,
               invocationId,
               context,
             )
+            learningStatus = 'unapproved candidate recorded'
           } catch (learningError) {
             const detail = learningError instanceof Error ? learningError.message : String(learningError)
-            throw new Error(`deepseek-learning-persistence: the DeepSeek result was received but the NEXUS learning candidate could not be recorded (${detail}). DeepSeek output: ${completed.result.slice(0, 500)}`)
+            learningStatus = 'failed'
+            learningWarning = `Learning persistence warning: deepseek-learning-persistence failed after the real DeepSeek result was received (${detail.slice(0, 300)}).`
           }
         }
-        return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\nRun: ${completed.run.html_url}\n\n${completed.result}${nexusLearn ? '\n\nNEXUS recorded this result as an unapproved learning candidate.' : ''}`
+        const checkpoint = completed.model || 'checkpoint metadata unavailable'
+        const role = completed.role ? ` (${completed.role})` : ''
+        const stages = `Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=${completed.source}; result-extraction=complete; checkpoint=${checkpoint}${role}; learning-persistence=${learningStatus}.`
+        return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${completed.run.html_url}\n\n${completed.result}${learningWarning ? `\n\n${learningWarning}` : nexusLearn ? '\n\nNEXUS recorded this result as an unapproved learning candidate.' : ''}`
       }
 
       // ── Self-sculpt: branch + pull request proposal ──────────────────────────

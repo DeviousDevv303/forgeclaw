@@ -15,11 +15,13 @@ import {
   DEFAULT_NEXUS_WEBGPU_MODEL,
   LEGACY_NEXUS_WEBGPU_MODEL,
   isNexusWebGpuAvailable,
+  sanitizeNexusWebGpuDiagnostic,
 } from './providers/nexusWebGpuProvider'
 import { injectToolSchemaWithinBudget } from './manualToolMode'
 import { MAX_NEXUS_CONTEXT_TOKENS } from './nexusContext'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
+import { buildDeepSeekTaskPayload, extractOriginalDeepSeekTask } from './deepseekContext'
 
 // ─── Registry ───────────────────────────────────────────────────────────────
 
@@ -191,6 +193,113 @@ function latestCurrentToolResult(request: AIRequest): { name: string; content: s
   return { name: callNamesById.get(result.tool_call_id) || '', content: result.content }
 }
 
+function failedDeepSeekToolResult(request: AIRequest): { name: string; content: string } | undefined {
+  const turn = currentTurnMessages(request)
+  const callNamesById = new Map<string, string>()
+  for (const message of turn) {
+    if (message.role === 'assistant') for (const call of message.tool_calls ?? []) callNamesById.set(call.id, call.name)
+  }
+  const result = [...turn].reverse().find(message => {
+    if (message.role !== 'tool' || !message.tool_call_id || callNamesById.get(message.tool_call_id) !== 'deepseek_reason') return false
+    return !isSuccessfulDeepSeekToolResult(message.content)
+  })
+  return result?.role === 'tool' ? { name: 'deepseek_reason', content: result.content } : undefined
+}
+
+function secondarySynthesisAttempt(model: string, error: unknown) {
+  const rawMessage = error instanceof Error ? error.message : String(error)
+  const taggedStage = rawMessage.match(/NEXUS_WEBGPU_FAILURE stage=([a-z-]+)/)?.[1]
+  const stage = taggedStage || (/timed out/i.test(rawMessage) ? 'timeout' : 'unknown')
+  return { model, stage, message: sanitizeNexusWebGpuDiagnostic(error) }
+}
+
+function shouldSkipLegacyAfterPrimaryFailure(attempt: { stage: string }): boolean {
+  // The legacy checkpoint shares the same browser adapter/runtime. Do not launch
+  // a second download/engine while the first timed-out load may still be running.
+  return ['timeout', 'webgpu-detection', 'webgpu-capability', 'webllm-import'].includes(attempt.stage)
+}
+
+const CLEAN_DEEPSEEK_FALLBACK_SYSTEM_PROMPT = [
+  "You are ForgeClaw's local NEXUS/Qwen fallback. The primary reasoning service did not return a usable result.",
+  'Answer only the original user request in the single user message below. You have no tools and no repository, workflow, or external-action evidence.',
+  'Never claim that DeepSeek, a tool, a workflow, or an external action succeeded. Do not mention or reproduce internal error messages.',
+  'For factual or scientific topics, distinguish established evidence from hypothesis, metaphor, or creative framing.',
+  "Honor ForgeClaw's motive of Love by respecting dignity and emotional autonomy; do not exploit vulnerabilities or claim to know the user's innermost triggers.",
+  'If necessary evidence is absent, state plainly what cannot be verified rather than guessing.',
+].join(' ')
+
+function isGuardianBlockedResult(content: string): boolean {
+  return /^\s*\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(content)
+}
+
+function isSuccessfulDeepSeekToolResult(content: string): boolean {
+  return content.startsWith('✓ DeepSeek-16B completed as ')
+}
+
+function deepSeekCheckpointLabel(content: string): string {
+  return content.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable'
+}
+
+function primaryReasoningFailure(content: string) {
+  const message = sanitizeNexusWebGpuDiagnostic(content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim())
+  const stage = message.match(/\b(deepseek-[a-z-]+)(?=\s|:)/i)?.[1] || (/github read timed out/i.test(message) ? 'github-read-unclassified' : 'unknown')
+  return { status: 'failed' as const, stage, message: message.slice(0, 500) }
+}
+
+function cleanOriginalTaskRequest(request: AIRequest, model: string): AIRequest | null {
+  const originalUserMessage = [...currentTurnMessages(request)].reverse().find(message => message.role === 'user')
+  const task = extractOriginalDeepSeekTask(originalUserMessage?.content ?? '')
+  if (!task) return null
+  return {
+    model,
+    systemPrompt: CLEAN_DEEPSEEK_FALLBACK_SYSTEM_PROMPT,
+    messages: [{ role: 'user', content: task }],
+    maxTokens: Math.min(request.maxTokens ?? 512, 768),
+    signal: request.signal,
+  }
+}
+
+async function sendCleanFallbackAfterDeepSeekFailure(
+  request: AIRequest,
+  apiKey: string,
+  primaryFailure: ReturnType<typeof primaryReasoningFailure>,
+): Promise<AIResponse> {
+  const cleanRequest = cleanOriginalTaskRequest(request, DEFAULT_NEXUS_WEBGPU_MODEL)
+  if (!cleanRequest) throw new Error(`DeepSeek primary failed at ${primaryFailure.stage}; the original user request was unavailable for a clean fallback.`)
+
+  let preferredError: unknown
+  let preferredAttempt: ReturnType<typeof secondarySynthesisAttempt> | undefined
+  try {
+    const response = await sendSecondaryWithTimeout(nexusProvider, cleanRequest, apiKey, 'Clean-request Qwen fallback')
+    return { ...response, stopReason: 'clean-fallback-no-tools', diagnostics: { primaryReasoning: primaryFailure } }
+  } catch (error) {
+    if (request.signal?.aborted) throw error
+    preferredError = error
+    preferredAttempt = secondarySynthesisAttempt(DEFAULT_NEXUS_WEBGPU_MODEL, error)
+    if (shouldSkipLegacyAfterPrimaryFailure(preferredAttempt)) {
+      throw new Error(`DeepSeek primary failed at ${primaryFailure.stage}: ${primaryFailure.message}; clean Qwen fallback failed at ${preferredAttempt.stage}: ${preferredAttempt.message}`)
+    }
+  }
+
+  const legacyRequest = cleanOriginalTaskRequest(request, LEGACY_NEXUS_WEBGPU_MODEL)
+  if (!legacyRequest) throw preferredError
+  try {
+    const response = await sendSecondaryWithTimeout(nexusProvider, legacyRequest, apiKey, 'Clean-request Qwen legacy fallback')
+    return {
+      ...response,
+      stopReason: 'clean-fallback-no-tools',
+      diagnostics: {
+        primaryReasoning: primaryFailure,
+        secondarySynthesis: { status: 'fallback-model-used', attempts: [preferredAttempt!] },
+      },
+    }
+  } catch (legacyError) {
+    if (request.signal?.aborted) throw legacyError
+    const legacyAttempt = secondarySynthesisAttempt(LEGACY_NEXUS_WEBGPU_MODEL, legacyError)
+    throw new Error(`DeepSeek primary failed at ${primaryFailure.stage}: ${primaryFailure.message}; clean Qwen fallback failed at ${preferredAttempt!.stage}: ${preferredAttempt!.message}; Qwen 1.5B clean fallback failed at ${legacyAttempt.stage}: ${legacyAttempt.message}`)
+  }
+}
+
 function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: ProviderId): boolean {
   if (providerId !== 'nexus' && providerId !== 'corpus') return false
   if (!request.tools?.some(tool => tool.name === 'github_repo_state')) return false
@@ -203,6 +312,7 @@ function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: Provi
 function shouldBootstrapDeepSeekReasoning(request: AIRequest, providerId: ProviderId): boolean {
   if (providerId !== 'nexus' && providerId !== 'corpus') return false
   if (!request.tools?.some(tool => tool.name === 'deepseek_reason')) return false
+  if (failedDeepSeekToolResult(request)) return false
   const latestToolResult = latestCurrentToolResult(request)
   if (latestToolResult) return latestToolResult.name !== 'deepseek_reason'
 
@@ -213,17 +323,16 @@ function shouldBootstrapDeepSeekReasoning(request: AIRequest, providerId: Provid
 
 function buildDeepSeekToolInput(request: AIRequest): { task: string; context?: string } {
   const turn = currentTurnMessages(request)
-  const task = [...turn].reverse().find(message => message.role === 'user')?.content || ''
+  const rawTask = [...turn].reverse().find(message => message.role === 'user')?.content || ''
   const callNamesById = new Map<string, string>()
   for (const message of turn) {
     if (message.role === 'assistant') for (const call of message.tool_calls ?? []) callNamesById.set(call.id, call.name)
   }
-  const context = turn
-    .filter(message => message.role === 'tool' && message.tool_call_id)
+  const verifiedToolResults = turn
+    .filter(message => message.role === 'tool' && message.tool_call_id && !/^\s*(?:\[TOOL ERROR\]|\[GUARDIAN (?:BLOCKED?|REJECTED)\])/i.test(message.content))
     .map(message => `${callNamesById.get(message.tool_call_id!) || 'tool'} result:\n${message.content}`)
     .join('\n\n')
-    .slice(-12000)
-  return context ? { task, context } : { task }
+  return buildDeepSeekTaskPayload(rawTask, verifiedToolResults)
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────
@@ -271,20 +380,15 @@ export async function sendViaRouter(
     })
   }
 
-  // Repository tasks must establish live evidence before reasoning starts.
-  if (shouldBootstrapRepositoryEvidence(request, selectedProviderId)) {
-    return success({
-      text: '',
-      provider: selectedProviderId,
-      model: choice.model,
-      toolCalls: [{ id: `bootstrap-repo-state-${Date.now()}`, name: 'github_repo_state', input: {} }],
-      stopReason: 'deterministic-repository-evidence',
-    })
+  const priorDeepSeekResult = latestCurrentToolResult(request)
+  if ((selectedProviderId === 'nexus' || selectedProviderId === 'corpus') && priorDeepSeekResult?.name === 'deepseek_reason' && isGuardianBlockedResult(priorDeepSeekResult.content)) {
+    const error = classifyError(new Error(`Guardian blocked the DeepSeek reasoning step; no local model fallback was started. ${priorDeepSeekResult.content.slice(0, 300)}`), selectedProviderId)
+    return { success: false, error }
   }
 
-  // Use the existing DeepSeek workflow through executeTool, then let the main
-  // NEXUS/CORPUS loop synthesize from its actual result. Repository evidence
-  // above always wins as the first tool action when both apply.
+  // DeepSeek is the primary reasoner. After its real result, a repository task
+  // can obtain live GitHub evidence, then invoke a continuation with successful
+  // tool results only. Qwen remains secondary synthesis/fallback.
   if (shouldBootstrapDeepSeekReasoning(request, selectedProviderId)) {
     return success({
       text: '',
@@ -296,6 +400,19 @@ export async function sendViaRouter(
         input: buildDeepSeekToolInput(request),
       }],
       stopReason: 'deterministic-deepseek-reasoning',
+    })
+  }
+
+  // Safe, read-only repository evidence follows primary reasoning in the
+  // default duo. If primary reasoning failed, this can still collect the
+  // explicitly requested evidence before a clean, tool-free Qwen fallback.
+  if (shouldBootstrapRepositoryEvidence(request, selectedProviderId)) {
+    return success({
+      text: '',
+      provider: selectedProviderId,
+      model: choice.model,
+      toolCalls: [{ id: `bootstrap-repo-state-${Date.now()}`, name: 'github_repo_state', input: {} }],
+      stopReason: 'deterministic-repository-evidence',
     })
   }
 
@@ -312,20 +429,52 @@ export async function sendViaRouter(
   }
 
   try {
+    const failedPrimary = failedDeepSeekToolResult(request)
+    if ((selectedProviderId === 'nexus' || selectedProviderId === 'corpus') && failedPrimary) {
+      const primaryFailure = primaryReasoningFailure(failedPrimary.content)
+      return success(await sendCleanFallbackAfterDeepSeekFailure(request, apiKey, primaryFailure))
+    }
+
     if (selectedProviderId === 'nexus' || selectedProviderId === 'corpus') {
       try {
         return success(await sendSecondaryWithTimeout(provider, requestForWebGpuFallback(request, choice.model), apiKey, 'WebGPU secondary synthesis'))
       } catch (primaryError) {
         if (request.signal?.aborted) throw primaryError
+        const primaryAttempt = secondarySynthesisAttempt(choice.model, primaryError)
+        const workflowResult = latestCurrentToolResult(request)
+        if (shouldSkipLegacyAfterPrimaryFailure(primaryAttempt)) {
+          if (workflowResult?.name === 'deepseek_reason' && isSuccessfulDeepSeekToolResult(workflowResult.content)) {
+            return success({
+              text: workflowResult.content,
+              provider: 'deepseek',
+              model: `DeepSeek Actions (${deepSeekCheckpointLabel(workflowResult.content)})`,
+              stopReason: 'webgpu-secondary-unavailable',
+              diagnostics: { secondarySynthesis: { status: 'unavailable', attempts: [primaryAttempt] } },
+            })
+          }
+          throw primaryError
+        }
         try {
           const response = await sendSecondaryWithTimeout(provider, requestForWebGpuFallback(request, LEGACY_NEXUS_WEBGPU_MODEL), apiKey, 'WebGPU legacy secondary synthesis')
-          return success(response)
+          return success({
+            ...response,
+            diagnostics: {
+              ...response.diagnostics,
+              secondarySynthesis: { status: 'fallback-model-used', attempts: [primaryAttempt] },
+            },
+          })
         } catch (fallbackError) {
-          const workflowResult = latestCurrentToolResult(request)
-          if (workflowResult?.name === 'deepseek_reason' && !workflowResult.content.startsWith('[TOOL ERROR]')) {
-            return success({ text: workflowResult.content, provider: 'deepseek', model: 'deepseek-16b-workflow (6.7B checkpoint)', stopReason: 'webgpu-secondary-unavailable' })
+          const fallbackAttempt = secondarySynthesisAttempt(LEGACY_NEXUS_WEBGPU_MODEL, fallbackError)
+          if (workflowResult?.name === 'deepseek_reason' && isSuccessfulDeepSeekToolResult(workflowResult.content)) {
+            return success({
+              text: workflowResult.content,
+              provider: 'deepseek',
+              model: `DeepSeek Actions (${deepSeekCheckpointLabel(workflowResult.content)})`,
+              stopReason: 'webgpu-secondary-unavailable',
+              diagnostics: { secondarySynthesis: { status: 'unavailable', attempts: [primaryAttempt, fallbackAttempt] } },
+            })
           }
-          throw new Error(`WebGPU 3B fallback failed (${primaryError instanceof Error ? primaryError.message : String(primaryError)}); 1.5B fallback failed (${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)})`)
+          throw new Error(`WebGPU 3B failed (${primaryAttempt.message}); 1.5B failed (${fallbackAttempt.message})`)
         }
       }
     }

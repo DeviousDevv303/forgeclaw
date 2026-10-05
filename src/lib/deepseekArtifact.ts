@@ -34,6 +34,7 @@ export const DEEPSEEK_MAX_WAIT_MS = 35 * 60 * 1000
 
 const DISCOVERY_TIMEOUT_MS = 30_000
 const MIRROR_TIMEOUT_MS = 20_000
+export const DEEPSEEK_GITHUB_READ_TIMEOUT_MS = 15_000
 const discoveryDelays = [100, 250, 500, 1000, 2000] as const
 const statusDelays = [1000, 2000, 3000, 5000, 8000] as const
 
@@ -42,6 +43,30 @@ interface ArtifactInfo {
   name: string
   archive_download_url: string
   expired: boolean
+}
+
+export interface DeepSeekResultDelivery {
+  result: string
+  source: 'mirror' | 'artifact'
+  model?: string
+  role?: string
+  elapsedSeconds?: string
+}
+
+function parseResultMetadata(text: string): Pick<DeepSeekResultDelivery, 'model' | 'role' | 'elapsedSeconds'> {
+  const fields = new Map<string, string>()
+  for (const line of text.split(/\r?\n/)) {
+    const separator = line.indexOf('=')
+    if (separator < 0) continue
+    const key = line.slice(0, separator).trim()
+    const value = line.slice(separator + 1).trim()
+    if (key && value) fields.set(key, value)
+  }
+  return {
+    ...(fields.get('model') ? { model: fields.get('model') } : {}),
+    ...(fields.get('role') ? { role: fields.get('role') } : {}),
+    ...(fields.get('elapsed_seconds') ? { elapsedSeconds: fields.get('elapsed_seconds') } : {}),
+  }
 }
 
 function ghHeaders(ctx: ToolContext): Record<string, string> {
@@ -54,16 +79,16 @@ export function deepseekMirrorUrl(owner: string, repo: string, invocationId: str
 }
 
 async function findRun(ctx: ToolContext, owner: string, repo: string, invocationId: string, dispatchedAt: number): Promise<DeepSeekWorkflowRun | undefined> {
-  const response = await toolFetch(
-    ctx,
+  const response = await githubStage('deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs', () => toolFetch(
+    { ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS },
     `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${DEEPSEEK_WORKFLOW_ID}/runs?event=workflow_dispatch&per_page=100`,
     // GitHub caches REST GET responses briefly. Polling the identical URL
     // without cache bypass can replay the pre-dispatch list until discovery
     // times out, even though the workflow has already run.
     { headers: ghHeaders(ctx), cache: 'no-store' },
-  )
-  if (!response.ok) throw new Error(describeGithubHttpFailure('deepseek-run-discovery', response.status, response.statusText))
-  const data = await response.json() as { workflow_runs?: Array<Partial<ShellWorkflowRun>> }
+  ))
+  if (!response.ok) throw new Error(describeGithubHttpFailure('deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs', response.status, response.statusText))
+  const data = await githubStage('deepseek-run-discovery response JSON', () => response.json()) as { workflow_runs?: Array<Partial<ShellWorkflowRun>> }
   return data.workflow_runs?.find(run => isCorrelatedShellRun(run, invocationId, dispatchedAt)) as DeepSeekWorkflowRun | undefined
 }
 
@@ -86,9 +111,13 @@ export async function waitForDeepSeekRun(ctx: ToolContext, owner: string, repo: 
   let finalRun = run
   while (Date.now() - started < DEEPSEEK_MAX_WAIT_MS) {
     if (ctx.signal?.aborted) throw new DOMException('DeepSeek run aborted', 'AbortError')
-    const response = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`, { headers: ghHeaders(ctx), cache: 'no-store' })
-    if (!response.ok) throw new Error(describeGithubHttpFailure('deepseek-run-poll', response.status, response.statusText))
-    finalRun = await response.json() as DeepSeekWorkflowRun
+    const response = await githubStage('deepseek-run-poll GET /actions/runs/{run_id}', () => toolFetch(
+      { ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS },
+      `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
+      { headers: ghHeaders(ctx), cache: 'no-store' },
+    ))
+    if (!response.ok) throw new Error(describeGithubHttpFailure('deepseek-run-poll GET /actions/runs/{run_id}', response.status, response.statusText))
+    finalRun = await githubStage('deepseek-run-poll response JSON', () => response.json()) as DeepSeekWorkflowRun
     if (finalRun.status === 'completed') break
     const remaining = DEEPSEEK_MAX_WAIT_MS - (Date.now() - started)
     if (remaining <= 0) break
@@ -104,46 +133,48 @@ export async function waitForDeepSeekRun(ctx: ToolContext, owner: string, repo: 
  * Returns undefined when the mirror is absent (older runs, or a run that failed
  * before publishing) so the caller can fall back to the artifact.
  */
-export async function readDeepSeekMirror(ctx: ToolContext, owner: string, repo: string, invocationId: string): Promise<string | undefined> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), MIRROR_TIMEOUT_MS)
-  const onParentAbort = () => controller.abort()
-  ctx.signal?.addEventListener('abort', onParentAbort, { once: true })
+export async function readDeepSeekMirror(ctx: ToolContext, owner: string, repo: string, invocationId: string): Promise<DeepSeekResultDelivery | undefined> {
   try {
-    const response = await fetch(deepseekMirrorUrl(owner, repo, invocationId), {
+    const mirrorContext = { ...ctx, timeoutMs: MIRROR_TIMEOUT_MS }
+    const response = await toolFetch(mirrorContext, deepseekMirrorUrl(owner, repo, invocationId), {
       cache: 'no-store',
-      signal: controller.signal,
     })
     if (!response.ok) return undefined
     const text = (await response.text()).trim()
-    return text || undefined
+    if (!text) return undefined
+    let metadata: Pick<DeepSeekResultDelivery, 'model' | 'role' | 'elapsedSeconds'> = {}
+    try {
+      const metaResponse = await toolFetch(mirrorContext, deepseekMirrorUrl(owner, repo, `${invocationId}.meta`), { cache: 'no-store' })
+      if (metaResponse.ok) metadata = parseResultMetadata(await metaResponse.text())
+    } catch {
+      // Metadata is auxiliary; old mirrors may contain only the result text.
+    }
+    return { result: text, source: 'mirror', ...metadata }
   } catch {
+    if (ctx.signal?.aborted) throw new DOMException('DeepSeek result retrieval aborted', 'AbortError')
     // No mirror yet (or blocked) — the artifact bridge below is the fallback.
     return undefined
-  } finally {
-    clearTimeout(timer)
-    ctx.signal?.removeEventListener('abort', onParentAbort)
   }
 }
 
 /** Fallback path: list the run's artifacts and extract result.txt from the ZIP. */
-export async function downloadDeepSeekArtifact(ctx: ToolContext, owner: string, repo: string, runId: number, invocationId: string): Promise<string> {
-  const artifactsRes = await githubStage('deepseek-artifact-list', () => toolFetch(
-    ctx,
+export async function downloadDeepSeekArtifact(ctx: ToolContext, owner: string, repo: string, runId: number, invocationId: string): Promise<DeepSeekResultDelivery> {
+  const artifactsRes = await githubStage('deepseek-artifact-list GET /actions/runs/{run_id}/artifacts', () => toolFetch(
+    { ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS },
     `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/artifacts?per_page=100`,
     { headers: ghHeaders(ctx), cache: 'no-store' },
   ))
 
   if (!artifactsRes.ok) {
-    throw new Error(describeGithubHttpFailure('deepseek-artifact-list', artifactsRes.status, artifactsRes.statusText))
+    throw new Error(describeGithubHttpFailure('deepseek-artifact-list GET /actions/runs/{run_id}/artifacts', artifactsRes.status, artifactsRes.statusText))
   }
 
-  const data = await artifactsRes.json() as { artifacts?: ArtifactInfo[] }
+  const data = await githubStage('deepseek-artifact-list response JSON', () => artifactsRes.json()) as { artifacts?: ArtifactInfo[] }
   const artifact = data.artifacts?.find(item => item.name === `${DEEPSEEK_ARTIFACT_PREFIX}${invocationId}` && !item.expired)
   if (!artifact) throw new Error(`deepseek-artifact-list: artifact "${DEEPSEEK_ARTIFACT_PREFIX}${invocationId}" was not found on run ${runId}.`)
 
   const zipResponse = await githubStage('deepseek-artifact-download', () => toolFetch(
-    ctx,
+    { ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS },
     artifact.archive_download_url,
     { headers: ghHeaders(ctx), signal: ctx.signal, redirect: 'follow' },
   ))
@@ -157,17 +188,19 @@ export async function downloadDeepSeekArtifact(ctx: ToolContext, owner: string, 
   if (!result) throw new Error(`deepseek-artifact-unzip: artifact "${artifact.name}" did not contain result.txt.`)
   const text = (await githubStage('deepseek-result-extract', () => result.async('text'))).trim()
   if (!text) throw new Error(`deepseek-result-extract: run #${runId} completed without a non-empty result.`)
-  return text
+  const metadataFile = Object.values(zip.files).find(entry => !entry.dir && entry.name.split('/').pop() === 'result_meta.txt')
+  const metadataText = metadataFile ? await githubStage('deepseek-result-metadata-extract', () => metadataFile.async('text')) : ''
+  return { result: text, source: 'artifact', ...parseResultMetadata(metadataText) }
 }
 
 /** Resolve the real DeepSeek result for a correlated run, with stage-labelled failures. */
-export async function downloadDeepSeekResult(ctx: ToolContext, owner: string, repo: string, runId: number, invocationId: string): Promise<string> {
+export async function downloadDeepSeekResult(ctx: ToolContext, owner: string, repo: string, runId: number, invocationId: string): Promise<DeepSeekResultDelivery> {
   const mirrored = await readDeepSeekMirror(ctx, owner, repo, invocationId)
   if (mirrored) return mirrored
   return downloadDeepSeekArtifact(ctx, owner, repo, runId, invocationId)
 }
 
-export async function waitForDeepSeekResult(ctx: ToolContext, owner: string, repo: string, invocationId: string, dispatchedAt: number): Promise<{ run: DeepSeekWorkflowRun; result: string }> {
+export async function waitForDeepSeekResult(ctx: ToolContext, owner: string, repo: string, invocationId: string, dispatchedAt: number): Promise<{ run: DeepSeekWorkflowRun } & DeepSeekResultDelivery> {
   const run = await waitForDeepSeekRun(ctx, owner, repo, invocationId, dispatchedAt)
-  return { run, result: await downloadDeepSeekResult(ctx, owner, repo, run.id, invocationId) }
+  return { run, ...await downloadDeepSeekResult(ctx, owner, repo, run.id, invocationId) }
 }

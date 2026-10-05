@@ -9,6 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeTool, type ToolContext } from './forgeTools'
 import { describeGithubTransportFailure, isBrowserNetworkFailure } from './githubFetch'
+import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, waitForDeepSeekRun } from './deepseekArtifact'
 
 function ctx(): ToolContext {
   return { ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' }
@@ -18,10 +19,14 @@ async function resultZip(text: string): Promise<ArrayBuffer> {
   const JSZip = (await import('jszip')).default
   const zip = new JSZip()
   zip.file('result.txt', text)
+  zip.file('result_meta.txt', 'model=deepseek-ai/deepseek-coder-1.3b-instruct\nrole=fallback checkpoint after primary failure: OOM\nelapsed_seconds=12.3\n')
   return zip.generateAsync({ type: 'arraybuffer' })
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 describe('DeepSeek result retrieval', () => {
   it('prefers the browser-readable mirror and never lists artifacts', async () => {
@@ -51,6 +56,7 @@ describe('DeepSeek result retrieval', () => {
       if (url.endsWith('/actions/runs/84')) {
         return Response.json({ id: 84, status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/84', run_number: 84, name: 'DeepSeek 16B', display_title: 'DeepSeek 16B', event: 'workflow_dispatch' })
       }
+      if (url.includes('raw.githubusercontent.com') && url.endsWith('.meta.txt')) return new Response('model=deepseek-ai/deepseek-coder-6.7b-instruct\nrole=primary checkpoint\nelapsed_seconds=8.2\n', { status: 200 })
       if (url.includes('raw.githubusercontent.com')) return new Response('Mirror answer from the workflow.', { status: 200 })
       if (url.includes('/artifacts?')) { artifactListCalls += 1; return Response.json({ artifacts: [] }) }
       throw new Error(`Unexpected fetch URL: ${url}`)
@@ -63,6 +69,7 @@ describe('DeepSeek result retrieval', () => {
     }, ctx())
 
     expect(output).toContain('Mirror answer from the workflow.')
+    expect(output).toContain('checkpoint=deepseek-ai/deepseek-coder-6.7b-instruct')
     expect(artifactListCalls).toBe(0)
   })
 
@@ -106,10 +113,55 @@ describe('DeepSeek result retrieval', () => {
     }, ctx())
 
     expect(output).toContain('Artifact answer from the runner.')
+    expect(output).toContain('checkpoint=deepseek-ai/deepseek-coder-1.3b-instruct')
   })
 })
 
 describe('DeepSeek stage-specific failures', () => {
+  it('names the workflow-run discovery endpoint when that GitHub read times out', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', 'deepseek-timeout-discovery', Date.now())
+    const assertion = expect(pending).rejects.toThrow('deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs: GitHub read timed out after 15000ms')
+    await vi.advanceTimersByTimeAsync(DEEPSEEK_GITHUB_READ_TIMEOUT_MS + 1)
+    await assertion
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('names the correlated run-status endpoint when polling times out', async () => {
+    vi.useFakeTimers()
+    const invocationId = 'deepseek-timeout-poll'
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input)
+      if (url.includes('/deepseek-16b.yml/runs?')) {
+        return Response.json({ workflow_runs: [{
+          id: 88,
+          name: `DeepSeek 16B ${invocationId}`,
+          display_title: `DeepSeek 16B ${invocationId}`,
+          event: 'workflow_dispatch',
+          status: 'in_progress',
+          conclusion: null,
+          created_at: new Date().toISOString(),
+          head_branch: 'main',
+          html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/88',
+          run_number: 88,
+        }] })
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', invocationId, Date.now())
+    const assertion = expect(pending).rejects.toThrow('deepseek-run-poll GET /actions/runs/{run_id}: GitHub read timed out after 15000ms')
+    await vi.advanceTimersByTimeAsync(DEEPSEEK_GITHUB_READ_TIMEOUT_MS + 1)
+    await assertion
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('labels a browser network/CORS dispatch failure as deepseek-dispatch', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }) as unknown as typeof fetch)
 

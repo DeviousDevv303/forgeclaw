@@ -37,7 +37,14 @@ describe('provider router runtime passthrough', () => {
       messages: [{ role: 'user', content: task }],
       tools: [{ name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } }],
     }, '')
-    expect(result).toMatchObject({ success: true, response: { provider: 'corpus', stopReason: 'deterministic-deepseek-reasoning', toolCalls: [{ name: 'deepseek_reason', input: { task } }] } })
+    expect(result).toMatchObject({
+      success: true,
+      response: {
+        provider: 'corpus',
+        stopReason: 'deterministic-deepseek-reasoning',
+        toolCalls: [{ name: 'deepseek_reason', input: { task, context: expect.stringContaining('ForgeClaw architecture facts') } }],
+      },
+    })
   })
 
   it('turns explicit image intent into a direct generate_image tool call', async () => {
@@ -115,7 +122,34 @@ describe('provider router runtime passthrough', () => {
     const result = await sendViaRouter(request, '', 'nexus')
     expect(result).toMatchObject({
       success: true,
-      response: { stopReason: 'deterministic-deepseek-reasoning', toolCalls: [{ name: 'deepseek_reason', input: { task: 'Inspect the ForgeClaw repository.', context: expect.stringContaining(realResult) } }] },
+      response: {
+        stopReason: 'deterministic-deepseek-reasoning',
+        toolCalls: [{ name: 'deepseek_reason', input: { task: 'Inspect the ForgeClaw repository.', context: expect.stringContaining(realResult) } }],
+      },
+    })
+  })
+
+  it('sends the exact user objective separately from the runtime envelope and preserves verified HEAD evidence', async () => {
+    const task = 'Read the current ForgeClaw repository state and report its actual HEAD commit.'
+    const headResult = 'repo: DeviousDevv303/forgeclaw\nHEAD: f5a7fd36b8e3465fc07a93a94f20a2059c6c24f2'
+    const result = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Use actual repository evidence.',
+      messages: [
+        { role: 'user', content: `${task}\n\n[RUNTIME_STATE repository="DeviousDevv303/forgeclaw" taskStatus="idle"]\nRepository evidence comes from GitHub tools; never infer or preload contents.\n[/RUNTIME_STATE]` },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'head-read-1', name: 'github_repo_state', input: {} }] },
+        { role: 'tool', content: headResult, tool_call_id: 'head-read-1' },
+      ],
+      tools: [
+        { name: 'github_repo_state', description: 'Read repository state', parameters: { type: 'object', properties: {}, required: [] } },
+        { name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } },
+      ],
+    }, '', 'corpus')
+    expect(result).toMatchObject({
+      success: true,
+      response: {
+        toolCalls: [{ name: 'deepseek_reason', input: { task, context: expect.stringContaining(headResult) } }],
+      },
     })
   })
 
@@ -147,7 +181,7 @@ describe('provider router runtime passthrough', () => {
     const first = await sendViaRouter({ model: DEFAULT_NEXUS_WEBGPU_MODEL, systemPrompt: 'Use DeepSeek when appropriate.', messages: [{ role: 'user', content: task }], tools }, '', 'nexus')
     expect(first).toMatchObject({ success: true, response: { stopReason: 'deterministic-deepseek-reasoning', toolCalls: [{ name: 'deepseek_reason', input: { task } }] } })
 
-    const deepSeekResult = 'Actual DeepSeek workflow output: three trade-offs.'
+    const deepSeekResult = '✓ DeepSeek-16B completed as deepseek-test on DeviousDevv303/forgeclaw@main.\nStages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=mirror; result-extraction=complete; checkpoint=deepseek-ai/deepseek-coder-6.7b-instruct (primary checkpoint); learning-persistence=unapproved candidate recorded.\n\nActual DeepSeek workflow output: three trade-offs.'
     const send = vi.spyOn(providers.nexus, 'send').mockResolvedValue({ text: 'Concise synthesis.', provider: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL })
     const continued = await sendViaRouter({
       model: DEFAULT_NEXUS_WEBGPU_MODEL,
@@ -164,7 +198,7 @@ describe('provider router runtime passthrough', () => {
   })
 
   it('returns the real DeepSeek result if the secondary Qwen WebGPU runtime cannot synthesize', async () => {
-    const deepSeekResult = 'Actual DeepSeek workflow answer, not invented by local inference.'
+    const deepSeekResult = '✓ DeepSeek-16B completed as deepseek-real on DeviousDevv303/forgeclaw@main.\nStages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=mirror; result-extraction=complete; checkpoint=deepseek-ai/deepseek-coder-6.7b-instruct (primary checkpoint); learning-persistence=unapproved candidate recorded.\n\nActual DeepSeek workflow answer, not invented by local inference.'
     const send = vi.spyOn(providers.corpus, 'send').mockRejectedValue(new Error('WebGPU unavailable'))
     const result = await sendViaRouter({
       model: DEFAULT_NEXUS_WEBGPU_MODEL,
@@ -176,7 +210,18 @@ describe('provider router runtime passthrough', () => {
       ],
       tools: [{ name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } }],
     }, '')
-    expect(result).toMatchObject({ success: true, response: { provider: 'deepseek', text: deepSeekResult, stopReason: 'webgpu-secondary-unavailable' } })
+    expect(result).toMatchObject({
+      success: true,
+      response: {
+        provider: 'deepseek',
+        text: deepSeekResult,
+        stopReason: 'webgpu-secondary-unavailable',
+        diagnostics: { secondarySynthesis: { status: 'unavailable', attempts: [
+          { model: DEFAULT_NEXUS_WEBGPU_MODEL, stage: 'unknown', message: 'WebGPU unavailable' },
+          { model: LEGACY_NEXUS_WEBGPU_MODEL, stage: 'unknown', message: 'WebGPU unavailable' },
+        ] } },
+      },
+    })
     expect(send.mock.calls.map(([request]) => request.model)).toEqual([DEFAULT_NEXUS_WEBGPU_MODEL, LEGACY_NEXUS_WEBGPU_MODEL])
   })
 
@@ -188,7 +233,7 @@ describe('provider router runtime passthrough', () => {
       if (request.signal) signals.push(request.signal)
       return neverSettles
     })
-    const deepSeekResult = 'Actual DeepSeek workflow output.'
+    const deepSeekResult = '✓ DeepSeek-16B completed as deepseek-timeout on DeviousDevv303/forgeclaw@main.\nStages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=mirror; result-extraction=complete; checkpoint=deepseek-ai/deepseek-coder-6.7b-instruct (primary checkpoint); learning-persistence=unapproved candidate recorded.\n\nActual DeepSeek workflow output.'
     const task = sendViaRouter({
       model: DEFAULT_NEXUS_WEBGPU_MODEL,
       systemPrompt: 'Synthesize only from the real DeepSeek result.',
@@ -201,22 +246,166 @@ describe('provider router runtime passthrough', () => {
     }, '', 'corpus')
 
     try {
-      // First deadline rejects the 3B attempt and starts the legacy model.
+      // A timed-out 3B initialization may still be running; do not start a
+      // concurrent legacy model download/engine.
       await vi.advanceTimersByTimeAsync(SECONDARY_SYNTHESIS_TIMEOUT_MS + 1)
-      expect(send).toHaveBeenCalledTimes(2)
+      expect(send).toHaveBeenCalledTimes(1)
       expect(signals[0]?.aborted).toBe(true)
-
-      // The second deadline also wins even though the mocked model never settles.
-      await vi.advanceTimersByTimeAsync(SECONDARY_SYNTHESIS_TIMEOUT_MS + 1)
       const result = await task
       expect(result).toMatchObject({
         success: true,
-        response: { provider: 'deepseek', text: deepSeekResult, stopReason: 'webgpu-secondary-unavailable' },
+        response: {
+          provider: 'deepseek',
+          text: deepSeekResult,
+          stopReason: 'webgpu-secondary-unavailable',
+          diagnostics: { secondarySynthesis: { status: 'unavailable', attempts: [{ model: DEFAULT_NEXUS_WEBGPU_MODEL, stage: 'timeout' }] } },
+        },
       })
-      expect(signals[1]?.aborted).toBe(true)
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('sends only the original task to direct Qwen after a DeepSeek tool error', async () => {
+    const task = 'Write a moving, truthful presentation about seeing humanity as beings of light.'
+    const deepseekError = '[TOOL ERROR] deepseek-run-poll GET /actions/runs/{run_id}: GitHub read timed out after 15000ms'
+    const send = vi.spyOn(providers.nexus, 'send').mockResolvedValue({
+      text: 'Light can be offered as a spiritual metaphor, not a proven scientific fact.',
+      provider: 'nexus',
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+    })
+    const result = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Do not expose this stale application history.',
+      messages: [
+        { role: 'user', content: `${task}\n\n[RUNTIME_STATE taskStatus="idle"]\nold execution manifest\n[/RUNTIME_STATE]` },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'deepseek-failed', name: 'deepseek_reason', input: { task } }] },
+        { role: 'tool', content: deepseekError, tool_call_id: 'deepseek-failed' },
+      ],
+      tools: [
+        { name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } },
+        { name: 'github_repo_state', description: 'Read repository state', parameters: { type: 'object', properties: {}, required: [] } },
+      ],
+    }, '', 'corpus')
+
+    expect(result).toMatchObject({
+      success: true,
+      response: {
+        provider: 'nexus',
+        text: 'Light can be offered as a spiritual metaphor, not a proven scientific fact.',
+        stopReason: 'clean-fallback-no-tools',
+        diagnostics: { primaryReasoning: { status: 'failed', stage: 'deepseek-run-poll' } },
+      },
+    })
+    expect(send).toHaveBeenCalledOnce()
+    const cleanRequest = send.mock.calls[0][0]
+    expect(cleanRequest.messages).toEqual([{ role: 'user', content: task }])
+    expect(cleanRequest.systemPrompt).toContain("ForgeClaw's motive of Love")
+    expect(cleanRequest.systemPrompt).not.toContain('stale application history')
+    expect(cleanRequest.messages[0].content).not.toContain('old execution manifest')
+    expect(cleanRequest.messages[0].content).not.toContain('GitHub read timed out')
+    expect(cleanRequest.tools).toBeUndefined()
+    expect(cleanRequest.onToken).toBeUndefined()
+    expect(cleanRequest.signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('runs primary reasoning before the requested GitHub read, then continues DeepSeek from the real result', async () => {
+    const task = 'Read the current repository HEAD commit and explain what branch it is on. Use the GitHub repository tool; do not guess.'
+    const tools = [
+      { name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } },
+      { name: 'github_repo_state', description: 'Read repository state', parameters: { type: 'object', properties: {}, required: [] } },
+    ]
+    const first = await sendViaRouter({ model: DEFAULT_NEXUS_WEBGPU_MODEL, systemPrompt: 'system', messages: [{ role: 'user', content: task }], tools }, '', 'corpus')
+    expect(first).toMatchObject({ success: true, response: { stopReason: 'deterministic-deepseek-reasoning', toolCalls: [{ name: 'deepseek_reason' }] } })
+
+    const deepSeek = '✓ DeepSeek-16B completed as deepseek-order on DeviousDevv303/forgeclaw@main.\nStages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=mirror; result-extraction=complete; checkpoint=deepseek-ai/deepseek-coder-6.7b-instruct (primary checkpoint); learning-persistence=not requested.\n\nI need the live repository evidence before reporting the HEAD.'
+    const repoRead = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'system',
+      messages: [
+        { role: 'user', content: task },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'deepseek-order-1', name: 'deepseek_reason', input: { task } }] },
+        { role: 'tool', content: deepSeek, tool_call_id: 'deepseek-order-1' },
+      ],
+      tools,
+    }, '', 'corpus')
+    expect(repoRead).toMatchObject({ success: true, response: { stopReason: 'deterministic-repository-evidence', toolCalls: [{ name: 'github_repo_state' }] } })
+
+    const head = 'repo: DeviousDevv303/forgeclaw\nHEAD: f5a7fd36b8e3465fc07a93a94f20a2059c6c24f2'
+    const continuation = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'system',
+      messages: [
+        { role: 'user', content: task },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'deepseek-order-1', name: 'deepseek_reason', input: { task } }] },
+        { role: 'tool', content: deepSeek, tool_call_id: 'deepseek-order-1' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'repo-order-1', name: 'github_repo_state', input: {} }] },
+        { role: 'tool', content: head, tool_call_id: 'repo-order-1' },
+      ],
+      tools,
+    }, '', 'corpus')
+    expect(continuation).toMatchObject({
+      success: true,
+      response: { stopReason: 'deterministic-deepseek-reasoning', toolCalls: [{ name: 'deepseek_reason', input: { task, context: expect.stringContaining(head) } }] },
+    })
+  })
+
+  it('never sends a failed DeepSeek tool trace into a continuation after collecting requested repo evidence', async () => {
+    const task = 'Read the current repository HEAD commit. Use the GitHub repository tool. Do not guess.'
+    const tools = [
+      { name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } },
+      { name: 'github_repo_state', description: 'Read repository state', parameters: { type: 'object', properties: {}, required: [] } },
+    ]
+    const error = '[TOOL ERROR] deepseek-run-poll GET /actions/runs/{run_id}: GitHub read timed out after 15000ms'
+    const afterFailure = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'system',
+      messages: [
+        { role: 'user', content: task },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'deepseek-failed-repo', name: 'deepseek_reason', input: { task } }] },
+        { role: 'tool', content: error, tool_call_id: 'deepseek-failed-repo' },
+      ],
+      tools,
+    }, '', 'corpus')
+    expect(afterFailure).toMatchObject({ success: true, response: { stopReason: 'deterministic-repository-evidence', toolCalls: [{ name: 'github_repo_state' }] } })
+
+    const head = 'repo: DeviousDevv303/forgeclaw\nHEAD: aabbccddeeff00112233445566778899aabbccdd'
+    const send = vi.spyOn(providers.nexus, 'send').mockResolvedValue({ text: 'I cannot verify a commit from my local fallback alone.', provider: 'nexus', model: DEFAULT_NEXUS_WEBGPU_MODEL })
+    const final = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'system',
+      messages: [
+        { role: 'user', content: task },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'deepseek-failed-repo', name: 'deepseek_reason', input: { task } }] },
+        { role: 'tool', content: error, tool_call_id: 'deepseek-failed-repo' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'repo-after-failure', name: 'github_repo_state', input: {} }] },
+        { role: 'tool', content: head, tool_call_id: 'repo-after-failure' },
+      ],
+      tools,
+    }, '', 'corpus')
+    expect(final).toMatchObject({ success: true, response: { stopReason: 'clean-fallback-no-tools' } })
+    expect(send).toHaveBeenCalledOnce()
+    const cleanRequest = send.mock.calls[0][0]
+    expect(cleanRequest.messages).toEqual([{ role: 'user', content: task }])
+    expect(cleanRequest.messages[0].content).not.toContain('GitHub read timed out')
+    expect(cleanRequest.messages[0].content).not.toContain(head)
+    expect(cleanRequest.tools).toBeUndefined()
+  })
+
+  it('does not start Qwen when the DeepSeek result was explicitly blocked by Guardian', async () => {
+    const send = vi.spyOn(providers.nexus, 'send')
+    const result = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'system',
+      messages: [
+        { role: 'user', content: 'Explain this idea.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'guardian-block', name: 'deepseek_reason', input: {} }] },
+        { role: 'tool', content: '[GUARDIAN BLOCKED] Co-sign required.', tool_call_id: 'guardian-block' },
+      ],
+      tools: [{ name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } }],
+    }, '', 'corpus')
+    expect(result.success).toBe(false)
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('keeps ordinary NEXUS chat free of the full tool catalog', async () => {

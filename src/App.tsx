@@ -1168,7 +1168,7 @@ function App() {
         const output = await executeTool(call, toolCtx)
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
 
-        const isError = output.startsWith('[TOOL ERROR]')
+        const isError = output.startsWith('[TOOL ERROR]') || /^\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(output)
         const result: ToolResult = {
           toolCallId: call.id,
           name: call.name,
@@ -1230,6 +1230,7 @@ function App() {
       let resolvedProvider: string = activeProvider
       let resolvedModel = normalizedActiveModel
       let finalText = ''
+      let secondarySynthesisNotice = ''
       let generatedImageUrl: string | undefined
       let directImageCompleted = false
       const toolRetryCounts = new Map<string, number>()
@@ -1290,11 +1291,25 @@ function App() {
         resolvedProvider = result.provider === 'deepseek' ? 'deepseek' : result.provider === 'nexus' ? 'nexus' : result.provider === 'corpus' ? 'corpus' : result.provider === 'local' ? 'local' : activeProvider
         if (result.provider === 'deepseek') source = 'cloud'
         resolvedModel = result.model || currentModel
+        const primaryDiagnostic = result.diagnostics?.primaryReasoning
+        if (primaryDiagnostic) {
+          secondarySynthesisNotice = `PRIMARY REASONING: DeepSeek failed at ${primaryDiagnostic.stage}. A fresh, tool-free request containing only the original user task was sent to ${result.model}; no failed-tool trace or DeepSeek-success claim was passed to Qwen.\n${primaryDiagnostic.message}`
+        }
+        const secondaryDiagnostic = result.diagnostics?.secondarySynthesis
+        if (secondaryDiagnostic) {
+          const attemptLines = secondaryDiagnostic.attempts
+            .map(attempt => `- ${attempt.model} — stage=${attempt.stage}: ${attempt.message}`)
+            .join('\n')
+          const notice = secondaryDiagnostic.status === 'unavailable'
+            ? `SECONDARY SYNTHESIS: Qwen WebGPU did not complete for this request. The real DeepSeek result is retained.\n${attemptLines}`
+            : `SECONDARY SYNTHESIS: Qwen used its fallback model after the preferred model failed.\n${attemptLines}`
+          secondarySynthesisNotice = [secondarySynthesisNotice, notice].filter(Boolean).join('\n\n')
+        }
 
         // No tool calls → final answer
         if (!result.toolCalls?.length) {
           // Check for manual tool mode (no native tool support)
-          if (!supportsTools && result.text) {
+          if (!supportsTools && result.text && result.stopReason !== 'clean-fallback-no-tools') {
             const manualActions = parseManualToolCalls(result.text)
             if (manualActions.length > 0) {
               // Convert manual actions to tool calls for execution
@@ -1340,7 +1355,7 @@ for (const call of result.toolCalls) {
           emitForge({ type: 'TOOL_START', tool: call.name, iter })
           const output = await executeTool(call, toolCtx)
           if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
-          const isErr = output.startsWith('[TOOL ERROR]')
+          const isErr = output.startsWith('[TOOL ERROR]') || /^\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(output)
           toolAttempts.push({
             name: call.name,
             input: JSON.stringify(call.input, Object.keys(call.input).sort()),
@@ -1411,13 +1426,19 @@ for (const call of result.toolCalls) {
       if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
       const deepSeekSucceeded = allToolResults.some(result => result.name === 'deepseek_reason' && !result.isError)
       const deepSeekFailed = allToolResults.some(result => result.name === 'deepseek_reason' && result.isError)
+      const deepSeekSuccessOutput = allToolResults.find(result => result.name === 'deepseek_reason' && !result.isError)?.output || ''
+      const deepSeekCheckpoint = deepSeekSuccessOutput.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable'
       if (deepSeekSucceeded) source = 'cloud'
       if (deepSeekDuoDefault && resolvedProvider === 'deepseek') {
-        resolvedModel = 'DeepSeek workflow (current 6.7B checkpoint); Qwen WebGPU secondary unavailable'
+        resolvedModel = `DeepSeek Actions (${deepSeekCheckpoint}); Qwen WebGPU secondary unavailable`
       } else if (deepSeekDuoDefault && deepSeekSucceeded) {
-        resolvedModel = `DeepSeek workflow (current 6.7B checkpoint) → ${resolvedModel} (secondary Qwen WebGPU synthesis)`
+        resolvedModel = `DeepSeek Actions (${deepSeekCheckpoint}) → ${resolvedModel} (secondary Qwen WebGPU synthesis)`
       } else if (deepSeekDuoDefault && deepSeekFailed) {
-        resolvedModel = `Qwen WebGPU secondary fallback after DeepSeek workflow failure → ${resolvedModel}`
+        resolvedModel = `Qwen WebGPU clean-request fallback after DeepSeek workflow failure → ${resolvedModel}`
+      }
+      if (deepSeekFailed) {
+        const failedDeepSeekResult = allToolResults.find(result => result.name === 'deepseek_reason' && result.isError)
+        setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'error', lastError: failedDeepSeekResult?.output || 'DeepSeek primary reasoning failed.' }))
       }
       setLastSource(source)
       const { cleanText, tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
@@ -1451,7 +1472,7 @@ for (const call of result.toolCalls) {
       const visibleText = directImageCompleted
         ? ''
         : cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)'
-      const messageContent = [visibleText, completionSafetyNotice].filter(Boolean).join('\n\n')
+      const messageContent = [visibleText, completionSafetyNotice, secondarySynthesisNotice].filter(Boolean).join('\n\n')
       const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${resolvedProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace

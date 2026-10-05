@@ -147,13 +147,13 @@ describe('dispatcher integrity (offline)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
-  it('dispatches ask_deepseek directly to the fixed workflow without NEXUS learning', async () => {
+  it('dispatches the exact ForgeClaw reasoning question and supplied project context to the fixed workflow without NEXUS learning', async () => {
     const JSZip = (await import('jszip')).default
     const zip = new JSZip()
     zip.file('result.txt', 'The capital of France is Paris.')
     const zipBytes = await zip.generateAsync({ type: 'arraybuffer' })
     let dispatchedUrl = ''
-    let payload: { ref: string; inputs: { task: string; nexus_learning: string; invocation_id: string } } | undefined
+    let payload: { ref: string; inputs: { task: string; context: string; nexus_learning: string; invocation_id: string } } | undefined
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
       if (url.endsWith('/deepseek-16b.yml/dispatches')) {
@@ -191,11 +191,15 @@ describe('dispatcher integrity (offline)', () => {
     const output = await executeTool({
       id: 'direct-deepseek-test',
       name: 'ask_deepseek',
-      input: { question: 'What is the capital of France?' },
+      input: {
+        question: "Explain ForgeClaw's default reasoning flow. Tell me which model is primary and which is secondary.",
+        context: 'ForgeClaw architecture facts: DeepSeek-Coder 6.7B primary; Qwen2.5 WebGPU 3B secondary.',
+      },
     }, { ...ctx(), ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
 
     expect(dispatchedUrl).toBe('https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/deepseek-16b.yml/dispatches')
-    expect(payload?.inputs.task).toBe('What is the capital of France?')
+    expect(payload?.inputs.task).toBe("Explain ForgeClaw's default reasoning flow. Tell me which model is primary and which is secondary.")
+    expect(payload?.inputs.context).toBe('ForgeClaw architecture facts: DeepSeek-Coder 6.7B primary; Qwen2.5 WebGPU 3B secondary.')
     expect(payload?.inputs.nexus_learning).toBe('false')
     expect(payload?.inputs.invocation_id).toMatch(/^deepseek-/)
     expect(output).toContain('DeepSeek-16B completed')

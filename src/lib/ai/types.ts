@@ -33,12 +33,33 @@ export interface AIToolCall {
   input: Record<string, unknown>
 }
 
+export interface SecondarySynthesisAttempt {
+  model: string
+  stage: string
+  message: string
+}
+
+export interface SecondarySynthesisDiagnostic {
+  status: 'fallback-model-used' | 'unavailable'
+  attempts: SecondarySynthesisAttempt[]
+}
+
+export interface PrimaryReasoningDiagnostic {
+  status: 'failed'
+  stage: string
+  message: string
+}
+
 export interface AIResponse {
   text: string
   provider: string
   model: string
   toolCalls?: AIToolCall[]
   stopReason?: string
+  diagnostics?: {
+    primaryReasoning?: PrimaryReasoningDiagnostic
+    secondarySynthesis?: SecondarySynthesisDiagnostic
+  }
 }
 
 export interface AIProvider {

@@ -96,18 +96,35 @@ jobs:
           torch.set_num_threads(min(4, os.cpu_count() or 1))
 
           user_content = (
-              f"{task}\n\nContext:\n{context}\n\n"
-              'Answer the request directly and concretely. Do not claim to have '
-              'performed actions that are not evidenced in the context.'
+              f"Task:\n{task}\n\nVerified project, CORPUS, and tool context:\n"
+              f"{context or '(No additional context was supplied.)'}\n\n"
+              'Answer the actual task directly and concretely from the supplied '
+              'context. Distinguish static architecture facts from live repository '
+              'facts. This workflow has no direct tool authority: never claim a '
+              'tool, workflow, repository read, or other action happened unless an '
+              'actual successful ForgeTools result or correlated run result is '
+              'included above. Results marked [TOOL ERROR], [GUARDIAN BLOCK], or '
+              '[GUARDIAN REJECTED] are failures, not proof of successful execution. '
+              'If the context is sufficient, do not refuse merely because the task '
+              'names ForgeClaw or another specific project. Answer technical, '
+              'factual, analytical, and creative requests directly when the supplied '
+              'information supports it. For spiritual or persuasive writing, clearly '
+              'distinguish belief, metaphor, and creative framing from established '
+              'evidence. Honor ForgeClaw\'s motive of Love: do not exploit personal '
+              'vulnerabilities or use coercive emotional pressure. If evidence is '
+              'missing, name precisely what cannot be verified rather than guessing.'
           )
           messages = [
               {
                   'role': 'system',
                   'content': (
-                      'You are the primary reasoning engine of an autonomous '
-                      'software system. Answer technical questions on their '
-                      'merits and never refuse merely because the question '
-                      'mentions a specific project or repository.'
+                  'You are the primary reasoning engine of ForgeClaw. Answer the '
+                  'user’s actual request on its merits using the supplied context; '
+                  'technical, factual, analytical, and creative requests are all in '
+                  'scope. Do not substitute generic disclaimers for an answer the '
+                  'evidence supports. For persuasion, respect dignity and emotional '
+                  'autonomy; do not manipulate or claim unverified beliefs as proven. '
+                  'Never claim an action succeeded without actual evidence.'
                   ),
               },
               {'role': 'user', 'content': user_content},
@@ -188,7 +205,8 @@ jobs:
           fi
           mkdir -p /tmp/deepseek-results-worktree/deepseek-results
           cp result.txt "/tmp/deepseek-results-worktree/deepseek-results/${INVOCATION_ID}.txt"
-          git -C /tmp/deepseek-results-worktree add "deepseek-results/${INVOCATION_ID}.txt"
+          cp result_meta.txt "/tmp/deepseek-results-worktree/deepseek-results/${INVOCATION_ID}.meta.txt"
+          git -C /tmp/deepseek-results-worktree add "deepseek-results/${INVOCATION_ID}.txt" "deepseek-results/${INVOCATION_ID}.meta.txt"
           git -C /tmp/deepseek-results-worktree commit -m "deepseek: publish ${INVOCATION_ID}"
           git -C /tmp/deepseek-results-worktree push origin HEAD:deepseek-results
 
