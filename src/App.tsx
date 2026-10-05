@@ -679,7 +679,7 @@ function App() {
   const [agentResumedState, setAgentResumedState] = useState<CodingAgentState | null>(null)
   const [resumePrompt, setResumePrompt] = useState<string | null>(null)
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
-  const [tier1Active, setTier1Active] = useState(false)
+  const [tier1Active, setTier1Active] = useState(true)
 
   const requestGuardianApproval = useCallback(async (call: ToolCall): Promise<boolean> => {
     if (!tier1Active) return true
