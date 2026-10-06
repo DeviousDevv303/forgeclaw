@@ -181,13 +181,13 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'deepseek_reason',
-    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained; the workflow currently runs deepseek-ai/deepseek-llm-7b-chat as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request is recorded as an unapproved NEXUS learning candidate when enabled.',
+    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained; the workflow currently runs deepseek-ai/deepseek-llm-7b-chat as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.',
     parameters: {
       type: 'object',
       properties: {
         task: { type: 'string', description: 'Task for the DeepSeek reasoning workflow' },
         context: { type: 'string', description: 'Additional context for the task' },
-        nexus_learn: { type: 'boolean', description: 'Record the dispatch in the local NEXUS corpus (default true)' },
+        nexus_learn: { type: 'boolean', description: 'Record the dispatch as an unapproved learning candidate (default true)' },
         ref: { type: 'string', description: 'Branch or tag to run the workflow from (default main)' },
       },
       required: ['task'],
@@ -425,7 +425,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'generate_image',
-    description: 'Generate an image with public Stable Diffusion v1.5 through the repository-owned GitHub Actions workflow. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request is recorded as an unapproved NEXUS learning candidate.',
+    description: 'Generate an image with public Stable Diffusion v1.5 through the repository-owned GitHub Actions workflow. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request may be recorded as an unapproved learning candidate.',
     parameters: {
       type: 'object',
       properties: {
@@ -782,7 +782,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const checkpoint = completed.model || 'checkpoint metadata unavailable'
         const role = completed.role ? ` (${completed.role})` : ''
         const stages = `Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=${completed.source}; result-extraction=complete; checkpoint=${checkpoint}${role}; learning-persistence=${learningStatus}.`
-        return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${completed.run.html_url}\n\n${completed.result}${learningWarning ? `\n\n${learningWarning}` : nexusLearn ? '\n\nNEXUS recorded this result as an unapproved learning candidate.' : ''}`
+        return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${completed.run.html_url}\n\n${completed.result}${learningWarning ? `\n\n${learningWarning}` : nexusLearn ? '\n\nLearning candidate recorded as unapproved.' : ''}`
       }
 
       // ── Self-sculpt: branch + pull request proposal ──────────────────────────
