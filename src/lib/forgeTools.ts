@@ -1066,7 +1066,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           return runs.find(run => isCorrelatedShellRun(run, invocationId, dispatchStartedAt))
         }
 
-        const findDeadline = Date.now() + Math.min(maxWait * 1000, 30000)
+        const findDeadline = Date.now() + Math.min(maxWait * 1000, 120000)
         let run: ShellWorkflowRun | undefined
 
         const discoveryDelays = [100, 250, 500, 1000, 2000] as const
