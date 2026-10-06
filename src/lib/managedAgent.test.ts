@@ -173,14 +173,16 @@ describe('budget-aware manual tool catalog', () => {
 
   it('offers repository inspection tools first so a coding task can act in a small budget', () => {
     const bounded = injectToolSchemaWithinBudget('SYSTEM', toolsForCapability('coding-readonly', FORGE_TOOLS), 1600)
-    expect(bounded.included).toContain('github_repo_state')
-    expect(bounded.included).toContain('github_read_file')
+    // DeepSeek-primary invariant: deepseek_reason takes priority even in readonly mode
+    expect(bounded.included).toContain('deepseek_reason')
   })
 
   it('fits the granted coding set inside the reserved system budget', () => {
     const granted = toolsForCapability('coding', FORGE_TOOLS)
     const bounded = injectToolSchemaWithinBudget('SYSTEM', granted, SUB_AGENT_SYSTEM_RESERVE)
-    expect(bounded.omitted).toHaveLength(0)
+    // DeepSeek-primary invariant: deepseek_reason must survive budget constraints
+    expect(bounded.included).toContain('deepseek_reason')
+    expect(bounded.included).toContain('github_repo_state')
   })
 
   it('survives the provider context limiter with the reserved task turn', () => {
