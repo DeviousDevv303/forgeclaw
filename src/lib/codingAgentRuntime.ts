@@ -139,6 +139,16 @@ export function extractExplicitShellCommand(prompt: string): string | null {
   return `${match[1].toLowerCase()}${command.slice(match[1].length)}`
 }
 
+/** True when the user is asking for a repository's authoritative main HEAD. */
+export function isRepositoryHeadQuestion(prompt: string): boolean {
+  const text = prompt.toLowerCase().replace(/\s+/g, ' ').trim()
+  if (!text) return false
+  return (
+    /(?:current|latest|actual|what is|identify|report).{0,48}(?:main|head).{0,48}(?:commit|sha)/.test(text) ||
+    /(?:commit|sha).{0,48}(?:on|of|for|in).{0,48}(?:main|head)/.test(text)
+  )
+}
+
 /** Select only the existing Shell tool for explicit Shell requests. */
 export function selectRequestTools(prompt: string, allTools: ToolDef[], defaultTools: ToolDef[]): ToolDef[] {
   return isExplicitShellRequest(prompt)

@@ -44,6 +44,8 @@ import {
   isCodingTaskRequest,
   isExplicitShellRequest,
   extractExplicitShellCommand,
+  isRepositoryHeadQuestion,
+  parseRepoState,
   recordToolProgress,
   recordTaskOutcome,
   recordVerification,
@@ -1333,7 +1335,7 @@ function App() {
         if (!globalRecentToolCalls) globalRecentToolCalls = []
         const MAX_REPEATED_CALLS = 3
 
-for (const call of result.toolCalls) {
+        for (const call of result.toolCalls) {
   // Check for loop
   const callKey = `${call.name}:${JSON.stringify(call.input)}`
   globalRecentToolCalls.push(callKey)
@@ -1355,7 +1357,12 @@ for (const call of result.toolCalls) {
           setActivityLog(prev => [...prev.slice(-99), { id: actEntryId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
           emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
           emitForge({ type: 'TOOL_START', tool: call.name, iter })
-          const output = await executeTool(call, toolCtx)
+          const repositoryHeadVerified = isRepositoryHeadQuestion(promptText) && allToolResults.some(toolResult =>
+            toolResult.name === 'github_repo_state' && !toolResult.isError,
+          )
+          const output = call.name === 'shell_exec' && repositoryHeadVerified
+            ? 'Skipped: github_repo_state already provided the authoritative repository HEAD; shell execution was not needed.'
+            : await executeTool(call, toolCtx)
           if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
           const isErr = output.startsWith('[TOOL ERROR]') || /^\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(output)
           toolAttempts.push({
@@ -1482,9 +1489,14 @@ for (const call of result.toolCalls) {
       else if (hasUnresolvedToolFailure) emitForge({ type: 'MISSION_BLOCKED', reason: 'A requested tool execution failed and was not successfully resolved' })
       else if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
+      const verifiedRepoState = allToolResults.find(result => result.name === 'github_repo_state' && !result.isError)
+      const verifiedRepoHead = verifiedRepoState ? parseRepoState(verifiedRepoState.output).headSha : ''
+      const authoritativeRepositoryAnswer = isRepositoryHeadQuestion(promptText) && /^[0-9a-f]{40}$/i.test(verifiedRepoHead)
+        ? `Current main commit SHA: ${verifiedRepoHead}`
+        : ''
       const visibleText = directImageCompleted
         ? ''
-        : cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)'
+        : authoritativeRepositoryAnswer || cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)'
       const messageContent = [visibleText, completionSafetyNotice, secondarySynthesisNotice].filter(Boolean).join('\n\n')
       const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${resolvedProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
