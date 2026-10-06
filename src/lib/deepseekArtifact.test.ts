@@ -149,7 +149,7 @@ describe('DeepSeek stage-specific failures', () => {
     }))
     vi.stubGlobal('fetch', fetchMock)
     const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', 'deepseek-timeout-discovery', Date.now())
-    const assertion = expect(pending).rejects.toThrow('deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs: GitHub read timed out after 15000ms')
+    const assertion = expect(pending).rejects.toThrow('deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs: GitHub read timed out after 30000ms')
     await vi.advanceTimersByTimeAsync(DEEPSEEK_GITHUB_READ_TIMEOUT_MS + 1)
     await assertion
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -180,7 +180,7 @@ describe('DeepSeek stage-specific failures', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', invocationId, Date.now())
-    const assertion = expect(pending).rejects.toThrow('deepseek-run-poll GET /actions/runs/{run_id}: GitHub read timed out after 15000ms')
+    const assertion = expect(pending).rejects.toThrow('deepseek-run-poll GET /actions/runs/{run_id}: GitHub read timed out after 30000ms')
     await vi.advanceTimersByTimeAsync(DEEPSEEK_GITHUB_READ_TIMEOUT_MS + 1)
     await assertion
     expect(fetchMock).toHaveBeenCalledTimes(2)

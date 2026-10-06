@@ -34,7 +34,7 @@ export const DEEPSEEK_MAX_WAIT_MS = 35 * 60 * 1000
 
 const DISCOVERY_TIMEOUT_MS = 30_000
 const MIRROR_TIMEOUT_MS = 20_000
-export const DEEPSEEK_GITHUB_READ_TIMEOUT_MS = 15_000
+export const DEEPSEEK_GITHUB_READ_TIMEOUT_MS = 30_000
 const discoveryDelays = [100, 250, 500, 1000, 2000] as const
 const statusDelays = [1000, 2000, 3000, 5000, 8000] as const
 
