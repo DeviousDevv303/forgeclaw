@@ -1,7 +1,7 @@
 // @vitest-environment node
 // MANUS acceptance coverage: the router must transport the runtime request as-is.
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { detectBestProvider, getBestProvider, providers, providerSupportsTools, sendViaRouter, SECONDARY_SYNTHESIS_TIMEOUT_MS } from './providerRouter'
+import { detectBestProvider, getBestProvider, providers, providerSupportsTools, sendViaRouter } from './providerRouter'
 import { DEFAULT_NEXUS_WEBGPU_MODEL, LEGACY_NEXUS_WEBGPU_MODEL } from './providers/nexusWebGpuProvider'
 
 afterEach(() => vi.restoreAllMocks())
