@@ -24,6 +24,7 @@ import {
   isCodingTaskRequest,
   isExplicitShellRequest,
   extractExplicitShellCommand,
+  isRepositoryHeadQuestion,
   selectRequestTools,
   buildRuntimeRequestContext,
   measureRequestMetrics,
@@ -520,6 +521,12 @@ describe('coding task detection and repo state parsing', () => {
     const selected = selectRequestTools('inspect the repository and report the current HEAD', FORGE_TOOLS, readonlyTools).map(tool => tool.name)
     expect(selected).toContain('github_repo_state')
     expect(selected).not.toContain('shell_exec')
+  })
+
+  it('recognises authoritative main-HEAD questions without treating them as shell work', () => {
+    expect(isRepositoryHeadQuestion('What is the current main commit SHA of the ForgeClaw repository?')).toBe(true)
+    expect(isRepositoryHeadQuestion('Report the latest HEAD commit')).toBe(true)
+    expect(isRepositoryHeadQuestion('Git --version')).toBe(false)
   })
 
   it('recognises coding objectives and ignores ordinary chat', () => {
