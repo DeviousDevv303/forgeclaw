@@ -205,8 +205,9 @@ describe('dispatcher integrity (offline)', () => {
     expect(output).toContain('DeepSeek-16B completed')
     expect(output).toContain('The capital of France is Paris.')
     expect(output).not.toContain('learning candidate')
-    // dispatch + runs list + run status + mirror probe + artifact list + artifact zip
-    expect(fetchMock).toHaveBeenCalledTimes(6)
+    // dispatch + runs list + mirror completion probe + run status + mirror read
+    // + artifact list + artifact zip
+    expect(fetchMock).toHaveBeenCalledTimes(7)
   })
 
   it('generates an image through the complete dispatch, run, artifact, and registry pipeline', async () => {

@@ -22,18 +22,18 @@ export interface CallResult { text: string; provider: ProviderId; model: string;
 export interface CallOptions { tools?: ToolDef[]; onToken?: (token: string) => void; signal?: AbortSignal; maxTokens?: number }
 export async function callProvider(providerId: ProviderId, model: string, systemPrompt: string, messages: ChatMessage[], apiKey: string, options: CallOptions = {}): Promise<CallResult> {
   const request: AIRequest = { systemPrompt, messages, model, maxTokens: options.maxTokens, tools: options.tools, onToken: options.onToken, signal: options.signal }
-  if (providerId === 'corpus') { const response = await corpusProvider.send({ ...request, model: model || 'deepseek-16b' }, apiKey); return { text: response.text, provider: 'corpus', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
+  if (providerId === 'corpus' || providerId === 'nexus') { const response = await corpusProvider.send({ ...request, model: model || 'deepseek-16b' }, apiKey); return { text: response.text, provider: 'corpus', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
   if (providerId === 'anthropic') { const response = await anthropicProvider.send({ ...request, model: model || DEFAULT_ANTHROPIC_MODEL }, apiKey); return { text: response.text, provider: 'anthropic', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
   const response = await localInferenceProvider.send({ ...request, model: model || DEFAULT_LOCAL_MODEL }, apiKey)
   return { text: response.text, provider: 'local', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
 }
 export function modelSupportsTools(providerId: ProviderId, modelId: string): boolean {
-  if (providerId === 'corpus') return corpusProvider.supportsTools(modelId)
+  if (providerId === 'corpus' || providerId === 'nexus') return corpusProvider.supportsTools(modelId)
   if (providerId === 'anthropic') return anthropicProvider.supportsTools(modelId)
   return localInferenceProvider.supportsTools(modelId)
 }
 export async function testProviderKey(providerId: ProviderId, _model: string, apiKey: string): Promise<void> {
-  if (providerId === 'corpus') { await corpusProvider.test(apiKey); return }
+  if (providerId === 'corpus' || providerId === 'nexus') { await corpusProvider.test(apiKey); return }
   if (providerId === 'anthropic') { await anthropicProvider.test(apiKey); return }
   await localInferenceProvider.test(apiKey)
 }

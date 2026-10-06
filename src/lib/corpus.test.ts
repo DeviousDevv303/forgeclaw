@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CorpusRepository, appendDeepSeekLearning, extractImagePatterns, suggestImprovedPrompt } from './corpus'
 import { corpusProvider } from './ai/providers/corpusProvider'
-import { localInferenceProvider } from './ai/providers/localInferenceProvider'
+import { buildDeepSeekTaskPayload } from './ai/deepseekContext'
 import { requiresCoSign } from './guardianGate'
 
 class MemoryStorage implements Storage {
@@ -108,22 +108,14 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(repository.getApprovedCount()).toBe(1)
   })
 
-  it('uses approved corpus context through the existing local inference provider without requiring network at initialization', async () => {
+  it('makes approved corpus context available to the DeepSeek workflow without local fallback', async () => {
     const repository = new CorpusRepository()
     const { candidate } = await repository.appendInteraction({ input: 'What is beta?', context: '', result: 'Beta is the second letter.', runtime: 'corpus', model: 'local-model' })
     await repository.admitCandidate(candidate.id)
-    // corpusProvider delegates to the NEXUS inference engine, which is the Browser
-    // WebGPU runtime. Spying on localInferenceProvider asserted a delegate that the
-    // corpus path no longer uses, so the spy was never called.
-    const { nexusWebGpuProvider } = await import('./ai/providers/nexusWebGpuProvider')
-    const originalSend = nexusWebGpuProvider.send
-    const send = vi.spyOn(nexusWebGpuProvider, 'send').mockResolvedValue({ text: 'local answer', provider: 'nexus', model: 'local-model', stopReason: 'stop' })
-    await corpusProvider.send({ systemPrompt: 'system', messages: [{ role: 'user', content: 'What is beta?' }], model: 'local-model' }, 'http://127.0.0.1:8080/v1')
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt: expect.stringContaining('Beta is the second letter.') }), 'http://127.0.0.1:8080/v1')
-    send.mockRestore()
-    expect(originalSend).toBeDefined()
-    // The corpus path must not touch the Ollama-backed local provider.
-    expect(localInferenceProvider.id).toBe('local')
+    const payload = buildDeepSeekTaskPayload('What is beta?')
+    expect(payload.context).toContain('Beta is the second letter.')
+    expect(corpusProvider.supportsTools('deepseek-16b')).toBe(false)
+    await expect(corpusProvider.send({ systemPrompt: 'system', messages: [{ role: 'user', content: 'What is beta?' }], model: 'deepseek-16b' }, '')).rejects.toThrow('GitHub Actions workflow dispatcher')
   })
 
   it('does not let corpus context bypass the existing Guardian co-sign boundary', () => {

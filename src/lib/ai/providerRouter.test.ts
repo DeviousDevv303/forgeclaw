@@ -22,6 +22,20 @@ describe('DeepSeek-only provider router', () => {
     if (result.success) expect(result.response.toolCalls?.[0]?.name).toBe('deepseek_reason')
   })
 
+  it('establishes live repository evidence before DeepSeek when both tools are available', async () => {
+    const request: AIRequest = {
+      model: 'deepseek-16b', systemPrompt: '',
+      messages: [{ role: 'user', content: 'Check the repository HEAD and explain the current build.' }],
+      tools: [
+        { name: 'github_repo_state', description: 'read repository state', parameters: {} },
+        { name: 'deepseek_reason', description: 'reason', parameters: {} },
+      ],
+    }
+    const result = await sendViaRouter(request, '', 'corpus')
+    expect(result).toMatchObject({ success: true, response: { provider: 'corpus', stopReason: 'deterministic-repository-evidence' } })
+    if (result.success) expect(result.response.toolCalls?.[0]?.name).toBe('github_repo_state')
+  })
+
   it('returns a terminal error instead of invoking a secondary model after a workflow failure', async () => {
     const request: AIRequest = {
       model: 'deepseek-16b', systemPrompt: '',
