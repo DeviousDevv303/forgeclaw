@@ -25,6 +25,7 @@ jobs:
         run: npm run build
         env:
           GITHUB_PAGES: 'true'
+          VITE_GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
       - uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
