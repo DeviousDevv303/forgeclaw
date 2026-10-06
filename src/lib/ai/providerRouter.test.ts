@@ -104,8 +104,10 @@ describe('provider router runtime passthrough', () => {
     expect(result).toMatchObject({ success: true, response: { stopReason: 'deterministic-repository-evidence', toolCalls: [{ name: 'github_repo_state' }] } })
   })
 
-  it('passes actual GitHub evidence to DeepSeek before NEXUS/CORPUS synthesis', async () => {
+  it('returns actual GitHub evidence directly for a broad inspection request when DeepSeek did not initiate the read', async () => {
     const realResult = 'repo: DeviousDevv303/forgeclaw\nHEAD: abc123\nREADME evidence follows.'
+    const deepSeekSend = vi.spyOn(providers.corpus, 'send')
+    const nexusSend = vi.spyOn(providers.nexus, 'send')
     const request = {
       model: DEFAULT_NEXUS_WEBGPU_MODEL,
       systemPrompt: 'Reason from tool results.',
@@ -123,15 +125,46 @@ describe('provider router runtime passthrough', () => {
     expect(result).toMatchObject({
       success: true,
       response: {
-        stopReason: 'deterministic-deepseek-reasoning',
-        toolCalls: [{ name: 'deepseek_reason', input: { task: 'Inspect the ForgeClaw repository.', context: expect.stringContaining(realResult) } }],
+        text: realResult,
+        stopReason: 'direct-readonly-tool-result',
       },
     })
+    expect(deepSeekSend).not.toHaveBeenCalled()
+    expect(nexusSend).not.toHaveBeenCalled()
   })
 
-  it('sends the exact user objective separately from the runtime envelope and preserves verified HEAD evidence', async () => {
+  it('answers a plain-English main-commit-SHA question from the successful repo-state result without invoking DeepSeek', async () => {
+    const toolResult = 'repo: DeviousDevv303/forgeclaw\ninspectedBranch: main\nHEAD: 0123456789abcdef0123456789abcdef01234567\nHEAD short: 0123456'
+    const deepSeekSend = vi.spyOn(providers.corpus, 'send')
+    const nexusSend = vi.spyOn(providers.nexus, 'send')
+    const result = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Use real GitHub tool results for current repository facts.',
+      messages: [
+        { role: 'user', content: "What's the current main commit SHA?" },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'main-sha-read', name: 'github_repo_state', input: { branch: 'main' } }] },
+        { role: 'tool', content: toolResult, tool_call_id: 'main-sha-read' },
+      ],
+      tools: [
+        { name: 'github_repo_state', description: 'Read repository state', parameters: { type: 'object', properties: {}, required: [] } },
+        { name: 'github_verify_commit', description: 'Verify a commit', parameters: { type: 'object', properties: {}, required: [] } },
+        { name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } },
+      ],
+    }, '', 'corpus')
+    expect(result).toMatchObject({
+      success: true,
+      response: { text: toolResult, stopReason: 'direct-readonly-tool-result' },
+    })
+    expect(result.success && result.response.toolCalls).toBeUndefined()
+    expect(result.success && result.response.text).not.toMatch(/private/i)
+    expect(deepSeekSend).not.toHaveBeenCalled()
+    expect(nexusSend).not.toHaveBeenCalled()
+  })
+
+  it('returns verified HEAD evidence directly for a plain repository-state request', async () => {
     const task = 'Read the current ForgeClaw repository state and report its actual HEAD commit.'
     const headResult = 'repo: DeviousDevv303/forgeclaw\nHEAD: f5a7fd36b8e3465fc07a93a94f20a2059c6c24f2'
+    const deepSeekSend = vi.spyOn(providers.corpus, 'send')
     const result = await sendViaRouter({
       model: DEFAULT_NEXUS_WEBGPU_MODEL,
       systemPrompt: 'Use actual repository evidence.',
@@ -147,9 +180,28 @@ describe('provider router runtime passthrough', () => {
     }, '', 'corpus')
     expect(result).toMatchObject({
       success: true,
-      response: {
-        toolCalls: [{ name: 'deepseek_reason', input: { task, context: expect.stringContaining(headResult) } }],
-      },
+      response: { text: headResult, stopReason: 'direct-readonly-tool-result' },
+    })
+    expect(deepSeekSend).not.toHaveBeenCalled()
+  })
+
+  it('does not treat a failed commit-verification result as a successful direct fact', async () => {
+    const result = await sendViaRouter({
+      model: DEFAULT_NEXUS_WEBGPU_MODEL,
+      systemPrompt: 'Use verified repository evidence.',
+      messages: [
+        { role: 'user', content: 'Verify this commit.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'verify-failed-1', name: 'github_verify_commit', input: { sha: 'deadbeef' } }] },
+        { role: 'tool', content: '✗ VERIFICATION FAILED — commit deadbeef not found in DeviousDevv303/forgeclaw (GitHub 404).', tool_call_id: 'verify-failed-1' },
+      ],
+      tools: [
+        { name: 'github_verify_commit', description: 'Verify a commit', parameters: { type: 'object', properties: {}, required: [] } },
+        { name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } },
+      ],
+    }, '', 'corpus')
+    expect(result).toMatchObject({
+      success: true,
+      response: { stopReason: 'deterministic-deepseek-reasoning', toolCalls: [{ name: 'deepseek_reason' }] },
     })
   })
 

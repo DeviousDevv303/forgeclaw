@@ -23,6 +23,7 @@ import { MAX_NEXUS_CONTEXT_TOKENS } from './nexusContext'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { buildDeepSeekTaskPayload, extractOriginalDeepSeekTask } from './deepseekContext'
+import { CODING_READONLY_TOOL_NAMES } from '../managedAgent'
 
 // ─── Registry ───────────────────────────────────────────────────────────────
 
@@ -192,6 +193,36 @@ function latestCurrentToolResult(request: AIRequest): { name: string; content: s
   const result = [...turn].reverse().find(message => message.role === 'tool' && message.tool_call_id)
   if (!result?.tool_call_id) return undefined
   return { name: callNamesById.get(result.tool_call_id) || '', content: result.content }
+}
+
+// Repository inspection results are already grounded, deterministic answers.
+// A direct tool-only turn should surface that exact evidence instead of asking
+// DeepSeek to embellish it. Keep task-state persistence out of this factual set;
+// it is classified read-only for capability budgeting but is not a read result.
+const DIRECT_FACT_READ_TOOL_NAMES = new Set(CODING_READONLY_TOOL_NAMES.filter(name => name !== 'coding_task_update'))
+
+function hasDeepSeekCall(request: AIRequest): boolean {
+  return currentTurnMessages(request).some(message =>
+    message.role === 'assistant' && message.tool_calls?.some(call => call.name === 'deepseek_reason'),
+  )
+}
+
+function latestSuccessfulDirectFactResult(request: AIRequest): { name: string; content: string } | undefined {
+  const turn = currentTurnMessages(request)
+  const callNamesById = new Map<string, string>()
+  for (const message of turn) {
+    if (message.role === 'assistant') for (const call of message.tool_calls ?? []) callNamesById.set(call.id, call.name)
+  }
+  const result = [...turn].reverse().find(message => message.role === 'tool' && message.tool_call_id)
+  if (result?.role !== 'tool' || !result.tool_call_id) return undefined
+  const name = callNamesById.get(result.tool_call_id) || ''
+  const content = result.content.trim()
+  if (!DIRECT_FACT_READ_TOOL_NAMES.has(name) || !content) return undefined
+  if (/^\[(?:TOOL ERROR|GUARDIAN BLOCKED?|GUARDIAN REJECTED)\]/i.test(content)) return undefined
+  // github_verify_commit can return an ordinary text failure instead of a
+  // [TOOL ERROR], so only its positive verification response is evidence.
+  if (name === 'github_verify_commit' && !content.startsWith('✓ VERIFIED —')) return undefined
+  return { name, content: result.content }
 }
 
 function failedDeepSeekToolResult(request: AIRequest): { name: string; content: string } | undefined {
@@ -403,6 +434,20 @@ export async function sendViaRouter(
   if ((selectedProviderId === 'nexus' || selectedProviderId === 'corpus') && priorDeepSeekResult?.name === 'deepseek_reason' && isGuardianBlockedResult(priorDeepSeekResult.content)) {
     const error = classifyError(new Error(`Guardian blocked the DeepSeek reasoning step; no local model fallback was started. ${priorDeepSeekResult.content.slice(0, 300)}`), selectedProviderId)
     return { success: false, error }
+  }
+
+  // When a read-only factual tool was the direct action in this turn, its
+  // successful result is the answer. Do not send it to DeepSeek for unsolicited
+  // narration or claims that are absent from the evidence. If DeepSeek itself
+  // initiated a read mid-reasoning, preserve that established continuation.
+  const directFactResult = latestSuccessfulDirectFactResult(request)
+  if ((selectedProviderId === 'nexus' || selectedProviderId === 'corpus') && directFactResult && !hasDeepSeekCall(request)) {
+    return success({
+      text: directFactResult.content,
+      provider: selectedProviderId,
+      model: choice.model,
+      stopReason: 'direct-readonly-tool-result',
+    })
   }
 
   // DeepSeek is the primary reasoner. After its real result, a repository task
