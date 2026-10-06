@@ -508,6 +508,8 @@ describe('coding task detection and repo state parsing', () => {
     expect(extractExplicitShellCommand('run pwd')).toBe('pwd')
     expect(extractExplicitShellCommand('Please run the shell command: `pwd`')).toBe('pwd')
     expect(extractExplicitShellCommand('```bash\npwd\n```')).toBe('pwd')
+    expect(extractExplicitShellCommand('Git clone https://github.com/DeviousDevv303/forgeclaw')).toBe('git clone https://github.com/DeviousDevv303/forgeclaw')
+    expect(extractExplicitShellCommand('NPM test')).toBe('npm test')
     expect(extractExplicitShellCommand('inspect the repository and report its current directory')).toBeNull()
     expect(extractExplicitShellCommand('run whatever you think is best')).toBeNull()
   })
