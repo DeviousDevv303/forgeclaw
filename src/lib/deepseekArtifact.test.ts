@@ -174,6 +174,10 @@ describe('DeepSeek stage-specific failures', () => {
           run_number: 88,
         }] })
       }
+      // Mirror check: return 404 so it falls through to GitHub API poll
+      if (url.includes('raw.githubusercontent.com')) {
+        return new Response('Not Found', { status: 404 })
+      }
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
       })
@@ -183,7 +187,8 @@ describe('DeepSeek stage-specific failures', () => {
     const assertion = expect(pending).rejects.toThrow('deepseek-run-poll GET /actions/runs/{run_id}: GitHub read timed out after 30000ms')
     await vi.advanceTimersByTimeAsync(DEEPSEEK_GITHUB_READ_TIMEOUT_MS + 1)
     await assertion
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // 3 calls: run discovery + mirror HEAD check + GitHub API poll
+    expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
   it('labels a browser network/CORS dispatch failure as deepseek-dispatch', async () => {

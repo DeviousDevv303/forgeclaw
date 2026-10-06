@@ -161,8 +161,25 @@ export async function waitForDeepSeekRun(ctx: ToolContext, owner: string, repo: 
   const started = Date.now()
   let statusAttempt = 0
   let finalRun = run
+  const mirrorUrl = deepseekMirrorUrl(owner, repo, invocationId)
   while (Date.now() - started < DEEPSEEK_MAX_WAIT_MS) {
     if (ctx.signal?.aborted) throw new DOMException('DeepSeek run aborted', 'AbortError')
+    // Prefer mirror-based completion check: if the result file exists, the run is done.
+    // This avoids GitHub API timeouts on constrained networks.
+    try {
+      const mirrorCheck = await toolFetch(
+        { ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS },
+        mirrorUrl,
+        { method: 'HEAD', cache: 'no-store' },
+      )
+      if (mirrorCheck.ok) {
+        // Mirror exists = workflow completed and published. Mark as completed.
+        finalRun = { ...run, status: 'completed', conclusion: 'success' } as DeepSeekWorkflowRun
+        break
+      }
+    } catch {
+      // Mirror check failed, fall back to GitHub API poll
+    }
     const response = await githubStage('deepseek-run-poll GET /actions/runs/{run_id}', () => toolFetch(
       { ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS },
       `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
