@@ -159,6 +159,7 @@ describe('DeepSeek stage-specific failures', () => {
     vi.useFakeTimers()
     const invocationId = 'deepseek-timeout-poll'
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      void init
       const url = String(input)
       if (url.includes('/deepseek-16b.yml/runs?')) {
         return Response.json({ workflow_runs: [{

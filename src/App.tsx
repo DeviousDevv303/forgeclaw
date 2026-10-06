@@ -23,8 +23,7 @@ import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/
 import { resolveInitialProvider } from './lib/modelProviders'
 import type { ProviderId } from './lib/modelProviders'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, corpusProvider, nexusProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
-import { DEFAULT_NEXUS_MODEL } from './lib/ai/providers/nexusProvider'
+import { sendViaRouter, testProviderKey, corpusProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { corpusRepository } from './lib/corpus'
 import { parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
@@ -570,7 +569,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const activeRunRef = useRef<{ id: string; controller: AbortController; messageId: string } | null>(null)
   const [testKeyError, setTestKeyError] = useState('')
-  // Active execution is deterministic; a saved provider choice is preserved, otherwise the DeepSeek + CORPUS/NEXUS duo is selected.
+  // Active execution is deterministic; a saved provider choice is preserved, otherwise DeepSeek 16B GitHub Actions is selected.
   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
   const initialProvider: ProviderId = resolveInitialProvider(savedProvider)
   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
@@ -582,13 +581,11 @@ function App() {
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
   const [corpusWebhookUrl, setCorpusWebhookUrl] = useState<string>(() => safeGetItem('fm_corpus_webhook') || '')
   const [corpusSyncStatus, setCorpusSyncStatus] = useState('')
-  const normalizedActiveModel = activeProvider === 'local' ? localModel : activeProvider === 'nexus' || activeProvider === 'corpus' ? DEFAULT_NEXUS_MODEL : anthropicModel
+  const normalizedActiveModel = activeProvider === 'local' ? localModel : activeProvider === 'corpus' ? 'deepseek-16b' : anthropicModel
   const activeModelLabel = activeProvider === 'corpus'
-    ? corpusProvider.models.find(m => m.id === DEFAULT_NEXUS_MODEL)?.label ?? DEFAULT_NEXUS_MODEL
+    ? corpusProvider.models[0]?.label ?? 'DeepSeek 16B · GitHub Actions'
     : activeProvider === 'local'
       ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
-    : activeProvider === 'nexus'
-      ? nexusProvider.models.find(m => m.id === DEFAULT_NEXUS_MODEL)?.label ?? DEFAULT_NEXUS_MODEL
     : activeProvider === 'anthropic'
       ? anthropicProvider.models.find(m => m.id === anthropicModel)?.label ?? anthropicModel
       : localModel
@@ -596,11 +593,9 @@ function App() {
   const lastRuntimeRoute = lastRuntimeMessage
     ? lastRuntimeMessage.provider === 'GitHub Actions' || lastRuntimeMessage.provider === 'deepseek'
       ? 'Level 1 · direct DeepSeek dispatch'
-      : (lastRuntimeMessage.provider === 'nexus' || lastRuntimeMessage.provider === 'corpus') && lastRuntimeMessage.model?.includes('1.5B')
-        ? 'NEXUS WebGPU · Qwen2.5 1.5B fallback'
-        : lastRuntimeMessage.provider === 'nexus' || lastRuntimeMessage.provider === 'corpus'
-          ? 'NEXUS WebGPU · Qwen2.5 3B'
-          : lastRuntimeMessage.provider === 'local'
+      : lastRuntimeMessage.provider === 'corpus'
+        ? 'Level 1 · DeepSeek 16B GitHub Actions'
+        : lastRuntimeMessage.provider === 'local'
             ? 'Level 2 · llama.cpp'
             : `${lastRuntimeMessage.provider} · ${lastRuntimeMessage.model}`
     : 'No completed route yet'
@@ -793,7 +788,7 @@ function App() {
       })
       if (activeProvider === 'corpus') await corpusRepository.admitCandidate(candidate.id)
     } catch (error) {
-      emitFailure({ source: 'forgemind', severity: 'warning', message: `NEXUS local persistence unavailable: ${error instanceof Error ? error.message : String(error)}` })
+      emitFailure({ source: 'forgemind', severity: 'warning', message: `DeepSeek local persistence unavailable: ${error instanceof Error ? error.message : String(error)}` })
     }
   }
 
@@ -856,8 +851,8 @@ function App() {
 
     // DeepSeek-primary providers require a GitHub token. Fail fast with a clear
     // message instead of dispatching DeepSeek (which will fail) and falling back
-    // to Qwen soup.
-    const deepSeekProvider = activeProvider === 'corpus' || activeProvider === 'nexus'
+    // to an unverified local fallback.
+    const deepSeekProvider = activeProvider === 'corpus'
     if (deepSeekProvider && !ghToken?.trim()) {
       const errorMsg: Message = {
         id: Date.now().toString(),
@@ -881,7 +876,7 @@ function App() {
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : ''
-    const currentProviderLabel = activeProvider === 'corpus' ? 'CORPUS + NEXUS WebGPU + DeepSeek reasoning' : activeProvider === 'nexus' ? 'NEXUS WebGPU (secondary)' : activeProvider === 'local' ? 'Local inference' : 'Anthropic'
+    const currentProviderLabel = activeProvider === 'corpus' ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : 'sk-ant-...'
 
     const explicitDeepSeek = !imageUrl ? parseDirectDeepSeekCommand(promptText) : null
@@ -1035,7 +1030,7 @@ function App() {
 
     setMessages(prev => [...prev, userMsg])
 
-    let source: 'local' | 'cloud' = activeProvider === 'corpus' || activeProvider === 'local' || activeProvider === 'nexus' ? 'local' : 'cloud'
+    let source: 'local' | 'cloud' = activeProvider === 'corpus' || activeProvider === 'local' ? 'local' : 'cloud'
     let cloudMsgId: string | null = null
     // Declared outside the try so a terminal failure can still attach the real
     // tool outcomes the run produced (Activity/Diagnostics must reflect reality).
@@ -1062,10 +1057,10 @@ function App() {
       return toolKeywords.some((kw: string) => messageLower.includes(kw))
     })
 
-    // Keep ordinary chat free of the execution catalog; small WebGPU models
+    // Keep ordinary chat free of the execution catalog; browser-local models
     // can emit code-token soup when a large tool protocol is injected for a
     // request that does not need tools.
-    const deepSeekDuoDefault = activeProvider === 'corpus' || activeProvider === 'nexus'
+    const deepSeekDuoDefault = activeProvider === 'corpus'
     const complexReasoningTask = !imageUrl && activeProvider !== 'anthropic' && shouldDispatchComplexTaskToDeepSeek(promptText)
     const coreToolNames = codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
@@ -1082,7 +1077,7 @@ function App() {
     const primaryInstruction = imageUrl
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
       : deepSeekDuoDefault
-        ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek GitHub Actions workflow is the primary reasoning engine for this CORPUS/NEXUS runtime. Dispatch deepseek_reason first, then continue reasoning in NEXUS/CORPUS from its real result. Qwen WebGPU is the secondary synthesis/fallback model; never claim the workflow ran without its dispatcher result.'
+        ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
@@ -1104,7 +1099,7 @@ function App() {
 
     // ── Runtime-owned repository identity ────────────────────────────────────
     // Do not pre-read or serialize HEAD/repository contents into the prompt. The
-    // runtime supplies a compact identity envelope and NEXUS calls the GitHub read
+    // runtime supplies a compact identity envelope and DeepSeek calls the GitHub read
     // tool when evidence is required.
     let effectivePrompt = promptText
     const owner = (ghOwner || CANONICAL_IDENTITY.owner).trim()
@@ -1285,7 +1280,7 @@ function App() {
           signal: controller.signal,
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
-            // NEXUS has no native tool channel. Do not stream raw manual-tool
+            // DeepSeek has no native tool channel. Do not stream raw manual-tool
             // protocol text into the normal assistant renderer: until the full
             // response is parsed, even `github_repo_state();` is only model text.
             // Keep it diagnostic-only and show a neutral progress marker; the
@@ -1306,24 +1301,13 @@ function App() {
         }
         setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'success', lastError: null, lastLatencyMs: latency }))
         const result = routerResult.response
-        resolvedProvider = result.provider === 'deepseek' ? 'deepseek' : result.provider === 'nexus' ? 'nexus' : result.provider === 'corpus' ? 'corpus' : result.provider === 'local' ? 'local' : activeProvider
+        resolvedProvider = result.provider === 'deepseek' ? 'deepseek' : result.provider === 'corpus' ? 'corpus' : result.provider === 'local' ? 'local' : activeProvider
         if (result.provider === 'deepseek') source = 'cloud'
         resolvedModel = result.model || currentModel
         const primaryDiagnostic = result.diagnostics?.primaryReasoning
         if (primaryDiagnostic) {
-          secondarySynthesisNotice = `PRIMARY REASONING: DeepSeek failed at ${primaryDiagnostic.stage}. A fresh, tool-free request containing only the original user task was sent to ${result.model}; no failed-tool trace or DeepSeek-success claim was passed to Qwen.\n${primaryDiagnostic.message}`
+          secondarySynthesisNotice = `PRIMARY REASONING: DeepSeek failed at ${primaryDiagnostic.stage}. No fallback model was invoked.\n${primaryDiagnostic.message}`
         }
-        const secondaryDiagnostic = result.diagnostics?.secondarySynthesis
-        if (secondaryDiagnostic) {
-          const attemptLines = secondaryDiagnostic.attempts
-            .map(attempt => `- ${attempt.model} — stage=${attempt.stage}: ${attempt.message}`)
-            .join('\n')
-          const notice = secondaryDiagnostic.status === 'unavailable'
-            ? `SECONDARY SYNTHESIS: Qwen WebGPU did not complete for this request. The real DeepSeek result is retained.\n${attemptLines}`
-            : `SECONDARY SYNTHESIS: Qwen used its fallback model after the preferred model failed.\n${attemptLines}`
-          secondarySynthesisNotice = [secondarySynthesisNotice, notice].filter(Boolean).join('\n\n')
-        }
-
         // No tool calls → final answer
         if (!result.toolCalls?.length) {
           // Check for manual tool mode (no native tool support)
@@ -1448,11 +1432,11 @@ for (const call of result.toolCalls) {
       const deepSeekCheckpoint = deepSeekSuccessOutput.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable'
       if (deepSeekSucceeded) source = 'cloud'
       if (deepSeekDuoDefault && resolvedProvider === 'deepseek') {
-        resolvedModel = `DeepSeek Actions (${deepSeekCheckpoint}); Qwen WebGPU secondary unavailable`
+        resolvedModel = `DeepSeek Actions (${deepSeekCheckpoint}); DeepSeek 16B secondary unavailable`
       } else if (deepSeekDuoDefault && deepSeekSucceeded) {
-        resolvedModel = `DeepSeek Actions (${deepSeekCheckpoint}) → ${resolvedModel} (secondary Qwen WebGPU synthesis)`
+        resolvedModel = `DeepSeek Actions (${deepSeekCheckpoint}) → ${resolvedModel} (secondary DeepSeek 16B synthesis)`
       } else if (deepSeekDuoDefault && deepSeekFailed) {
-        resolvedModel = `Qwen WebGPU clean-request fallback after DeepSeek workflow failure → ${resolvedModel}`
+        resolvedModel = `DeepSeek 16B clean-request fallback after DeepSeek workflow failure → ${resolvedModel}`
       }
       if (deepSeekFailed) {
         const failedDeepSeekResult = allToolResults.find(result => result.name === 'deepseek_reason' && result.isError)
@@ -1811,19 +1795,6 @@ for (const call of result.toolCalls) {
     }
   }
 
-  const testNexusEndpoint = async () => {
-    setTestingKey(true)
-    setTestKeyError('')
-    try {
-      await testProviderKey('', 'nexus')
-      setTestKeyError('Browser WebGPU runtime is available; no API key or localhost server is used.')
-    } catch (err) {
-      setTestKeyError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setTestingKey(false)
-    }
-  }
-
   const syncCorpus = async () => {
     if (!corpusWebhookUrl.trim()) {
       setCorpusSyncStatus('No webhook configured; local-only mode remains active.')
@@ -2041,8 +2012,7 @@ for (const call of result.toolCalls) {
     if (activeProvider === 'local') return <span style={{ color: localEndpoint ? '#6b6b6b' : '#ef4444' }}>{localEndpoint ? activeModelLabel : 'Local endpoint missing'}</span>
     const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : true
     if (!keyPresent) return <span style={{ color: '#ef4444' }}>Anthropic: no API key</span>
-    if (activeProvider === 'corpus') return <span style={{ color: '#6b6b6b' }}>DeepSeek → CORPUS/NEXUS · Qwen secondary</span>
-    if (activeProvider === 'nexus') return <span style={{ color: '#6b6b6b' }}>DeepSeek → NEXUS WebGPU · Qwen secondary</span>
+    if (activeProvider === 'corpus') return <span style={{ color: '#6b6b6b' }}>DeepSeek 16B · GitHub Actions</span>
     return <span style={{ color: lastSource === 'cloud' ? '#3b82f6' : '#6b6b6b', fontWeight: lastSource === 'cloud' ? 'bold' : 'normal' }}>{activeModelLabel}</span>
   }
 
@@ -2194,7 +2164,7 @@ for (const call of result.toolCalls) {
                   ))}
                 </div>
                 <div style={{ borderTop: '1px solid #292929', marginTop: '12px', paddingTop: '9px', color: '#777', fontSize: '10px', lineHeight: 1.5 }}>
-                  Hierarchy: Founder’s principles → Codex Anima / Guardian foundation → ForgeClaw / NEXUS behavior. CORPUS may supply learning candidates, never authority over these principles.
+                  Hierarchy: Founder’s principles → Codex Anima / Guardian foundation → ForgeClaw / DeepSeek behavior. CORPUS may supply learning candidates, never authority over these principles.
                   <br />Canonical source: <a href="https://github.com/DeviousDevv303/forgeclaw/blob/main/docs/founder-principles.md" target="_blank" rel="noreferrer" style={{ color: '#f97316' }}>{FOUNDER_PRINCIPLES.sourcePath}</a>
                 </div>
               </section>
@@ -2207,8 +2177,7 @@ for (const call of result.toolCalls) {
                   onChange={e => setActiveProvider(e.target.value as ProviderId)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
-                  <option value="corpus" style={{ background: '#111' }}>Default Duo: CORPUS + DeepSeek / NEXUS WebGPU</option>
-                  <option value="nexus" style={{ background: '#111' }}>NEXUS WebGPU (secondary; Qwen)</option>
+                  <option value="corpus" style={{ background: '#111' }}>DeepSeek 16B · GitHub Actions</option>
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
                   <option value="local" style={{ background: '#111' }}>Local Inference (llama.cpp)</option>
                 </select>
@@ -2225,17 +2194,11 @@ for (const call of result.toolCalls) {
               {activeProvider === 'corpus' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
-                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Default Duo: CORPUS + DeepSeek / NEXUS WebGPU</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>DeepSeek workflow is primary reasoning; CORPUS supplies approved context and Qwen WebGPU is secondary.</span>
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>DeepSeek 16B · GitHub Actions</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Repository-owned workflow. Failures are surfaced directly; no browser-local fallback is used.</span>
                 </div>
               )}
 
-              {activeProvider === 'nexus' && (
-                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
-                  <div><div style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold' }}>NEXUS WebGPU (secondary)</div><div style={{ color: '#666', fontSize: '10px' }}>Browser-local Qwen2.5 WebGPU synthesis/fallback; DeepSeek remains the primary reasoning workflow in the default duo.</div></div>
-                </div>
-              )}
 
               {activeProvider === 'local' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
@@ -2259,14 +2222,6 @@ for (const call of result.toolCalls) {
                   <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Local Model</label>
                   <select value={localModel} onChange={e => { setLocalModel(e.target.value); safeSetItem('fm_local_model', e.target.value) }} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
                     {localInferenceProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
-                  </select>
-                </div>
-              )}
-              {activeProvider === 'nexus' && (
-                <div style={{ marginBottom: '14px' }}>
-                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>NEXUS Model</label>
-                  <select value={DEFAULT_NEXUS_MODEL} disabled style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
-                    {nexusProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
                   </select>
                 </div>
               )}
@@ -2313,29 +2268,22 @@ for (const call of result.toolCalls) {
                   <div style={{ color: '#777', fontSize: '10px', fontFamily: 'monospace', lineHeight: 1.5 }}>Local CORPUS records: {corpusRepository.getInteractionCount()} · approved: {corpusRepository.getApprovedCount()} · candidates: {corpusRepository.getCandidateCount()} · version: {corpusRepository.getVersion()}.</div>
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #222' }}>
                     <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Optional Corpus Webhook</label>
-                    <input type="url" placeholder="https://example.invalid/nexus-sync" value={corpusWebhookUrl} onChange={e => setCorpusWebhookUrl(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                    <input type="url" placeholder="https://example.invalid/deepseek-sync" value={corpusWebhookUrl} onChange={e => setCorpusWebhookUrl(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
                     <button onClick={syncCorpus} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>SYNC PENDING CANDIDATES</button>
                     {corpusSyncStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusSyncStatus}</div>}
                   </div>
                 </div>
               )}
 
-              {activeProvider === 'nexus' && (
-                <div style={{ marginBottom: '14px' }}>
-                  <button onClick={testNexusEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST NEXUS RUNTIME'}</button>
-                  {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
-                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Browser-local Qwen2.5 WebGPU is the secondary synthesis/fallback path in the DeepSeek + CORPUS/NEXUS default duo. It uses no API key, HTTP bridge, or llama.cpp server.</div>
-                </div>
-              )}
 
               {/* Operator diagnostics */}
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
                 {[
-                  ['runtime provider', activeProvider === 'corpus' ? 'DeepSeek + CORPUS/NEXUS duo' : activeProvider === 'nexus' ? 'NEXUS WebGPU secondary' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],
+                  ['runtime provider', activeProvider === 'corpus' ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],
                   ['runtime model', activeModelLabel],
                   ['last route level', lastRuntimeRoute],
-                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'anthropic' ? (anthropicApiKey ? 'present' : 'missing') : safeGetItem('gh_token') ? 'GitHub workflow token present; WebGPU needs no key' : 'GitHub workflow token missing; WebGPU needs no key'],
+                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'anthropic' ? (anthropicApiKey ? 'present' : 'missing') : safeGetItem('gh_token') ? 'GitHub workflow token present' : 'GitHub workflow token missing'],
                   ['request status', requestStatus],
                   ['last error', lastRequestError || diagnostics.lastError || 'none'],
                   ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
@@ -2538,12 +2486,12 @@ for (const call of result.toolCalls) {
 
                   {/* API / workflow credential */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{activeProvider === 'corpus' || activeProvider === 'nexus' ? 'CREDENTIALS' : 'API KEY'}</div>
-                    <div style={{ color: activeProvider === 'corpus' || activeProvider === 'nexus' ? '#22c55e' : diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
-                      {activeProvider === 'corpus' || activeProvider === 'nexus' ? '● NO WEBGPU KEY REQUIRED' : diagnostics.keyPresent ? '● PRESENT' : '● MISSING'}
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{activeProvider === 'corpus' ? 'CREDENTIALS' : 'API KEY'}</div>
+                    <div style={{ color: activeProvider === 'corpus' ? '#22c55e' : diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
+                      {activeProvider === 'corpus' ? '● GITHUB WORKFLOW TOKEN' : diagnostics.keyPresent ? '● PRESENT' : '● MISSING'}
                     </div>
                     <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                      {activeProvider === 'corpus' ? (safeGetItem('gh_token') ? 'DeepSeek workflow GitHub token saved' : 'DeepSeek workflow requires GitHub token in Settings') : activeProvider === 'nexus' ? 'Browser-local WebGPU; no API key' : diagnostics.keyPresent ? 'Key format valid' : 'Enter key above'}
+                      {activeProvider === 'corpus' ? (safeGetItem('gh_token') ? 'DeepSeek workflow GitHub token saved' : 'DeepSeek workflow requires GitHub token in Settings') : diagnostics.keyPresent ? 'Key format valid' : 'Enter key above'}
                     </div>
                   </div>
 

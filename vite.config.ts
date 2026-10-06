@@ -29,6 +29,9 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: true,
   },
+  preview: {
+    allowedHosts: ['4173-i8tnbm9cn5hseuzj25lpq-0b38851f.us4.manus.computer'],
+  },
   server: {
     port: 5173,
     allowedHosts: ['5173-i717pcqu966pbmxqlw216-602911ed.us2.manus.computer'],

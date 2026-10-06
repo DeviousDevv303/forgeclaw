@@ -11,7 +11,7 @@ describe('canonical provider defaults', () => {
 
   it('preserves an explicitly saved valid provider selection across initialization', () => {
     for (const provider of PROVIDER_IDS) {
-      expect(resolveInitialProvider(provider)).toBe(provider)
+      expect(resolveInitialProvider(provider)).toBe(provider === 'nexus' ? DEFAULT_PROVIDER : provider)
     }
   })
 })
