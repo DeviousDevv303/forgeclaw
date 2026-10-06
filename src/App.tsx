@@ -1431,12 +1431,10 @@ for (const call of result.toolCalls) {
       const deepSeekSuccessOutput = allToolResults.find(result => result.name === 'deepseek_reason' && !result.isError)?.output || ''
       const deepSeekCheckpoint = deepSeekSuccessOutput.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable'
       if (deepSeekSucceeded) source = 'cloud'
-      if (deepSeekDuoDefault && resolvedProvider === 'deepseek') {
-        resolvedModel = `DeepSeek Actions (${deepSeekCheckpoint}); DeepSeek 16B secondary unavailable`
-      } else if (deepSeekDuoDefault && deepSeekSucceeded) {
-        resolvedModel = `DeepSeek Actions (${deepSeekCheckpoint}) → ${resolvedModel} (secondary DeepSeek 16B synthesis)`
-      } else if (deepSeekDuoDefault && deepSeekFailed) {
-        resolvedModel = `DeepSeek 16B clean-request fallback after DeepSeek workflow failure → ${resolvedModel}`
+      if (deepSeekSucceeded) {
+        resolvedModel = `DeepSeek 16B Actions (${deepSeekCheckpoint})`
+      } else if (deepSeekFailed) {
+        resolvedModel = `DeepSeek 16B Actions (workflow failed)`
       }
       if (deepSeekFailed) {
         const failedDeepSeekResult = allToolResults.find(result => result.name === 'deepseek_reason' && result.isError)
