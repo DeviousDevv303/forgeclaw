@@ -854,6 +854,24 @@ function App() {
   const sendPrompt = useCallback(async (promptText: string, imageUrl?: string) => {
     if (!promptText.trim()) return
 
+    // DeepSeek-primary providers require a GitHub token. Fail fast with a clear
+    // message instead of dispatching DeepSeek (which will fail) and falling back
+    // to Qwen soup.
+    const deepSeekProvider = activeProvider === 'corpus' || activeProvider === 'nexus'
+    if (deepSeekProvider && !ghToken?.trim()) {
+      const errorMsg: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: '⚠️ GitHub token required: The DeepSeek reasoning workflow needs a GitHub token to dispatch. Please add your token in Settings → GitHub Token, then try again.',
+        timestamp: Date.now(),
+      }
+      setMessages(prev => [...prev,
+        { id: (Date.now() - 1).toString(), role: 'user', content: promptText, timestamp: Date.now() },
+        errorMsg,
+      ])
+      return
+    }
+
     const displayContent = imageUrl
       ? promptText
           .replace(/data:[^;]+;base64,[A-Za-z0-9+/=\n]+/g, '')
