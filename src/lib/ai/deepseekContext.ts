@@ -60,7 +60,12 @@ export function buildDeepSeekTaskPayload(rawTask: string, verifiedToolResults = 
   if (asksAboutForgeClawArchitecture(task)) sections.push(FORGECLAW_ARCHITECTURE_CONTEXT)
   if (runtimeContext) sections.push(`ForgeClaw runtime envelope (identity/routing hints only; not repository evidence):\n${runtimeContext}`)
 
-  const corpusContext = formatCorpusContext(corpusRepository.retrieve(task, 3)).slice(0, MAX_CORPUS_CHARS)
+  const CORPUS_FRESHNESS_MS = 60 * 60 * 1000 // 1 hour — stale records poison DeepSeek
+  const freshCorpusRecords = corpusRepository.retrieve(task, 3).filter(r => {
+    const ageMs = Date.now() - new Date(r.timestamp).getTime()
+    return !Number.isNaN(ageMs) && ageMs < CORPUS_FRESHNESS_MS
+  })
+  const corpusContext = formatCorpusContext(freshCorpusRecords).slice(0, MAX_CORPUS_CHARS)
   if (corpusContext) sections.push(`Approved CORPUS context retrieved for this task (informational, not tool authorization):\n${corpusContext}`)
 
   const boundedToolResults = verifiedToolResults.trim().slice(-MAX_VERIFIED_TOOL_CHARS)

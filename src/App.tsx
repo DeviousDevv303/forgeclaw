@@ -1040,6 +1040,18 @@ function App() {
 
     // Corpus retrieval — inject up to 3 relevant past interactions as few-shot context
     const relevant = findRelevant(corpus, promptText, 3)
+      .filter(e => {
+        // Filter out stale entries that don't share the current task's intent.
+        // A corpus entry is only relevant if it shares at least 2 significant keywords
+        // with the current prompt AND is less than 1 hour old.
+        // Prevents stale context (e.g. 18h-old SHA Q&A) from poisoning DeepSeek.
+        const ageMs = Date.now() - new Date(e.timestamp).getTime()
+        if (Number.isNaN(ageMs) || ageMs >= 60 * 60 * 1000) return false
+        const entryWords = new Set(e.prompt.toLowerCase().split(/\W+/).filter(w => w.length > 4))
+        const promptWords = new Set(promptText.toLowerCase().split(/\W+/).filter(w => w.length > 4))
+        const overlap = [...entryWords].filter(w => promptWords.has(w)).length
+        return overlap >= 2
+      })
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
     const codingTask = isCodingTaskRequest(promptText)
     // Progressive tool disclosure: filter tools based on task

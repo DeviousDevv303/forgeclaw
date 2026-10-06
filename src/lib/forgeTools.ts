@@ -718,11 +718,22 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       // ── DeepSeek: repository-owned primary reasoning ────────────────────────
       case 'deepseek_reason': {
         const task = typeof input.task === 'string' ? input.task.trim() : ''
-        const context = typeof input.context === 'string' ? input.context : ''
+        let context = typeof input.context === 'string' ? input.context : ''
         const ref = typeof input.ref === 'string' && input.ref.trim() ? input.ref.trim() : 'main'
         const nexusLearn = input.nexus_learn !== false
         if (!task) throw new Error('DeepSeek task is required.')
         if (!token) throw new Error('No GitHub token configured.')
+        // Defense-in-depth: drop context that shares no significant words with the task.
+        // Stale context (e.g. 18h-old SHA Q&A) confuses DeepSeek into answering the wrong question.
+        if (context && task) {
+          const taskWords = new Set(task.toLowerCase().split(/\W+/).filter(w => w.length > 4))
+          const contextWords = new Set(context.toLowerCase().split(/\W+/).filter(w => w.length > 4))
+          const overlap = [...taskWords].filter(w => contextWords.has(w)).length
+          if (overlap === 0) {
+            console.warn('[deepseek_reason] Dropping stale context with zero keyword overlap to task')
+            context = ''
+          }
+        }
         if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {
           throw new Error('Invalid workflow ref.')
         }
