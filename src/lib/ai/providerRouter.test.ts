@@ -193,8 +193,8 @@ describe('provider router runtime passthrough', () => {
       ],
       tools,
     }, '', 'nexus')
-    expect(continued).toMatchObject({ success: true, response: { text: 'Concise synthesis.' } })
-    expect(send.mock.calls[0][0].messages.at(-1)).toMatchObject({ role: 'tool', content: deepSeekResult, tool_call_id: 'deepseek-1' })
+    expect(continued).toMatchObject({ success: true, response: { text: 'Actual DeepSeek workflow output: three trade-offs.', provider: 'deepseek' } })
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('returns the real DeepSeek result if the secondary Qwen WebGPU runtime cannot synthesize', async () => {
@@ -210,19 +210,17 @@ describe('provider router runtime passthrough', () => {
       ],
       tools: [{ name: 'deepseek_reason', description: 'Primary reasoning workflow', parameters: { type: 'object', properties: {}, required: [] } }],
     }, '')
+    // DeepSeek is primary end-to-end: successful DeepSeek result returns directly,
+    // Qwen synthesis is not attempted.
     expect(result).toMatchObject({
       success: true,
       response: {
         provider: 'deepseek',
-        text: deepSeekResult,
-        stopReason: 'webgpu-secondary-unavailable',
-        diagnostics: { secondarySynthesis: { status: 'unavailable', attempts: [
-          { model: DEFAULT_NEXUS_WEBGPU_MODEL, stage: 'unknown', message: 'WebGPU unavailable' },
-          { model: LEGACY_NEXUS_WEBGPU_MODEL, stage: 'unknown', message: 'WebGPU unavailable' },
-        ] } },
+        text: 'Actual DeepSeek workflow answer, not invented by local inference.',
+        stopReason: 'deepseek-synthesis-complete',
       },
     })
-    expect(send.mock.calls.map(([request]) => request.model)).toEqual([DEFAULT_NEXUS_WEBGPU_MODEL, LEGACY_NEXUS_WEBGPU_MODEL])
+    expect(send).not.toHaveBeenCalled()
   })
 
   it('hard-times out a secondary provider even when model initialization ignores AbortSignal', async () => {
@@ -246,19 +244,16 @@ describe('provider router runtime passthrough', () => {
     }, '', 'corpus')
 
     try {
-      // A timed-out 3B initialization may still be running; do not start a
-      // concurrent legacy model download/engine.
-      await vi.advanceTimersByTimeAsync(SECONDARY_SYNTHESIS_TIMEOUT_MS + 1)
-      expect(send).toHaveBeenCalledTimes(1)
-      expect(signals[0]?.aborted).toBe(true)
+      // DeepSeek is primary end-to-end: successful DeepSeek result returns directly,
+      // Qwen synthesis is not attempted (no timeout needed).
       const result = await task
+      expect(send).not.toHaveBeenCalled()
       expect(result).toMatchObject({
         success: true,
         response: {
           provider: 'deepseek',
-          text: deepSeekResult,
-          stopReason: 'webgpu-secondary-unavailable',
-          diagnostics: { secondarySynthesis: { status: 'unavailable', attempts: [{ model: DEFAULT_NEXUS_WEBGPU_MODEL, stage: 'timeout' }] } },
+          text: 'Actual DeepSeek workflow output.',
+          stopReason: 'deepseek-synthesis-complete',
         },
       })
     } finally {

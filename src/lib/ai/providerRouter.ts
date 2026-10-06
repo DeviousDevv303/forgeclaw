@@ -454,6 +454,24 @@ export async function sendViaRouter(
       return success(await sendCleanFallbackAfterDeepSeekFailure(request, apiKey, primaryFailure))
     }
 
+    // DeepSeek is primary end-to-end. If the latest tool result is a successful
+    // DeepSeek synthesis, extract the answer and return it directly.
+    // Qwen must not render for normal requests.
+    const latestResult = latestCurrentToolResult(request)
+    if ((selectedProviderId === 'nexus' || selectedProviderId === 'corpus') &&
+        latestResult?.name === 'deepseek_reason' &&
+        isSuccessfulDeepSeekToolResult(latestResult.content)) {
+      const answer = latestResult.content.split('\n\n').slice(1).join('\n\n').trim()
+      if (answer) {
+        return success({
+          text: answer,
+          provider: 'deepseek',
+          model: `DeepSeek Actions (${deepSeekCheckpointLabel(latestResult.content)})`,
+          stopReason: 'deepseek-synthesis-complete',
+        })
+      }
+    }
+
     if (selectedProviderId === 'nexus' || selectedProviderId === 'corpus') {
       try {
         return success(await sendSecondaryWithTimeout(provider, requestForWebGpuFallback(request, choice.model), apiKey, 'WebGPU secondary synthesis'))
