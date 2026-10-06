@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeTool, type ToolContext } from './forgeTools'
 import { describeGithubTransportFailure, isBrowserNetworkFailure } from './githubFetch'
-import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, normalizeDeepSeekOutput, waitForDeepSeekRun } from './deepseekArtifact'
+import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, DEEPSEEK_MAX_WAIT_MS, normalizeDeepSeekOutput, waitForDeepSeekRun } from './deepseekArtifact'
 
 function ctx(): ToolContext {
   return { ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' }
@@ -155,7 +155,7 @@ describe('DeepSeek stage-specific failures', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
-  it('names the correlated run-status endpoint when polling times out', async () => {
+  it('tolerates transient poll failures and times out after max wait', async () => {
     vi.useFakeTimers()
     const invocationId = 'deepseek-timeout-poll'
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -178,17 +178,17 @@ describe('DeepSeek stage-specific failures', () => {
       if (url.includes('raw.githubusercontent.com')) {
         return new Response('Not Found', { status: 404 })
       }
-      return new Promise<Response>((_resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
-      })
+      // Simulate transient network failure: reject immediately
+      throw new Error('Failed to fetch')
     })
     vi.stubGlobal('fetch', fetchMock)
     const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', invocationId, Date.now())
-    const assertion = expect(pending).rejects.toThrow('deepseek-run-poll GET /actions/runs/{run_id}: GitHub read timed out after 30000ms')
-    await vi.advanceTimersByTimeAsync(DEEPSEEK_GITHUB_READ_TIMEOUT_MS + 1)
+    const assertion = expect(pending).rejects.toThrow('deepseek-run-poll: DeepSeek timed out after 35m')
+    // Advance past the max wait time; transient failures should not abort early
+    await vi.advanceTimersByTimeAsync(DEEPSEEK_MAX_WAIT_MS + 60000)
     await assertion
-    // 3 calls: run discovery + mirror HEAD check + GitHub API poll
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    // Multiple poll attempts were made (not just one)
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(3)
   })
 
   it('labels a browser network/CORS dispatch failure as deepseek-dispatch', async () => {

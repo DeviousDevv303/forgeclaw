@@ -36,7 +36,7 @@ const DISCOVERY_TIMEOUT_MS = 30_000
 const MIRROR_TIMEOUT_MS = 20_000
 export const DEEPSEEK_GITHUB_READ_TIMEOUT_MS = 30_000
 const discoveryDelays = [100, 250, 500, 1000, 2000] as const
-const statusDelays = [1000, 2000, 3000, 5000, 8000] as const
+const statusDelays = [30000, 45000, 60000, 60000, 60000] as const
 
 type DeepSeekWorkflowRun = ShellWorkflowRun
 interface ArtifactInfo {
@@ -180,14 +180,23 @@ export async function waitForDeepSeekRun(ctx: ToolContext, owner: string, repo: 
     } catch {
       // Mirror check failed, fall back to GitHub API poll
     }
-    const response = await githubStage('deepseek-run-poll GET /actions/runs/{run_id}', () => toolFetch(
-      { ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS },
-      `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
-      { headers: ghHeaders(ctx), cache: 'no-store' },
-    ))
-    if (!response.ok) throw new Error(describeGithubHttpFailure('deepseek-run-poll GET /actions/runs/{run_id}', response.status, response.statusText))
-    finalRun = await githubStage('deepseek-run-poll response JSON', () => response.json()) as DeepSeekWorkflowRun
-    if (finalRun.status === 'completed') break
+    // GitHub API poll: tolerate transient network failures, retry on next interval.
+    // A single failed request must not abort the entire 35-minute wait.
+    try {
+      const response = await githubStage('deepseek-run-poll GET /actions/runs/{run_id}', () => toolFetch(
+        { ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS },
+        `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
+        { headers: ghHeaders(ctx), cache: 'no-store' },
+      ))
+      if (!response.ok) throw new Error(describeGithubHttpFailure('deepseek-run-poll GET /actions/runs/{run_id}', response.status, response.statusText))
+      finalRun = await githubStage('deepseek-run-poll response JSON', () => response.json()) as DeepSeekWorkflowRun
+      if (finalRun.status === 'completed') break
+    } catch (pollError) {
+      // Transient poll failure (network/CORS/timeout): log and retry on next interval.
+      // Only abort if the context was explicitly cancelled.
+      if (pollError instanceof DOMException && pollError.name === 'AbortError') throw pollError
+      // Otherwise, fall through to the delay and retry.
+    }
     const remaining = DEEPSEEK_MAX_WAIT_MS - (Date.now() - started)
     if (remaining <= 0) break
     await new Promise(resolve => setTimeout(resolve, Math.min(statusDelays[Math.min(statusAttempt++, statusDelays.length - 1)], remaining)))
