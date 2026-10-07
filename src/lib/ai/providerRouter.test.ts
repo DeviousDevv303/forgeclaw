@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { detectBestProvider, getBestProvider, providers, sendViaRouter } from './providerRouter'
 import type { AIRequest } from './types'
 
-describe('DeepSeek-only provider router', () => {
-  it('uses DeepSeek 16B as the canonical corpus model without probing localhost', async () => {
+describe('provider router', () => {
+  it('uses Moonshot/Kimi as the canonical model without probing localhost', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    await expect(getBestProvider('')).resolves.toEqual({ providerId: 'corpus', model: 'deepseek-16b', level: 1 })
+    await expect(getBestProvider('')).resolves.toEqual({ providerId: 'moonshot', model: 'moonshot-v1-8k', level: 1 })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
