@@ -98,6 +98,17 @@ jobs:
 
           torch.set_num_threads(min(4, os.cpu_count() or 1))
 
+          def is_presentation_task(task_text):
+              return 'presentation' in task_text.casefold()
+
+          # Only include the presentation template for actual presentation tasks.
+          # The 7B model latches onto structured templates and ignores the real task.
+          presentation_instructions = (
+              ' For a presentation request, write the presentation itself with a title and '
+              'the exact sections Opening Image, What We Can See, What Light Means, '
+              'and Closing Invitation. Do not use a letter greeting or name placeholder. '
+          ) if is_presentation_task(task) else ''
+
           user_content = (
               f"Task:\n{task}\n\nVerified project, CORPUS, and tool context:\n"
               f"{context or '(No additional context was supplied.)'}\n\n"
@@ -114,10 +125,7 @@ jobs:
               'information supports it. For spiritual, philosophical, persuasive, or '
               'creative requests, treat the premise as a poetic or imaginative frame '
               'rather than scientifically proven fact, but still fulfill the requested '
-              'artifact instead of replacing it with a generic disclaimer. For a '
-              'presentation request, write the presentation itself with a title and '
-              'the exact sections Opening Image, What We Can See, What Light Means, '
-              'and Closing Invitation. Do not use a letter greeting or name placeholder. '
+              f'artifact instead of replacing it with a generic disclaimer.{presentation_instructions}'
               'Honor ForgeClaw\'s '
               'motive of Love: invite reflection without exploiting vulnerabilities '
               'or using coercive emotional pressure. If evidence is missing, name '
@@ -137,11 +145,9 @@ jobs:
                   'a redirect to another source, or a technical lecture. If the user '
                   'asks for emotional triggers, replace exploitation of private '
                   'vulnerabilities with an ethical persuasive arc based on universal '
-                  'human experiences and an invitation that preserves consent. For a '
-                  'For a presentation, provide a title, the exact sections Opening Image, '
-                  'What We Can See, What Light Means, and Closing Invitation, plus concrete '
-                  'speaking points. Do not use a letter greeting or name placeholder. '
-                  'Never claim an action succeeded without actual evidence.'
+                  'human experiences and an invitation that preserves consent.'
+                  + presentation_instructions +
+                  ' Never claim an action succeeded without actual evidence.'
                   ),
               },
               {'role': 'user', 'content': user_content},
@@ -151,9 +157,6 @@ jobs:
               folded = task_text.casefold()
               markers = ('creative', 'presentation', 'persuasive', 'philosoph', 'spiritual', 'metaphor', 'poem', 'story', 'imagine')
               return any(marker in folded for marker in markers)
-
-          def is_presentation_task(task_text):
-              return 'presentation' in task_text.casefold()
 
           def has_presentation_structure(text):
               folded = ' '.join(text.casefold().split())
