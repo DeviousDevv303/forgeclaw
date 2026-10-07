@@ -1,11 +1,11 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 
-export const PROVIDER_IDS = ['corpus', 'local', 'anthropic', 'nexus'] as const
+export const PROVIDER_IDS = ['moonshot', 'corpus', 'local', 'anthropic', 'nexus'] as const
 export type ProviderId = typeof PROVIDER_IDS[number]
 
-/** DeepSeek 16B GitHub Actions is the canonical ForgeClaw reasoning runtime. */
-export const DEFAULT_PROVIDER: ProviderId = 'corpus'
+/** Moonshot/Kimi is the canonical ForgeClaw reasoning runtime; DeepSeek remains selectable. */
+export const DEFAULT_PROVIDER: ProviderId = 'moonshot'
 
 export function resolveInitialProvider(savedProvider: string | null): ProviderId {
   if (savedProvider === 'nexus') return DEFAULT_PROVIDER
