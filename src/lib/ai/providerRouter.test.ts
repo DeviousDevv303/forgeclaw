@@ -6,7 +6,7 @@ describe('provider router', () => {
   it('uses Moonshot/Kimi as the canonical model without probing localhost', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    await expect(getBestProvider('')).resolves.toEqual({ providerId: 'moonshot', model: 'moonshot-v1-8k', level: 1 })
+    await expect(getBestProvider('')).resolves.toEqual({ providerId: 'moonshot', model: 'kimi-k2.6', level: 1 })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

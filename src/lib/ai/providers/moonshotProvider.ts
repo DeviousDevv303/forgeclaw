@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Moonshot (Kimi) Provider Adapter ───────────────────────────────────────
-// OpenAI-compatible API via https://api.moonshot.cn/v1
+// OpenAI-compatible API via https://api.moonshot.ai/v1
 // Supports native tool calling.
 // PROD NOTE: When hosted with ForgeMind engine, calls route through /api/moonshot
 // to keep the API key server-side. See engine/server.ts.
@@ -10,17 +10,15 @@ import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '.
 
 const isDev = import.meta.env.DEV;
 const MOONSHOT_BASE_URL = isDev
-  ? 'https://api.moonshot.cn/v1'
+  ? 'https://api.moonshot.ai/v1'
   : '/api/moonshot/v1';
 
 export const MOONSHOT_MODELS = [
-  { id: 'moonshot-v1-8k', label: 'Kimi 8K', contextK: 8, note: 'Fast, lightweight' },
-  { id: 'moonshot-v1-32k', label: 'Kimi 32K', contextK: 32, note: 'Balanced' },
-  { id: 'moonshot-v1-128k', label: 'Kimi 128K', contextK: 128, note: 'Large context' },
-  { id: 'moonshot-v1-auto', label: 'Kimi Auto', contextK: 128, note: 'Auto context sizing' },
+  { id: 'kimi-k2.6', label: 'Kimi K2.6', contextK: 256, note: 'General reasoning model' },
+  { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code', contextK: 256, note: 'Coding-focused model' },
 ]
 
-export const DEFAULT_MOONSHOT_MODEL = MOONSHOT_MODELS[1].id // 32K default
+export const DEFAULT_MOONSHOT_MODEL = MOONSHOT_MODELS[0].id // K2.6 default for this API account
 
 function cleanApiKey(apiKey: string): string {
   return apiKey.trim()

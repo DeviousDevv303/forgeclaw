@@ -4,7 +4,7 @@
 
 const PORT = Deno.env.get("PORT") ? parseInt(Deno.env.get("PORT")!) : 3001;
 const MOONSHOT_API_KEY = Deno.env.get("MOONSHOT_API_KEY") || "";
-const MOONSHOT_BASE_URL = "https://api.moonshot.cn/v1";
+const MOONSHOT_BASE_URL = Deno.env.get("MOONSHOT_BASE_URL") || "https://api.moonshot.ai/v1";
 
 // CORS — allow GitHub Pages origin. Tighten this to your exact domain in prod.
 const CORS_HEADERS = {
@@ -27,9 +27,9 @@ Deno.serve({ port: PORT }, async (req) => {
     return Response.json({ status: "ok", engine: "forgemind", version: "0.1.0" });
   }
 
-  // Moonshot proxy: /api/moonshot/v1/chat/completions → api.moonshot.cn/v1/chat/completions
+  // Moonshot proxy: /api/moonshot/v1/chat/completions → api.moonshot.ai/v1/chat/completions
   if (path.startsWith("/api/moonshot/")) {
-    const moonshotPath = path.replace("/api/moonshot", "");
+    const moonshotPath = path.replace("/api/moonshot/v1", "") || "/";
     const targetUrl = `${MOONSHOT_BASE_URL}${moonshotPath}`;
 
     if (!MOONSHOT_API_KEY) {

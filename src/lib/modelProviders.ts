@@ -12,7 +12,7 @@ export interface ModelOption { id: string; label: string; contextK: number; note
 export interface ProviderConfig { id: ProviderId; name: string; url: string; models: ModelOption[]; keyPlaceholder: string; keyPrefix?: string }
 export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   corpus: { id: 'corpus', name: 'DeepSeek 16B (GitHub Actions)', url: 'https://github.com/DeviousDevv303/forgeclaw/actions/workflows/deepseek-16b.yml', models: corpusProvider.models.map(model => ({ ...model })), keyPlaceholder: 'No API key required; DeepSeek workflow uses GitHub authorization' },
-  moonshot: { id: 'moonshot', name: 'Moonshot (Kimi)', url: 'https://api.moonshot.cn/v1/chat/completions', models: MOONSHOT_MODELS, keyPlaceholder: 'sk-...', keyPrefix: 'sk-' },
+  moonshot: { id: 'moonshot', name: 'Moonshot (Kimi)', url: 'https://api.moonshot.ai/v1/chat/completions', models: MOONSHOT_MODELS, keyPlaceholder: 'sk-...', keyPrefix: 'sk-' },
   anthropic: { id: 'anthropic', name: 'Anthropic (Claude)', url: 'https://api.anthropic.com/v1/messages', models: ANTHROPIC_MODELS, keyPlaceholder: 'sk-ant-...', keyPrefix: 'sk-ant-' },
   local: { id: 'local', name: 'Local Inference (llama.cpp)', url: `${DEFAULT_LOCAL_ENDPOINT}/chat/completions`, models: localInferenceProvider.models.map(model => ({ ...model })), keyPlaceholder: DEFAULT_LOCAL_ENDPOINT },
   nexus: { id: 'nexus', name: 'DeepSeek 16B (legacy saved-session alias)', url: 'https://github.com/DeviousDevv303/forgeclaw/actions/workflows/deepseek-16b.yml', models: corpusProvider.models.map(model => ({ ...model })), keyPlaceholder: 'Use the DeepSeek workflow token' },
