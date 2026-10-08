@@ -534,6 +534,24 @@ export function loadToolContext(): ToolContext {
 
 export { toolFetch } from './githubFetch'
 
+/**
+ * Format the user-visible deepseek_reason success output.
+ * Internal bookkeeping (learning-persistence status) is reported in the
+ * Stages line, which surfaces in the reasoning trace — it must never be
+ * appended to the chat-visible answer.
+ */
+export function formatDeepSeekResultText(
+  invocationId: string,
+  owner: string,
+  repo: string,
+  ref: string,
+  stages: string,
+  runUrl: string,
+  result: string,
+): string {
+  return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${runUrl}\n\n${result}`
+}
+
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
   const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'deepseekreason' || call.name === 'ask_deepseek' ? 'deepseek_reason' : call.name
   const input = { ...call.input }
@@ -772,10 +790,10 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
         const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
         let learningStatus = 'not requested'
-        let learningWarning = ''
         if (nexusLearn) {
-          // Learning persistence is independent of reasoning success. Preserve
-          // the actual workflow result and report a separate write warning.
+          // Learning persistence is independent of reasoning success. Its status
+          // is reported in the Stages line (surfaced in the reasoning trace),
+          // never appended to the user-visible answer.
           try {
             await appendDeepSeekLearning(
               task,
@@ -784,16 +802,14 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
               context,
             )
             learningStatus = 'unapproved candidate recorded'
-          } catch (learningError) {
-            const detail = learningError instanceof Error ? learningError.message : String(learningError)
+          } catch {
             learningStatus = 'failed'
-            learningWarning = `Learning persistence warning: deepseek-learning-persistence failed after the real DeepSeek result was received (${detail.slice(0, 300)}).`
           }
         }
         const checkpoint = completed.model || 'checkpoint metadata unavailable'
         const role = completed.role ? ` (${completed.role})` : ''
         const stages = `Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=${completed.source}; result-extraction=complete; checkpoint=${checkpoint}${role}; learning-persistence=${learningStatus}.`
-        return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${completed.run.html_url}\n\n${completed.result}${learningWarning ? `\n\n${learningWarning}` : nexusLearn ? '\n\nLearning candidate recorded as unapproved.' : ''}`
+        return formatDeepSeekResultText(invocationId, owner, repo, ref, stages, completed.run.html_url, completed.result)
       }
 
       // ── Self-sculpt: branch + pull request proposal ──────────────────────────
