@@ -735,12 +735,19 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
       // ── DeepSeek: repository-owned primary reasoning ────────────────────────
       case 'deepseek_reason': {
-        const task = typeof input.task === 'string' ? input.task.trim() : ''
+        let task = typeof input.task === 'string' ? input.task.trim() : ''
         let context = typeof input.context === 'string' ? input.context : ''
         const ref = typeof input.ref === 'string' && input.ref.trim() ? input.ref.trim() : 'main'
         const nexusLearn = input.nexus_learn !== false
         if (!task) throw new Error('DeepSeek task is required.')
         if (!token) throw new Error('No GitHub token configured.')
+        // GitHub workflow_dispatch inputs have size limits (~64KB total).
+        // Base64 image data (data:image/...) blows past this with a 422.
+        // Strip it before dispatch — the DeepSeek workflow can't process images.
+        const IMAGE_DATA_PATTERN = /data:image\/[a-zA-Z]+;base64,[A-Za-z0-9+/=]+/g
+        const stripImages = (text: string) => text.replace(IMAGE_DATA_PATTERN, '[image omitted: not supported via DeepSeek workflow dispatch]')
+        task = stripImages(task)
+        context = stripImages(context)
         // Defense-in-depth: drop context that shares no significant words with the task.
         // Stale context (e.g. 18h-old SHA Q&A) confuses DeepSeek into answering the wrong question.
         if (context && task) {
