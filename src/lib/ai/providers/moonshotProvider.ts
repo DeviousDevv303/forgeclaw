@@ -3,15 +3,17 @@
 // ─── Moonshot (Kimi) Provider Adapter ───────────────────────────────────────
 // OpenAI-compatible API via https://api.moonshot.ai/v1
 // Supports native tool calling.
-// PROD NOTE: When hosted with ForgeMind engine, calls route through /api/moonshot
+// PROD NOTE: When hosted with ForgeMind engine, calls can route through /api/moonshot
 // to keep the API key server-side. See engine/server.ts.
+// For GitHub Pages (static hosting, no backend), always use the direct API URL
+// since the key is stored in browser localStorage anyway.
 
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
 
-const isDev = import.meta.env.DEV;
-const MOONSHOT_BASE_URL = isDev
-  ? 'https://api.moonshot.ai/v1'
-  : '/api/moonshot/v1';
+// Always use direct API URL in the browser — the proxy path (/api/moonshot)
+// only works when the ForgeMind engine backend is running, which isn't the
+// case for GitHub Pages deployments.
+const MOONSHOT_BASE_URL = 'https://api.moonshot.ai/v1';
 
 export const MOONSHOT_MODELS = [
   { id: 'kimi-k2.6', label: 'Kimi K2.6', contextK: 256, note: 'General reasoning model' },
