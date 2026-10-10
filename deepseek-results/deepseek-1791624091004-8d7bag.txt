@@ -1,0 +1,9 @@
+Title: Quantum Leap in Physics: AI's Breakthrough in Solving a Six-Loop Super-Yang-Mills Theory
+
+Opening Image: A microscopic particle colliding in a complex, multi-dimensional space, representing the challenge of predicting the behavior of subatomic particles.
+
+What We Can See: The AI model, Claude, has successfully computed the six-loop scattering amplitude in planar N=4 super-Yang-Mills theory, surpassing the theoretical physics record that had stood since 2023. This achievement answers a public challenge issued in August 2026 by physicist Matt von Hippel, who dared AI labs to solve a long-standing frontier calculation on an academic budget.
+
+What Light Means: This accomplishment represents a massive leap in autonomous scientific discovery, as earlier AI applications relied on highly constrained datasets. Claude tackled this multi-day symbolic math problem with minimal human intervention, running overnight with a simple instruction to "keep working." The final result, containing over 30 billion terms in one slice, was verified by Stanford physicist Lance Dixon, the previous eight-loop record holder.
+
+Closing Invitation: While the underlying physics model is a simplified "toy model" rather than a representation of the real universe, the success proves that AI can systematically navigate the tedious, error-prone algebra of theoretical physics, transforming weeks of grueling human labor into a few thousand dollars of computing power.
