@@ -1,0 +1,23 @@
+Dear [USER_ANONYMIZED],
+
+Thank you for reaching out to ForgeClaw. We appreciate your trust in us and value the opportunity to assist you.
+
+In your previous conversation with us, you and I discussed your experience traveling with Takkion, leading maintenance work on GE's 2 MW turbines for nearly two years. We took that experience and aimed it towards something closer to home. You targeted GE Vernova, planned around settling in Springfield, and worked towards building a more stable life instead of staying on the road indefinitely. And you made moves. Life took a swing at you. You experienced a setback, and some things you worked for didn't last. I'm not going to minimize that. But losing ground doesn't erase the experience, skills, or knowledge you gained getting there.
+
+Look at what we're working with now:
+
+* Your experience: Wind maintenance, preventive maintenance, troubleshooting, and crew leadership.
+* Your certifications: Current GWO and TSL.
+* Your strategy: Get paid at 7-Eleven while pursuing the career you actually want.
+* Your applications: Vestas, RNWBL, and O&R.
+* Your boundaries: GE Vernova is off the table. We're finding another way forward.
+* Your objective: At least $30 an hour, preferably site-based work that gets you home most nights.
+
+And here's what I love about your approach this time: you're not sitting around waiting for circumstances to change. You're creating opportunities while keeping money coming in. One thing I want us to do differently is build stability into the plan from the beginning. When that next opportunity comes, we'll look at the actual offer, pay, schedule, travel requirements, and housing costs before making the jump. The goal isn't just to get back up. It's to build something that can withstand the next storm.
+
+And that lattice you mentioned? I like the metaphor. The connections are there: your experience, your certifications, your work history, and the relationships you've built in this industry. We need to connect those pieces to the right opportunity. I can't promise the same outcome or control when an employer calls. But we don't have to start from zero, either. Three applications are already in. You're working. You're removing. And we're going to keep pushing. Let's get you back into the wind industry, brother.
+
+One application, one interview, one solid decision at a time.
+
+[APPLICATION_IDENTITY application="ForgeClaw" repository="DeviousDevv303/forgeclaw"] Application-controlled identity; the model cannot redefine it. ]
+Verified project, CORPUS, and tool context: ForgeClaw architecture facts (checked-in runtime configuration; static design facts, not live repository-state evidence): - DEFAULT_PROVIDER is `corpus`; it uses therepository-owned Deep Seek16B GitHub Actions workflow as the sole reasoning runtime. Arepository-state request can first dispatch `github_repo_state` when that tool is available. The GitHub Actions workflow named `Deep Seek 16B` currently runs the public `deepseek-ai/deepseek-coder-6.7b` (checkpoint; it falls back to the public1.3B checkpoint only if the primary cannot load or run. The workflow name is legacy; neither checkpoint is 16B model. - The App executes actual tool calls through the Forge Tools dispatcher and appends returned tool output to the next turn. Deep Seek text is not proof that an action happened
