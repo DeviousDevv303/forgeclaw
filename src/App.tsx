@@ -67,6 +67,7 @@ import {
 } from './lib/agentCore'
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
+import { TasteProviderClient, type TasteSignal } from './lib/ai/providers/tasteProvider'
 import { useForgeOps } from './hooks/useForgeOps'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
@@ -98,6 +99,8 @@ interface Message {
   phases?: Record<string, string>
   showReasoning?: boolean
   feedback?: 'up' | 'down'
+  tasteImageId?: string
+  tasteFeedback?: TasteSignal
   reasoning?: ReasoningChainType
   toolResults?: ToolResult[]   // agentic tool calls this message made
   streaming?: boolean          // true while tokens are arriving
@@ -894,6 +897,13 @@ function App() {
           .trim()
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
+    if (imageUrl) {
+      const tasteClient = new TasteProviderClient()
+      void tasteClient.extractAndWait(imageUrl).then(result => {
+        if (result.status !== 'complete' || !result.image_id) return
+        setMessages(prev => prev.map(message => message.id === userMsg.id ? { ...message, tasteImageId: result.image_id } : message))
+      }).catch(() => { /* Taste is optional; a slow or offline service never blocks chat. */ })
+    }
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : ''
     const currentProviderLabel = activeProvider === 'corpus' ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : 'sk-ant-...'
@@ -1788,6 +1798,16 @@ function App() {
     safeSetItem('forgemind_feedback', JSON.stringify(nextFeedback))
     emitFailure({ source: 'forgemind', severity: 'info', message: `Feedback saved: ${type === 'up' ? 'helpful' : 'not helpful'}`, context: { messageId: id, type } })
     setMessages(prev => prev.map(m => m.id === id ? { ...m, feedback: type } : m))
+  }
+  const handleTasteFeedback = async (id: string, signal: TasteSignal) => {
+    const message = messages.find(item => item.id === id)
+    if (!message?.tasteImageId) return
+    try {
+      await new TasteProviderClient().feedback(message.tasteImageId, signal)
+      setMessages(prev => prev.map(item => item.id === id ? { ...item, tasteFeedback: signal } : item))
+    } catch (error) {
+      emitFailure({ source: 'forgemind', severity: 'warning', message: `Taste feedback failed: ${error instanceof Error ? error.message : String(error)}` })
+    }
   }
 
   const toggleReasoning = (id: string) => {
@@ -2707,6 +2727,14 @@ function App() {
                         {msg.role === 'user' && (
                           <div style={{ marginTop: '8px', display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={{ ...actionButtonStyle, color: '#000', border: '1px solid rgba(0,0,0,0.3)' }}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
+                            {msg.tasteImageId && (
+                              <>
+                                <span style={{ color: '#333', fontSize: '10px', fontFamily: 'monospace' }}>TASTE</span>
+                                {(['up', 'down', 'fire'] as TasteSignal[]).map(signal => (
+                                  <button key={signal} onClick={() => void handleTasteFeedback(msg.id, signal)} title={`Taste: ${signal}`} style={{ ...actionButtonStyle, color: msg.tasteFeedback === signal ? '#f97316' : '#333', border: '1px solid rgba(0,0,0,0.3)' }}>{signal === 'fire' ? '🔥' : signal === 'up' ? '👍' : '👎'}</button>
+                                ))}
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
