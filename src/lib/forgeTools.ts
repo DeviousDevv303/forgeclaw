@@ -1108,7 +1108,15 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
 
         while (!run && Date.now() < findDeadline) {
           if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted while locating shell execution.'
-          run = await findCorrelatedRun()
+          try {
+            run = await findCorrelatedRun()
+          } catch (error) {
+            // A single GitHub read timeout must not discard a successfully
+            // dispatched workflow. Keep polling within the bounded window;
+            // authentication and configuration failures still surface.
+            const detail = error instanceof Error ? error.message : String(error)
+            if (!/timed out|failed to fetch|network|GitHub runs list (?:429|500|502|503|504)/i.test(detail)) throw error
+          }
           if (run) break
 
           const remainingMs = findDeadline - Date.now()

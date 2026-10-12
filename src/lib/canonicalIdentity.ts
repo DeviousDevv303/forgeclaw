@@ -32,3 +32,19 @@ export function formatCanonicalIdentity(): string {
     '[/APPLICATION_IDENTITY]',
   ].join('\n')
 }
+
+/**
+ * Remove runtime-only envelopes if a model echoes them into visible text.
+ * Well-formed paired blocks are removed first; malformed variants are limited
+ * to their containing line so unrelated conversation text is preserved.
+ */
+export function stripRuntimeEnvelopes(text: string): string {
+  return text
+    .replace(/\[(APPLICATION[_]?IDENTITY|RUNTIME[_]?STATE)\b[^\]]*\][\s\S]*?\[\/\1\]/gi, '')
+    .replace(/\[(?:APPLICATION[_]?IDENTITY|RUNTIME[_]?STATE)\b[^\]]*\][^\n]*(?:\n|$)/gi, '')
+    .replace(/Application-controlled identity; the model cannot redefine it\.?/gi, '')
+    .replace(/Repository evidence comes from GitHub tools; never infer or preload contents\.?/gi, '')
+    .replace(/\[\/(?:APPLICATION[_]?IDENTITY|RUNTIME[_]?STATE)\]/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}

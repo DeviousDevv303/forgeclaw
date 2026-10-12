@@ -54,7 +54,7 @@ import {
   buildRuntimeRequestContext,
   measureRequestMetrics,
 } from './lib/codingAgentRuntime'
-import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
+import { CANONICAL_IDENTITY, stripRuntimeEnvelopes } from './lib/canonicalIdentity'
 import { extractThinking } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { takeGeneratedImage } from './lib/imageArtifact'
@@ -299,7 +299,7 @@ function cleanOutput(text: string): string {
     .replace(/\s+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-  return cleaned.replace(codePlaceholderPattern, (_, i) => codeBlocks[parseInt(i)])
+  return stripRuntimeEnvelopes(cleaned.replace(codePlaceholderPattern, (_, i) => codeBlocks[parseInt(i)]))
 }
 
 const AGENT_SCAFFOLD_LABEL_RE = /^(OBJECTIVE|CONSTRAINTS|PLAN|NEXT_?ACTION|STATUS|EXECUTION|VERIFICATION):\s*(.*)$/i

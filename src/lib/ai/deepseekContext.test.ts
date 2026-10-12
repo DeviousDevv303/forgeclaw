@@ -25,7 +25,8 @@ describe('DeepSeek task/context boundary', () => {
 
     expect(payload.task).toBe(task)
     expect(payload.context).toContain('ForgeClaw architecture facts')
-    expect(payload.context).toContain('deepseek-ai/deepseek-coder-6.7b-instruct')
+    expect(payload.context).toContain('Moonshot/Kimi K2.6 is the primary reasoning runtime')
+    expect(payload.context).toContain('DeepSeek remains an explicit selectable alternate provider')
     expect(payload.context).toContain('There is no browser-local model fallback')
     expect(payload.context).toContain('not repository evidence')
     expect(payload.context).not.toContain('[/RUNTIME_STATE]\n\n[RUNTIME_STATE')

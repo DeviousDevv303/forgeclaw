@@ -23,6 +23,9 @@ export function formatUserFacingError(rawMessage: string): string {
   if (/deepseek-run-discovery[\s\S]*(?:timed out|timeout)|GitHub read timed out/i.test(message)) {
     return 'I couldn’t reach GitHub Actions in time while starting the DeepSeek job. Your request was not completed. Please try again in a moment; if it keeps happening, open Settings and run “TEST GITHUB READ” to check the connection.'
   }
+  if (/shell execution dispatched but correlated run|correlated run .* not found/i.test(message)) {
+    return 'GitHub accepted the shell request, but its workflow run was not visible yet. Nothing was reported as completed. Please try again in a moment; the execution panel will keep the technical run details.'
+  }
   if (/401|403|unauthorized|authentication|invalid.*(?:token|key)|token.*(?:invalid|rejected)/i.test(message)) {
     return 'GitHub rejected the saved credential, so I couldn’t complete that request. Check the GitHub token in Settings, then try again.'
   }

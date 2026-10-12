@@ -16,8 +16,8 @@ const MAX_VERIFIED_TOOL_CHARS = 8_000
  */
 export const FORGECLAW_ARCHITECTURE_CONTEXT = [
   'ForgeClaw architecture facts (checked-in runtime configuration; static design facts, not live repository-state evidence):',
-  '- DEFAULT_PROVIDER is `corpus`; it uses the repository-owned DeepSeek 16B GitHub Actions workflow as the sole reasoning runtime.',
-  '- The provider router deterministically dispatches `deepseek_reason` for corpus requests. A repository-state request can first dispatch `github_repo_state` when that tool is available.',
+  '- DEFAULT_PROVIDER is `moonshot`; Moonshot/Kimi K2.6 is the primary reasoning runtime. DeepSeek remains an explicit selectable alternate provider backed by the repository-owned GitHub Actions workflow.',
+  '- When the user selects the DeepSeek provider, the provider router deterministically dispatches `deepseek_reason`. A repository-state request can first dispatch `github_repo_state` when that tool is available.',
   '- The GitHub Actions workflow named `DeepSeek 16B` currently runs the public `deepseek-ai/deepseek-coder-6.7b-instruct` checkpoint; it falls back to the public 1.3B checkpoint only if the primary cannot load or run. The workflow name is legacy; neither checkpoint is a 16B model.',
   '- The App executes actual tool calls through the ForgeTools dispatcher and appends returned tool output to the next turn. DeepSeek text is not proof that an action happened; only a real dispatcher result is. A result marked [TOOL ERROR], [GUARDIAN BLOCK], or [GUARDIAN REJECTED] is not evidence of successful execution.',
   '- There is no browser-local model fallback. If the DeepSeek workflow fails, surface the verified failure and do not invent a replacement answer.',
