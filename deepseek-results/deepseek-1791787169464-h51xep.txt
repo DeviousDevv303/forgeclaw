@@ -1,0 +1,49 @@
+The actual task is to adjust the `computeCentroidLearningRate` function and the `updateCentroid` function based on the provided fixes. These fixes are intended to improve the convergence of the centroid in the learning process and address potential issues with the weight of late ratings. 
+
+1. In the `computeCentroidLearningRate` function, update the `if` statements to use `>=` instead of `>`. This will ensure that the centroid moves less as the cluster grows, and only when the member count is larger than or equal to 5, 15, or 30.
+2. In the `updateCentroid` function, update the comment on line 109 to explain the variation that `variations[0]` is meant to address.
+```typescript
+// The user's rating is the only quality sign that matters.
+// Centroid exploration phase: Each attempt tries a different interpretation of the cluster's taste, not just a literal copy of it.
+function computeCentroidLearningRate(cluster: TasteCluster, incomingVector: TasteVector): number {
+ const n = cluster.member_count; // ...
+ // Use >= instead of > in these if statements to move the centroid less as the cluster grows.
+ if (n < 5) return 0.25;
+ if (n < 15) return 0.15;
+ if (n < 30) return 0.08;
+ return 0.04; // Mature cluster: Very stable.
+}
+
+// Apply when updating the centroid.
+// This prevents the first 5-10 ratings from dominating forever.
+```
+
+3. In the `updateCentroid` function, apply the recency weighting to the influence of each vector in the `for` loop.
+```typescript
+for (const vector of vectors) {
+ // ...
+ const ageDays = (vector.created_at - centroid.last_update_at) / (1000 * 60 * 60 * 24); // Exponential decay with 90-day half-life.
+ learningRate *= Math.pow(0.5, ageDays / 90);
+ // ...
+}
+```
+
+4. In the `computeVectorInfluenceWeight` function, update the comment on line 36 to explain the purpose of the age-based weighting.
+```typescript
+// This lets ratedrift naturally without explicit cluster versioning.
+// A rating today matters more than a rating from 3 months ago.
+function computeVectorInfluenceWeight(vector: TasteVector, now: Date) {
+ const age = (now - vector.created_at) / (1000 * 60 * 60 * 24); // Age in days.
+ const weight = Math.exp(-age / 90); // Exponential decay with 90-day half-life.
+ return 1 / (1 + weight);
+}
+```
+
+5. In the `updateCentroid` function, update the `newVector` parameter in the `catch` block to use the `updateCentroid` function from the `ml.llm` module.
+```typescript
+// ...
+const newVector = await ml.llm.updateCentroid(centroid, incomingVector);
+// ...
+```
+
+6. In the `updateCentroid` function, replace the `lerp` function calls with the following line of code, which calculates the weighted
