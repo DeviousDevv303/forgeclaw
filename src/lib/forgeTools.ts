@@ -26,6 +26,7 @@ import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
+import { TasteProviderClient } from './ai/providers/tasteProvider'
 import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, waitForDeepSeekResult } from './deepseekArtifact'
 
 // These runtime envelopes are for the chat/model boundary only. They must not
@@ -1285,7 +1286,14 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
         if (!token) throw new Error('No GitHub token configured.')
 
-        const improved = suggestImprovedPrompt(prompt, style)
+        let tastePrompt = ''
+        try {
+          const taste = await new TasteProviderClient().profile('generation')
+          if (!taste.fallback_active && taste.profile) tastePrompt = Object.values(taste.profile).join(', ')
+        } catch {
+          // Taste is additive and optional; image generation keeps its normal path.
+        }
+        const improved = suggestImprovedPrompt(tastePrompt ? `${prompt}, ${tastePrompt}` : prompt, style)
         const invocationId = `sd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const dispatchStartedAt = Date.now()
 
