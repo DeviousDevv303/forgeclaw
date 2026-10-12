@@ -74,6 +74,7 @@ import type { AgentPhase } from './types/forgeOps'
 import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from './lib/deepseekCommand'
 import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
 import { FOUNDER_PRINCIPLES } from './lib/founderPrinciples'
+import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -365,7 +366,7 @@ function formatScaffoldTrace(text: string): string | undefined {
 
 function cleanVisibleResponse(text: string): string {
   const publicAnswer = extractPublicAnswer(text)
-  return cleanOutput(publicAnswer || formatScaffoldFallback(text) || text)
+  return sanitizeChatText(cleanOutput(publicAnswer || formatScaffoldFallback(text) || text))
 }
 
 function buildMessageTrace(message: Message): string | undefined {
@@ -1553,7 +1554,7 @@ function App() {
     } catch (err) {
       if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
       const rawMsg = err instanceof Error ? err.message : 'Unknown error'
-      const msg = rawMsg
+      const msg = formatUserFacingError(rawMsg)
       setRequestStatus('error')
       setLastRequestError(msg)
       emitFailure({ source: 'forgemind', severity: 'error', message: rawMsg, context: { provider: activeProvider, promptLength: promptText.length } })
@@ -1562,9 +1563,12 @@ function App() {
         setMessages(prev => prev.map(m => {
           if (m.id !== cloudMsgId) return m
           const hasContent = m.content && m.content.trim() !== '' && m.content !== 'Processing…'
+          const safeContent = hasContent ? cleanVisibleResponse(m.content) : ''
           return {
             ...m,
-            content: hasContent ? m.content : `[ERROR]: ${msg}`,
+            // Keep useful partial content, but never expose raw tool protocol
+            // or provider internals in the normal chat bubble.
+            content: safeContent ? `${safeContent}\n\n${msg}` : msg,
             streaming: false,
             // Keep the real execution record visible even when the run failed:
             // a failed DeepSeek dispatch must not read as "0 TOOL CALLS".
@@ -1573,17 +1577,12 @@ function App() {
           }
         }))
       } else {
-        setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: `[ERROR]: ${msg}`, timestamp: Date.now(), source, agentPhase: 'BLOCKED' as const, toolResults: failedToolResults }])
+        setMessages(prev => [...prev, { id: (Date.now() + 1).toString(), role: 'assistant', content: msg, timestamp: Date.now(), source, agentPhase: 'BLOCKED' as const, toolResults: failedToolResults }])
       }
       // Auth/runtime failures are surfaced to the operator. No hidden provider fallback occurs.
-      const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(msg)
+      const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(rawMsg)
       if (isAuthError) {
         if (activeProvider === 'anthropic') setAnthropicApiKeyStatus('invalid')
-        setMessages(prev => [...prev, {
-          id: (Date.now() + 2).toString(), role: 'assistant',
-          content: `${currentProviderLabel} authentication failed. Check the provider credentials in Settings.`,
-          timestamp: Date.now(), source: 'local' as const,
-        }])
       }
     } finally {
       if (activeRunRef.current?.id === runId) {
