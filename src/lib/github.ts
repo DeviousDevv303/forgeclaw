@@ -311,6 +311,7 @@ export async function triggerWorkflow(
   branch?: string,
   inputs?: Record<string, string>
 ): Promise<{ runId: number; htmlUrl: string }> {
+  const dispatchedAt = Date.now()
   await octokit.actions.createWorkflowDispatch({
     owner,
     repo,
@@ -318,15 +319,28 @@ export async function triggerWorkflow(
     ref: branch || 'main',
     inputs,
   })
-  // GitHub returns 204 No Content; fetch latest run manually
-  const runs = await octokit.actions.listWorkflowRuns({
-    owner,
-    repo,
-    workflow_id: workflowId,
-    per_page: 1,
-  })
-  const run = runs.data.workflow_runs[0]
-  return { runId: run.id, htmlUrl: run.html_url }
+  // GitHub returns 204 No Content. The run is created asynchronously, so a
+  // single "latest run" request can return the previous invocation and cause
+  // callers to poll or report the wrong execution. Poll briefly and correlate
+  // by creation time instead.
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const runs = await octokit.actions.listWorkflowRuns({
+      owner,
+      repo,
+      workflow_id: workflowId,
+      branch: branch || undefined,
+      per_page: 10,
+    })
+    const run = runs.data.workflow_runs
+      .filter(candidate => {
+        const createdAt = Date.parse(candidate.created_at)
+        return Number.isFinite(createdAt) && createdAt >= dispatchedAt - 5_000
+      })
+      .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0]
+    if (run) return { runId: run.id, htmlUrl: run.html_url }
+    await new Promise(resolve => setTimeout(resolve, Math.min(250 * 2 ** attempt, 2_000)))
+  }
+  throw new Error(`Workflow ${workflowId} was dispatched, but its run was not discoverable.`)
 }
 
 export async function listWorkflowRuns(

@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { safeGetItem, safeSetItem } from '../lib/storage'
+import { safeGetItem, safeSetItem, safeJsonParse } from '../lib/storage'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,14 +36,12 @@ const META_API = 'https://graph.facebook.com/v19.0'
 export function useWhatsApp() {
   const [credentials, setCredentials] = useState<WACredentials>(() => {
     const raw = safeGetItem(STORAGE_KEY_CREDS)
-    return raw
-      ? (JSON.parse(raw) as WACredentials)
-      : { phoneNumberId: '', accessToken: '', recipientNumber: '', verifyToken: '', inboxOwner: 'DeviousDevv303', inboxRepo: 'forgeclaw', ghToken: '' }
+    return safeJsonParse<WACredentials>(raw, { phoneNumberId: '', accessToken: '', recipientNumber: '', verifyToken: '', inboxOwner: 'DeviousDevv303', inboxRepo: 'forgeclaw', ghToken: '' })
   })
 
   const [messages, setMessages] = useState<WAMessage[]>(() => {
     const raw = safeGetItem(STORAGE_KEY_MSGS)
-    return raw ? (JSON.parse(raw) as WAMessage[]) : []
+    return safeJsonParse<WAMessage[]>(raw, [])
   })
 
   const [sending, setSending] = useState(false)
@@ -53,6 +51,7 @@ export function useWhatsApp() {
 
   // seenFiles avoids re-processing unchanged inbox files across polls
   const seenFiles = useRef(new Set<string>())
+  const pollingRef = useRef(false)
 
   // Persist credentials and messages whenever they change
   useEffect(() => { safeSetItem(STORAGE_KEY_CREDS, JSON.stringify(credentials)) }, [credentials])
@@ -139,6 +138,8 @@ export function useWhatsApp() {
   const pollInbox = useCallback(async () => {
     const { inboxOwner, inboxRepo, ghToken } = credentials
     if (!inboxOwner || !inboxRepo) return
+    if (pollingRef.current) return
+    pollingRef.current = true
     setIsPolling(true)
     try {
       const headers: Record<string, string> = {
@@ -158,7 +159,6 @@ export function useWhatsApp() {
         if (!entry.name.endsWith('.json')) continue
         const key = `${entry.name}:${entry.sha}`
         if (seenFiles.current.has(key)) continue
-        seenFiles.current.add(key)
 
         try {
           const fileRes = await fetch(
@@ -173,9 +173,13 @@ export function useWhatsApp() {
             if (prev.some(m => m.id === parsed.id)) return prev
             return [...prev, { ...parsed, direction: 'inbound' }]
           })
+          // Only mark a file seen after a successful fetch and parse. A
+          // transient GitHub/network failure must be retried on the next poll.
+          seenFiles.current.add(key)
         } catch { /* skip malformed files */ }
       }
     } catch { /* graceful: inbox dir may not exist yet */ } finally {
+      pollingRef.current = false
       setIsPolling(false)
     }
   }, [credentials])

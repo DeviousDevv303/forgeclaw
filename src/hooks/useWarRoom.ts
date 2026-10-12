@@ -33,6 +33,7 @@ export function useWarRoom({
   const proposalSnapshots = useRef(new Map<string, AgentSnapshot>())
   // Cristian decisions keyed by targetId (baseName of the snapshot responded to)
   const decisions = useRef(new Map<string, CristianDecision>())
+  const pollingRef = useRef(false)
 
   const ghGet = useCallback(async (path: string): Promise<unknown> => {
     const res = await fetch(`https://api.github.com${path}`, {
@@ -79,6 +80,8 @@ export function useWarRoom({
 
   const poll = useCallback(async () => {
     if (!token || !owner || !repo) return
+    if (pollingRef.current) return
+    pollingRef.current = true
     setIsPolling(true)
     try {
       type DirEntry = { name: string; sha: string; path: string }
@@ -91,7 +94,6 @@ export function useWarRoom({
         if (!entry.name.endsWith('.json')) continue
         const key = `${entry.name}:${entry.sha}`
         if (seenFiles.current.has(key)) continue
-        seenFiles.current.add(key)
 
         try {
           type FileData = { content: string }
@@ -121,6 +123,9 @@ export function useWarRoom({
             decisions.current.set(dec.targetId, dec)
             changed = true
           }
+          // Only mark an event seen after its content was fetched and parsed;
+          // temporary network failures must be retried on the next poll.
+          seenFiles.current.add(key)
         } catch {
           // skip malformed or unreadable files
         }
@@ -130,6 +135,7 @@ export function useWarRoom({
     } catch {
       // graceful degradation — token absent, war-room/ not yet created, network error
     } finally {
+      pollingRef.current = false
       setIsPolling(false)
     }
   }, [owner, repo, token, ghGet, addEvent, deriveAndSet])

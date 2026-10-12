@@ -6,9 +6,30 @@ const PORT = Deno.env.get("PORT") ? parseInt(Deno.env.get("PORT")!) : 3001;
 const MOONSHOT_API_KEY = Deno.env.get("MOONSHOT_API_KEY") || "";
 const MOONSHOT_BASE_URL = Deno.env.get("MOONSHOT_BASE_URL") || "https://api.moonshot.ai/v1";
 
-// CORS — allow GitHub Pages origin. Tighten this to your exact domain in prod.
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
+// Never use wildcard CORS here: this server holds MOONSHOT_API_KEY and a
+// wildcard proxy lets any website spend it. Add deployment origins through
+// CORS_ORIGINS (comma-separated); local development and the public Pages site
+// remain supported by default.
+const ALLOWED_ORIGINS = new Set([
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://deviousdevv303.github.io",
+  ...(Deno.env.get("CORS_ORIGINS") || "").split(",").map(origin => origin.trim()).filter(Boolean),
+]);
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("origin");
+  return {
+    ...(origin && ALLOWED_ORIGINS.has(origin) ? { "Access-Control-Allow-Origin": origin, "Vary": "Origin" } : {}),
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  };
+}
+function originAllowed(req: Request): boolean {
+  const origin = req.headers.get("origin");
+  return !origin || ALLOWED_ORIGINS.has(origin);
+}
+
+const COMMON_HEADERS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
@@ -19,12 +40,16 @@ Deno.serve({ port: PORT }, async (req) => {
 
   // Preflight
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
+    return new Response(null, { status: originAllowed(req) ? 204 : 403, headers: corsHeaders(req) });
   }
 
   // Health check
   if (path === "/health" && req.method === "GET") {
-    return Response.json({ status: "ok", engine: "forgemind", version: "0.1.0" });
+    return Response.json({ status: "ok", engine: "forgemind", version: "0.1.0" }, { headers: corsHeaders(req) });
+  }
+
+  if (!originAllowed(req)) {
+    return Response.json({ error: "Origin not allowed" }, { status: 403, headers: COMMON_HEADERS });
   }
 
   // Moonshot proxy: /api/moonshot/v1/chat/completions → api.moonshot.ai/v1/chat/completions
@@ -35,7 +60,7 @@ Deno.serve({ port: PORT }, async (req) => {
     if (!MOONSHOT_API_KEY) {
       return Response.json(
         { error: "MOONSHOT_API_KEY not configured on server" },
-        { status: 500, headers: CORS_HEADERS }
+        { status: 500, headers: corsHeaders(req) }
       );
     }
 
@@ -58,14 +83,14 @@ Deno.serve({ port: PORT }, async (req) => {
         status: upstream.status,
         statusText: upstream.statusText,
         headers: {
-          ...CORS_HEADERS,
+          ...corsHeaders(req),
           "content-type": upstream.headers.get("content-type") || "application/json",
         },
       });
     } catch (err) {
       return Response.json(
         { error: "Upstream Moonshot error", detail: String(err) },
-        { status: 502, headers: CORS_HEADERS }
+        { status: 502, headers: corsHeaders(req) }
       );
     }
   }
@@ -73,10 +98,10 @@ Deno.serve({ port: PORT }, async (req) => {
   // SQLite persistence routes (stub — wire your db.ts here)
   if (path === "/api/ledger" && req.method === "POST") {
     // Wire to engine/db/db.ts
-    return Response.json({ status: "not-implemented" }, { status: 501, headers: CORS_HEADERS });
+    return Response.json({ status: "not-implemented" }, { status: 501, headers: corsHeaders(req) });
   }
 
-  return Response.json({ error: "Not found" }, { status: 404, headers: CORS_HEADERS });
+  return Response.json({ error: "Not found" }, { status: 404, headers: corsHeaders(req) });
 });
 
 console.log(`ForgeMind engine running on http://localhost:${PORT}`);
