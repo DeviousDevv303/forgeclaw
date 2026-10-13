@@ -1,0 +1,1 @@
+Temporary smoke-test artifact for shell-repair exit-code verification; close and delete after inspecting the generated PR.
