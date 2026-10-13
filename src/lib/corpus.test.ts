@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { CorpusRepository, appendDeepSeekLearning, extractImagePatterns, integrityHash, suggestImprovedPrompt } from './corpus'
+import { authorizationPayload, RFC8032_TEST_KEY_ID, type CandidateAuthorization } from './corpusAdmissionAuth'
 import { corpusProvider } from './ai/providers/corpusProvider'
 import { buildDeepSeekTaskPayload } from './ai/deepseekContext'
 import { requiresCoSign } from './guardianGate'
@@ -18,31 +19,54 @@ class MemoryStorage implements Storage {
 const storage = new MemoryStorage()
 Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
 
+const RFC8032_PRIVATE_SEED = '9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60'
+const RFC8032_PKCS8_PREFIX = '302e020100300506032b657004220420'
+
+function hexBytes(value: string): Uint8Array {
+  return Uint8Array.from({ length: value.length / 2 }, (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16))
+}
+
+function bufferSource(value: Uint8Array): ArrayBuffer {
+  return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer
+}
+
+async function testAuthorization(candidate: { id: string; integrity: string }): Promise<CandidateAuthorization> {
+  const issuedAt = '2026-01-01T00:00:00.000Z'
+  const expiresAt = '2030-01-01T00:00:00.000Z'
+  const unsigned = { keyId: RFC8032_TEST_KEY_ID, candidateId: candidate.id, candidateIntegrity: candidate.integrity, issuedAt, expiresAt }
+  const key = await globalThis.crypto.subtle.importKey('pkcs8', bufferSource(hexBytes(`${RFC8032_PKCS8_PREFIX}${RFC8032_PRIVATE_SEED}`)), { name: 'Ed25519' }, false, ['sign'])
+  const signature = new Uint8Array(await globalThis.crypto.subtle.sign({ name: 'Ed25519' }, key, new TextEncoder().encode(authorizationPayload(unsigned))))
+  return { ...unsigned, signature: Array.from(signature, byte => byte.toString(16).padStart(2, '0')).join('') }
+}
+
 describe('NEXUS / Corpus Local Mode', () => {
   beforeEach(() => storage.clear())
 
   it('initializes offline and persists a raw interaction plus untrusted candidate', async () => {
-    const repository = new CorpusRepository()
+    const repository = new CorpusRepository({ mode: 'test' })
     const result = await repository.appendInteraction({ input: 'What is alpha?', context: '', result: 'Alpha is the first letter.', runtime: 'corpus', model: 'local-model' })
     expect(repository.getInteractionCount()).toBe(1)
     expect(repository.getCandidateCount()).toBe(1)
     expect(repository.getApprovedCount()).toBe(0)
     expect(result.candidate.admissionStatus).toBe('candidate')
-    expect(new CorpusRepository().getInteractionCount()).toBe(1)
+    expect(new CorpusRepository({ mode: 'test' }).getInteractionCount()).toBe(1)
   })
 
   it('retrieves only approved local records and admits valid candidates', async () => {
-    const repository = new CorpusRepository()
+    const repository = new CorpusRepository({ mode: 'test' })
     const { candidate } = await repository.appendInteraction({ input: 'Explain alpha', context: '', result: 'Alpha is the first letter.', runtime: 'corpus', model: 'local-model' })
     expect(repository.retrieve('alpha')).toHaveLength(0)
-    expect(await repository.admitCandidate(candidate.id)).not.toBeNull()
+    const authorization = await testAuthorization(candidate)
+    expect((await repository.admitCandidate(candidate.id, authorization)).status).toBe('admitted')
     expect(repository.retrieve('alpha')).toHaveLength(1)
     expect(repository.getApprovedCount()).toBe(1)
-    expect(await repository.admitCandidate(candidate.id)).not.toBeNull()
+    const versionAfterFirstAdmission = repository.getVersion()
+    expect((await repository.admitCandidate(candidate.id, authorization)).status).toBe('already_admitted')
+    expect(repository.getVersion()).toBe(versionAfterFirstAdmission)
   })
 
   it('stores Shell evidence as an unapproved candidate and preserves provenance', async () => {
-    const repository = new CorpusRepository()
+    const repository = new CorpusRepository({ mode: 'test' })
     const { candidate } = await repository.appendShellExperience({
       input: 'Identify the current repository directory.',
       context: '{"exerciseId":"shell.l1.pwd"}',
@@ -76,40 +100,42 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(patterns.lighting).toContain('golden hour')
     expect(patterns.colorPalette).toContain('warm tones')
 
-    const repository = new CorpusRepository()
+    const repository = new CorpusRepository({ mode: 'test' })
     const { candidate } = await repository.appendImageGenerationLearning({ prompt: 'sunset beach', style: 'realistic', width: 1024, height: 1024, invocationId: 'flux-test-1' })
     expect(suggestImprovedPrompt('sunset beach').prompt).toBe('sunset beach')
-    await repository.admitCandidate(candidate.id)
+    await repository.admitCandidate(candidate.id, await testAuthorization(candidate))
     expect(suggestImprovedPrompt('beach').prompt).toContain('beach')
   })
 
   it('rejects malformed and tampered candidates', async () => {
-    const repository = new CorpusRepository()
+    const repository = new CorpusRepository({ mode: 'test' })
     storage.setItem('forgeclaw_nexus_candidate_v1:malformed', '{bad json')
     storage.setItem('forgeclaw_nexus_candidate_index_v1', JSON.stringify(['malformed']))
-    expect(await repository.admitCandidate('malformed')).toBeNull()
+    expect((await repository.admitCandidate('malformed', await testAuthorization({ id: 'malformed', integrity: 'sha256-invalid' }))).status).toBe('rejected')
     const { candidate } = await repository.appendInteraction({ input: 'known input', context: '', result: 'trusted result', runtime: 'corpus', model: 'local-model' })
     const raw = JSON.parse(storage.getItem(`forgeclaw_nexus_candidate_v1:${candidate.id}`)!)
     raw.generatedResult = 'tampered result'
     storage.setItem(`forgeclaw_nexus_candidate_v1:${candidate.id}`, JSON.stringify(raw))
-    expect(await repository.admitCandidate(candidate.id)).toBeNull()
+    expect((await repository.admitCandidate(candidate.id, await testAuthorization(candidate))).status).toBe('rejected')
     expect(repository.getApprovedCount()).toBe(0)
   })
 
-  it('keeps webhook failure optional and admits only validated returned updates', async () => {
-    const repository = new CorpusRepository()
+  it('keeps webhook failure optional and stores returned updates as candidates', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
     const { candidate } = await repository.appendInteraction({ input: 'webhook test', context: '', result: 'local result', runtime: 'corpus', model: 'local-model' })
     const unavailable = await repository.syncPending('https://example.invalid/webhook', vi.fn().mockRejectedValue(new Error('offline')))
     expect(unavailable.status).toBe('pending')
     expect(repository.getApprovedCount()).toBe(0)
     const synced = await repository.syncPending('https://example.invalid/webhook', vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [{ id: candidate.id }, { id: 'missing' }, 'malformed'] }), { status: 200 })))
     expect(synced.status).toBe('synced')
-    expect(synced.admitted).toBe(1)
+    expect(synced.admitted).toBe(0)
+    expect(repository.getApprovedCount()).toBe(0)
+    expect((await repository.admitCandidate(candidate.id, await testAuthorization(candidate))).status).toBe('admitted')
     expect(repository.getApprovedCount()).toBe(1)
   })
 
   it('H-A: rejects an unauthorized webhook candidate instead of admitting it', async () => {
-    const repository = new CorpusRepository()
+    const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'local pending candidate', context: '', result: 'local result', runtime: 'corpus', model: 'local-model' })
     const input = 'remote webhook candidate'
     const context = 'remote context'
@@ -148,9 +174,9 @@ describe('NEXUS / Corpus Local Mode', () => {
   })
 
   it('makes approved corpus context available to the DeepSeek workflow without local fallback', async () => {
-    const repository = new CorpusRepository()
+    const repository = new CorpusRepository({ mode: 'test' })
     const { candidate } = await repository.appendInteraction({ input: 'What is beta?', context: '', result: 'Beta is the second letter.', runtime: 'corpus', model: 'local-model' })
-    await repository.admitCandidate(candidate.id)
+    await repository.admitCandidate(candidate.id, await testAuthorization(candidate))
     const payload = buildDeepSeekTaskPayload('What is beta?')
     expect(payload.context).toContain('Beta is the second letter.')
     expect(corpusProvider.supportsTools('deepseek-16b')).toBe(false)
@@ -163,12 +189,47 @@ describe('NEXUS / Corpus Local Mode', () => {
   })
 
   it('accommodates 10,000 interaction records in persistent local storage', async () => {
-    const repository = new CorpusRepository()
+    const repository = new CorpusRepository({ mode: 'test' })
     for (let index = 0; index < 10_000; index += 1) {
       await repository.appendInteraction({ input: `synthetic query ${index}`, context: '', result: `synthetic result ${index}`, runtime: 'corpus', model: 'local-model' })
     }
     expect(repository.getInteractionCount()).toBe(10_000)
     expect(repository.getCandidateCount()).toBe(10_000)
-    expect(new CorpusRepository().getInteractionCount()).toBe(10_000)
+    expect(new CorpusRepository({ mode: 'test' }).getInteractionCount()).toBe(10_000)
   }, 60_000)
+})
+
+describe('CORPUS admission authorization conformance', () => {
+  beforeEach(() => storage.clear())
+
+  it('verifies the RFC 8032 Ed25519 test vector fixture', async () => {
+    const publicKey = await globalThis.crypto.subtle.importKey('raw', bufferSource(hexBytes('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a')), { name: 'Ed25519' }, false, ['verify'])
+    const signature = hexBytes('e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b')
+    await expect(globalThis.crypto.subtle.verify({ name: 'Ed25519' }, publicKey, bufferSource(signature), new ArrayBuffer(0))).resolves.toBe(true)
+  })
+
+  it('rejects forged, wrong-hash, expired, and missing authorization', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    const { candidate } = await repository.appendInteraction({ input: 'conformance input', context: '', result: 'conformance result', runtime: 'test', model: 'test' })
+    const valid = await testAuthorization(candidate)
+    const forged = { ...valid, signature: valid.signature.replace(/^../, valid.signature.startsWith('00') ? 'ff' : '00') }
+    const expired = { ...valid, issuedAt: '2020-01-01T00:00:00.000Z', expiresAt: '2021-01-01T00:00:00.000Z' }
+    expect((await repository.admitCandidate(candidate.id, forged)).status).toBe('rejected')
+    expect((await repository.admitCandidate(candidate.id, { ...valid, candidateIntegrity: 'sha256-wrong' })).status).toBe('rejected')
+    expect((await repository.admitCandidate(candidate.id, expired)).status).toBe('rejected')
+    expect((await repository.admitCandidate(candidate.id, undefined as unknown as CandidateAuthorization)).status).toBe('rejected')
+    expect((await repository.admitCandidate(candidate.id, true as unknown as CandidateAuthorization)).status).toBe('rejected')
+  })
+
+  it('fails closed when authorization is replayed for another candidate and rejects the RFC key in production', async () => {
+    const testRepository = new CorpusRepository({ mode: 'test' })
+    const first = await testRepository.appendInteraction({ input: 'first', context: '', result: 'first result', runtime: 'test', model: 'test' })
+    const second = await testRepository.appendInteraction({ input: 'second', context: '', result: 'second result', runtime: 'test', model: 'test' })
+    const authorization = await testAuthorization(first.candidate)
+    expect((await testRepository.admitCandidate(first.candidate.id, authorization)).status).toBe('admitted')
+    expect((await testRepository.admitCandidate(second.candidate.id, authorization)).status).toBe('rejected')
+    const productionRepository = new CorpusRepository()
+    const productionCandidate = await productionRepository.appendInteraction({ input: 'production', context: '', result: 'production result', runtime: 'test', model: 'test' })
+    expect((await productionRepository.admitCandidate(productionCandidate.candidate.id, await testAuthorization(productionCandidate.candidate))).status).toBe('rejected')
+  })
 })

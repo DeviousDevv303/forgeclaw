@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CorpusRepository } from '../corpus'
+import { authorizationPayload, RFC8032_TEST_KEY_ID } from '../corpusAdmissionAuth'
 import { buildDeepSeekTaskPayload } from './deepseekContext'
 
 class MemoryStorage implements Storage {
@@ -15,6 +16,11 @@ class MemoryStorage implements Storage {
 
 const storage = new MemoryStorage()
 Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
+
+const RFC8032_PRIVATE_SEED = '9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60'
+const RFC8032_PKCS8_PREFIX = '302e020100300506032b657004220420'
+const hexBytes = (value: string) => Uint8Array.from({ length: value.length / 2 }, (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16))
+const bufferSource = (value: Uint8Array) => value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer
 
 describe('DeepSeek task/context boundary', () => {
   beforeEach(() => storage.clear())
@@ -33,7 +39,7 @@ describe('DeepSeek task/context boundary', () => {
   })
 
   it('includes only approved CORPUS records and preserves actual tool results as separately labelled evidence', async () => {
-    const repository = new CorpusRepository()
+    const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({
       input: 'ForgeClaw runtime flow',
       context: '',
@@ -48,7 +54,10 @@ describe('DeepSeek task/context boundary', () => {
       runtime: 'test',
       model: 'test',
     })
-    await repository.admitCandidate(approved.candidate.id)
+    const unsigned = { keyId: RFC8032_TEST_KEY_ID, candidateId: approved.candidate.id, candidateIntegrity: approved.candidate.integrity, issuedAt: '2026-01-01T00:00:00.000Z', expiresAt: '2030-01-01T00:00:00.000Z' }
+    const key = await globalThis.crypto.subtle.importKey('pkcs8', bufferSource(hexBytes(`${RFC8032_PKCS8_PREFIX}${RFC8032_PRIVATE_SEED}`)), { name: 'Ed25519' }, false, ['sign'])
+    const signature = new Uint8Array(await globalThis.crypto.subtle.sign({ name: 'Ed25519' }, key, new TextEncoder().encode(authorizationPayload(unsigned))))
+    await repository.admitCandidate(approved.candidate.id, { ...unsigned, signature: Array.from(signature, byte => byte.toString(16).padStart(2, '0')).join('') })
 
     const payload = buildDeepSeekTaskPayload(
       'Explain ForgeClaw default reasoning flow.',
