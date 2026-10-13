@@ -76,6 +76,7 @@ import type { AgentPhase } from './types/forgeOps'
 import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from './lib/deepseekCommand'
 import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
 import { FOUNDER_PRINCIPLES, WHY_FORGECLAW_EXISTS } from './lib/founderPrinciples'
+import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 
 // Global loop detection tracking
@@ -3191,10 +3192,7 @@ function App() {
 
       </main>
 
-      {/* Footer signature */}
-      <footer style={{ textAlign: 'center', padding: '6px', borderTop: '1px solid #111', fontSize: '9px', color: '#2a2a2a', letterSpacing: '1.5px', flexShrink: 0, userSelect: 'none' }}>
-        FORGECLAW · AUTONOMOUS REASONING ENGINE · BUILT BY DEVIOUSDEVV303
-      </footer>
+      <ColoradoFooter />
 
       <style>{`
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
