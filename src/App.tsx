@@ -55,7 +55,7 @@ import {
   measureRequestMetrics,
 } from './lib/codingAgentRuntime'
 import { CANONICAL_IDENTITY, stripRuntimeEnvelopes } from './lib/canonicalIdentity'
-import { extractThinking } from './lib/guardianGate'
+import { extractThinking, type GuardianPosture } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { takeGeneratedImage } from './lib/imageArtifact'
 import { runSubAgent, toolsForCapability } from './lib/managedAgent'
@@ -559,6 +559,8 @@ function App() {
     setResumePrompt(
       `Resume the unfinished ForgeClaw coding task. Repository evidence must be read with github_repo_state before continuing.`,
     )
+    // Auto-persist: task continues automatically on app reopen.
+    setAutoResumePending(true)
     // Factual trail only — no execution narration, no reasoning display.
     const resumed = saveCodingAgentState({
       activity: appendActivity(resumable, 'session resumed after reload', `HEAD ${resumable.headShaShort || 'unknown'}`),
@@ -697,11 +699,12 @@ function App() {
   const [codingAgentState, setCodingAgentState] = useState<CodingAgentState>(() => loadCodingAgentState())
   const [agentResumedState, setAgentResumedState] = useState<CodingAgentState | null>(null)
   const [resumePrompt, setResumePrompt] = useState<string | null>(null)
+  const [autoResumePending, setAutoResumePending] = useState(false)
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
-  const [tier1Active, setTier1Active] = useState(false)
+  const [guardianPosture, setGuardianPosture] = useState<GuardianPosture>('operator-shell')
 
   const requestGuardianApproval = useCallback(async (call: ToolCall): Promise<boolean> => {
-    if (!tier1Active) return true
+    if (guardianPosture === 'autonomous') return true
     const coSignId = `cosign_${call.id}_${Date.now()}`
     const reasoning = extractThinking('') ?? '(approval requested by authoritative dispatcher)'
     return new Promise<boolean>((resolve) => {
@@ -715,7 +718,7 @@ function App() {
         }
       }, 120_000)
     })
-  }, [tier1Active])
+  }, [guardianPosture])
 
   const [listening, setListening] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState('')
@@ -1194,7 +1197,7 @@ function App() {
         agentId: FORGECLAW_AGENT_ID,
         runId,
         signal: controller.signal,
-        tier1Active,
+        guardianPosture,
         requestGuardianApproval,
         codingAgentState: compressedState,
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
@@ -1204,7 +1207,7 @@ function App() {
             agentId: FORGECLAW_AGENT_ID,
             runId,
             signal: controller.signal,
-            tier1Active,
+            guardianPosture,
             requestGuardianApproval,
           }),
       }
@@ -1613,7 +1616,17 @@ function App() {
         setLoading(false)
       }
     }
-  }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, tier1Active, requestGuardianApproval, agentResumedState]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, guardianPosture, requestGuardianApproval, agentResumedState]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-persist: resume in-progress task automatically on app reopen.
+  useEffect(() => {
+    if (autoResumePending && resumePrompt && !loading && agentResumedState) {
+      const text = resumePrompt
+      setResumePrompt(null)
+      setAutoResumePending(false)
+      void sendPrompt(text, undefined, { resumeTask: true })
+    }
+  }, [autoResumePending, resumePrompt, loading, agentResumedState, sendPrompt])
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -2653,7 +2666,7 @@ function App() {
               {resumePrompt && (
                 <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '10px', fontFamily: 'monospace' }}>
                   <div style={{ color: '#93c5fd', fontSize: '10px', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '6px' }}>
-                    UNFINISHED TASK DETECTED — RESUMABLE
+                    UNFINISHED TASK DETECTED — AUTO-RESUMING
                   </div>
                   <div style={{ color: '#94a3b8', fontSize: '11px', marginBottom: '8px' }}>
                     {codingAgentState.task || 'Coding task'} · {codingAgentState.owner}/{codingAgentState.repo}@{codingAgentState.branch} · HEAD {codingAgentState.headShaShort || 'unknown'}
@@ -2774,21 +2787,23 @@ function App() {
               {/* ── Autonomy mode toggle ── */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: pendingCoSigns.length ? '8px' : '0' }}>
                 <button
-                  onClick={() => setTier1Active(t => !t)}
+                  onClick={() => setGuardianPosture(p => p === 'operator-shell' ? 'full-cosign' : p === 'full-cosign' ? 'autonomous' : 'operator-shell')}
                   style={{
-                    background: tier1Active ? '#0d1a05' : '#051a05',
-                    border: `1px solid ${tier1Active ? '#3a6e14' : '#14532d'}`,
-                    color: tier1Active ? '#86efac' : '#22c55e',
+                    background: guardianPosture !== 'autonomous' ? '#0d1a05' : '#051a05',
+                    border: `1px solid ${guardianPosture !== 'autonomous' ? '#3a6e14' : '#14532d'}`,
+                    color: guardianPosture !== 'autonomous' ? '#86efac' : '#22c55e',
                     borderRadius: '5px', padding: '4px 10px', fontSize: '9px',
                     fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1.5px',
                     textTransform: 'uppercase', fontFamily: 'monospace',
                   }}
                 >
-                  {tier1Active ? '🛡 TIER 1' : '⚡ AUTONOMOUS'}
+                  {guardianPosture === 'full-cosign' ? '🛡 FULL CO-SIGN' : guardianPosture === 'operator-shell' ? '⚡ OPERATOR-SHELL' : '⚡ AUTONOMOUS'}
                 </button>
                 <span style={{ color: '#3a5c3a', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>
-                  {tier1Active
-                    ? 'feature branch auto · main + run_js co-sign'
+                  {guardianPosture === 'full-cosign'
+                    ? 'all mutating ops require co-sign'
+                    : guardianPosture === 'operator-shell'
+                    ? 'shell autonomous · repo writes co-sign'
                     : 'all operations run without co-sign'}
                 </span>
               </div>
@@ -2964,7 +2979,7 @@ function App() {
             activeProvider={activeProvider}
             activeModel={normalizedActiveModel}
             apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'local' ? localEndpoint : ''}
-            tier1Active={tier1Active}
+            guardianPosture={guardianPosture}
             requestGuardianApproval={requestGuardianApproval}
           />
         )}
