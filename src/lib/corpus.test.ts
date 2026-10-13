@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { CorpusRepository, appendDeepSeekLearning, extractImagePatterns, suggestImprovedPrompt } from './corpus'
+import { CorpusRepository, appendDeepSeekLearning, extractImagePatterns, integrityHash, suggestImprovedPrompt } from './corpus'
 import { corpusProvider } from './ai/providers/corpusProvider'
 import { buildDeepSeekTaskPayload } from './ai/deepseekContext'
 import { requiresCoSign } from './guardianGate'
@@ -106,6 +106,45 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(synced.status).toBe('synced')
     expect(synced.admitted).toBe(1)
     expect(repository.getApprovedCount()).toBe(1)
+  })
+
+  it('H-A: rejects an unauthorized webhook candidate instead of admitting it', async () => {
+    const repository = new CorpusRepository()
+    await repository.appendInteraction({ input: 'local pending candidate', context: '', result: 'local result', runtime: 'corpus', model: 'local-model' })
+    const input = 'remote webhook candidate'
+    const context = 'remote context'
+    const generatedResult = 'remote result'
+    const runtime = 'remote-runtime'
+    const model = 'remote-model'
+    const integrity = await integrityHash([input, context, generatedResult, runtime, model].join('\n'))
+    const remoteCandidate = {
+      id: `candidate-${integrity}`,
+      corpusId: 'nexus-remote',
+      source: 'remote-webhook',
+      content: generatedResult,
+      timestamp: new Date().toISOString(),
+      version: 2,
+      recordType: 'learning_candidate' as const,
+      integrity,
+      admissionStatus: 'candidate' as const,
+      metadata: { input, runtime, model, sourceInteractionId: `interaction-${integrity}` },
+      sourceInteractionId: `interaction-${integrity}`,
+      runtime,
+      model,
+      input,
+      context,
+      generatedResult,
+    }
+
+    const synced = await repository.syncPending(
+      'https://example.invalid/webhook',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [remoteCandidate] }), { status: 200 })),
+    )
+
+    expect(synced.status).toBe('synced')
+    expect(synced.admitted).toBe(0)
+    expect(repository.getApprovedCount()).toBe(0)
+    expect(repository.retrieve('remote result')).toHaveLength(0)
   })
 
   it('makes approved corpus context available to the DeepSeek workflow without local fallback', async () => {
