@@ -1865,7 +1865,7 @@ function App() {
     setCorpusSyncStatus('Syncing pending candidates…')
     const result = await corpusRepository.syncPending(corpusWebhookUrl.trim())
     setCorpusSyncStatus(result.status === 'synced'
-      ? `Synced ${result.admitted} validated update${result.admitted === 1 ? '' : 's'}.`
+      ? `Synced ${result.attempted} candidate update${result.attempted === 1 ? '' : 's'}; admission still requires authorization.`
       : `Webhook unavailable; ${Math.max(0, result.attempted - result.admitted)} candidate${Math.max(0, result.attempted - result.admitted) === 1 ? '' : 's'} remain local.`)
   }
 
