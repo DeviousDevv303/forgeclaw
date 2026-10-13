@@ -144,7 +144,7 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
   })
 
   it('blocks self-sculpt changes to protected paths and unsafe branches', async () => {
-    const context = { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' }
+    const context = { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw', guardianPosture: 'autonomous' as const }
     const protectedPath = await executeTool({
       id: 'sculpt-protected',
       name: 'sculpt_self',
@@ -169,7 +169,7 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
   it('exercises an offline local tool without external credentials', async () => {
     const output = await executeTool(
       { id: 'smoke-run-js', name: 'run_js', input: { code: 'return 6 * 7' } },
-      { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' },
+      { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw', guardianPosture: 'autonomous' as const },
     )
     expect(output).toBe('42')
   })
@@ -197,7 +197,7 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
       'local-model',
       endpoint,
       FORGE_TOOLS,
-      { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' },
+      { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw', guardianPosture: 'autonomous' as const },
     )
     expect(output.trim().length).toBeGreaterThan(0)
   }, 120_000)

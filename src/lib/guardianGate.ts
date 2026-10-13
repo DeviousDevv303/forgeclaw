@@ -26,17 +26,44 @@ export function extractThinking(text: string): string | null {
   return m ? m[1].trim() : null
 }
 
-// Tier 1 gate — returns true if the operation needs a human co-sign.
+// Guardian posture — controls which operations require human co-sign.
 //
-// tier1Active=false (default): fully autonomous — everything runs without co-sign.
-// tier1Active=true  (safety):  branch-aware gate —
-//   ALWAYS co-sign:  run_js, send_whatsapp, github_run_workflow, mutating http_fetch
-//   Branch-aware:    github_write_file → co-sign on main/master, auto on feature branch
+// 'autonomous':     fully autonomous — everything runs without co-sign.
+//                   (legacy tier1Active=false)
+// 'operator-shell': shell_exec is autonomous (operator's shell commands run
+//                   without obstacles); repo writes and other mutating
+//                   operations require co-sign per full-cosign rules.
+// 'full-cosign':    everything in ALWAYS_COSIGN requires co-sign, plus
+//                   branch-aware github_write_file and mutating http_fetch.
+//                   (legacy tier1Active=true)
 //
-export function requiresCoSign(call: ToolCall, tier1Active: boolean): boolean {
-  if (!tier1Active) return false  // fully autonomous — no gates
+export type GuardianPosture = 'autonomous' | 'operator-shell' | 'full-cosign'
 
-  // Always co-sign in Tier 1
+/** Default posture: operator shell runs free, repo changes need approval. */
+export const DEFAULT_GUARDIAN_POSTURE: GuardianPosture = 'operator-shell'
+
+/** Map legacy boolean tier1Active to the new posture model. */
+export function postureFromTier1Active(tier1Active: boolean): GuardianPosture {
+  return tier1Active ? 'full-cosign' : 'autonomous'
+}
+
+// Tier gate — returns true if the operation needs a human co-sign.
+export function requiresCoSign(call: ToolCall, posture: GuardianPosture | boolean): boolean {
+  // Backward compat: boolean maps to legacy postures
+  const resolved: GuardianPosture = typeof posture === 'boolean'
+    ? postureFromTier1Active(posture)
+    : posture
+
+  if (resolved === 'autonomous') return false  // fully autonomous — no gates
+
+  if (resolved === 'operator-shell') {
+    // Operator's shell commands are autonomous — no obstacles.
+    if (call.name === 'shell_exec') return false
+    // Everything else follows full-cosign rules below.
+  }
+
+  // full-cosign (and operator-shell fallthrough for non-shell tools):
+  // Always co-sign these
   if (ALWAYS_COSIGN.has(call.name)) return true
 
   // Branch-aware: writes to main/master (or unspecified) require co-sign
@@ -45,7 +72,7 @@ export function requiresCoSign(call: ToolCall, tier1Active: boolean): boolean {
     return !branch || branch === 'main' || branch === 'master'
   }
 
-  // Mutating HTTP requires co-sign in Tier 1
+  // Mutating HTTP requires co-sign
   if (call.name === 'http_fetch') {
     const method = ((call.input.method as string) || 'GET').toUpperCase()
     return DESTRUCTIVE_HTTP_METHODS.has(method)
@@ -56,5 +83,5 @@ export function requiresCoSign(call: ToolCall, tier1Active: boolean): boolean {
 
 // Backward-compat alias
 export function isDestructive(call: ToolCall): boolean {
-  return requiresCoSign(call, true)
+  return requiresCoSign(call, 'full-cosign')
 }

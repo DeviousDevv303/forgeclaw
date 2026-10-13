@@ -1,6 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useState, useRef, useCallback } from 'react'
+import type { GuardianPosture } from '../lib/guardianGate'
 import { safeGetItem, safeSetItem, safeJsonParse } from '../lib/storage'
 import type { ProviderId } from '../lib/modelProviders'
 import { modelSupportsTools } from '../lib/modelProviders'
@@ -34,7 +35,7 @@ interface AgentsPanelProps {
   activeModel: string
   apiKey: string
   /** Guardian posture, forwarded so an agent run is gated exactly like ForgeMind. */
-  tier1Active?: boolean
+  guardianPosture?: GuardianPosture
   /** Project-owned Guardian approval handler (co-sign). */
   requestGuardianApproval?: (call: ToolCall) => Promise<boolean>
 }
@@ -92,7 +93,7 @@ function CapabilityChip({ label, tone }: { label: string; tone: ChipTone }) {
   )
 }
 
-export function AgentsPanel({ activeProvider, activeModel, apiKey, tier1Active = false, requestGuardianApproval }: AgentsPanelProps) {
+export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPosture = 'operator-shell', requestGuardianApproval }: AgentsPanelProps) {
   const [agents, setAgents] = useState<CustomAgent[]>(loadAgents)
   const [activeAgent, setActiveAgent] = useState<CustomAgent | null>(null)
   const [editing, setEditing] = useState<CustomAgent | null>(null)
@@ -171,7 +172,7 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, tier1Active =
         agentId: agent.id,
         runId,
         signal: controller.signal,
-        tier1Active,
+        guardianPosture,
         requestGuardianApproval,
       }
       let report: SubAgentBudgetReport | null = null
@@ -207,7 +208,7 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, tier1Active =
       setLoading(false)
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
     }
-  }, [input, loading, activeAgent, chatMessages, activeProvider, activeModel, apiKey, tier1Active, requestGuardianApproval])
+  }, [input, loading, activeAgent, chatMessages, activeProvider, activeModel, apiKey, guardianPosture, requestGuardianApproval])
 
   const stopGeneration = () => {
     abortRef.current?.abort()
@@ -335,8 +336,8 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, tier1Active =
               tone={activeCapability === 'chat' ? 'muted' : 'ok'}
             />
             <CapabilityChip
-              label={tier1Active ? 'GUARDIAN: TIER 1 (CO-SIGN)' : 'GUARDIAN: AUTONOMOUS (NOT ARMED)'}
-              tone={tier1Active ? 'ok' : 'muted'}
+              label={guardianPosture === 'full-cosign' ? 'GUARDIAN: FULL CO-SIGN' : guardianPosture === 'operator-shell' ? 'GUARDIAN: OPERATOR-SHELL' : 'GUARDIAN: AUTONOMOUS (NOT ARMED)'}
+              tone={guardianPosture !== 'autonomous' ? 'ok' : 'muted'}
             />
           </div>
           {runtimeNotice && (
