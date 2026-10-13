@@ -1,0 +1,1 @@
+Final happy-path dry-run sentinel; safe to remove.
