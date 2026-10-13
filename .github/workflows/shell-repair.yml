@@ -197,8 +197,8 @@ jobs:
           Guarded autonomous repair proposal.
 
           - Invocation ID: $INVOCATION_ID
-          - Baseline exit code: ${{ steps.baseline.outcome == 'success' && 0 || 1 }}
-          - Post-patch exit code: ${{ steps.verify.outcome == 'success' && 0 || 1 }}
+          - Baseline exit code: ${{ steps.baseline.outcome == 'success' && '0' || '1' }}
+          - Post-patch exit code: ${{ steps.verify.outcome == 'success' && '0' || '1' }}
           - Run URL: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
           - Landing path: pull request to \\`main\\`; this workflow never merges.
           EOF
