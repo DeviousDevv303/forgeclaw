@@ -109,7 +109,7 @@ export function isCodingTaskRequest(prompt: string, options?: { hasAttachment?: 
  * and the existing Guardian gate.
  */
 export function isExplicitShellRequest(prompt: string): boolean {
-  const text = prompt.trim().toLowerCase()
+  const text = stripShellPrefix(prompt).trim().toLowerCase()
   if (!text) return false
   if (/\bshell_exec\b|\bshell command\b|\b(?:run|execute)\s+(?:the\s+)?(?:shell|command|bash)\b/.test(text)) return true
   return /^(?:please\s+)?(?:(?:run|execute)\s+(?:the\s+)?|)(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/.test(text)
@@ -121,8 +121,16 @@ export function isExplicitShellRequest(prompt: string): boolean {
  * left to the normal agent loop, while a bare `pwd` never depends on the model
  * deciding to emit a function call.
  */
+/**
+ * Strip common shell-command prefixes (/shell, !, $) so prefixed input
+ * routes through the direct shell path instead of falling to the model.
+ */
+function stripShellPrefix(prompt: string): string {
+  return prompt.trim().replace(/^(?:\/shell\s+|!\s*|\$\s*)/i, '').trim()
+}
+
 export function extractExplicitShellCommand(prompt: string): string | null {
-  const text = prompt.trim()
+  const text = stripShellPrefix(prompt)
   if (!text) return null
 
   const inlineCode = text.match(/`([^`\n]+)`/)
