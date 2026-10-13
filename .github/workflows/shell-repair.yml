@@ -200,7 +200,7 @@ jobs:
           - Baseline exit code: ${{ steps.baseline.outcome == 'success' && '0' || '1' }}
           - Post-patch exit code: ${{ steps.verify.outcome == 'success' && '0' || '1' }}
           - Run URL: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
-          - Landing path: pull request to \\`main\\`; this workflow never merges.
+          - Landing path: pull request to main; this workflow never merges.
           EOF
           )
             pr_url="$(gh pr create --base main --head "$REPAIR_BRANCH" --title "repair: $(printf '%s' "$REPAIR_REASON" | tr '\n\r' '  ' | cut -c1-200)" --body "$body")"
