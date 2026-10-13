@@ -21,7 +21,7 @@ import {
   type CodingAgentState,
 } from './codingAgentState'
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
-import { requiresCoSign } from './guardianGate'
+import { requiresCoSign, type GuardianPosture, DEFAULT_GUARDIAN_POSTURE, postureFromTier1Active } from './guardianGate'
 import { isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, SHELL_LOG_POLL_INTERVAL_MS, SHELL_LOG_RETRIEVAL_TIMEOUT_MS, SHELL_RUN_LIST_TIMEOUT_MS, type ShellWorkflowRun } from './shellCorrelation'
 import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
@@ -87,6 +87,7 @@ export interface ToolContext {
   runId?: string
   signal?: AbortSignal
   tier1Active?: boolean
+  guardianPosture?: GuardianPosture
   requestGuardianApproval?: (call: ToolCall) => Promise<boolean>
   spawnAgent?: (systemPrompt: string, task: string, tools?: string[]) => Promise<string>
 }
@@ -567,7 +568,9 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
   }
   const normalizedCall = name === call.name && input === call.input ? call : { ...call, name, input }
   if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted before tool execution.'
-  if (requiresCoSign(normalizedCall, Boolean(ctx.tier1Active))) {
+  const posture: GuardianPosture = ctx.guardianPosture
+    ?? (ctx.tier1Active !== undefined ? postureFromTier1Active(ctx.tier1Active) : DEFAULT_GUARDIAN_POSTURE)
+  if (requiresCoSign(normalizedCall, posture)) {
     if (!ctx.requestGuardianApproval) {
       return `[GUARDIAN BLOCK] ${name} requires Guardian co-sign approval, but no project-owned approval handler is attached.`
     }
