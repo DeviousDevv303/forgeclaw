@@ -75,7 +75,7 @@ import { ReasoningTrace } from './components/ReasoningTrace'
 import type { AgentPhase } from './types/forgeOps'
 import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from './lib/deepseekCommand'
 import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
-import { FOUNDER_PRINCIPLES } from './lib/founderPrinciples'
+import { FOUNDER_PRINCIPLES, WHY_FORGECLAW_EXISTS } from './lib/founderPrinciples'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 
 // Global loop detection tracking
@@ -2215,16 +2215,10 @@ function App() {
                   Foundational governance — not an editable runtime setting. Capability may evolve through verified reality; authority remains with the constitution.
                 </div>
                 <div style={{ display: 'grid', gap: '10px' }}>
-                  {[
-                    ['The Founder’s Principle', FOUNDER_PRINCIPLES.principle],
-                    ['The Motive', FOUNDER_PRINCIPLES.motive],
-                    ['Completion standard', FOUNDER_PRINCIPLES.completionStandard],
-                  ].map(([title, content]) => (
-                    <details key={title} open style={{ borderTop: '1px solid #292929', paddingTop: '8px' }}>
-                      <summary style={{ color: '#ddd', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>{title}</summary>
-                      <div style={{ color: '#aaa', fontSize: '10px', lineHeight: 1.6, marginTop: '8px', whiteSpace: 'pre-wrap' }}>{content}</div>
-                    </details>
-                  ))}
+                  <details style={{ borderTop: '1px solid #292929', paddingTop: '8px' }}>
+                    <summary style={{ color: '#ddd', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>Why ForgeClaw Exists</summary>
+                    <div style={{ color: '#aaa', fontSize: '10px', lineHeight: 1.6, marginTop: '8px', whiteSpace: 'pre-wrap' }}>{WHY_FORGECLAW_EXISTS}</div>
+                  </details>
                 </div>
                 <div style={{ borderTop: '1px solid #292929', marginTop: '12px', paddingTop: '9px', color: '#777', fontSize: '10px', lineHeight: 1.5 }}>
                   Hierarchy: Founder’s principles → Codex Anima / Guardian foundation → ForgeClaw / DeepSeek behavior. CORPUS may supply learning candidates, never authority over these principles.
