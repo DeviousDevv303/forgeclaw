@@ -2,6 +2,11 @@
 // Proprietary source-available license. Commercial use requires written permission.
 
 export const MAX_SHELL_OUTPUT_CHARS = 6_000
+export const SHELL_RUN_LIST_TIMEOUT_MS = 120_000
+export const SHELL_LOG_RETRIEVAL_TIMEOUT_MS = 300_000
+export const SHELL_LOG_POLL_INTERVAL_MS = 5_000
+
+export type ShellRunResolution = 'pending_run' | 'pending_log' | 'resolved' | 'run_timeout' | 'log_timeout'
 
 export interface ShellWorkflowRun {
   id: number
@@ -33,7 +38,7 @@ export function isCorrelatedShellRun(
   if (run.event !== 'workflow_dispatch') return false
   if (run.head_branch !== 'main') return false
   // Match invocation ID in name or display_title — GitHub may truncate or vary display_title.
-  const label = `${run.name ?? ""} ${run.display_title ?? ""}`
+  const label = `${run.name ?? ''} ${run.display_title ?? ''}`
   if (!label.includes(invocationId)) return false
   if (typeof run.created_at !== 'string' || run.created_at.length === 0) return false
 
@@ -44,23 +49,34 @@ export function isCorrelatedShellRun(
   return createdAt >= dispatchedAt - 60_000 && createdAt <= now + 60_000
 }
 
+/**
+ * Classify the two asynchronous gaps independently: a missing correlated run
+ * is still pending discovery, while a completed run whose job log is not yet
+ * downloadable is pending log retrieval rather than a retrieval failure.
+ */
+export function resolveShellRun(
+  run: ShellWorkflowRun | undefined,
+  logAvailable: boolean,
+  runDeadline: number,
+  logDeadline: number,
+  now = Date.now(),
+): ShellRunResolution {
+  if (!run) return now >= runDeadline ? 'run_timeout' : 'pending_run'
+  if (!logAvailable) return now >= logDeadline ? 'log_timeout' : 'pending_log'
+  return 'resolved'
+}
+
 function normalizePosixPath(path: string): string {
   const parts: string[] = []
   for (const part of path.split('/')) {
     if (part === '' || part === '.') continue
-    if (part === '..') {
-      parts.pop()
-    } else {
-      parts.push(part)
-    }
+    if (part === '..') parts.pop()
+    else parts.push(part)
   }
   return `/${parts.join('/')}`
 }
 
-/**
- * Resolve a repository-relative working directory while rejecting absolute
- * paths and any traversal that escapes the checkout root.
- */
+/** Resolve a repository-relative working directory without escaping checkout root. */
 export function resolveShellWorkingDirectory(
   workingDirectory: string,
   workspaceRoot: string,
@@ -71,11 +87,7 @@ export function resolveShellWorkingDirectory(
   return candidate === workspace || candidate.startsWith(`${workspace}/`) ? candidate : null
 }
 
-/**
- * Map common model/container workspace paths to a GitHub Actions repository-
- * relative directory. Actions checks the repository out at GITHUB_WORKSPACE,
- * not /workspace, so `/workspace` is an alias for `.` here.
- */
+/** Map common model/container workspace paths to a repository-relative directory. */
 export function normalizeShellWorkingDirectoryInput(
   value: unknown,
   repositoryName: string,
@@ -86,15 +98,10 @@ export function normalizeShellWorkingDirectoryInput(
 
   let relative = requested
   const workspaceRepoPrefix = `/workspace/${repositoryName}/`
-  if (requested === '/workspace' || requested === `/workspace/${repositoryName}`) {
-    relative = '.'
-  } else if (requested.startsWith(workspaceRepoPrefix)) {
-    relative = requested.slice(workspaceRepoPrefix.length)
-  } else if (requested.startsWith('/workspace/')) {
-    relative = requested.slice('/workspace/'.length)
-  }
+  if (requested === '/workspace' || requested === `/workspace/${repositoryName}`) relative = '.'
+  else if (requested.startsWith(workspaceRepoPrefix)) relative = requested.slice(workspaceRepoPrefix.length)
+  else if (requested.startsWith('/workspace/')) relative = requested.slice('/workspace/'.length)
 
-  // Share the exact traversal semantics used by the workflow boundary.
   return resolveShellWorkingDirectory(relative, '/repo') === null ? null : relative
 }
 
@@ -103,10 +110,7 @@ export interface ParsedShellOutput {
   exitCode: number
 }
 
-export function parseShellExecutionLog(
-  rawLogs: string,
-  conclusion: string | null,
-): ParsedShellOutput {
+export function parseShellExecutionLog(rawLogs: string, conclusion: string | null): ParsedShellOutput {
   const marker = '=== FORGECLAW EXECUTION ==='
   const markerIndex = rawLogs.indexOf(marker)
   const executionLog = (markerIndex >= 0 ? rawLogs.slice(markerIndex) : rawLogs)
@@ -125,8 +129,5 @@ export function parseShellExecutionLog(
     .replace(/^start=[^\n]*\n?/, '')
     .replace(/\n?end=[^\n]*$/, '')
     .trim()
-  return {
-    commandOutput: commandOutput.slice(0, MAX_SHELL_OUTPUT_CHARS),
-    exitCode,
-  }
+  return { commandOutput: commandOutput.slice(0, MAX_SHELL_OUTPUT_CHARS), exitCode }
 }
