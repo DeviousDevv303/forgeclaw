@@ -114,8 +114,12 @@ jobs:
               'src/lib/guardianGate.ts', 'src/lib/forgeTools.ts',
               'src/core/autonomyEngine.ts', 'engine/', 'foundation/',
           )
+          # Compare origin/main to the complete working tree. The patch is
+          # intentionally uncommitted at this point, so origin/main...HEAD
+          # alone would miss modified tracked files and allow protected paths
+          # to reach the commit/push step.
           changed = set(subprocess.check_output(
-              ['git', 'diff', '--name-only', 'origin/main...HEAD'], text=True
+              ['git', 'diff', '--name-only', 'origin/main'], text=True
           ).splitlines())
           changed.update(subprocess.check_output(
               ['git', 'ls-files', '--others', '--exclude-standard'], text=True
