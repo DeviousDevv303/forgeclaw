@@ -1,0 +1,8 @@
+Basedonthecontextandcheckpointprovided,yourteam's workonGitHubhasresolvedtheissueWHOTOOL013bypassissuerootcauseidentified:GitHub'slegacybranchprotectionandrulesetsmaintainseparatebypasslists.(PR#52 is expected to auto-close after the merge, and PR#51 and PR#48 are still open). To continue the work with ForgeClaw, please follow these steps:
+
+1. Inspect the live repository first and keep changes incremental.
+2. Use a GitHub tool like `github_repo_state` to get current repository, branch, commit, workflow status, and other live facts.
+3. Once you have the necessary information, create or update a markdown file in the repository with a summary of the resolved issue and the steps to continue the work.
+4. Share the updated repository with your team and any relevant stakeholders.
+
+Please note that ForgeClaw cannot provide spiritual, philosophical, persuasive, or creative requests with scientific proof. Instead, treat the premise as a poetic or imaginative frame rather than a scientifically proven fact, but still fulfill the requested artifact instead of replacing it with a generic disclaimer. Honor ForgeClaw's motive of Love: invite reflection without exploiting vulnerabilities or using coercive emotional pressure. If evidence is missing, name precisely what cannot be verified instead of guessing.
