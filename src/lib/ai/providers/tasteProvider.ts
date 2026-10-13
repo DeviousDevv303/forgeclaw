@@ -14,12 +14,15 @@ export interface ExtractFeature { value: number; confidence: number }
 export interface ExtractResult { status: 'pending' | 'complete' | 'failed'; image_id?: string; features?: Record<string, ExtractFeature>; error?: string; detail?: string; extraction_time_ms?: number; extraction_model?: string; prompt_version?: string }
 export interface FeedbackResult { image_id: string; routing: string; update_type: string; dimensions_updated: string[]; centroid_displacement: number; alpha_effective: number; drift_flag: boolean }
 export interface TasteCluster { id?: string; label?: string; centroid?: Record<string, number>; size?: number; [key: string]: unknown }
-export interface TasteProfile { profile?: Record<string, string>; confidence?: Record<string, number>; centroid?: Record<string, number>; event_count: number; alpha_current?: number; drift_flag: boolean; fallback_active?: boolean; clusters?: TasteCluster[] }
+export interface TasteProfile { profile?: Record<string, string>; prompt_positive?: string; prompt_negative?: string; confidence?: Record<string, number>; centroid?: Record<string, number>; event_count: number; alpha_current?: number; drift_flag: boolean; fallback_active?: boolean; clusters?: TasteCluster[] }
 
 type Fetcher = typeof fetch
 const POLL_INITIAL_DELAY_MS = 2_000
 const POLL_MAX_DELAY_MS = 30_000
 const EXTRACT_TIMEOUT_MS = 120_000
+export const HEALTH_CACHE_TTL_MS = 30_000
+type HealthCacheEntry = { value?: boolean; expiresAt: number; pending?: Promise<boolean> }
+const healthCache = new Map<string, HealthCacheEntry>()
 
 async function readError(response: Response): Promise<string> {
   const raw = await response.text().catch(() => '')
@@ -45,7 +48,35 @@ export class TasteProviderClient {
   private readonly baseUrl: string
   private readonly fetchImpl: Fetcher
   constructor(baseUrl = configuredTasteEndpoint(), fetchImpl: Fetcher = fetch) { this.baseUrl = baseUrl.replace(/\/+$/, ''); this.fetchImpl = fetchImpl }
-  async isConfigured(signal?: AbortSignal): Promise<boolean> { try { const response = await this.fetchImpl(`${this.baseUrl}/health`, { signal, cache: 'no-store' }); return response.ok } catch (error) { if (signal?.aborted) throw error; return false } }
+  async isConfigured(signal?: AbortSignal): Promise<boolean> {
+    const now = Date.now()
+    const cached = healthCache.get(this.baseUrl)
+    if (cached?.value !== undefined && cached.expiresAt > now) return cached.value
+    if (cached?.pending) return cached.pending
+    const entry: HealthCacheEntry = { expiresAt: now + HEALTH_CACHE_TTL_MS }
+    const pending = this.fetchImpl(`${this.baseUrl}/health`, { signal, cache: 'no-store' })
+      .then(response => response.ok)
+      .then(value => {
+        entry.value = value
+        entry.expiresAt = Date.now() + HEALTH_CACHE_TTL_MS
+        return value
+      })
+      .catch(error => {
+        if (signal?.aborted) throw error
+        entry.value = false
+        entry.expiresAt = Date.now() + HEALTH_CACHE_TTL_MS
+        return false
+      })
+      .finally(() => {
+        if (healthCache.get(this.baseUrl)?.pending === pending) {
+          entry.pending = undefined
+          healthCache.set(this.baseUrl, entry)
+        }
+      })
+    entry.pending = pending
+    healthCache.set(this.baseUrl, entry)
+    return pending
+  }
   async health(signal?: AbortSignal): Promise<Record<string, unknown>> { const response = await this.fetchImpl(`${this.baseUrl}/health`, { signal, cache: 'no-store' }); if (!response.ok) throw new Error(await readError(response)); return response.json() as Promise<Record<string, unknown>> }
   async extract(image: Blob | string, dimensions?: string[], imageId?: string, signal?: AbortSignal): Promise<ExtractJob> {
     throwIfAborted(signal)
@@ -77,8 +108,8 @@ export class TasteProviderClient {
     }
     throw new Error(`Taste extraction timed out after ${EXTRACT_TIMEOUT_MS / 1000} seconds.`)
   }
-  async feedback(imageId: string, signal: TasteSignal, text?: string): Promise<FeedbackResult> {
-    const response = await this.fetchImpl(`${this.baseUrl}/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_id: imageId, signal, ...(text ? { text } : {}) }) })
+  async feedback(imageId: string, signal: TasteSignal, text?: string, dimension?: string): Promise<FeedbackResult> {
+    const response = await this.fetchImpl(`${this.baseUrl}/feedback`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image_id: imageId, signal, ...(text ? { text } : {}), ...(dimension ? { dimension } : {}) }) })
     if (!response.ok) throw new Error(await readError(response))
     return response.json() as Promise<FeedbackResult>
   }

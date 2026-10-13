@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { TasteProviderClient } from './tasteProvider'
+import { HEALTH_CACHE_TTL_MS, TasteProviderClient } from './tasteProvider'
 
 describe('NEXUS Taste provider client', () => {
   it('submits an image, polls until complete, then sends feedback', async () => {
@@ -13,8 +13,24 @@ describe('NEXUS Taste provider client', () => {
     const client = new TasteProviderClient('http://127.0.0.1:8377/v1', fetcher)
     const result = await client.extractAndWait('data:image/png;base64,aGVsbG8=')
     expect(result.status).toBe('complete')
-    await expect(client.feedback('image-1', 'fire')).resolves.toMatchObject({ update_type: 'attract' })
+    await expect(client.feedback('image-1', 'fire', 'the color is wrong', 'lighting.hardness')).resolves.toMatchObject({ update_type: 'attract' })
+    const feedbackCall = (fetcher.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>)[3]
+    expect(JSON.parse(String(feedbackCall?.[1]?.body))).toMatchObject({ image_id: 'image-1', signal: 'fire', text: 'the color is wrong', dimension: 'lighting.hardness' })
     expect(fetcher).toHaveBeenCalledTimes(4)
+  })
+
+  it('caches health probes for 30 seconds and deduplicates concurrent checks', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    const client = new TasteProviderClient('http://taste-cache.test/v1', fetcher)
+    await expect(Promise.all([client.isConfigured(), client.isConfigured()])).resolves.toEqual([true, true])
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    await expect(client.isConfigured()).resolves.toBe(true)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.now() + HEALTH_CACHE_TTL_MS + 1)
+    await expect(client.isConfigured()).resolves.toBe(true)
+    vi.useRealTimers()
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
   it('surfaces expired jobs as an actionable error', async () => {

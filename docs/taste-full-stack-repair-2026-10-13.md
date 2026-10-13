@@ -8,11 +8,11 @@ This change completes the existing ForgeClaw ↔ `nexus-taste` integration from 
 
 - Preserved and integrated the existing tested Taste extraction, feedback, and generation-profile path.
 - Removed the accidental root file named `undefined`.
-- Made the provider health check real: `tasteProvider.isConfigured()` now probes `GET /health` asynchronously instead of returning `true`.
+- Made the provider health check real: `tasteProvider.isConfigured()` now probes `GET /health` asynchronously instead of returning `true`, with a 30-second TTL cache and concurrent-request deduplication.
 - Registered Taste in the provider router as an auxiliary provider. It is visible to provider status/configuration code but remains intentionally non-routable for chat (`send()` fails with an explicit message).
 - Made provider configuration checks awaitable without changing synchronous providers.
 - Replaced `unknown[]` profile clusters with the typed `TasteCluster` shape.
-- Removed the undocumented `dimension` field from feedback requests.
+- Restored the contract-defined optional `dimension` feedback override; the client includes it when supplied and the server gives it precedence over text mapping.
 - Added exponential polling backoff (`2s → 4s → 8s → 16s → 30s`) with the existing 120-second deadline.
 - Propagated `AbortSignal` into health, extract, and job-poll requests. Chat cleanup aborts an in-flight optional taste extraction on unmount or when a newer image extraction starts.
 - Added endpoint persistence via `fc_taste_endpoint` and a Settings panel that shows live health status, allows saving the endpoint, and clearly labels Taste as optional.
@@ -21,7 +21,9 @@ This change completes the existing ForgeClaw ↔ `nexus-taste` integration from 
 
 ## Verification
 
-- ForgeClaw focused Vitest: provider router and Taste client tests pass (`8 tests`).
+- ForgeClaw focused Vitest: provider router and Taste client tests pass (`9 tests`).
+- Live mock HTTP trace: health → extract 202 → pending polling → complete features → feedback 200 → generation/full profiles; see `docs/full-stack-trace-2026-10-13.md`.
+- nexus-taste contract tests confirm top-level generation prompt fields and explicit dimension precedence.
 - ForgeClaw `npm run build`: passes (TypeScript, ESLint, and Vite production bundle).
 - ForgeClaw `git diff --check`: clean.
 - `nexus-taste` backend test suite: requires the repository's Python test dependencies (`pytest`); the sandbox system interpreter does not currently include them.
