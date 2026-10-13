@@ -46,7 +46,7 @@ const storage = new MemoryStorage()
 Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
 
 const toolNames = FORGE_TOOLS.map(tool => tool.name)
-const ctx = () => ({ ...loadToolContext(), ghToken: '' })
+const ctx = () => ({ ...loadToolContext(), ghToken: '', guardianPosture: 'autonomous' as const })
 
 afterEach(() => {
   storage.clear()
@@ -336,7 +336,7 @@ describe('dispatcher integrity (offline)', () => {
   it('enforces Guardian at the dispatcher boundary even without an App caller', async () => {
     const output = await executeTool(
       { id: 'guardian-boundary', name: 'github_write_file', input: { path: 'x.md', content: 'x', message: 'doc: x' } },
-      { ...ctx(), ghToken: 'test-token', tier1Active: true },
+      { ...ctx(), ghToken: 'test-token', guardianPosture: 'full-cosign' as const },
     )
     expect(output).toContain('[GUARDIAN BLOCK]')
     expect(output).toContain('no project-owned approval handler')
@@ -351,7 +351,7 @@ describe('dispatcher integrity (offline)', () => {
     const approved = vi.fn(async () => true)
     const output = await executeTool(
       { id: 'guardian-approved', name: 'github_write_file', input: { path: 'x.md', content: 'x', message: 'docs: x' } },
-      { ...ctx(), ghToken: 'test-token', tier1Active: true, requestGuardianApproval: approved },
+      { ...ctx(), ghToken: 'test-token', guardianPosture: 'full-cosign' as const, requestGuardianApproval: approved },
     )
     expect(approved).toHaveBeenCalledOnce()
     expect(output).toContain('approved123')
