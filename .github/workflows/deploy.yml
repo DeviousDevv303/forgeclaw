@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-      - run: npm install
+      - run: npm ci
       - name: Patch GitHub read-only UI for Pages
         run: node scripts/patchGithubReadUi.mjs
       - name: Build for GitHub Pages
