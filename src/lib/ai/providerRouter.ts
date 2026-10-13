@@ -3,25 +3,22 @@ import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
 import { anthropicProvider } from './providers/anthropicProvider'
 import { moonshotProvider } from './providers/moonshotProvider'
-import { localInferenceProvider, DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL } from './providers/localInferenceProvider'
+import { localInferenceProvider, DEFAULT_LOCAL_MODEL } from './providers/localInferenceProvider'
 import { corpusProvider } from './providers/corpusProvider'
+import { tasteProvider } from './providers/tasteProvider'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { buildDeepSeekTaskPayload } from './deepseekContext'
 
-export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, anthropic: anthropicProvider, local: localInferenceProvider, nexus: corpusProvider } as const
+export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, anthropic: anthropicProvider, local: localInferenceProvider, nexus: corpusProvider, taste: tasteProvider } as const
 export type ProviderId = keyof typeof providers
 export interface ProviderChoice { providerId: ProviderId; model: string; level: 1 | 2 | 3 | 4 }
 export const LOCAL_PROVIDER_TIMEOUT_MS = 4_000
 
-async function localEndpointAvailable(apiKey: string): Promise<boolean> {
-  const base = (apiKey.trim() || DEFAULT_LOCAL_ENDPOINT).replace(/\/+$/, '')
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 650)
-  try { return (await fetch(`${base}/models`, { signal: controller.signal, cache: 'no-store' })).ok } catch { return false } finally { clearTimeout(timer) }
-}
 export async function detectBestProvider(apiKey = '', preferredModel = DEFAULT_LOCAL_MODEL): Promise<ProviderChoice> {
-  await localEndpointAvailable(apiKey)
+  void apiKey
+  // Local is an explicit operator-selected runtime. Availability is checked by
+  // the provider heartbeat and send path; do not perform a dead probe here.
   return { providerId: 'local', model: preferredModel, level: 2 }
 }
 export async function getBestProvider(apiKey: string, preferred: ProviderId = DEFAULT_PROVIDER, preferredModel = ''): Promise<ProviderChoice> {
@@ -88,7 +85,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // the model then produced plausible-looking but unsupported commit answers.
   if (shouldBootstrapRepositoryEvidence(request, selected)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `bootstrap-repo-state-${Date.now()}`, name: 'github_repo_state', input: {} }], stopReason: 'deterministic-repository-evidence' })
   if (shouldBootstrapDeepSeekReasoning(request, selected)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `bootstrap-deepseek-${Date.now()}`, name: 'deepseek_reason', input: buildDeepSeekToolInput(request) }], stopReason: 'deterministic-deepseek-reasoning' })
-  if (!provider.isConfigured(apiKey)) return { success: false, error: { class: 'AUTH_FAILURE', message: `${provider.label} API key or endpoint required.`, provider: selected, retryable: false } }
+  if (!(await provider.isConfigured(apiKey))) return { success: false, error: { class: 'AUTH_FAILURE', message: `${provider.label} API key or endpoint required.`, provider: selected, retryable: false } }
   try {
     const failed = failedDeepSeekToolResult(request)
     if (selected === 'corpus' && failed) return { success: false, error: classifyError(new Error(failed.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
@@ -101,7 +98,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
     return success(selected === 'local' ? await sendLocalWithTimeout(request, apiKey) : await provider.send(request, apiKey))
   } catch (error) { return { success: false, error: classifyError(error, selected) } }
 }
-export function isProviderConfigured(apiKey = '', providerId: ProviderId = DEFAULT_PROVIDER): boolean { return providers[providerId].isConfigured(apiKey) }
+export async function isProviderConfigured(apiKey = '', providerId: ProviderId = DEFAULT_PROVIDER): Promise<boolean> { return await providers[providerId].isConfigured(apiKey) }
 export function providerSupportsTools(modelId: string, providerId: ProviderId = DEFAULT_PROVIDER): boolean { return providers[providerId]?.supportsTools(modelId) ?? false }
 export async function testProviderKey(apiKey = '', providerId: ProviderId = DEFAULT_PROVIDER, workspaceId?: string): Promise<void> { await providers[providerId].test(apiKey, workspaceId) }
-export { moonshotProvider, corpusProvider, anthropicProvider, localInferenceProvider }
+export { moonshotProvider, corpusProvider, anthropicProvider, localInferenceProvider, tasteProvider }

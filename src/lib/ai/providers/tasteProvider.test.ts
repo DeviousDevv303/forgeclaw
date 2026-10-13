@@ -13,7 +13,7 @@ describe('NEXUS Taste provider client', () => {
     const client = new TasteProviderClient('http://127.0.0.1:8377/v1', fetcher)
     const result = await client.extractAndWait('data:image/png;base64,aGVsbG8=')
     expect(result.status).toBe('complete')
-    await expect(client.feedback('image-1', 'fire', undefined, 'lighting.hardness')).resolves.toMatchObject({ update_type: 'attract' })
+    await expect(client.feedback('image-1', 'fire')).resolves.toMatchObject({ update_type: 'attract' })
     expect(fetcher).toHaveBeenCalledTimes(4)
   })
 

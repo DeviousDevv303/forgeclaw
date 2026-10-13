@@ -67,7 +67,7 @@ export interface AIProvider {
   label: string
   requiresKey: boolean
   models: Array<{ id: string; label: string; contextK: number; note?: string }>
-  isConfigured(apiKey: string): boolean
+  isConfigured(apiKey: string): boolean | Promise<boolean>
   supportsTools(modelId: string): boolean
   send(request: AIRequest, apiKey: string): Promise<AIResponse>
   test(apiKey: string, workspaceId?: string): Promise<void>

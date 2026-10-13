@@ -68,6 +68,7 @@ import {
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
 import { TasteProviderClient, type TasteSignal } from './lib/ai/providers/tasteProvider'
+import { TasteStatusPanel } from './components/TasteStatusPanel'
 import { useForgeOps } from './hooks/useForgeOps'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
@@ -629,6 +630,8 @@ function App() {
   // Resolve through the shared auth path so an operator-provided .env seed and the
   // localStorage PAT are both honoured here, not just in the GitHub tool helpers.
   const [ghToken, setGhToken] = useState(() => resolveGithubToken())
+  const tasteAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => () => { tasteAbortRef.current?.abort() }, [])
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
@@ -898,8 +901,11 @@ function App() {
       : promptText
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
     if (imageUrl) {
+      tasteAbortRef.current?.abort()
+      const tasteAbort = new AbortController()
+      tasteAbortRef.current = tasteAbort
       const tasteClient = new TasteProviderClient()
-      void tasteClient.extractAndWait(imageUrl).then(result => {
+      void tasteClient.extractAndWait(imageUrl, undefined, undefined, tasteAbort.signal).then(result => {
         if (result.status !== 'complete' || !result.image_id) return
         setMessages(prev => prev.map(message => message.id === userMsg.id ? { ...message, tasteImageId: result.image_id } : message))
       }).catch(() => { /* Taste is optional; a slow or offline service never blocks chat. */ })
@@ -2428,8 +2434,8 @@ function App() {
                 </div>
               </div>
 
-              {/* GitHub Token */}
-              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+              <TasteStatusPanel />
+              {/* GitHub Token */}              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <label style={{ color: '#f97316', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', fontFamily: 'monospace' }}>
                     GitHub Token
