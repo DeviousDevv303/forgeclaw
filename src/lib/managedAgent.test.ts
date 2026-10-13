@@ -39,7 +39,7 @@ class MemoryStorage implements Storage {
 const storage = new MemoryStorage()
 Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
 
-const ctx = () => ({ ...loadToolContext(), ghToken: '', agentId: 'agent-under-test', runId: 'run-1' })
+const ctx = () => ({ ...loadToolContext(), ghToken: '', agentId: 'agent-under-test', runId: 'run-1', guardianPosture: 'autonomous' as const })
 
 afterEach(() => {
   storage.clear()
@@ -342,7 +342,7 @@ describe('saved-agent run reaches real tools without native function calling', (
     await runSubAgent('specialist', 'write a file', undefined, 'nexus', 'qwen', '', FORGE_TOOLS, {
       ...ctx(),
       ghToken: 'test-token',
-      tier1Active: true,
+      guardianPosture: 'full-cosign' as const,
     }, { capability: 'coding', callProviderFn })
 
     const toolTurn = seen[1].messages.find(message => message.role === 'tool')
@@ -358,7 +358,7 @@ describe('saved-agent run reaches real tools without native function calling', (
     await runSubAgent('specialist', 'write a file', undefined, 'nexus', 'qwen', '', FORGE_TOOLS, {
       ...ctx(),
       ghToken: 'test-token',
-      tier1Active: true,
+      guardianPosture: 'full-cosign' as const,
       requestGuardianApproval: async () => false,
     }, { capability: 'coding', callProviderFn })
 
