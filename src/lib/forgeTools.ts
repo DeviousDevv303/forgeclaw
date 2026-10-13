@@ -21,7 +21,7 @@ import {
 } from './codingAgentState'
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign } from './guardianGate'
-import { isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, type ShellWorkflowRun } from './shellCorrelation'
+import { isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, SHELL_LOG_POLL_INTERVAL_MS, SHELL_LOG_RETRIEVAL_TIMEOUT_MS, SHELL_RUN_LIST_TIMEOUT_MS, type ShellWorkflowRun } from './shellCorrelation'
 import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
@@ -1101,7 +1101,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           return runs.find(run => isCorrelatedShellRun(run, invocationId, dispatchStartedAt))
         }
 
-        const findDeadline = Date.now() + Math.min(maxWait * 1000, 120000)
+        const findDeadline = Date.now() + SHELL_RUN_LIST_TIMEOUT_MS
         let run: ShellWorkflowRun | undefined
 
         const discoveryDelays = [100, 250, 500, 1000, 2000] as const
@@ -1174,31 +1174,43 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           return `[TOOL ERROR] Shell execution timed out after ${maxWait}s. Run #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nLast status: ${lastStatus}\nConclusion: ${finalRun.conclusion ?? 'unknown'}\nURL: ${finalRun.html_url}`
         }
 
-        const jobsRes = await toolFetch(
-          ctx,
-          `https://api.github.com/repos/${sOwner}/${sRepo}/actions/runs/${finalRun.id}/jobs?per_page=20`,
-          { headers: sHeaders },
-        )
-        if (!jobsRes.ok) throw new Error(`GitHub jobs list ${jobsRes.status}`)
-
         type WorkflowJob = { id: number; name: string; conclusion: string | null }
-        const jobsData = await jobsRes.json() as { jobs?: WorkflowJob[] }
-        const job = (jobsData.jobs || []).find(j => j.name === 'execute') || jobsData.jobs?.[0]
-
-        if (!job) {
-          return `[TOOL ERROR] Shell execution completed but no job was found.\nRun #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nStatus: ${finalRun.status}\nConclusion: ${finalRun.conclusion ?? 'unknown'}`
+        const logDeadline = Date.now() + SHELL_LOG_RETRIEVAL_TIMEOUT_MS
+        let rawLogs: string | undefined
+        let lastLogStatus = 'pending'
+        while (!rawLogs && Date.now() < logDeadline) {
+          if (ctx.signal?.aborted) return '[TOOL ERROR] Shell execution aborted while retrieving logs.'
+          const jobsRes = await toolFetch(
+            ctx,
+            `https://api.github.com/repos/${sOwner}/${sRepo}/actions/runs/${finalRun.id}/jobs?per_page=20`,
+            { headers: sHeaders },
+          )
+          if (!jobsRes.ok) {
+            lastLogStatus = `jobs ${jobsRes.status}`
+          } else {
+            const jobsData = await jobsRes.json() as { jobs?: WorkflowJob[] }
+            const job = (jobsData.jobs || []).find(j => j.name === 'execute') || jobsData.jobs?.[0]
+            if (job) {
+              const logsRes = await toolFetch(
+                ctx,
+                `https://api.github.com/repos/${sOwner}/${sRepo}/actions/jobs/${job.id}/logs`,
+                { headers: sHeaders },
+              )
+              if (logsRes.ok) rawLogs = await logsRes.text()
+              else lastLogStatus = `logs ${logsRes.status}`
+            } else {
+              lastLogStatus = 'job not yet available'
+            }
+          }
+          if (!rawLogs) {
+            const remainingMs = logDeadline - Date.now()
+            if (remainingMs <= 0) break
+            await new Promise<void>(resolve => setTimeout(resolve, Math.min(SHELL_LOG_POLL_INTERVAL_MS, remainingMs)))
+          }
         }
-
-        const logsRes = await toolFetch(
-          ctx,
-          `https://api.github.com/repos/${sOwner}/${sRepo}/actions/jobs/${job.id}/logs`,
-          { headers: sHeaders },
-        )
-        if (!logsRes.ok) {
-          return `[TOOL ERROR] Shell execution logs were unavailable (${logsRes.status}).\nRun #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nStatus: ${finalRun.status}\nConclusion: ${finalRun.conclusion ?? 'unknown'}`
+        if (!rawLogs) {
+          return `[TOOL ERROR] Shell execution completed but logs remained unavailable after ${SHELL_LOG_RETRIEVAL_TIMEOUT_MS / 1000}s.\nRun #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nStatus: ${finalRun.status}\nConclusion: ${finalRun.conclusion ?? 'unknown'}\nLast log state: ${lastLogStatus}`
         }
-        const rawLogs = await logsRes.text()
-
         const { commandOutput, exitCode } = parseShellExecutionLog(rawLogs, finalRun.conclusion)
 
         const exercise = getShellExercise(input.exercise_id as string | undefined || '')

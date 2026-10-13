@@ -5,6 +5,7 @@ import {
   normalizeShellWorkingDirectoryInput,
   parseShellExecutionLog,
   resolveShellWorkingDirectory,
+  resolveShellRun,
   type ShellWorkflowRun,
 } from './shellCorrelation'
 
@@ -75,6 +76,23 @@ describe('Shell workflow correlation', () => {
     expect(isCorrelatedShellRun(run({ head_branch: 'feature/other' }), invocationId, dispatchedAt, now)).toBe(false)
     expect(isCorrelatedShellRun(run({ id: 0 }), invocationId, dispatchedAt, now)).toBe(false)
     expect(isCorrelatedShellRun(run({ created_at: 'not-a-date' }), invocationId, dispatchedAt, now)).toBe(false)
+  })
+})
+
+
+describe('Shell run resolution states', () => {
+  const runDeadline = now + 1_000
+  const logDeadline = now + 2_000
+
+  it('keeps a missing run pending until the run-list deadline', () => {
+    expect(resolveShellRun(undefined, false, runDeadline, logDeadline, now)).toBe('pending_run')
+    expect(resolveShellRun(undefined, false, runDeadline, logDeadline, runDeadline)).toBe('run_timeout')
+  })
+
+  it('distinguishes a discovered run with delayed logs from log timeout', () => {
+    expect(resolveShellRun(run(), false, runDeadline, logDeadline, now)).toBe('pending_log')
+    expect(resolveShellRun(run(), false, runDeadline, logDeadline, logDeadline)).toBe('log_timeout')
+    expect(resolveShellRun(run(), true, runDeadline, logDeadline, now)).toBe('resolved')
   })
 })
 
