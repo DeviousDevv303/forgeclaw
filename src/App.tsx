@@ -77,6 +77,17 @@ import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from 
 import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
 import { FOUNDER_PRINCIPLES } from './lib/founderPrinciples'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
+import {
+  buildRepairPatchPrompt,
+  createShellRepairDispatchInputs,
+  dispatchShellRepair,
+  extractUnifiedDiff,
+  fetchMainFileContent,
+  getUnifiedDiffPaths,
+  isRepairSourceFile,
+  isRepairUploadRequest,
+  resolveRepairSourcePath,
+} from './lib/shellRepairUploadRouting'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -1608,10 +1619,164 @@ function App() {
     }
   }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, tier1Active, requestGuardianApproval]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleRepairUpload = async (instruction: string, file: { name: string; content: string }) => {
+    const startedAt = performance.now()
+    const now = Date.now()
+    const runId = `shell-repair-upload-${now}`
+    const taskId = `repair-upload-${now}`
+    const assistantId = `${now + 1}`
+    const controller = new AbortController()
+    const owner = ghOwner || CANONICAL_IDENTITY.owner
+    const repo = ghRepo || CANONICAL_IDENTITY.repository
+    const userMessage: Message = {
+      id: `${now}`,
+      role: 'user',
+      content: `Repair request for ${file.name}: ${instruction.trim()}`,
+      timestamp: now,
+    }
+    const assistantMessage: Message = {
+      id: assistantId,
+      role: 'assistant',
+      content: 'Preparing a unified diff for the guarded shell-repair workflow…',
+      timestamp: now + 1,
+      source: 'cloud',
+      provider: activeProvider,
+      model: normalizedActiveModel,
+      streaming: true,
+      agentPhase: 'EXECUTION',
+    }
+
+    setMessages(prev => [...prev, userMessage, assistantMessage])
+    const admitted = admitTask({
+      taskId,
+      agentId: 'forgemind',
+      intent: 'chat',
+      payload: { attachment: file.name, promptLength: instruction.length },
+      timeout: 300_000,
+      requestedScopes: ['llm:generate', 'github:read', 'github:dispatch'],
+    })
+    if (!admitted) {
+      const blocked = 'Repair upload blocked by Guardian task admission; no workflow was dispatched.'
+      setMessages(prev => prev.map(message => message.id === assistantId ? { ...message, content: blocked, streaming: false, agentPhase: 'BLOCKED' } : message))
+      setRequestStatus('blocked')
+      setLastRequestError(blocked)
+      emitFailure({ source: 'forgemind', severity: 'warning', message: blocked, context: { taskId } })
+      return
+    }
+
+    setLoading(true)
+    setRequestStatus('running')
+    setLastRequestError('')
+    setLastRequestLatencyMs(null)
+    activeRunRef.current = { id: runId, controller, messageId: assistantId }
+    emitForge({ type: 'OBJECTIVE_RECEIVED', objective: userMessage.content })
+    emitForge({ type: 'PHASE_CHANGE', phase: 'EXECUTION' })
+
+    try {
+      if (!ghToken.trim()) throw new Error('A GitHub token is required to dispatch the guarded shell-repair workflow. Add it in Settings → GitHub Token.')
+      let rawDiff = file.content
+      let targetPath: string | undefined
+
+      if (isRepairSourceFile(file.name)) {
+        targetPath = resolveRepairSourcePath(instruction, file.name)
+        if (file.content.length > 40_000) throw new Error('The uploaded source file is too large for safe patch generation (40,000 character limit).')
+        const currentSource = await fetchMainFileContent(ghToken, owner, repo, targetPath, fetch, controller.signal)
+        if (controller.signal.aborted) return
+        if (currentSource.length > 40_000) throw new Error('The main-branch source file is too large for safe patch generation (40,000 character limit).')
+        const patchPrompt = buildRepairPatchPrompt(instruction, targetPath, file.content, currentSource)
+        if (patchPrompt.length > 50_000) throw new Error('The repair request and source content exceed the 50,000 character generation limit.')
+
+        if (activeProvider === 'corpus' || activeProvider === 'nexus') {
+          const output = await executeTool({
+            id: `repair-diff-${now}`,
+            name: 'deepseek_reason',
+            input: { task: patchPrompt, context: '', nexus_learn: false },
+          }, {
+            ...loadToolContext(),
+            sessionId,
+            agentId: FORGECLAW_AGENT_ID,
+            runId,
+            signal: controller.signal,
+            ghToken,
+            ghOwner: owner,
+            ghRepo: repo,
+            tier1Active,
+            requestGuardianApproval,
+          })
+          if (output.startsWith('[TOOL ERROR]') || output.startsWith('[GUARDIAN')) throw new Error(output)
+          rawDiff = output
+        } else {
+          const apiKey = activeProvider === 'local' ? localEndpoint
+            : activeProvider === 'anthropic' ? anthropicApiKey
+              : activeProvider === 'moonshot' ? moonshotApiKey : ''
+          const generated = await sendViaRouter({
+            model: normalizedActiveModel,
+            systemPrompt: 'Return only the requested unified diff. Do not call tools, add explanations, or change unrelated files.',
+            messages: [{ role: 'user', content: patchPrompt }],
+            signal: controller.signal,
+          }, apiKey, activeProvider)
+          if (!generated.success) throw new Error(generated.error.message)
+          if (generated.response.toolCalls?.length) throw new Error('Patch generation returned tool calls instead of a unified diff.')
+          rawDiff = generated.response.text
+        }
+      }
+
+      if (controller.signal.aborted) return
+      const patch = extractUnifiedDiff(rawDiff)
+      if (!patch) throw new Error('No valid unified diff was produced; the repair workflow was not dispatched.')
+      if (targetPath) {
+        const paths = getUnifiedDiffPaths(patch)
+        if (paths.length !== 1 || paths[0] !== targetPath) {
+          throw new Error(`Generated diff must modify only ${targetPath}; the repair workflow was not dispatched.`)
+        }
+      }
+      const inputs = createShellRepairDispatchInputs(patch, instruction)
+      await dispatchShellRepair(ghToken, owner, repo, inputs, fetch, controller.signal)
+      if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+
+      const success = `Guarded shell repair dispatched for ${owner}/${repo}.\n\nBranch: ${inputs.repair_branch}\nInvocation: ${inputs.invocation_id}\n\nThe existing workflow will validate the patch, run its safety checks and build, and open a review PR if verification succeeds. It does not merge the PR.`
+      setMessages(prev => prev.map(message => message.id === assistantId
+        ? { ...message, content: success, streaming: false, provider: 'GitHub Actions', model: 'Guarded shell-repair workflow', agentPhase: 'COMPLETE' }
+        : message,
+      ))
+      setLastSource('cloud')
+      setRequestStatus('success')
+      setLastRequestError('')
+      setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
+      emitForge({ type: 'MISSION_COMPLETE' })
+    } catch (error) {
+      if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+      const message = error instanceof Error ? error.message : String(error)
+      setMessages(prev => prev.map(item => item.id === assistantId
+        ? { ...item, content: `Shell repair was not dispatched: ${message}`, streaming: false, agentPhase: 'BLOCKED' }
+        : item,
+      ))
+      setRequestStatus('blocked')
+      setLastRequestError(message)
+      setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
+      emitForge({ type: 'MISSION_BLOCKED', reason: message })
+    } finally {
+      resolveTask(taskId)
+      if (activeRunRef.current?.id === runId) {
+        activeRunRef.current = null
+        setLoading(false)
+      }
+    }
+  }
+
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
     if (chatListening) {
       stopChatVoiceRecognition()
+    }
+
+    const repairInstruction = input.trim()
+    if (attachedFile && isRepairUploadRequest(repairInstruction, attachedFile.name)) {
+      const repairFile = attachedFile
+      setInput('')
+      setAttachedFile(null)
+      await handleRepairUpload(repairInstruction, repairFile)
+      return
     }
 
     let promptText = input

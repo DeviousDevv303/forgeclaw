@@ -13,6 +13,9 @@ const ACCEPTED_TYPES = [
   'text/plain', 'text/markdown', 'text/csv',
   'application/json', 'application/typescript',
   'text/javascript', 'text/typescript', 'text/x-python',
+  '.patch', '.diff', '.c', '.cc', '.cpp', '.cs', '.css', '.go', '.h', '.html',
+  '.java', '.js', '.jsx', '.json', '.kt', '.mjs', '.php', '.py', '.rb', '.rs',
+  '.scss', '.sh', '.sql', '.svelte', '.swift', '.ts', '.tsx', '.vue', '.yaml', '.yml',
 ]
 
 export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonProps) {
