@@ -871,7 +871,7 @@ function App() {
     return { cleanText: cleanVisibleResponse(answerText), tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; trace: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase; nextAction: string | undefined }
   }
 
-  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string) => {
+  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string, options: { attachmentName?: string; resumeTask?: boolean } = {}) => {
     if (!promptText.trim()) return
 
     // DeepSeek-primary providers require a GitHub token. Fail fast with a clear
@@ -891,6 +891,8 @@ function App() {
       ])
       return
     }
+    const hasAttachment = Boolean(options.attachmentName || imageUrl)
+    const resumesCodingTask = !hasAttachment && options.resumeTask === true && Boolean(agentResumedState)
 
     const displayContent = imageUrl
       ? promptText
@@ -899,6 +901,9 @@ function App() {
           .replace(/\n{3,}/g, '\n')
           .trim()
       : promptText
+    const executionObjective = options.attachmentName
+      ? `Analyze attachment: ${options.attachmentName}`
+      : displayContent
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
     if (imageUrl) {
       tasteAbortRef.current?.abort()
@@ -1036,7 +1041,7 @@ function App() {
     }
 
     // Emit forge objective
-    emitForge({ type: 'OBJECTIVE_RECEIVED', objective: displayContent })
+    emitForge({ type: 'OBJECTIVE_RECEIVED', objective: executionObjective })
     emitForge({ type: 'PHASE_CHANGE', phase: 'PLAN' })
 
     // Orchestrator: admit forgemind chat task
@@ -1059,7 +1064,7 @@ function App() {
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`
     const controller = new AbortController()
     activeRunRef.current = { id: runId, controller, messageId: `${Date.now() + 1}` }
-    if (isCodingTaskRequest(promptText) || agentResumedState) {
+    if (isCodingTaskRequest(promptText, { hasAttachment }) || resumesCodingTask) {
       setCodingAgentState(saveCodingAgentState({ sessionId, activeRunId: runId }))
     }
 
@@ -1086,7 +1091,8 @@ function App() {
         return overlap >= 2
       })
     const languageInstruction = RESPONSE_LANGUAGE_INSTRUCTIONS[selectedLanguage] ?? RESPONSE_LANGUAGE_INSTRUCTIONS.en
-    const codingTask = isCodingTaskRequest(promptText)
+    const codingTask = isCodingTaskRequest(promptText, { hasAttachment })
+    const usesCodingAgentState = codingTask || resumesCodingTask
     // Progressive tool disclosure: filter tools based on task
     const keywords: Record<string, string[]> = {
       'github_read_file': ['read', 'show', 'view', 'file', 'get'],
@@ -1494,7 +1500,7 @@ function App() {
       }
       setLastSource(source)
       const { cleanText, tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
-      const repositoryEvidenceRequired = codingTask || Boolean(agentResumedState)
+      const repositoryEvidenceRequired = usesCodingAgentState
       const repositoryEvidenceObserved = hasSuccessfulRepositoryEvidence(allToolResults)
       const completionBlocked = repositoryEvidenceRequired && !repositoryEvidenceObserved
       const hasUnresolvedToolFailure = allToolResults.some((result, failedIndex) => {
@@ -1556,7 +1562,7 @@ function App() {
       setLastRequestError('')
       setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
       // Persist the outcome so the next session resumes instead of restarting.
-      if (codingTask || agentResumedState) {
+      if (usesCodingAgentState) {
         const verified = allToolResults.filter(r => r.name === 'github_verify_commit').length
         if (verified > 0) {
           recordVerification(`${verified} commit verification(s) returned by github_verify_commit`)
@@ -1606,7 +1612,7 @@ function App() {
         setLoading(false)
       }
     }
-  }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, tier1Active, requestGuardianApproval]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, tier1Active, requestGuardianApproval, agentResumedState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -1633,7 +1639,7 @@ function App() {
 
     setInput('')
     setAttachedFile(null)
-    await sendPrompt(promptText, imageUrl)
+    await sendPrompt(promptText, imageUrl, { attachmentName: attachedFile?.name })
   }
 
   const stopGeneration = useCallback(() => {
@@ -2660,7 +2666,7 @@ function App() {
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button
                       type="button"
-                      onClick={() => { const text = resumePrompt; setResumePrompt(null); void sendPrompt(text) }}
+                      onClick={() => { const text = resumePrompt; setResumePrompt(null); void sendPrompt(text, undefined, { resumeTask: true }) }}
                       disabled={loading}
                       style={{ background: loading ? '#1a1a1a' : '#1e3a5f', border: '1px solid #334155', color: loading ? '#555' : '#93c5fd', borderRadius: '4px', padding: '6px 12px', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '10px', fontWeight: 'bold', fontFamily: 'monospace' }}
                     >
