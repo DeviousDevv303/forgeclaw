@@ -148,6 +148,15 @@ jobs:
                   'human experiences and an invitation that preserves consent.'
                   + presentation_instructions +
                   ' Never claim an action succeeded without actual evidence.'
+                  ' When you need to invoke a tool, emit a structured tool call '
+                  'in this exact format:\n\n'
+                  '```tool_call\n'
+                  '{"name": "tool_name", "arguments": {"key": "value"}}\n'
+                  '```\n\n'
+                  'Available tools include: github_write_file (path, content, branch), '
+                  'github_read_file (path), shell_exec (command, working_directory). '
+                  'Do not describe the tool call in prose; emit the structured format '
+                  'above so the orchestrator can execute it.'
                   ),
               },
               {'role': 'user', 'content': user_content},
