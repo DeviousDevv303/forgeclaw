@@ -110,9 +110,18 @@ export function isCodingTaskRequest(prompt: string, options?: { hasAttachment?: 
  */
 export function isExplicitShellRequest(prompt: string): boolean {
   const text = stripShellPrefix(prompt).trim().toLowerCase()
-  if (!text) return false
-  if (/\bshell_exec\b|\bshell command\b|\b(?:run|execute)\s+(?:the\s+)?(?:shell|command|bash)\b/.test(text)) return true
-  return /^(?:please\s+)?(?:(?:run|execute)\s+(?:the\s+)?|)(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/.test(text)
+  console.log('[SHELL_DETECT] input:', JSON.stringify(prompt), 'stripped:', JSON.stringify(text))
+  if (!text) {
+    console.log('[SHELL_DETECT] empty after strip, returning false')
+    return false
+  }
+  if (/\bshell_exec\b|\bshell command\b|\b(?:run|execute)\s+(?:the\s+)?(?:shell|command|bash)\b/.test(text)) {
+    console.log('[SHELL_DETECT] matched shell keyword pattern, returning true')
+    return true
+  }
+  const result = /^(?:please\s+)?(?:(?:run|execute)\s+(?:the\s+)?|)(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/.test(text)
+  console.log('[SHELL_DETECT] command pattern result:', result)
+  return result
 }
 
 /**
@@ -131,7 +140,11 @@ function stripShellPrefix(prompt: string): string {
 
 export function extractExplicitShellCommand(prompt: string): string | null {
   const text = stripShellPrefix(prompt)
-  if (!text) return null
+  console.log('[SHELL_EXTRACT] input:', JSON.stringify(prompt), 'stripped:', JSON.stringify(text))
+  if (!text) {
+    console.log('[SHELL_EXTRACT] empty after strip, returning null')
+    return null
+  }
 
   const inlineCode = text.match(/`([^`\n]+)`/)
   let command = inlineCode?.[1]?.trim() ?? text
