@@ -151,20 +151,40 @@ export function extractExplicitShellCommand(prompt: string): string | null {
   return executable.test(command) ? normalizeKnownShellExecutable(command) : null
 }
 
-const DIRECT_TOOL_NAMES = new Set(['github_write_file','github_read_file','github_list_files'])
-
-/** Required arguments per direct tool; a call missing one is a usage error, never a model fallback. */
-const DIRECT_TOOL_REQUIRED_ARGS: Record<string, string[]> = {
-  github_write_file: ['path', 'content'],
-  github_read_file: ['path'],
-  github_list_files: [],
+/**
+ * Tools the operator can run by typing their name and arguments. They bypass the
+ * model entirely and still pass through the Guardian gate inside executeTool, so
+ * co-sign rules (gmail_send, send_whatsapp, calendar_create, github_run_workflow,
+ * writes to main) are unchanged. Excluded on purpose: run_js, sculpt_self,
+ * spawn_agent, http_fetch, deepseek_reason, generate_image, analyze_image and
+ * review_code (free-form or multi-line inputs), and shell_exec (own command path).
+ */
+const DIRECT_TOOLS: Record<string, { required: string[]; usage: string }> = {
+  github_write_file: { required: ['path', 'content'], usage: 'github_write_file path="file.txt" content="hello" [branch="name"] [message="why"]' },
+  github_read_file: { required: ['path'], usage: 'github_read_file path="file.txt"' },
+  github_list_files: { required: [], usage: 'github_list_files [path="dir"]' },
+  github_repo_state: { required: [], usage: 'github_repo_state [branch="name"]' },
+  github_verify_commit: { required: ['sha'], usage: 'github_verify_commit sha="abc1234" [branch="name"]' },
+  github_search_code: { required: ['query'], usage: 'github_search_code query="text"' },
+  github_get_run_status: { required: ['run_id'], usage: 'github_get_run_status run_id="123"' },
+  github_get_run_logs: { required: ['run_id'], usage: 'github_get_run_logs run_id="123"' },
+  github_create_issue: { required: ['title', 'body'], usage: 'github_create_issue title="..." body="..."' },
+  github_run_workflow: { required: ['workflow'], usage: 'github_run_workflow workflow="file.yml" [ref="main"]' },
+  web_search: { required: ['query'], usage: 'web_search query="text" [count="5"]' },
+  memory_write: { required: ['key', 'value'], usage: 'memory_write key="name" value="text"' },
+  memory_read: { required: ['key'], usage: 'memory_read key="name"' },
+  memory_list: { required: [], usage: 'memory_list' },
+  gmail_read: { required: [], usage: 'gmail_read [query="from:x"] [max_results="5"]' },
+  gmail_send: { required: ['to', 'subject', 'body'], usage: 'gmail_send to="a@b.com" subject="..." body="..."' },
+  calendar_read: { required: [], usage: 'calendar_read [max_results="5"]' },
+  calendar_create: { required: ['summary', 'start', 'end'], usage: 'calendar_create summary="..." start="2026-10-15T10:00:00" end="2026-10-15T11:00:00"' },
+  send_whatsapp: { required: ['text'], usage: 'send_whatsapp text="..." [to="+1..."]' },
 }
 
-const DIRECT_TOOL_USAGE: Record<string, string> = {
-  github_write_file: 'github_write_file path="file.txt" content="hello" [branch="name"] [message="why"]',
-  github_read_file: 'github_read_file path="file.txt"',
-  github_list_files: 'github_list_files [path="dir"]',
-}
+const DIRECT_TOOL_NAMES = new Set(Object.keys(DIRECT_TOOLS))
+
+/** Arguments that may legitimately be an empty string; every other required argument must be non-blank. */
+const EMPTY_ALLOWED_ARGS = new Set(['content', 'value', 'body'])
 
 function stripToolWrapping(prompt: string): string {
   // Mobile keyboards substitute typographic quotes; normalize them so
@@ -204,9 +224,10 @@ export function extractExplicitToolCall(prompt: string): ExplicitToolCall | null
   let m; while ((m = argPattern.exec(match[2] ?? '')) !== null) { input[m[1]] = m[2] ?? m[3] ?? m[4] ?? '' }
   // Operator-typed writes carry an explicit commit intent instead of a generic fallback.
   if (name === 'github_write_file' && !input.message?.trim() && input.path) input.message = `operator direct write: ${input.path}`
-  const missing = DIRECT_TOOL_REQUIRED_ARGS[name].filter(key => !(key in input) || (key === 'path' && !input[key].trim()))
+  const spec = DIRECT_TOOLS[name]
+  const missing = spec.required.filter(key => !(key in input) || (!EMPTY_ALLOWED_ARGS.has(key) && !input[key].trim()))
   return missing.length
-    ? { name, input, error: `[TOOL ERROR] ${name} is missing required argument${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}. Usage: ${DIRECT_TOOL_USAGE[name]}` }
+    ? { name, input, error: `[TOOL ERROR] ${name} is missing required argument${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}. Usage: ${spec.usage}` }
     : { name, input }
 }
 
