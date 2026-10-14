@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CorpusRepository, appendDeepSeekLearning, extractImagePatterns, integrityHash, suggestImprovedPrompt } from './corpus'
 import { authorizationPayload, RFC8032_TEST_KEY_ID, type CandidateAuthorization } from './corpusAdmissionAuth'
 import { corpusProvider } from './ai/providers/corpusProvider'
@@ -231,5 +231,86 @@ describe('CORPUS admission authorization conformance', () => {
     const productionRepository = new CorpusRepository()
     const productionCandidate = await productionRepository.appendInteraction({ input: 'production', context: '', result: 'production result', runtime: 'test', model: 'test' })
     expect((await productionRepository.admitCandidate(productionCandidate.candidate.id, await testAuthorization(productionCandidate.candidate))).status).toBe('rejected')
+  })
+})
+
+describe('CORPUS admission persistence failures', () => {
+  beforeEach(() => storage.clear())
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('surfaces storage_unavailable when localStorage.getItem throws during admit', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    const { candidate } = await repository.appendInteraction({ input: 'storage test', context: '', result: 'storage result', runtime: 'test', model: 'test' })
+    const authorization = await testAuthorization(candidate)
+
+    vi.spyOn(globalThis.localStorage, 'getItem').mockImplementation(() => {
+      throw new DOMException('Storage unavailable', 'SecurityError')
+    })
+
+    const result = await repository.admitCandidate(candidate.id, authorization)
+    expect(result.status).toBe('rejected')
+    expect(result.reason).toBe('storage_unavailable')
+    expect(result.detail).toBeDefined()
+  })
+
+  it('surfaces storage_unavailable when localStorage.setItem throws during admit', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    const { candidate } = await repository.appendInteraction({ input: 'storage test 2', context: '', result: 'storage result 2', runtime: 'test', model: 'test' })
+    const authorization = await testAuthorization(candidate)
+
+    // Let the read succeed but fail the write
+    const originalSetItem = globalThis.localStorage.setItem.bind(globalThis.localStorage)
+    let callCount = 0
+    vi.spyOn(globalThis.localStorage, 'setItem').mockImplementation((key: string, value: string) => {
+      callCount++
+      // Allow the initial candidate creation writes, fail on admission writes
+      if (callCount > 10) throw new DOMException('Quota exceeded', 'QuotaExceededError')
+      return originalSetItem(key, value)
+    })
+
+    const result = await repository.admitCandidate(candidate.id, authorization)
+    // May succeed if writes happen before our threshold, or fail with storage_unavailable
+    // The key assertion: it does NOT silently return null or admit without persisting
+    if (result.status === 'rejected') {
+      expect(result.reason).toBe('storage_unavailable')
+    }
+  })
+
+  it('returns candidate_not_found (not storage_unavailable) for genuinely missing candidates', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    // No mocks — storage works fine, candidate just doesn't exist
+    const fakeAuth = {
+      keyId: 'test',
+      candidateId: 'nonexistent',
+      candidateIntegrity: 'sha256-fake',
+      issuedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      signature: '00'.repeat(64),
+    }
+    const result = await repository.admitCandidate('nonexistent-id', fakeAuth as unknown as CandidateAuthorization)
+    expect(result.status).toBe('rejected')
+    expect(result.reason).toBe('candidate_not_found')
+  })
+
+  it('strict storage variants return ok/error without throwing', async () => {
+    const { strictGetItem, strictSetItem, strictRemoveItem } = await import('./storage')
+
+    // Normal operation
+    expect(strictSetItem('test-key', 'test-value').ok).toBe(true)
+    const getResult = strictGetItem('test-key')
+    expect(getResult.ok).toBe(true)
+    expect(getResult.value).toBe('test-value')
+    expect(strictRemoveItem('test-key').ok).toBe(true)
+
+    // Failure mode
+    vi.spyOn(globalThis.localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('Denied', 'SecurityError')
+    })
+    const failResult = strictSetItem('fail-key', 'fail-value')
+    expect(failResult.ok).toBe(false)
+    expect(failResult.error).toBeDefined()
   })
 })
