@@ -162,6 +162,23 @@ describe('direct dispatch covers the operator tool set', () => {
     expect(call.error).toContain('Usage:')
   })
 
+  it.each([
+    ['github_verify_commit sha="c675c35', 'sha'],
+    ["github_read_file path='src/App.tsx", 'path'],
+    ['github_search_code query="unclosed text', 'query'],
+  ])('rejects an unterminated quote in %s without calling anything', (prompt, arg) => {
+    const call = route(prompt)!
+    expect(call.error).toContain('unterminated quote')
+    expect(call.error).toContain(arg)
+    expect(call.error).toContain('Nothing was sent')
+  })
+
+  it('still accepts balanced quotes, bare values and quotes inside values', () => {
+    expect(route('github_verify_commit sha=c675c35')!.error).toBeUndefined()
+    expect(route('github_verify_commit sha="c675c35"')!.input).toEqual({ sha: 'c675c35' })
+    expect(route("github_write_file path=a.txt content='say \"hi\"'")!.input.content).toBe('say "hi"')
+  })
+
   it('still leaves excluded tools on their existing paths', () => {
     for (const prompt of ['run_js code="1+1"', 'sculpt_self file_path="x"', 'spawn_agent task="x"', 'http_fetch url="https://x"', 'deepseek_reason task="x"']) {
       expect(route(prompt)).toBeNull()
