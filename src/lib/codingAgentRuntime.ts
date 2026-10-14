@@ -189,7 +189,12 @@ const EMPTY_ALLOWED_ARGS = new Set(['content', 'value', 'body'])
 function stripToolWrapping(prompt: string): string {
   // Mobile keyboards substitute typographic quotes; normalize them so
   // path="x" never becomes a literal “x” file name.
-  let text = prompt.trim().replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"').replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
+  // Quote-like characters produced by phone keyboards and IMEs (typographic, guillemets,
+  // full-width, CJK corner marks, dingbats). Without this a lookalike closing quote left
+  // values truncated as `"check` while the key beside it parsed correctly.
+  let text = prompt.trim()
+    .replace(/[\u00AB\u00BB\u201C-\u201F\u2033\u2036\u275D\u275E\u301D-\u301F\uFF02]/g, '"')
+    .replace(/[\u2018-\u201B\u2032\u2035\u275B\u275C\u02BC\uFF07]/g, "'")
   const fence = text.match(/^```(?:\w+)?\s*\n([\s\S]*?)```$/)
   if (fence) text = fence[1].trim()
   const inline = text.match(/^`([^`\n]+)`$/)
