@@ -123,3 +123,84 @@ describe('direct tool → Guardian gate (operator-shell posture)', () => {
     expect(agentMessage.split('\n')[0]).toMatch(/^agent: MANUS — what:/)
   })
 })
+
+describe('direct dispatch covers the operator tool set', () => {
+  const route = (prompt: string) => extractExplicitToolCall(prompt)
+  const baseCtx = () => ({ ...loadToolContext(), ghToken: 'test-token', googleToken: 'g-token', waPhoneNumberId: '1', waAccessToken: 'wa', guardianPosture: 'operator-shell' as const })
+
+  it.each([
+    ['github_repo_state', {}],
+    ['github_verify_commit sha="abc1234"', { sha: 'abc1234' }],
+    ['github_search_code query="requiresCoSign"', { query: 'requiresCoSign' }],
+    ['github_get_run_status run_id="42"', { run_id: '42' }],
+    ['github_get_run_logs run_id="42"', { run_id: '42' }],
+    ['web_search query="wind turbine blade repair" count="3"', { query: 'wind turbine blade repair', count: '3' }],
+    ['memory_list', {}],
+    ['gmail_read max_results="3"', { max_results: '3' }],
+    ['calendar_read', {}],
+  ])('routes %s without the model', (prompt, input) => {
+    const call = route(prompt)!
+    expect(call.error).toBeUndefined()
+    expect(call.name).toBe(prompt.split(' ')[0])
+    expect(call.input).toEqual(input)
+  })
+
+  it.each([
+    ['github_verify_commit', 'sha'],
+    ['github_get_run_logs', 'run_id'],
+    ['github_create_issue title="t"', 'body'],
+    ['gmail_send to="a@b.com" subject="s"', 'body'],
+    ['calendar_create summary="x" start="2026-10-15T10:00:00"', 'end'],
+    ['send_whatsapp', 'text'],
+    ['memory_write key="k"', 'value'],
+    ['web_search', 'query'],
+    ['web_search query="   "', 'query'],
+  ])('reports a missing argument for %s instead of calling anything', (prompt, missing) => {
+    const call = route(prompt)!
+    expect(call.error).toContain(`missing required argument`)
+    expect(call.error).toContain(missing)
+    expect(call.error).toContain('Usage:')
+  })
+
+  it('still leaves excluded tools on their existing paths', () => {
+    for (const prompt of ['run_js code="1+1"', 'sculpt_self file_path="x"', 'spawn_agent task="x"', 'http_fetch url="https://x"', 'deepseek_reason task="x"']) {
+      expect(route(prompt)).toBeNull()
+    }
+  })
+
+  it('round-trips memory locally with no network', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const w = route('memory_write key="blade_note" value="check root bolts"')!
+    expect(await executeTool({ id: 'm1', name: w.name, input: w.input }, baseCtx())).toContain('blade_note')
+    const r = route('memory_read key="blade_note"')!
+    expect(await executeTool({ id: 'm2', name: r.name, input: r.input }, baseCtx())).toBe('check root bolts')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'gmail_send to="a@b.com" subject="s" body="b"',
+    'send_whatsapp text="hi"',
+    'calendar_create summary="x" start="2026-10-15T10:00:00" end="2026-10-15T11:00:00"',
+    'github_run_workflow workflow="ddg_search.yml"',
+  ])('keeps %s behind the Guardian: rejected means no network call', async prompt => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const call = route(prompt)!
+    const approval = vi.fn(async () => false)
+    const output = await executeTool({ id: 'g1', name: call.name, input: call.input }, { ...baseCtx(), requestGuardianApproval: approval })
+    expect(approval).toHaveBeenCalledTimes(1)
+    expect(output).toMatch(/^\[GUARDIAN REJECTED\]/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('runs a read-only tool straight through to its API without a card', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ messages: [] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const approval = vi.fn(async () => true)
+    const call = route('gmail_read max_results="1"')!
+    await executeTool({ id: 'r1', name: call.name, input: call.input }, { ...baseCtx(), requestGuardianApproval: approval })
+    expect(approval).not.toHaveBeenCalled()
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toContain('gmail.googleapis.com')
+  })
+})
