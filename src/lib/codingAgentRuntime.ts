@@ -110,17 +110,13 @@ export function isCodingTaskRequest(prompt: string, options?: { hasAttachment?: 
  */
 export function isExplicitShellRequest(prompt: string): boolean {
   const text = stripShellPrefix(prompt).trim().toLowerCase()
-  console.log('[SHELL_DETECT] input:', JSON.stringify(prompt), 'stripped:', JSON.stringify(text))
   if (!text) {
-    console.log('[SHELL_DETECT] empty after strip, returning false')
     return false
   }
   if (/\bshell_exec\b|\bshell command\b|\b(?:run|execute)\s+(?:the\s+)?(?:shell|command|bash)\b/.test(text)) {
-    console.log('[SHELL_DETECT] matched shell keyword pattern, returning true')
     return true
   }
   const result = /^(?:please\s+)?(?:(?:run|execute)\s+(?:the\s+)?|)(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/.test(text)
-  console.log('[SHELL_DETECT] command pattern result:', result)
   return result
 }
 
@@ -140,9 +136,7 @@ function stripShellPrefix(prompt: string): string {
 
 export function extractExplicitShellCommand(prompt: string): string | null {
   const text = stripShellPrefix(prompt)
-  console.log('[SHELL_EXTRACT] input:', JSON.stringify(prompt), 'stripped:', JSON.stringify(text))
   if (!text) {
-    console.log('[SHELL_EXTRACT] empty after strip, returning null')
     return null
   }
 
@@ -189,7 +183,6 @@ export function isExplicitToolRequest(prompt: string): boolean {
   const match = text.match(/^([a-z_][a-z0-9_]*)(?:\s+|$)/i)
   if (!match) return false
   const isDirect = DIRECT_TOOL_NAMES.has(match[1].toLowerCase())
-  console.log('[TOOL_DETECT] input:', JSON.stringify(prompt), 'stripped:', JSON.stringify(text), 'direct:', isDirect)
   return isDirect
 }
 

@@ -1253,10 +1253,8 @@ function App() {
       const directShellCommand = shellDetected
         ? extractExplicitShellCommand(promptText)
         : null
-      console.log('[SHELL_ROUTE] prompt:', JSON.stringify(promptText), 'detected:', shellDetected, 'command:', JSON.stringify(directShellCommand))
       const toolDetected = !directShellCommand && isExplicitToolRequest(promptText)
       const explicitTool = toolDetected ? extractExplicitToolCall(promptText) : null
-      console.log('[TOOL_ROUTE] detected:', toolDetected, 'tool:', explicitTool?.name)
       if (explicitTool) {
         const call: ToolCall = { id: `direct-tool-${Date.now()}`, name: explicitTool.name, input: explicitTool.input }
         const activityId = `act_${call.id}`
