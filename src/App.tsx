@@ -57,7 +57,8 @@ import {
   buildRuntimeRequestContext,
   measureRequestMetrics,
 } from './lib/codingAgentRuntime'
-import { CANONICAL_IDENTITY, stripRuntimeEnvelopes } from './lib/canonicalIdentity'
+import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
+import { cleanOutput } from './lib/cleanOutput'
 import { extractThinking, type GuardianPosture } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { takeGeneratedImage } from './lib/imageArtifact'
@@ -284,31 +285,6 @@ For code: fenced blocks with language tag (\`\`\`html, \`\`\`js, \`\`\`python, e
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function cleanOutput(text: string): string {
-  // Preserve fenced code blocks — extract them, clean the rest, reinsert
-  const codeBlocks: string[] = []
-  const placeholderPrefix = String.fromCharCode(0)
-  const codePlaceholderPattern = new RegExp(`${placeholderPrefix}CODE(\\d+)${placeholderPrefix}`, 'g')
-  const withPlaceholders = text.replace(/```[\s\S]*?```/g, (match) => {
-    codeBlocks.push(match)
-    return `${placeholderPrefix}CODE${codeBlocks.length - 1}${placeholderPrefix}`
-  })
-  const cleaned = withPlaceholders
-    .replace(/\[FM:[A-Z_0-9]+\][\s\S]*?\[FM:[A-Z_0-9]+_END\]/gi, '')
-    .replace(/\[FM:(THINK|TRACE)\][\s\S]*/i, '')
-    .replace(/\[FM:[A-Z_0-9]+\]/gi, '')
-    .replace(/\*{1,3}([^*]+)\*{1,3}/g, '$1')
-    .replace(/\*+/g, '')
-    .replace(/#{1,6}\s*/g, '')
-    .replace(/__|_/g, '')
-    .replace(/^-{3,}\s*$/gm, '')
-    .replace(/>\s*/gm, '')
-    .replace(/`[^`]+`/g, (m) => m.replace(/`/g, ''))  // inline code only
-    .replace(/\s+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-  return stripRuntimeEnvelopes(cleaned.replace(codePlaceholderPattern, (_, i) => codeBlocks[parseInt(i)]))
-}
 
 const AGENT_SCAFFOLD_LABEL_RE = /^(OBJECTIVE|CONSTRAINTS|PLAN|NEXT_?ACTION|STATUS|EXECUTION|VERIFICATION):\s*(.*)$/i
 const AGENT_SCAFFOLD_BOUNDARY = String.raw`(?:OBJECTIVE|CONSTRAINTS|PLAN|NEXT_?ACTION|STATUS|EXECUTION|VERIFICATION)`
