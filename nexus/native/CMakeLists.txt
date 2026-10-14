@@ -60,7 +60,10 @@ target_compile_options(nexus-corpus-selftest PRIVATE
 )
 
 add_executable(nexusd src/nexusd.cpp)
-target_link_libraries(nexusd PRIVATE nexus-inference nexus-ipc nexus-core llama)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SODIUM REQUIRED libsodium)
+target_include_directories(nexusd PRIVATE ${SODIUM_INCLUDE_DIRS})
+target_link_libraries(nexusd PRIVATE nexus-inference nexus-ipc nexus-core llama ${SODIUM_LIBRARIES})
 target_include_directories(nexusd PRIVATE
   ${CMAKE_CURRENT_LIST_DIR}/src
   ${CMAKE_CURRENT_LIST_DIR}/../../third_party/llama.cpp/include
