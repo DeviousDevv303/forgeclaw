@@ -4,7 +4,7 @@
 // Small, deterministic, localStorage-backed corpus ledger. No network is needed
 // to initialize or use this module; synchronization is an explicit optional path.
 
-import { safeGetItem, safeSetItem } from './storage'
+import { safeGetItem, safeSetItem, strictGetItem, strictSetItem, type StorageResult } from './storage'
 import { type AdmissionTrustConfig, type CandidateAuthorization, type AuthorizationValidation, verifyCandidateAuthorization } from './corpusAdmissionAuth'
 
 export type CorpusAdmissionStatus = 'raw' | 'candidate' | 'approved' | 'rejected'
@@ -59,6 +59,7 @@ export interface CandidateAdmissionResult {
   status: 'admitted' | 'already_admitted' | 'rejected'
   record?: CorpusRecord
   reason?: string
+  detail?: string
 }
 
 /**
@@ -243,6 +244,25 @@ export class CorpusRepository {
     writeIndex(indexKey, index)
   }
 
+  /** Strict variant for admission path — surfaces storage failures instead of swallowing them. */
+  private saveRecordStrict(record: CorpusRecord): StorageResult<void> {
+    const writeResult = strictSetItem(`${RECORD_PREFIX}${record.id}`, JSON.stringify(record))
+    if (!writeResult.ok) return writeResult
+    const indexRead = strictGetItem(INDEX_KEY)
+    if (!indexRead.ok) return { ok: false, error: indexRead.error }
+    let index: string[] = []
+    if (indexRead.value) {
+      try {
+        const parsed = JSON.parse(indexRead.value) as unknown
+        index = Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
+      } catch {
+        index = []
+      }
+    }
+    if (!index.includes(record.id)) index.push(record.id)
+    return strictSetItem(INDEX_KEY, JSON.stringify(index.slice(-MAX_INDEX_ENTRIES)))
+  }
+
   getInteractionCount(): number {
     return readIndex(INDEX_KEY).length
   }
@@ -362,7 +382,9 @@ export class CorpusRepository {
   }
 
   async admitCandidate(candidateId: string, authorization: CandidateAuthorization): Promise<CandidateAdmissionResult> {
-    const raw = safeGetItem(`${CANDIDATE_PREFIX}${candidateId}`)
+    const readResult = strictGetItem(`${CANDIDATE_PREFIX}${candidateId}`)
+    if (!readResult.ok) return { status: 'rejected', reason: 'storage_unavailable', detail: readResult.error }
+    const raw = readResult.value
     if (!raw) return { status: 'rejected', reason: 'candidate_not_found' }
     let candidate: LearningCandidate
     try {
@@ -390,7 +412,8 @@ export class CorpusRepository {
       admissionStatus: 'approved',
       metadata: { input: candidate.input, runtime: candidate.runtime, model: candidate.model, sourceInteractionId: candidate.sourceInteractionId },
     }
-    this.saveRecord(approved)
+    const saveResult = this.saveRecordStrict(approved)
+    if (!saveResult.ok) return { status: 'rejected', reason: 'storage_unavailable', detail: saveResult.error }
     return { status: 'admitted', record: approved }
   }
 
