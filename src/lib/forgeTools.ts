@@ -654,7 +654,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         })
         const branchLabel = branch ? ` on branch ${branch}` : ''
         const commitSha = written.commit?.sha || ''
-        return `✓ ${sha ? 'Updated' : 'Created'} ${path} in ${owner}/${repo}${branchLabel}\n  commit: ${commitSha || '(sha unavailable)'}\n  url: ${written.commit?.html_url || `https://github.com/${owner}/${repo}/commits`}\n  attributed: ${message.split('\n')[0]}\n  message: "${requestedMessage}"`
+        return `✓ ${sha ? 'Updated' : 'Created'} ${path} in ${owner}/${repo}${branchLabel}\n  commit: ${commitSha || '(sha unavailable)'}\n  url: ${written.commit?.html_url || `https://github.com/${owner}/${repo}/commits`}\n  attributed: ${message.split('\n')[0]}${requestedMessage ? `\n  message: "${requestedMessage}"` : ''}`
       }
 
       // ── GitHub: get run status ───────────────────────────────────────────────
