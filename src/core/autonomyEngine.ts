@@ -6,7 +6,32 @@ import type { GuardianDecision, GuardianContext, GuardianLogEntry, GuardianTrace
 // Configuration — tunable, not truth
 const ESCALATION_THRESHOLD = 3
 const ESCALATION_WINDOW_MS = 10 * 60 * 1000
-const HIGH_IMPACT_ACTIONS = new Set(['deploy', 'Delete'])
+// Scopes use the namespaced AuthorityScope vocabulary (see types/orchestrator.ts).
+// The legacy bare names are kept so older task specs still match.
+const HIGH_IMPACT_ACTIONS = new Set<string>(['github:write', 'github:dispatch', 'deploy', 'delete'])
+
+export const GUARDIAN_LEDGER_KEY = 'forgeclaw_guardian_ledger'
+export const GUARDIAN_LEDGER_MAX = 500
+
+type LedgerStorage = Pick<Storage, 'getItem' | 'setItem'>
+
+function defaultLedgerStorage(): LedgerStorage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage
+  } catch {
+    return null
+  }
+}
+
+/** Read the persisted Guardian decision ledger (oldest first). Corrupt data reads as empty. */
+export function readGuardianLedger(storage: LedgerStorage | null = defaultLedgerStorage()): GuardianLogEntry[] {
+  try {
+    const parsed = JSON.parse(storage?.getItem(GUARDIAN_LEDGER_KEY) ?? '[]')
+    return Array.isArray(parsed) ? parsed as GuardianLogEntry[] : []
+  } catch {
+    return []
+  }
+}
 
 // Invariant: CI pass does NOT imply runtime safety.
 // Guardian MUST evaluate every task regardless of CI status.
@@ -70,9 +95,23 @@ export class AutonomyEngine {
     return { action, triggeredRule, trace }
   }
 
-  logDecision(entry: GuardianLogEntry): void {
-    // Append to: data/decisions/ledger.jsonl
-    // Append-only. Never read by Guardian. Side-channel only.
+  /**
+   * Record a Guardian decision. Append-only, bounded to GUARDIAN_LEDGER_MAX entries,
+   * and never read by Guardian evaluation. Persistence failure is reported with
+   * console.error rather than swallowed, so a missing audit trail is visible.
+   */
+  logDecision(entry: GuardianLogEntry, storage: LedgerStorage | null = defaultLedgerStorage()): void {
     console.log('[Guardian]', JSON.stringify(entry))
+    if (!storage) {
+      console.error('[Guardian] ledger not persisted: no storage available', entry.taskId)
+      return
+    }
+    try {
+      const ledger = readGuardianLedger(storage)
+      ledger.push(entry)
+      storage.setItem(GUARDIAN_LEDGER_KEY, JSON.stringify(ledger.slice(-GUARDIAN_LEDGER_MAX)))
+    } catch (error) {
+      console.error('[Guardian] ledger not persisted:', error instanceof Error ? error.message : String(error), entry.taskId)
+    }
   }
 }
