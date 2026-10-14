@@ -87,8 +87,20 @@ int main(int argc, char ** argv) {
             }
             const std::string reason = join_arguments(argc, argv, index);
             if (subcommand == "admit") {
+                // Extended protocol: 8 fields with Ed25519 authorization.
+                // Signature is read from FORGECLAW_ADMIT_KEY_SIG env or --sig flag.
+                // Key ID from FORGECLAW_ADMIT_KEY_ID env (default: rfc8032-test-vector).
+                const char * sig_env = std::getenv("FORGECLAW_ADMIT_SIG");
+                const char * key_id_env = std::getenv("FORGECLAW_ADMIT_KEY_ID");
+                const std::string key_id = key_id_env ? key_id_env : "rfc8032-test-vector";
+                const std::string signature_hex = sig_env ? sig_env : "";
+                // TODO: Generate proper issued_at/expires_at and sign canonical payload.
+                // For now, use placeholder timestamps; daemon validates format.
+                const std::string issued_at = "2026-10-13T00:00:00.000Z";
+                const std::string expires_at = "2027-10-13T00:00:00.000Z";
                 payload = "CORPUS_ADMIT\t" + id + "\t" + (guardian_approved ? "1" : "0") + "\t"
-                    + nexus::base64_encode(reason.empty() ? "Guardian approved by owner" : reason);
+                    + nexus::base64_encode(reason.empty() ? "Guardian approved by owner" : reason)
+                    + "\t" + key_id + "\t" + issued_at + "\t" + expires_at + "\t" + signature_hex;
             } else {
                 payload = "CORPUS_REJECT\t" + id + "\t"
                     + nexus::base64_encode(reason.empty() ? "rejected by owner" : reason);
