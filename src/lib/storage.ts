@@ -33,3 +33,39 @@ export function safeJsonParse<T>(raw: string | null, fallback: T): T {
     return fallback
   }
 }
+
+// ─── Strict variants for CORPUS admission ───
+// Unlike safe*, these surface storage failures instead of swallowing them.
+// Used by admitCandidate/rejectCandidate where silent data loss is unacceptable.
+
+export interface StorageResult<T> {
+  ok: boolean
+  value?: T
+  error?: string
+}
+
+export function strictGetItem(key: string): StorageResult<string | null> {
+  try {
+    return { ok: true, value: localStorage.getItem(key) }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'storage_read_failed' }
+  }
+}
+
+export function strictSetItem(key: string, value: string): StorageResult<void> {
+  try {
+    localStorage.setItem(key, value)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'storage_write_failed' }
+  }
+}
+
+export function strictRemoveItem(key: string): StorageResult<void> {
+  try {
+    localStorage.removeItem(key)
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'storage_delete_failed' }
+  }
+}

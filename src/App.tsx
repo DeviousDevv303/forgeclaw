@@ -808,14 +808,13 @@ function App() {
       return next.length > CORPUS_MAX ? next.slice(next.length - CORPUS_MAX) : next
     })
     try {
-      const { candidate } = await corpusRepository.appendInteraction({
+      await corpusRepository.appendInteraction({
         input: prompt,
         context: '',
         result: response,
         runtime: activeProvider,
         model: normalizedActiveModel,
       })
-      if (activeProvider === 'corpus') await corpusRepository.admitCandidate(candidate.id)
     } catch (error) {
       emitFailure({ source: 'forgemind', severity: 'warning', message: `DeepSeek local persistence unavailable: ${error instanceof Error ? error.message : String(error)}` })
     }
@@ -1888,7 +1887,7 @@ function App() {
     setCorpusSyncStatus('Syncing pending candidates…')
     const result = await corpusRepository.syncPending(corpusWebhookUrl.trim())
     setCorpusSyncStatus(result.status === 'synced'
-      ? `Synced ${result.admitted} validated update${result.admitted === 1 ? '' : 's'}.`
+      ? `Synced ${result.attempted} candidate update${result.attempted === 1 ? '' : 's'}; admission still requires authorization.`
       : `Webhook unavailable; ${Math.max(0, result.attempted - result.admitted)} candidate${Math.max(0, result.attempted - result.admitted) === 1 ? '' : 's'} remain local.`)
   }
 

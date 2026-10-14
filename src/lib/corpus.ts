@@ -4,7 +4,8 @@
 // Small, deterministic, localStorage-backed corpus ledger. No network is needed
 // to initialize or use this module; synchronization is an explicit optional path.
 
-import { safeGetItem, safeSetItem } from './storage'
+import { safeGetItem, safeSetItem, strictGetItem, strictSetItem, type StorageResult } from './storage'
+import { type AdmissionTrustConfig, type CandidateAuthorization, type AuthorizationValidation, verifyCandidateAuthorization } from './corpusAdmissionAuth'
 
 export type CorpusAdmissionStatus = 'raw' | 'candidate' | 'approved' | 'rejected'
 export type CorpusRecordType = 'interaction' | 'learning_candidate' | 'knowledge'
@@ -52,6 +53,13 @@ export interface CorpusSyncResult {
   admitted: number
   status: 'skipped' | 'synced' | 'pending' | 'rejected'
   reason?: string
+}
+
+export interface CandidateAdmissionResult {
+  status: 'admitted' | 'already_admitted' | 'rejected'
+  record?: CorpusRecord
+  reason?: string
+  detail?: string
 }
 
 /**
@@ -218,6 +226,12 @@ function safeRecord(raw: string | null): CorpusRecord | null {
 }
 
 export class CorpusRepository {
+  private readonly trustConfig: AdmissionTrustConfig
+
+  constructor(trustConfig: AdmissionTrustConfig = {}) {
+    this.trustConfig = trustConfig
+  }
+
   getVersion(): number {
     const value = Number(safeGetItem(VERSION_KEY) || '1')
     return Number.isFinite(value) && value > 0 ? value : 1
@@ -236,6 +250,25 @@ export class CorpusRepository {
     const index = readIndex(indexKey)
     if (!index.includes(record.id)) index.push(record.id)
     writeIndex(indexKey, index)
+  }
+
+  /** Strict variant for admission path — surfaces storage failures instead of swallowing them. */
+  private saveRecordStrict(record: CorpusRecord): StorageResult<void> {
+    const writeResult = strictSetItem(`${RECORD_PREFIX}${record.id}`, JSON.stringify(record))
+    if (!writeResult.ok) return writeResult
+    const indexRead = strictGetItem(INDEX_KEY)
+    if (!indexRead.ok) return { ok: false, error: indexRead.error }
+    let index: string[] = []
+    if (indexRead.value) {
+      try {
+        const parsed = JSON.parse(indexRead.value) as unknown
+        index = Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
+      } catch {
+        index = []
+      }
+    }
+    if (!index.includes(record.id)) index.push(record.id)
+    return strictSetItem(INDEX_KEY, JSON.stringify(index.slice(-MAX_INDEX_ENTRIES)))
   }
 
   getInteractionCount(): number {
@@ -373,20 +406,27 @@ export class CorpusRepository {
     return mergeImagePatterns(learned)
   }
 
-  async admitCandidate(candidateId: string): Promise<CorpusRecord | null> {
-    const raw = safeGetItem(`${CANDIDATE_PREFIX}${candidateId}`)
-    if (!raw) return null
+  async admitCandidate(candidateId: string, authorization: CandidateAuthorization): Promise<CandidateAdmissionResult> {
+    const readResult = strictGetItem(`${CANDIDATE_PREFIX}${candidateId}`)
+    if (!readResult.ok) return { status: 'rejected', reason: 'storage_unavailable', detail: readResult.error }
+    const raw = readResult.value
+    if (!raw) return { status: 'rejected', reason: 'candidate_not_found' }
     let candidate: LearningCandidate
     try {
       candidate = JSON.parse(raw) as LearningCandidate
     } catch {
-      return null
+      return { status: 'rejected', reason: 'candidate_malformed' }
     }
-    if (candidate.admissionStatus !== 'candidate' || !candidate.sourceInteractionId || !candidate.input || !candidate.generatedResult) return null
+    if (candidate.admissionStatus !== 'candidate' || !candidate.sourceInteractionId || !candidate.input || !candidate.generatedResult) return { status: 'rejected', reason: 'candidate_invalid' }
+    const authorizationValidation: AuthorizationValidation = await verifyCandidateAuthorization(authorization, candidate, this.trustConfig)
+    if (!authorizationValidation.valid) return { status: 'rejected', reason: authorizationValidation.reason }
     const expectedIntegrity = await integrityHash([candidate.input, candidate.context, candidate.generatedResult, candidate.runtime, candidate.model].join('\n'))
-    if (expectedIntegrity !== candidate.integrity) return null
+    if (expectedIntegrity !== candidate.integrity) return { status: 'rejected', reason: 'candidate_integrity_invalid' }
+    const approvedId = `knowledge-${candidate.integrity}`
+    const existing = safeRecord(safeGetItem(`${RECORD_PREFIX}${approvedId}`))
+    if (existing?.admissionStatus === 'approved') return { status: 'already_admitted', record: existing }
     const approved: CorpusRecord = {
-      id: `knowledge-${candidate.integrity}`,
+      id: approvedId,
       corpusId: candidate.corpusId,
       source: candidate.source,
       content: candidate.generatedResult,
@@ -397,9 +437,9 @@ export class CorpusRepository {
       admissionStatus: 'approved',
       metadata: { input: candidate.input, runtime: candidate.runtime, model: candidate.model, sourceInteractionId: candidate.sourceInteractionId },
     }
-    if (readIndex(INDEX_KEY).includes(approved.id)) return approved
-    this.saveRecord(approved)
-    return approved
+    const saveResult = this.saveRecordStrict(approved)
+    if (!saveResult.ok) return { status: 'rejected', reason: 'storage_unavailable', detail: saveResult.error }
+    return { status: 'admitted', record: approved }
   }
 
   /**
@@ -486,20 +526,17 @@ export class CorpusRepository {
       const response = await fetchImpl(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ corpusId: 'nexus-local', version: this.getVersion(), records }) })
       if (!response.ok) return { attempted: records.length, admitted: 0, status: 'pending', reason: `Webhook HTTP ${response.status}` }
       const body = await response.json().catch(() => ({})) as { updates?: unknown }
-      let admitted = 0
+      const admitted = 0
       for (const update of Array.isArray(body.updates) ? body.updates : []) {
         if (!update || typeof update !== 'object') continue
         const value = update as Partial<LearningCandidate>
         if (typeof value.id !== 'string') continue
-        let result = await this.admitCandidate(value.id)
-        if (!result && value.recordType === 'learning_candidate' && value.admissionStatus === 'candidate' && typeof value.integrity === 'string' && typeof value.corpusId === 'string' && typeof value.source === 'string' && typeof value.content === 'string' && typeof value.timestamp === 'string' && typeof value.version === 'number' && typeof value.sourceInteractionId === 'string' && typeof value.runtime === 'string' && typeof value.model === 'string' && typeof value.input === 'string' && typeof value.context === 'string' && typeof value.generatedResult === 'string' && value.metadata && typeof value.metadata === 'object') {
+        if (value.recordType === 'learning_candidate' && value.admissionStatus === 'candidate' && typeof value.integrity === 'string' && typeof value.corpusId === 'string' && typeof value.source === 'string' && typeof value.content === 'string' && typeof value.timestamp === 'string' && typeof value.version === 'number' && typeof value.sourceInteractionId === 'string' && typeof value.runtime === 'string' && typeof value.model === 'string' && typeof value.input === 'string' && typeof value.context === 'string' && typeof value.generatedResult === 'string' && value.metadata && typeof value.metadata === 'object') {
           const remoteCandidate = value as LearningCandidate
           safeSetItem(`${CANDIDATE_PREFIX}${remoteCandidate.id}`, JSON.stringify(remoteCandidate))
           const candidateIds = readIndex(CANDIDATE_INDEX_KEY)
           if (!candidateIds.includes(remoteCandidate.id)) writeIndex(CANDIDATE_INDEX_KEY, [...candidateIds, remoteCandidate.id])
-          result = await this.admitCandidate(remoteCandidate.id)
         }
-        if (result) admitted += 1
       }
       return { attempted: records.length, admitted, status: 'synced' }
     } catch {
