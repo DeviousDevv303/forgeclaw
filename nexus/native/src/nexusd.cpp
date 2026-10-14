@@ -8,9 +8,12 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#include <sodium.h>
 
 #include <fcntl.h>
 #include <sys/socket.h>
@@ -25,6 +28,77 @@ struct Options {
     std::string socket_path = "/tmp/nexus.sock";
     std::string corpus_path = "/tmp/nexus-corpus.log";
 };
+
+// ─── CORPUS Admission Ed25519 Verification ───
+// RFC 8032 test vector key (test mode only).
+// Production deployments must populate trusted keys from a config file.
+static const std::map<std::string, std::string> TRUSTED_ADMIT_KEYS = {
+    {"rfc8032-test-vector", "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"},
+};
+
+static std::vector<unsigned char> hex_to_bytes(const std::string & hex) {
+    std::vector<unsigned char> out;
+    if (hex.size() % 2 != 0) return out;
+    out.reserve(hex.size() / 2);
+    for (size_t i = 0; i < hex.size(); i += 2) {
+        unsigned int byte = 0;
+        if (sscanf(hex.c_str() + i, "%2x", &byte) != 1) return std::vector<unsigned char>();
+        out.push_back(static_cast<unsigned char>(byte));
+    }
+    return out;
+}
+
+// Verify Ed25519 signature for CORPUS_ADMIT authorization.
+// Returns true on success, false with error reason on failure.
+static bool verify_admit_authorization(
+    const std::string & candidate_id,
+    const std::string & key_id,
+    const std::string & issued_at,
+    const std::string & expires_at,
+    const std::string & signature_hex,
+    std::string & error_out) {
+
+    auto key_it = TRUSTED_ADMIT_KEYS.find(key_id);
+    if (key_it == TRUSTED_ADMIT_KEYS.end()) {
+        error_out = "untrusted_key";
+        return false;
+    }
+
+    // TODO: Validate issued_at < now < expires_at (ISO 8601 parsing)
+    // For now, require non-empty timestamps
+    if (issued_at.empty() || expires_at.empty() || expires_at <= issued_at) {
+        error_out = "invalid_authorization_window";
+        return false;
+    }
+
+    std::vector<unsigned char> pubkey = hex_to_bytes(key_it->second);
+    std::vector<unsigned char> signature = hex_to_bytes(signature_hex);
+    if (pubkey.size() != 32 || signature.size() != 64) {
+        error_out = "invalid_signature_encoding";
+        return false;
+    }
+
+    // Construct canonical payload (must match TS authorizationPayload())
+    // For now, sign candidate_id + key_id + timestamps.
+    // Full JCS canonicalization TODO: implement JSON canonicalization
+    std::string message = candidate_id + "|" + key_id + "|" + issued_at + "|" + expires_at;
+
+    if (sodium_init() < 0) {
+        error_out = "sodium_init_failed";
+        return false;
+    }
+
+    if (crypto_sign_verify_detached(
+            signature.data(),
+            reinterpret_cast<const unsigned char*>(message.c_str()),
+            message.size(),
+            pubkey.data()) != 0) {
+        error_out = "signature_invalid";
+        return false;
+    }
+
+    return true;
+}
 
 void usage(const char * program) {
     std::cerr << "Usage: " << program << " --model PATH --sha256 HEX [--socket PATH] [--corpus PATH] [--ctx N] [--threads N] [--n-predict N]\n";
@@ -117,10 +191,31 @@ std::string handle_request(const std::string & request, nexus::InferenceRuntime 
     if (fields[0] == "CORPUS_CANDIDATE" && fields.size() == 2u) {
         return ok("CORPUS_CANDIDATE\tid=" + fields[1] + "\tchanged=" + std::to_string(corpus.create_candidate(fields[1]) ? 1 : 0) + "\n");
     }
-    if (fields[0] == "CORPUS_ADMIT" && fields.size() == 4u) {
+    // CORPUS_ADMIT requires Ed25519 signature (8 fields).
+    // Old 4-field unsigned protocol is rejected.
+    if (fields[0] == "CORPUS_ADMIT") {
+        if (fields.size() == 4u) {
+            return ok("CORPUS_ADMIT\terror=unsigned_protocol_rejected\n");
+        }
+        if (fields.size() != 8u) {
+            return ok("CORPUS_ADMIT\terror=malformed_protocol\n");
+        }
+        const std::string & id = fields[1];
         const bool guardian_approved = fields[2] == "1";
-        const bool admitted = corpus.admit_candidate(fields[1], guardian_approved, nexus::base64_decode(fields[3]));
-        return ok("CORPUS_ADMIT\tid=" + fields[1] + "\tadmitted=" + std::to_string(admitted ? 1 : 0) + "\n");
+        const std::string reason = nexus::base64_decode(fields[3]);
+        const std::string & key_id = fields[4];
+        const std::string & issued_at = fields[5];
+        const std::string & expires_at = fields[6];
+        const std::string & signature_hex = fields[7];
+
+        // Verify Ed25519 signature before admitting
+        std::string verify_error;
+        if (!verify_admit_authorization(id, key_id, issued_at, expires_at, signature_hex, verify_error)) {
+            return ok("CORPUS_ADMIT\tid=" + id + "\terror=" + verify_error + "\n");
+        }
+
+        const bool admitted = corpus.admit_candidate(id, guardian_approved, reason);
+        return ok("CORPUS_ADMIT\tid=" + id + "\tadmitted=" + std::to_string(admitted ? 1 : 0) + "\n");
     }
     if (fields[0] == "CORPUS_REJECT" && fields.size() == 3u) {
         const bool rejected = corpus.reject_candidate(fields[1], nexus::base64_decode(fields[2]));
