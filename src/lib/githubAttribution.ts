@@ -21,7 +21,16 @@ export const FORGECLAW_ORCHESTRATOR_ID = 'MANUS'
 export const MANUS_ATTRIBUTION_TRAILER =
   'Agent: MANUS (autonomous orchestrator) via ForgeClaw — operation attributed per operator contract.'
 
+/** Who initiated the repository write: an autonomous agent or the operator typing a direct command. */
+/** Trailer for writes the operator typed directly; no orchestrator agent initiated them. */
+export const OPERATOR_ATTRIBUTION_TRAILER =
+  'Operator: direct command typed in ForgeClaw, executed by the ForgeClaw coding agent through the Guardian gate.'
+
+export type AttributionActor = 'agent' | 'operator'
+
 export interface AttributionInput {
+  /** Defaults to 'agent'. 'operator' records a human-typed direct command instead of an orchestrator action. */
+  actor?: AttributionActor
   /** ForgeClaw agent identity, e.g. forgesmith-coding. */
   agentId: string
   /** Human-readable agent label recorded alongside the id. */
@@ -59,17 +68,25 @@ export function buildAttributedCommitMessage(input: AttributionInput): string {
   const what = singleLine(input.what || input.task || 'autonomous repository change')
   const why = singleLine(input.why || input.task || 'Requested by the operator for the assigned ForgeClaw coding task.')
 
-  const lines = [
-    `agent: ${FORGECLAW_ORCHESTRATOR_ID} — what: ${what}`,
-    '',
-    `WHY: ${why}`,
-    `AGENT: ${FORGECLAW_ORCHESTRATOR_ID} (orchestrator) / ${agentId} (${agentLabel})`,
-  ]
+  const isOperator = input.actor === 'operator'
+  const lines = isOperator
+    ? [
+        `operator — what: ${what}`,
+        '',
+        `WHY: ${why}`,
+        `AGENT: operator (direct command) / ${agentId} (${agentLabel})`,
+      ]
+    : [
+        `agent: ${FORGECLAW_ORCHESTRATOR_ID} — what: ${what}`,
+        '',
+        `WHY: ${why}`,
+        `AGENT: ${FORGECLAW_ORCHESTRATOR_ID} (orchestrator) / ${agentId} (${agentLabel})`,
+      ]
 
   if (input.headSha) lines.push(`BASE: ${singleLine(input.headSha, 64)}`)
   if (input.branch) lines.push(`BRANCH: ${singleLine(input.branch, 128)}`)
   lines.push(`VALIDATION: ${singleLine(input.verification || 'Tool-level verification performed (result returned to NEXUS).')}`)
-  lines.push(MANUS_ATTRIBUTION_TRAILER)
+  lines.push(isOperator ? OPERATOR_ATTRIBUTION_TRAILER : MANUS_ATTRIBUTION_TRAILER)
 
   return lines.join('\n')
 }

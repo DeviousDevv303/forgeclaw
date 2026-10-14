@@ -380,6 +380,19 @@ describe('agent attribution contract', () => {
     expect(isAttributedCommitMessage(message)).toBe(true)
   })
 
+  it('records operator-typed writes as operator actions and still passes the contract', () => {
+    const message = buildAttributedCommitMessage({
+      actor: 'operator',
+      agentId: FORGECLAW_AGENT_ID,
+      agentLabel: 'ForgeClaw Coding Specialist',
+      what: 'operator direct write: a.txt',
+    })
+    expect(message.split('\n')[0]).toBe('operator — what: operator direct write: a.txt')
+    expect(message).not.toContain(FORGECLAW_ORCHESTRATOR_ID)
+    expect(message).toContain(FORGECLAW_AGENT_ID)
+    expect(isAttributedCommitMessage(message)).toBe(true)
+  })
+
   it('rejects generic commit subjects', () => {
     for (const generic of ['fix', 'update', 'changes', 'WIP']) {
       expect(isGenericCommitMessage(generic)).toBe(true)
