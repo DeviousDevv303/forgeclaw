@@ -1,0 +1,26 @@
+Hello! Based on the context provided, it seems that the user is asking for help with a technical issue related to a specific GitHub repository. The user mentions that they have already checked the repository's live facts and have tried the github_repo_state tool. They are now looking for guidance on how to proceed with the task at hand.
+
+To help the user, I will first clarify the actual task they are asking for. Then, I will use the supplied context to determine the best way to answer their request. If the context is insufficient, I will ask the user for more information to clarify their request.
+
+Once I have a clear understanding of the user's request, I will answer it directly and concretely, using the supplied context. I will also distinguish static architecture facts from live repository facts and ensure that I only claim an action happened if an actual successful Forge Tools result or correlated run result is included above.
+
+For this request, I will call github_repo_state or another appropriate GitHub read tool before giving repository feedback.
+
+Now, let me answer the user's actual request using the supplied context.
+
+Actual Forge Tools results from this turn (the only evidence of actions performed):
+
+github_repo_state result:
+repo: DeviousDevv303/forgeclaw
+url: <https://github.com/DeviousDevv303/forgeclaw>
+default Branch: main
+inspected Branch: main
+HEAD: 3261afed31b9b9060a900b44c48d1d9006d9b1c6
+HEAD short: 3261afe
+commit: feat(corpus): enforce Ed25519 auth sche main native CLI, fail closed on storage errors, add routemap (#61)
+author: DeviousDevv303@2026-10-14T01:34:51Z
+last push: 2026-10-14T01:35:29Z
+
+sample (package.json):
+```
+{"name":"forgeclaw","private":true,"version":"0.1.0","description":"Multi-agent governance shell with autonomous GitHub operations, browser automation, and integrity enforcement.","author":"DeviousDevv303<towerslutz@gmail.com>","license":"SEELICENSEINLICENSE","type":"module","scripts":{"check:conflicts":"grep-rn'^<<<<<<<\\|^>>>>>>>\\|^=======$'src/--include='*.ts'--include='*.tsx'&&echo'CONFLICTMARKERSFOUND'&&exit1||exit0","check:deepseek-workflow":"nodescripts/checkDeepSeekWorkflow.mjs","prebuild":"npmruncheck:conflicts&&npmrunlint","dev":"vite","build":"tsc-b&&vitebuild","lint":"eslint.","preview":"vitepreview","setup:hooks":"nodescripts/setupGitHooks.mjs","test":"vitest--passWithNoTests","test:run":"vitestrun--passWithNoTests","test:coverage":"vitestrun--coverage--passWithNoTests"},"dependencies":{"@octokit/rest":"^22.0.1","@supabase/supabase-js":"^2.101.1","react":"^19.2.4","react-dom":"^19.2.4","zustand":"^5.0.12","jszip
