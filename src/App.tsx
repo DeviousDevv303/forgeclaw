@@ -1216,9 +1216,11 @@ function App() {
       // small local model choosing to emit a native function call. Dispatch only
       // commands extracted from the explicit CLI allow-list, then show the real
       // tool output verbatim; ambiguous prose stays on the regular model path.
-      const directShellCommand = isExplicitShellRequest(promptText)
+      const shellDetected = isExplicitShellRequest(promptText)
+      const directShellCommand = shellDetected
         ? extractExplicitShellCommand(promptText)
         : null
+      console.log('[SHELL_ROUTE] prompt:', JSON.stringify(promptText), 'detected:', shellDetected, 'command:', JSON.stringify(directShellCommand))
       if (directShellCommand) {
         const call: ToolCall = {
           id: `direct-shell-${Date.now()}`,
