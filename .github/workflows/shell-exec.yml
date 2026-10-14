@@ -34,10 +34,11 @@ jobs:
         env:
           FORGE_COMMAND: ${{ inputs.command }}
           WORKING_DIRECTORY: ${{ inputs.working_directory }}
+          FORGE_INVOCATION_ID: ${{ inputs.invocation_id }}
         run: |
           set +e
           echo "=== FORGECLAW EXECUTION ==="
-          echo "invocation_id=${{ inputs.invocation_id }}"
+          echo "invocation_id=$FORGE_INVOCATION_ID"
           echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           WORKSPACE_ROOT="$(realpath -e "$GITHUB_WORKSPACE")"
           if [[ "$WORKING_DIRECTORY" = /* ]]; then
