@@ -1,0 +1,23 @@
+To write a test file named 'test.txt' on the default branch of the 'DeviousDevv303/forgeclaw' repository, please use the following GitHub API call:
+```php
+github_write_file("test.txt", "hello world", "@defaultbranch");
+```
+This API call will write the string "hello world" to the file 'test.txt' located in the root of the 'DeviousDevv303/forgeclaw' repository on the default branch.
+
+Once you have made the API call, you can provide the user with the following response:
+```makefile
+{"status":"success","message":"File has been written successfully","data":{"path":"test.txt","content":"hello world","branch":"@defaultbranch"}}
+```
+This response confirms that the file has been written successfully and provides details about the file, including its path, content, and branch.
+
+If the user requests further information about the repository, such as the current branch or commit status, you can use the following API calls:
+```php
+github_repo_state("DeviousDevv303/forgeclaw");
+github_get_branch("DeviousDevv303/forgeclaw", "@defaultbranch");
+github_get_status("DeviousDevv303/forgeclaw");
+```
+These API calls will provide information about the current state of the repository, including the branch and commit status.
+
+If the user requests feedback on the repository, you can provide a response that includes the information from the API calls, such as:
+```json
+{"status":"success","message":"Repository information retrieved successfully","data":{"path":"test.txt","content":"hello world","branch":"@defaultbranch","currentBranch":"main","lastPush":"2026-10-14T03:39:45Z","commitHash":"b66708603ae8945b19457b0a2dc7605de78374ac","commitMessage":"Fix: direct to old is patchend to end, Taste fetch binding, stale-build banner (#65)","author":"DeviousDevv303@2026-10-14T03:20:13Z","license":"SEELICENSEINLICENSE","dependencies":{"@octokit/rest":"^22.0.1","@supabase/supabase-js":"^2.101.1","react":"^19.2.4","react-dom":"^19.2.4","zustand":"^5.0.12","jszip":"^3.10.1","@mlc-ai/web-llm":"0.2.85"},"devDependencies":{"check:conflicts":"grep-rn'^<<<<<<<\\|^>>>>>>>\\|^=======$'src/--include='*.ts'--include='*.tsx'&&echo'CONFLICTMARKERSFOUND'&&exit1||exit0","check:deepseek-workflow":"nodescripts/checkDeepSeekWorkflow.mjs","prebuild":"npmruncheck:conflicts&&npmrunlint","dev":"vite","build":"tsc-b&&vitebuild","lint":"eslint.","preview":"vitepreview","setup:hooks":"nodescripts/setupGitHooks.m","test":"vitest--passWithNoTests","test:run":"vitestrun--passWithNoTests","test:coverage":"vitest
