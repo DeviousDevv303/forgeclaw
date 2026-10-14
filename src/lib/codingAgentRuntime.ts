@@ -159,16 +159,27 @@ export function extractExplicitShellCommand(prompt: string): string | null {
 
 const DIRECT_TOOL_NAMES = new Set(['github_write_file','github_read_file','github_list_files'])
 
+function stripToolWrapping(prompt: string): string {
+  let text = prompt.trim()
+  const fence = text.match(/^```(?:\w+)?\s*\n([\s\S]*?)```$/)
+  if (fence) text = fence[1].trim()
+  const inline = text.match(/^`([^`\n]+)`$/)
+  if (inline) text = inline[1].trim()
+  return text
+}
+
 export function isExplicitToolRequest(prompt: string): boolean {
-  const text = prompt.trim()
+  const text = stripToolWrapping(prompt)
   if (!text) return false
   const match = text.match(/^([a-z_][a-z0-9_]*)\s+/i)
   if (!match) return false
-  return DIRECT_TOOL_NAMES.has(match[1].toLowerCase())
+  const isDirect = DIRECT_TOOL_NAMES.has(match[1].toLowerCase())
+  console.log('[TOOL_DETECT] input:', JSON.stringify(prompt), 'stripped:', JSON.stringify(text), 'direct:', isDirect)
+  return isDirect
 }
 
 export function extractExplicitToolCall(prompt: string): { name: string; input: Record<string, string> } | null {
-  const text = prompt.trim()
+  const text = stripToolWrapping(prompt)
   const match = text.match(/^([a-z_][a-z0-9_]*)\s+(.*)$/is)
   if (!match) return null
   const name = match[1].toLowerCase()
