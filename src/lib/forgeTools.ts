@@ -88,6 +88,8 @@ export interface ToolContext {
   signal?: AbortSignal
   tier1Active?: boolean
   guardianPosture?: GuardianPosture
+  /** 'operator' for commands the human typed directly; otherwise writes are attributed to the agent. */
+  actor?: 'agent' | 'operator'
   requestGuardianApproval?: (call: ToolCall) => Promise<boolean>
   spawnAgent?: (systemPrompt: string, task: string, tools?: string[]) => Promise<string>
 }
@@ -613,6 +615,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         // silent or generic commit.
         const state = loadState()
         const message = buildAttributedCommitMessage({
+          actor: ctx.actor,
           agentId: FORGECLAW_AGENT_ID,
           agentLabel: FORGECLAW_AGENT_LABEL,
           what: requestedMessage,

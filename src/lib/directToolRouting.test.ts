@@ -101,4 +101,25 @@ describe('direct tool → Guardian gate (operator-shell posture)', () => {
     expect(put[0]).toMatch(/\/contents\/test\.txt$/)
     expect(JSON.parse(String(put[1]!.body)).content).toBe(btoa('hello'))
   })
+  it('attributes an operator-typed write to the operator, and agent writes to MANUS', async () => {
+    const makeFetch = () => vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === 'PUT'
+        ? new Response(JSON.stringify({ commit: { sha: 'abc1234', html_url: 'https://github.com/x' } }), { status: 201 })
+        : new Response('{}', { status: 404 }),
+    )
+    const messageFor = async (actor?: 'operator') => {
+      const fetchMock = makeFetch()
+      vi.stubGlobal('fetch', fetchMock)
+      const call = route('github_write_file path="a.txt" content="hi"')!
+      await executeTool({ id: 'direct-tool-3', name: call.name, input: call.input }, { ...ctx(), actor, requestGuardianApproval: async () => true })
+      const put = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')!
+      return JSON.parse(String(put[1]!.body)).message as string
+    }
+    const operatorMessage = await messageFor('operator')
+    expect(operatorMessage.split('\n')[0]).toMatch(/^operator — what: operator direct write: a\.txt/)
+    expect(operatorMessage).not.toContain('MANUS')
+    expect(operatorMessage).toContain('WHY:')
+    const agentMessage = await messageFor()
+    expect(agentMessage.split('\n')[0]).toMatch(/^agent: MANUS — what:/)
+  })
 })
