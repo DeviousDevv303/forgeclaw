@@ -22,6 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import { resolveInitialProvider } from './lib/modelProviders'
 import type { ProviderId } from './lib/modelProviders'
+import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
 import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { DEFAULT_MOONSHOT_MODEL } from './lib/ai/providers/moonshotProvider'
@@ -704,6 +705,23 @@ function App() {
   const [autoResumePending, setAutoResumePending] = useState(false)
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
   const [guardianPosture, setGuardianPosture] = useState<GuardianPosture>('operator-shell')
+  const [newerBuild, setNewerBuild] = useState<DeployedBuild | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    const check = async () => {
+      const deployed = await fetchDeployedBuild(import.meta.env.BASE_URL)
+      if (cancelled) return
+      if (isNewerBuildAvailable(BUILD_COMMIT, deployed)) {
+        console.log('[BUILD] stale bundle', BUILD_COMMIT, '→ deployed', deployed?.commit)
+        setNewerBuild(deployed)
+      }
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') void check() }
+    void check()
+    document.addEventListener('visibilitychange', onVisible)
+    const interval = setInterval(() => void check(), 5 * 60_000)
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); clearInterval(interval) }
+  }, [])
 
   const requestGuardianApproval = useCallback(async (call: ToolCall): Promise<boolean> => {
     if (guardianPosture === 'autonomous') return true
@@ -721,6 +739,14 @@ function App() {
       }, 120_000)
     })
   }, [guardianPosture])
+
+  // Settle a pending co-sign exactly once and remove its card immediately.
+  const settleCoSign = useCallback((coSignId: string, approved: boolean) => {
+    const resolve = coSignResolvers.current.get(coSignId)
+    coSignResolvers.current.delete(coSignId)
+    setPendingCoSigns(prev => prev.filter(cs => cs.id !== coSignId))
+    resolve?.(approved)
+  }, [])
 
   const [listening, setListening] = useState(false)
   const [voiceTranscript, setVoiceTranscript] = useState('')
@@ -1030,7 +1056,13 @@ function App() {
       return
     }
 
-    if ((activeProvider === 'local' || activeProvider === 'anthropic' || activeProvider === 'moonshot') && !currentApiKey) {
+    // Operator-typed tool/shell commands are dispatched without a model turn,
+    // so a missing LLM key must not block them.
+    const directDispatchOnly = !imageUrl && !hasAttachment && (
+      isExplicitToolRequest(promptText) ||
+      (isExplicitShellRequest(promptText) && extractExplicitShellCommand(promptText) !== null)
+    )
+    if ((activeProvider === 'local' || activeProvider === 'anthropic' || activeProvider === 'moonshot') && !currentApiKey && !directDispatchOnly) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
       setRequestStatus('blocked')
       setLastRequestError(missingKeyMessage)
@@ -1231,14 +1263,33 @@ function App() {
         setActivityLog(prev => [...prev.slice(-99), { id: activityId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
         emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
         emitForge({ type: 'TOOL_START', tool: call.name, iter: 0 })
-        const output = await executeTool(call, toolCtx)
+        // A malformed direct call is reported back with its usage; it is never
+        // executed and never handed to the model as a fallback.
+        const output = explicitTool.error ?? await executeTool(call, toolCtx)
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         const isError = output.startsWith('[TOOL ERROR]') || /^\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(output)
+        const result: ToolResult = { toolCallId: call.id, name: call.name, output, isError }
+        setCodingAgentState(recordToolProgress(call.name, output))
         setActivityLog(prev => prev.map(entry => entry.id === activityId ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' } : entry))
         emitForge({ type: 'THREAD_MERGE', threadId: call.id })
-        const outMsg: Message = { id: `msg-${Date.now()}`, role: 'assistant', content: output, timestamp: Date.now(), toolResults: [{ toolCallId: call.id, name: call.name, output, isError }] }
-        setMessages(prev => [...prev, outMsg])
-        setLoading(false)
+        if (isError) {
+          emitForge({ type: 'TOOL_FAILURE', tool: call.name, failClass: classifyToolFailure(output) })
+          emitForge({ type: 'MISSION_BLOCKED', reason: `Direct ${call.name} call failed or was blocked by Guardian` })
+        } else {
+          emitForge({ type: 'TOOL_SUCCESS', tool: call.name })
+          emitForge({ type: 'MISSION_COMPLETE' })
+        }
+        setLastSource(source)
+        // Resolve the streaming placeholder in place; appending a second bubble
+        // left the placeholder spinning forever.
+        setMessages(prev => prev.map(message => message.id === msgId
+          ? { ...message, content: output, streaming: false, provider: 'ForgeClaw', model: 'direct tool dispatch', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [result] }
+          : message,
+        ))
+        setRequestStatus(isError ? 'blocked' : 'success')
+        setLastRequestError(isError ? output : '')
+        setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+        resolveTask(taskId)
         return
       }
       if (directShellCommand) {
@@ -2132,6 +2183,14 @@ function App() {
   return (
     <div style={{ position: 'relative', zIndex: 10, height: '100dvh', display: 'flex', flexDirection: 'column', color: '#e5e5e5', overflow: 'hidden' }}>
 
+      {newerBuild && (
+        <button
+          onClick={() => window.location.reload()}
+          style={{ background: '#7c2d12', color: '#fed7aa', border: 'none', borderBottom: '1px solid #f97316', padding: '8px 16px', fontFamily: 'monospace', fontSize: '11px', letterSpacing: '0.5px', cursor: 'pointer', textAlign: 'center' }}
+        >
+          New build {newerBuild.commit.slice(0, 7)} deployed (running {BUILD_COMMIT.slice(0, 7)}) — tap to reload
+        </button>
+      )}
       {/* Header */}
       <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -2850,19 +2909,30 @@ function App() {
                       )}
                     </div>
                   )}
+                  {cs.toolName === 'github_write_file' && (
+                    <div style={{ background: '#0d0800', border: '1px solid #c4762a55', borderRadius: '4px', padding: '8px', marginBottom: '8px' }}>
+                      <div style={{ color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>⚠ REPOSITORY WRITE</div>
+                      <div style={{ color: '#d4d0c8', fontSize: '10px', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                        {String(cs.toolInput.path ?? '')} @ {typeof cs.toolInput.branch === 'string' && cs.toolInput.branch ? cs.toolInput.branch : 'default branch'}
+                      </div>
+                      <div style={{ color: '#9ca3af', fontSize: '10px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', marginTop: '5px', maxHeight: '80px', overflowY: 'auto' }}>
+                        {String(cs.toolInput.content ?? '').slice(0, 500)}{String(cs.toolInput.content ?? '').length > 500 ? '…' : ''}
+                      </div>
+                    </div>
+                  )}
                   <div style={{ background: '#040904', border: '1px solid #1a2e1a', borderRadius: '4px', padding: '8px', marginBottom: '10px', maxHeight: '80px', overflowY: 'auto' }}>
                     <div style={{ color: '#4a7a3a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>REASONING SNAPSHOT</div>
                     <div style={{ color: '#4a7a3a', fontSize: '10px', lineHeight: '1.5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{cs.reasoning.slice(0, 300)}{cs.reasoning.length > 300 ? '…' : ''}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button
-                      onClick={() => coSignResolvers.current.get(cs.id)?.(false)}
+                      onClick={() => settleCoSign(cs.id, false)}
                       style={{ flex: 1, background: '#1a0505', border: '1px solid #7f1d1d', color: '#ef4444', borderRadius: '5px', padding: '7px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1px', textTransform: 'uppercase' }}
                     >
                       REJECT
                     </button>
                     <button
-                      onClick={() => coSignResolvers.current.get(cs.id)?.(true)}
+                      onClick={() => settleCoSign(cs.id, true)}
                       style={{ flex: 1, background: '#051a05', border: '1px solid #14532d', color: '#22c55e', borderRadius: '5px', padding: '7px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1px', textTransform: 'uppercase' }}
                     >
                       APPROVE

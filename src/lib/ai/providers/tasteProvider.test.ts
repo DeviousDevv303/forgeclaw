@@ -2,6 +2,19 @@ import { describe, expect, it, vi } from 'vitest'
 import { HEALTH_CACHE_TTL_MS, TasteProviderClient } from './tasteProvider'
 
 describe('NEXUS Taste provider client', () => {
+  it('calls the global fetch unbound (browsers throw "Illegal invocation" otherwise)', async () => {
+    const browserLikeFetch = vi.fn(function (this: unknown) {
+      if (this !== undefined && this !== globalThis) throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation")
+      return Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    })
+    vi.stubGlobal('fetch', browserLikeFetch)
+    try {
+      await expect(new TasteProviderClient('http://127.0.0.1:8377/v1').health()).resolves.toEqual({ status: 'ok' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('submits an image, polls until complete, then sends feedback', async () => {
     const responses = [
       new Response(JSON.stringify({ job_id: 'job-1', status_url: '/v1/extract/job-1' }), { status: 202 }),

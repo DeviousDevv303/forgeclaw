@@ -159,8 +159,23 @@ export function extractExplicitShellCommand(prompt: string): string | null {
 
 const DIRECT_TOOL_NAMES = new Set(['github_write_file','github_read_file','github_list_files'])
 
+/** Required arguments per direct tool; a call missing one is a usage error, never a model fallback. */
+const DIRECT_TOOL_REQUIRED_ARGS: Record<string, string[]> = {
+  github_write_file: ['path', 'content'],
+  github_read_file: ['path'],
+  github_list_files: [],
+}
+
+const DIRECT_TOOL_USAGE: Record<string, string> = {
+  github_write_file: 'github_write_file path="file.txt" content="hello" [branch="name"] [message="why"]',
+  github_read_file: 'github_read_file path="file.txt"',
+  github_list_files: 'github_list_files [path="dir"]',
+}
+
 function stripToolWrapping(prompt: string): string {
-  let text = prompt.trim()
+  // Mobile keyboards substitute typographic quotes; normalize them so
+  // path="x" never becomes a literal “x” file name.
+  let text = prompt.trim().replace(/[\u201C\u201D\u201E\u201F\u2033]/g, '"').replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'")
   const fence = text.match(/^```(?:\w+)?\s*\n([\s\S]*?)```$/)
   if (fence) text = fence[1].trim()
   const inline = text.match(/^`([^`\n]+)`$/)
@@ -171,23 +186,35 @@ function stripToolWrapping(prompt: string): string {
 export function isExplicitToolRequest(prompt: string): boolean {
   const text = stripToolWrapping(prompt)
   if (!text) return false
-  const match = text.match(/^([a-z_][a-z0-9_]*)\s+/i)
+  const match = text.match(/^([a-z_][a-z0-9_]*)(?:\s+|$)/i)
   if (!match) return false
   const isDirect = DIRECT_TOOL_NAMES.has(match[1].toLowerCase())
   console.log('[TOOL_DETECT] input:', JSON.stringify(prompt), 'stripped:', JSON.stringify(text), 'direct:', isDirect)
   return isDirect
 }
 
-export function extractExplicitToolCall(prompt: string): { name: string; input: Record<string, string> } | null {
+export interface ExplicitToolCall {
+  name: string
+  input: Record<string, string>
+  /** Set when required arguments are missing; the call must not be executed. */
+  error?: string
+}
+
+export function extractExplicitToolCall(prompt: string): ExplicitToolCall | null {
   const text = stripToolWrapping(prompt)
-  const match = text.match(/^([a-z_][a-z0-9_]*)\s+(.*)$/is)
+  const match = text.match(/^([a-z_][a-z0-9_]*)(?:\s+([\s\S]*))?$/i)
   if (!match) return null
   const name = match[1].toLowerCase()
   if (!DIRECT_TOOL_NAMES.has(name)) return null
   const input: Record<string, string> = {}
   const argPattern = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g
-  let m; while ((m = argPattern.exec(match[2])) !== null) { input[m[1]] = m[2] ?? m[3] ?? m[4] ?? '' }
-  return Object.keys(input).length > 0 ? { name, input } : null
+  let m; while ((m = argPattern.exec(match[2] ?? '')) !== null) { input[m[1]] = m[2] ?? m[3] ?? m[4] ?? '' }
+  // Operator-typed writes carry an explicit commit intent instead of a generic fallback.
+  if (name === 'github_write_file' && !input.message?.trim() && input.path) input.message = `operator direct write: ${input.path}`
+  const missing = DIRECT_TOOL_REQUIRED_ARGS[name].filter(key => !(key in input) || (key === 'path' && !input[key].trim()))
+  return missing.length
+    ? { name, input, error: `[TOOL ERROR] ${name} is missing required argument${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}. Usage: ${DIRECT_TOOL_USAGE[name]}` }
+    : { name, input }
 }
 
 /** True when the user is asking for a repository's authoritative main HEAD. */
