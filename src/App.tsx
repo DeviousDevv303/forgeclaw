@@ -45,6 +45,8 @@ import {
   isCodingTaskRequest,
   isExplicitShellRequest,
   extractExplicitShellCommand,
+  isExplicitToolRequest,
+  extractExplicitToolCall,
   isRepositoryHeadQuestion,
   parseRepoState,
   recordToolProgress,
@@ -1220,6 +1222,25 @@ function App() {
         ? extractExplicitShellCommand(promptText)
         : null
       console.log('[SHELL_ROUTE] prompt:', JSON.stringify(promptText), 'detected:', shellDetected, 'command:', JSON.stringify(directShellCommand))
+      const toolDetected = !directShellCommand && isExplicitToolRequest(promptText)
+      const explicitTool = toolDetected ? extractExplicitToolCall(promptText) : null
+      console.log('[TOOL_ROUTE] detected:', toolDetected, 'tool:', explicitTool?.name)
+      if (explicitTool) {
+        const call: ToolCall = { id: `direct-tool-${Date.now()}`, name: explicitTool.name, input: explicitTool.input }
+        const activityId = `act_${call.id}`
+        setActivityLog(prev => [...prev.slice(-99), { id: activityId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
+        emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
+        emitForge({ type: 'TOOL_START', tool: call.name, iter: 0 })
+        const output = await executeTool(call, toolCtx)
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        const isError = output.startsWith('[TOOL ERROR]') || /^\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(output)
+        setActivityLog(prev => prev.map(entry => entry.id === activityId ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' } : entry))
+        emitForge({ type: 'THREAD_MERGE', threadId: call.id })
+        const outMsg: Message = { id: `msg-${Date.now()}`, role: 'assistant', content: output, timestamp: Date.now(), toolResults: [{ toolCallId: call.id, name: call.name, output, isError }] }
+        setMessages(prev => [...prev, outMsg])
+        setLoading(false)
+        return
+      }
       if (directShellCommand) {
         const call: ToolCall = {
           id: `direct-shell-${Date.now()}`,

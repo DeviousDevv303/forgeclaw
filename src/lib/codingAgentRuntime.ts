@@ -157,6 +157,28 @@ export function extractExplicitShellCommand(prompt: string): string | null {
   return executable.test(command) ? normalizeKnownShellExecutable(command) : null
 }
 
+const DIRECT_TOOL_NAMES = new Set(['github_write_file','github_read_file','github_list_files'])
+
+export function isExplicitToolRequest(prompt: string): boolean {
+  const text = prompt.trim()
+  if (!text) return false
+  const match = text.match(/^([a-z_][a-z0-9_]*)\s+/i)
+  if (!match) return false
+  return DIRECT_TOOL_NAMES.has(match[1].toLowerCase())
+}
+
+export function extractExplicitToolCall(prompt: string): { name: string; input: Record<string, string> } | null {
+  const text = prompt.trim()
+  const match = text.match(/^([a-z_][a-z0-9_]*)\s+(.*)$/is)
+  if (!match) return null
+  const name = match[1].toLowerCase()
+  if (!DIRECT_TOOL_NAMES.has(name)) return null
+  const input: Record<string, string> = {}
+  const argPattern = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g
+  let m; while ((m = argPattern.exec(match[2])) !== null) { input[m[1]] = m[2] ?? m[3] ?? m[4] ?? '' }
+  return Object.keys(input).length > 0 ? { name, input } : null
+}
+
 /** True when the user is asking for a repository's authoritative main HEAD. */
 export function isRepositoryHeadQuestion(prompt: string): boolean {
   const text = prompt.toLowerCase().replace(/\s+/g, ' ').trim()
