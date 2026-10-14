@@ -221,10 +221,20 @@ export function extractExplicitToolCall(prompt: string): ExplicitToolCall | null
   if (!DIRECT_TOOL_NAMES.has(name)) return null
   const input: Record<string, string> = {}
   const argPattern = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g
-  let m; while ((m = argPattern.exec(match[2] ?? '')) !== null) { input[m[1]] = m[2] ?? m[3] ?? m[4] ?? '' }
+  const malformed: string[] = []
+  let m; while ((m = argPattern.exec(match[2] ?? '')) !== null) {
+    // A value that opens a quote it never closes (e.g. sha="abc with the closing
+    // quote lost on a phone keyboard) would otherwise be sent with the quote
+    // character inside it and surface as a misleading "not found" from GitHub.
+    if (m[4] !== undefined && /^["']/.test(m[4])) malformed.push(m[1])
+    input[m[1]] = m[2] ?? m[3] ?? m[4] ?? ''
+  }
   // Operator-typed writes carry an explicit commit intent instead of a generic fallback.
   if (name === 'github_write_file' && !input.message?.trim() && input.path) input.message = `operator direct write: ${input.path}`
   const spec = DIRECT_TOOLS[name]
+  if (malformed.length) {
+    return { name, input, error: `[TOOL ERROR] ${name} has an unterminated quote in argument${malformed.length > 1 ? 's' : ''}: ${malformed.join(', ')}. Nothing was sent. Usage: ${spec.usage}` }
+  }
   const missing = spec.required.filter(key => !(key in input) || (!EMPTY_ALLOWED_ARGS.has(key) && !input[key].trim()))
   return missing.length
     ? { name, input, error: `[TOOL ERROR] ${name} is missing required argument${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}. Usage: ${spec.usage}` }
