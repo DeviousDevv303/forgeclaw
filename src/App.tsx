@@ -22,6 +22,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import { resolveInitialProvider } from './lib/modelProviders'
 import type { ProviderId } from './lib/modelProviders'
+import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
 import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { DEFAULT_MOONSHOT_MODEL } from './lib/ai/providers/moonshotProvider'
@@ -704,6 +705,23 @@ function App() {
   const [autoResumePending, setAutoResumePending] = useState(false)
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
   const [guardianPosture, setGuardianPosture] = useState<GuardianPosture>('operator-shell')
+  const [newerBuild, setNewerBuild] = useState<DeployedBuild | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    const check = async () => {
+      const deployed = await fetchDeployedBuild(import.meta.env.BASE_URL)
+      if (cancelled) return
+      if (isNewerBuildAvailable(BUILD_COMMIT, deployed)) {
+        console.log('[BUILD] stale bundle', BUILD_COMMIT, '→ deployed', deployed?.commit)
+        setNewerBuild(deployed)
+      }
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') void check() }
+    void check()
+    document.addEventListener('visibilitychange', onVisible)
+    const interval = setInterval(() => void check(), 5 * 60_000)
+    return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); clearInterval(interval) }
+  }, [])
 
   const requestGuardianApproval = useCallback(async (call: ToolCall): Promise<boolean> => {
     if (guardianPosture === 'autonomous') return true
@@ -2165,6 +2183,14 @@ function App() {
   return (
     <div style={{ position: 'relative', zIndex: 10, height: '100dvh', display: 'flex', flexDirection: 'column', color: '#e5e5e5', overflow: 'hidden' }}>
 
+      {newerBuild && (
+        <button
+          onClick={() => window.location.reload()}
+          style={{ background: '#7c2d12', color: '#fed7aa', border: 'none', borderBottom: '1px solid #f97316', padding: '8px 16px', fontFamily: 'monospace', fontSize: '11px', letterSpacing: '0.5px', cursor: 'pointer', textAlign: 'center' }}
+        >
+          New build {newerBuild.commit.slice(0, 7)} deployed (running {BUILD_COMMIT.slice(0, 7)}) — tap to reload
+        </button>
+      )}
       {/* Header */}
       <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

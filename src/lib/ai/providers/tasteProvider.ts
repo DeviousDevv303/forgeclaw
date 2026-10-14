@@ -47,7 +47,8 @@ function dataUrlBase64(image: Blob | string): Promise<string> {
 export class TasteProviderClient {
   private readonly baseUrl: string
   private readonly fetchImpl: Fetcher
-  constructor(baseUrl = configuredTasteEndpoint(), fetchImpl: Fetcher = fetch) { this.baseUrl = baseUrl.replace(/\/+$/, ''); this.fetchImpl = fetchImpl }
+  // Wrap the global: calling window.fetch as this.fetchImpl(...) rebinds `this` and throws "Illegal invocation".
+  constructor(baseUrl = configuredTasteEndpoint(), fetchImpl: Fetcher = (input, init) => fetch(input, init)) { this.baseUrl = baseUrl.replace(/\/+$/, ''); this.fetchImpl = fetchImpl }
   async isConfigured(signal?: AbortSignal): Promise<boolean> {
     const now = Date.now()
     const cached = healthCache.get(this.baseUrl)
