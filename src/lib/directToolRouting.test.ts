@@ -173,6 +173,20 @@ describe('direct dispatch covers the operator tool set', () => {
     expect(call.error).toContain('Nothing was sent')
   })
 
+  it.each([
+    ['\u00AB', '\u00BB'], ['\u201C', '\u201D'], ['\u201E', '\u201F'], ['\uFF02', '\uFF02'],
+    ['\u301D', '\u301E'], ['\u275D', '\u275E'], ['\u2018', '\u2019'], ['\uFF07', '\uFF07'],
+  ])('treats %s…%s as a quote pair, including values with spaces', (open, close) => {
+    const call = route(`memory_write key=${open}blade_note${close} value=${open}check root bolts${close}`)!
+    expect(call.error).toBeUndefined()
+    expect(call.input).toEqual({ key: 'blade_note', value: 'check root bolts' })
+  })
+
+  it('does not accept a lookalike opener with a plain closer silently truncated', () => {
+    const call = route('memory_write key="blade_note" value="check root bolts\u2E42')!
+    expect(call.error).toContain('unterminated quote')
+  })
+
   it('still accepts balanced quotes, bare values and quotes inside values', () => {
     expect(route('github_verify_commit sha=c675c35')!.error).toBeUndefined()
     expect(route('github_verify_commit sha="c675c35"')!.input).toEqual({ sha: 'c675c35' })
