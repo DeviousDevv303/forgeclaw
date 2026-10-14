@@ -47,6 +47,12 @@ export function postureFromTier1Active(tier1Active: boolean): GuardianPosture {
   return tier1Active ? 'full-cosign' : 'autonomous'
 }
 
+/** Lower-case, trim, and strip a leading refs/heads/ or heads/ prefix. Non-strings read as unspecified. */
+export function normalizeBranchName(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.toLowerCase().trim().replace(/^(?:refs\/)?heads\//, '')
+}
+
 // Tier gate — returns true if the operation needs a human co-sign.
 export function requiresCoSign(call: ToolCall, posture: GuardianPosture | boolean): boolean {
   // Backward compat: boolean maps to legacy postures
@@ -68,7 +74,9 @@ export function requiresCoSign(call: ToolCall, posture: GuardianPosture | boolea
 
   // Branch-aware: writes to main/master (or unspecified) require co-sign
   if (call.name === 'github_write_file') {
-    const branch = (call.input.branch as string | undefined)?.toLowerCase().trim()
+    // Normalize fully-qualified ref spellings ("refs/heads/main", "heads/main")
+    // so they cannot slip past the protected-branch check.
+    const branch = normalizeBranchName(call.input.branch)
     return !branch || branch === 'main' || branch === 'master'
   }
 
