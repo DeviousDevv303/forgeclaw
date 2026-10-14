@@ -103,3 +103,18 @@ describe('GuardianPosture', () => {
     })
   })
 })
+
+describe('protected-branch normalization', () => {
+  const protectedSpellings = ['main', 'MAIN ', 'refs/heads/main', 'refs/heads/Master', 'heads/main', '  refs/heads/main  ', '', undefined]
+  it.each(protectedSpellings)('co-signs github_write_file for branch %j', branch => {
+    for (const posture of ['operator-shell', 'full-cosign'] as GuardianPosture[]) {
+      expect(requiresCoSign(makeCall('github_write_file', { branch }), posture)).toBe(true)
+    }
+  })
+  it.each(['develop', 'fix/foo', 'refs/heads/fix/foo', 'feature/main-menu', 'mainline'])('does not co-sign feature branch %j', branch => {
+    expect(requiresCoSign(makeCall('github_write_file', { branch }), 'operator-shell')).toBe(false)
+  })
+  it('treats a non-string branch as unspecified (protected)', () => {
+    expect(requiresCoSign(makeCall('github_write_file', { branch: 42 }), 'operator-shell')).toBe(true)
+  })
+})
