@@ -22,6 +22,7 @@ import {
 } from './codingAgentState'
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign, type GuardianPosture, DEFAULT_GUARDIAN_POSTURE, postureFromTier1Active } from './guardianGate'
+import { runDdgWorkflowSearch } from './ddgWorkflowSearch'
 import { isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, SHELL_LOG_POLL_INTERVAL_MS, SHELL_LOG_RETRIEVAL_TIMEOUT_MS, SHELL_RUN_LIST_TIMEOUT_MS, type ShellWorkflowRun } from './shellCorrelation'
 import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
@@ -322,7 +323,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'web_search',
-    description: 'Search the web for current information. Uses Brave Search if an API key is configured, otherwise DuckDuckGo instant answers.',
+    description: 'Search the web for current information. Uses Brave Search if an API key is configured, otherwise real DuckDuckGo results via the ddg_search GitHub workflow (needs a GitHub token; takes ~15-40s), falling back to DuckDuckGo instant answers.',
     parameters: {
       type: 'object',
       properties: {
@@ -930,6 +931,20 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           return `Brave Search — "${query}":\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.description}`).join('\n\n')}`
         }
 
+        // Real results without a key: the read-only ddg_search.yml workflow (see ddgWorkflowSearch.ts).
+        // Failure is reported, then we fall back to Instant Answers rather than failing silently.
+        let workflowNote = ''
+        if (ctx.ghToken) {
+          try {
+            return await runDdgWorkflowSearch(query, count, {
+              fetcher: (url, init) => toolFetch(ctx, url, init),
+              owner: ctx.ghOwner, repo: ctx.ghRepo, token: ctx.ghToken, signal: ctx.signal,
+            })
+          } catch (error) {
+            workflowNote = `[DuckDuckGo workflow search failed: ${error instanceof Error ? error.message : String(error)}. Falling back to Instant Answers, which are not full web search.]\n`
+          }
+        }
+
         // Fallback: DuckDuckGo Instant Answers (no key, CORS-enabled)
         const res = await toolFetch(ctx,
           `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
@@ -942,9 +957,9 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const topics = (data.RelatedTopics || []).slice(0, count).filter(t => t.Text)
           .map(t => `• ${t.Text}${t.FirstURL ? `\n  ${t.FirstURL}` : ''}`)
         if (topics.length) parts.push(topics.join('\n'))
-        return parts.length
+        return workflowNote + (parts.length
           ? `DuckDuckGo — "${query}":\n${parts.join('\n\n')}`
-          : `No results for "${query}". Add a Brave Search API key in Settings for full web results.`
+          : `No results for "${query}". Add a Brave Search API key in Settings for full web results.`)
       }
 
       // ── Gmail: read ───────────────────────────────────────────────────────────
