@@ -187,6 +187,18 @@ describe('direct dispatch covers the operator tool set', () => {
     expect(call.error).toContain('unterminated quote')
   })
 
+  it('names the codepoint of an unrecognized closing character in the error', () => {
+    const call = route('web_search query="wind turbine blade erosion\u2E42 count=3')!
+    expect(call.error).toContain('unterminated quote')
+    expect(call.error).toContain('U+2E42')
+  })
+
+  it('adds no codepoint hint when the command is plain ASCII', () => {
+    const call = route('web_search query="unclosed text')!
+    expect(call.error).toContain('unterminated quote')
+    expect(call.error).not.toContain('U+')
+  })
+
   it('still accepts balanced quotes, bare values and quotes inside values', () => {
     expect(route('github_verify_commit sha=c675c35')!.error).toBeUndefined()
     expect(route('github_verify_commit sha="c675c35"')!.input).toEqual({ sha: 'c675c35' })
