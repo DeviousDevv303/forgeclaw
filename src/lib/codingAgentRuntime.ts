@@ -238,7 +238,12 @@ export function extractExplicitToolCall(prompt: string): ExplicitToolCall | null
   if (name === 'github_write_file' && !input.message?.trim() && input.path) input.message = `operator direct write: ${input.path}`
   const spec = DIRECT_TOOLS[name]
   if (malformed.length) {
-    return { name, input, error: `[TOOL ERROR] ${name} has an unterminated quote in argument${malformed.length > 1 ? 's' : ''}: ${malformed.join(', ')}. Nothing was sent. Usage: ${spec.usage}` }
+    // Name any non-ASCII characters in the arguments: a closing quote the parser does not
+    // recognize is the usual cause, and its codepoint says exactly what to add.
+    const odd = [...new Set([...(match[2] ?? '')].filter(ch => ch.charCodeAt(0) > 0x7E))]
+      .map(ch => `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`)
+    const hint = odd.length ? ` Unrecognized non-ASCII characters in the command: ${odd.join(', ')}.` : ''
+    return { name, input, error: `[TOOL ERROR] ${name} has an unterminated quote in argument${malformed.length > 1 ? 's' : ''}: ${malformed.join(', ')}.${hint} Nothing was sent. Usage: ${spec.usage}` }
   }
   const missing = spec.required.filter(key => !(key in input) || (!EMPTY_ALLOWED_ARGS.has(key) && !input[key].trim()))
   return missing.length
