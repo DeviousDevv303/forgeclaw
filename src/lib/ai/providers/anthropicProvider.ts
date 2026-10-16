@@ -9,13 +9,21 @@ import type { AIMessage, AIProvider, AIRequest, AIResponse, AIToolCall } from '.
 const ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
 
+// Current Messages API model IDs (checked against Anthropic's published model strings on
+// 2026-10-16). The earlier 3.5 Haiku / 3.7 Sonnet / Sonnet 4 entries were older aliases that
+// may no longer resolve; a stale saved choice is migrated by resolveAnthropicModel().
 export const ANTHROPIC_MODELS = [
-  { id: 'claude-3-5-haiku-latest', label: 'Claude 3.5 Haiku', contextK: 200, note: 'Fast, economical' },
-  { id: 'claude-3-7-sonnet-latest', label: 'Claude 3.7 Sonnet', contextK: 200, note: 'Balanced reasoning' },
-  { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4', contextK: 200, note: 'Latest Sonnet' },
+  { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', contextK: 200, note: 'Fast, economical' },
+  { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', contextK: 200, note: 'Balanced reasoning' },
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', contextK: 200, note: 'Strongest reasoning, highest cost' },
 ]
 
 export const DEFAULT_ANTHROPIC_MODEL = ANTHROPIC_MODELS[0].id
+
+/** A saved model ID that is not in the current list (e.g. a retired alias) falls back to the default. */
+export function resolveAnthropicModel(stored: string | null | undefined): string {
+  return ANTHROPIC_MODELS.some(m => m.id === stored) ? (stored as string) : DEFAULT_ANTHROPIC_MODEL
+}
 
 type AnthropicContentBlock =
   | { type: 'text'; text: string }
