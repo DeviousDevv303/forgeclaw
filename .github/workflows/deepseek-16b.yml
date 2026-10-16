@@ -64,6 +64,10 @@ jobs:
         with:
           path: ~/.cache/huggingface
           key: deepseek-16b-${{ runner.os }}-${{ hashFiles('.github/workflows/deepseek-16b.yml') }}
+          # The key hashes this file, so any edit would otherwise force a full model
+          # re-download. Fall back to the newest earlier cache for this runner OS.
+          restore-keys: |
+            deepseek-16b-${{ runner.os }}-
 
       - name: Install inference dependencies
         run: |
@@ -80,8 +84,12 @@ jobs:
           python - <<'PY'
           import os
           import re
+          import sys
           import time
           import torch
+          # Stops the model narrating results for a tool call it only requested.
+          sys.path.insert(0, '.github/scripts')
+          from deepseek_tool_calls import normalize_tool_call_output
           from transformers import AutoModelForCausalLM, AutoTokenizer
 
           # Use DeepSeek's general conversational checkpoint for the primary
@@ -153,10 +161,16 @@ jobs:
                   '```tool_call\n'
                   '{"name": "tool_name", "arguments": {"key": "value"}}\n'
                   '```\n\n'
-                  'Available tools include: github_write_file (path, content, branch), '
-                  'github_read_file (path), shell_exec (command, working_directory). '
-                  'Do not describe the tool call in prose; emit the structured format '
-                  'above so the orchestrator can execute it.'
+                  'Available tools: github_read_file (path), github_list_files (path), '
+                  'github_search_code (query), github_repo_state (), '
+                  'github_write_file (path, content, branch), '
+                  'shell_exec (command, working_directory; runs read-only in a checkout of the repository), '
+                  'web_search (query, count), memory_read (key), memory_write (key, value). '
+                  'Use only these names; never invent a tool. Emit ONE tool call and then STOP: '
+                  'you cannot see its result, the orchestrator runs it and sends you the real '
+                  'output. Never write what a tool returned, never write "(output: ...)", and '
+                  'never say you executed anything. Do not describe the tool call in prose; '
+                  'emit the structured format above so the orchestrator can execute it.'
                   ),
               },
               {'role': 'user', 'content': user_content},
@@ -267,6 +281,7 @@ jobs:
               result = run_inference(FALLBACK_MODEL)
 
           result, output_cleanup_applied = clean_model_output(result)
+          result, tool_call_tail_dropped = normalize_tool_call_output(result)
 
           creative_retry_attempted = False
           creative_retry_succeeded = False
@@ -299,6 +314,7 @@ jobs:
               try:
                   retry_result = run_inference(model_used, retry_messages, max_new_tokens=512)
                   retry_result, retry_cleanup_applied = clean_model_output(retry_result)
+                  retry_result, _ = normalize_tool_call_output(retry_result)
                   retry_is_useful = bool(retry_result) and not is_generic_scope_refusal(retry_result)
                   if is_presentation_task(task):
                       retry_is_useful = retry_is_useful and has_presentation_structure(retry_result)
@@ -326,6 +342,7 @@ jobs:
                   f'creative_retry_attempted={str(creative_retry_attempted).lower()}\n'
                   f'creative_retry_succeeded={str(creative_retry_succeeded).lower()}\n'
                   f'output_cleanup_applied={str(output_cleanup_applied).lower()}\n'
+                  f'tool_call_tail_dropped={str(tool_call_tail_dropped).lower()}\n'
                   f'elapsed_seconds={elapsed}\n'
               )
           print(f'Wrote DeepSeek result for {invocation_id} using {model_used}')
