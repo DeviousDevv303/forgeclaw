@@ -1240,9 +1240,14 @@ function App() {
         emitForge({ type: 'TOOL_START', tool: call.name, iter: 0 })
         // A malformed direct call is reported back with its usage; it is never
         // executed and never handed to the model as a fallback.
-        const output = explicitTool.error ?? await executeTool(call, { ...toolCtx, actor: 'operator' })
+        const rawOutput = explicitTool.error ?? await executeTool(call, { ...toolCtx, actor: 'operator' })
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
-        const isError = isToolFailureOutput(output)
+        // Surface parser adjustments (e.g. an auto-closed quote) so nothing is guessed silently.
+        const output = explicitTool.notes?.length && !explicitTool.error
+          ? `[parser note: ${explicitTool.notes.join('; ')}]\n${rawOutput}`
+          : rawOutput
+        // Judge the tool's own output: the parser-note prefix must not hide a leading [TOOL ERROR] or ✗.
+        const isError = isToolFailureOutput(rawOutput)
         const result: ToolResult = { toolCallId: call.id, name: call.name, output, isError }
         setCodingAgentState(recordToolProgress(call.name, output))
         setActivityLog(prev => prev.map(entry => entry.id === activityId ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' } : entry))
