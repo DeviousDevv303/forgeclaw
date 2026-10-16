@@ -25,6 +25,8 @@ import type { ProviderId } from './lib/modelProviders'
 import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
 import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
+import { isToolFailureOutput } from './lib/toolOutcome'
 import { DEFAULT_MOONSHOT_MODEL } from './lib/ai/providers/moonshotProvider'
 import { corpusRepository } from './lib/corpus'
 import { parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
@@ -192,7 +194,6 @@ function getSpeechErrorMessage(error?: string): string {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
-const DEFAULT_ANTHROPIC_MODEL = anthropicProvider.models[0]?.id ?? 'claude-3-5-haiku-latest'
 const RESPONSE_LANGUAGE_INSTRUCTIONS: Record<string, string> = {
   en: 'Respond in English unless the user asks for another language.',
   es: 'Respond in Spanish unless the user asks for another language.',
@@ -389,7 +390,7 @@ function readAnthropicKey(): string {
   return anthropicProvider.isConfigured(key) ? key : ''
 }
 function readAnthropicModel(): string {
-  return safeGetItem('fm_anthropic_model') || DEFAULT_ANTHROPIC_MODEL
+  return resolveAnthropicModel(safeGetItem('fm_anthropic_model'))
 }
 function readAnthropicWorkspaceId(): string {
   return safeGetItem('fm_anthropic_workspace_id') || ''
@@ -1241,7 +1242,7 @@ function App() {
         // executed and never handed to the model as a fallback.
         const output = explicitTool.error ?? await executeTool(call, { ...toolCtx, actor: 'operator' })
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
-        const isError = output.startsWith('[TOOL ERROR]') || /^\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(output)
+        const isError = isToolFailureOutput(output)
         const result: ToolResult = { toolCallId: call.id, name: call.name, output, isError }
         setCodingAgentState(recordToolProgress(call.name, output))
         setActivityLog(prev => prev.map(entry => entry.id === activityId ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' } : entry))
@@ -1285,7 +1286,7 @@ function App() {
         const output = await executeTool(call, toolCtx)
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
 
-        const isError = output.startsWith('[TOOL ERROR]') || /^\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(output)
+        const isError = isToolFailureOutput(output)
         const result: ToolResult = {
           toolCallId: call.id,
           name: call.name,
@@ -1466,7 +1467,7 @@ function App() {
             ? 'Skipped: github_repo_state already provided the authoritative repository HEAD; shell execution was not needed.'
             : await executeTool(call, toolCtx)
           if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
-          const isErr = output.startsWith('[TOOL ERROR]') || /^\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(output)
+          const isErr = isToolFailureOutput(output)
           toolAttempts.push({
             name: call.name,
             input: JSON.stringify(call.input, Object.keys(call.input).sort()),
