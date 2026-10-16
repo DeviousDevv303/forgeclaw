@@ -162,10 +162,11 @@ describe('direct dispatch covers the operator tool set', () => {
     expect(call.error).toContain('Usage:')
   })
 
+  // A missing quote that is NOT on the final argument cannot be closed safely: fail loudly.
   it.each([
-    ['github_verify_commit sha="c675c35', 'sha'],
-    ["github_read_file path='src/App.tsx", 'path'],
-    ['github_search_code query="unclosed text', 'query'],
+    ['github_verify_commit sha="c675c35 branch=main', 'sha'],
+    ["github_read_file path='src/App.tsx ref=main", 'path'],
+    ['github_search_code query="unclosed text then q=1', 'query'],
   ])('rejects an unterminated quote in %s without calling anything', (prompt, arg) => {
     const call = route(prompt)!
     expect(call.error).toContain('unterminated quote')
@@ -185,6 +186,56 @@ describe('direct dispatch covers the operator tool set', () => {
   it('does not accept a lookalike opener with a plain closer silently truncated', () => {
     const call = route('memory_write key="blade_note" value="check root bolts\u2E42')!
     expect(call.error).toContain('unterminated quote')
+  })
+
+  it('names the codepoint of an unrecognized closing character in the error', () => {
+    const call = route('web_search query="wind turbine blade erosion\u2E42 count=3')!
+    expect(call.error).toContain('unterminated quote')
+    expect(call.error).toContain('U+2E42')
+  })
+
+  it('adds no codepoint hint when the command is plain ASCII', () => {
+    const call = route('web_search query="unclosed text count=3')!
+    expect(call.error).toContain('unterminated quote')
+    expect(call.error).not.toContain('U+')
+  })
+
+  // Phone logs: the closing quote of the last argument goes missing. Close it at end of line,
+  // report it, and never guess when anything else is ambiguous.
+  it.each([
+    ['github_verify_commit sha="c675c35', { sha: 'c675c35' }],
+    ['web_search query="wind turbine blade erosion', { query: 'wind turbine blade erosion' }],
+    ['memory_write key="blade_note" value="check root bolts', { key: 'blade_note', value: 'check root bolts' }],
+    ['web_search query="wind turbine blade" count="3', { query: 'wind turbine blade', count: '3' }],
+    ["github_read_file path='src/App.tsx", { path: 'src/App.tsx' }],
+  ])('auto-closes a missing final quote in %s and says so', (prompt, input) => {
+    const call = route(prompt)!
+    expect(call.error).toBeUndefined()
+    expect(call.input).toEqual(input)
+    expect(call.notes?.[0]).toContain('closing quote was missing')
+  })
+
+  it('does not auto-close when the text holds a lookalike quote or another key=value', () => {
+    expect(route('memory_write key="k" value="a\u2E42')!.error).toContain('U+2E42')
+    expect(route('memory_write key="k value="v"')!.error).toBeDefined()
+  })
+
+  it('does not auto-close an empty value (nothing was typed after the quote)', () => {
+    expect(route('github_verify_commit sha="')!.error).toBeDefined()
+  })
+
+  it.each([
+    '. memory_write key="blade_note" value="check root bolts"',
+    '.\nmemory_write key="blade_note" value="check root bolts"',
+    '$ memory_read key=blade_note',
+    '> memory_list',
+  ])('ignores a leading prompt character before the tool name: %s', (prompt) => {
+    expect(isExplicitToolRequest(prompt)).toBe(true)
+    expect(route(prompt)!.error).toBeUndefined()
+  })
+
+  it('does not treat a leading dot before ordinary text as a tool request', () => {
+    expect(isExplicitToolRequest('. what is the weather')).toBe(false)
   })
 
   it('still accepts balanced quotes, bare values and quotes inside values', () => {

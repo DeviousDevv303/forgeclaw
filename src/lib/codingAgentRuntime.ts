@@ -199,6 +199,11 @@ function stripToolWrapping(prompt: string): string {
   if (fence) text = fence[1].trim()
   const inline = text.match(/^`([^`\n]+)`$/)
   if (inline) text = inline[1].trim()
+  // A stray prompt character before the tool name (". memory_write …", "$ web_search …",
+  // "> github_repo_state") used to fail tool detection and fall through to the model,
+  // which answered with "cannot determine the task". Strip it; detection still requires
+  // a real tool name afterwards.
+  text = text.replace(/^(?:[.$>]+\s+)+/, '')
   return text
 }
 
@@ -216,6 +221,8 @@ export interface ExplicitToolCall {
   input: Record<string, string>
   /** Set when required arguments are missing; the call must not be executed. */
   error?: string
+  /** Non-fatal adjustments the parser made (e.g. an auto-closed quote); shown with the result. */
+  notes?: string[]
 }
 
 export function extractExplicitToolCall(prompt: string): ExplicitToolCall | null {
@@ -227,23 +234,46 @@ export function extractExplicitToolCall(prompt: string): ExplicitToolCall | null
   const input: Record<string, string> = {}
   const argPattern = /(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g
   const malformed: string[] = []
-  let m; while ((m = argPattern.exec(match[2] ?? '')) !== null) {
+  const notes: string[] = []
+  const argText = match[2] ?? ''
+  let m; while ((m = argPattern.exec(argText)) !== null) {
     // A value that opens a quote it never closes (e.g. sha="abc with the closing
     // quote lost on a phone keyboard) would otherwise be sent with the quote
     // character inside it and surface as a misleading "not found" from GitHub.
-    if (m[4] !== undefined && /^["']/.test(m[4])) malformed.push(m[1])
+    if (m[4] !== undefined && /^["']/.test(m[4])) {
+      // Phone logs show the closing quote of the LAST argument going missing
+      // (`query="wind turbine blade erosion`). When nothing follows that could be another
+      // key=value pair and the text is plain ASCII, the intent is unambiguous: close the
+      // quote at the end of the line and say so. Anything else still fails loudly, so a
+      // lookalike quote character or a quote lost mid-command is never guessed at.
+      const restStart = m.index + m[0].length - m[4].length + 1
+      const rest = argText.slice(restStart).trim()
+      const followedByAnotherArg = /\w+\s*=/.test(rest)
+      const nonAscii = /[\u0080-\uFFFF]/.test(rest)
+      if (rest && !followedByAnotherArg && !nonAscii) {
+        input[m[1]] = rest
+        notes.push(`closing quote was missing on ${m[1]}; read it as ${m[1]}="${rest}"`)
+        break
+      }
+      malformed.push(m[1])
+    }
     input[m[1]] = m[2] ?? m[3] ?? m[4] ?? ''
   }
   // Operator-typed writes carry an explicit commit intent instead of a generic fallback.
   if (name === 'github_write_file' && !input.message?.trim() && input.path) input.message = `operator direct write: ${input.path}`
   const spec = DIRECT_TOOLS[name]
   if (malformed.length) {
-    return { name, input, error: `[TOOL ERROR] ${name} has an unterminated quote in argument${malformed.length > 1 ? 's' : ''}: ${malformed.join(', ')}. Nothing was sent. Usage: ${spec.usage}` }
+    // Name any non-ASCII characters in the arguments: a closing quote the parser does not
+    // recognize is the usual cause, and its codepoint says exactly what to add.
+    const odd = [...new Set([...(match[2] ?? '')].filter(ch => ch.charCodeAt(0) > 0x7E))]
+      .map(ch => `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}`)
+    const hint = odd.length ? ` Unrecognized non-ASCII characters in the command: ${odd.join(', ')}.` : ''
+    return { name, input, error: `[TOOL ERROR] ${name} has an unterminated quote in argument${malformed.length > 1 ? 's' : ''}: ${malformed.join(', ')}.${hint} Nothing was sent. Usage: ${spec.usage}` }
   }
   const missing = spec.required.filter(key => !(key in input) || (!EMPTY_ALLOWED_ARGS.has(key) && !input[key].trim()))
   return missing.length
     ? { name, input, error: `[TOOL ERROR] ${name} is missing required argument${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}. Usage: ${spec.usage}` }
-    : { name, input }
+    : notes.length ? { name, input, notes } : { name, input }
 }
 
 /** True when the user is asking for a repository's authoritative main HEAD. */
