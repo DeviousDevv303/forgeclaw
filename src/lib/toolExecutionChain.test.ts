@@ -753,3 +753,53 @@ describe.skipIf(!live)('live GitHub execution (NEXUS → tool → GitHub API →
     expect(output).toContain('VERIFICATION FAILED')
   })
 })
+
+describe('shell_exec run discovery diagnostics', () => {
+  const dispatchCtx = () => ({ ...ctx(), ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
+  const runDiscovery = async (listRuns: (invocationId: string) => unknown) => {
+    vi.useFakeTimers()
+    let invocationId = ''
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      if (url.pathname.endsWith('/dispatches')) {
+        invocationId = (JSON.parse(String(init?.body)) as { inputs: { invocation_id: string } }).inputs.invocation_id
+        return new Response(null, { status: 204 })
+      }
+      if (url.pathname.endsWith('/runs')) {
+        const listed = listRuns(invocationId)
+        return listed instanceof Response ? listed : Response.json(listed)
+      }
+      throw new Error(`Unexpected request: ${url}`)
+    }))
+    const pending = executeTool({ id: 'diag', name: 'shell_exec', input: { command: 'ls -la', wait: false } }, dispatchCtx())
+    const settled = pending.then(value => ({ value }), error => ({ error: String(error) }))
+    await vi.advanceTimersByTimeAsync(130_000)
+    const result = await settled
+    vi.useRealTimers()
+    return 'value' in result ? result.value : result.error
+  }
+
+  it('says a run with the invocation ID was listed but rejected, and why (clock skew case)', async () => {
+    const output = await runDiscovery(id => ({ workflow_runs: [{
+      id: 7, name: `Shell exec ${id}`, display_title: `Shell exec ${id}`, event: 'workflow_dispatch', status: 'completed',
+      conclusion: 'success', created_at: new Date(Date.now() - 10 * 60_000).toISOString(), head_branch: 'main',
+      html_url: 'https://github.com/x/y/actions/runs/7', run_number: 1,
+    }] }))
+    expect(output).toContain('was not found')
+    expect(output).toContain('listed but rejected')
+    expect(output).toContain('clock may be ahead')
+    expect(output).toContain('shell-exec.yml')
+  })
+
+  it('says no run carried the ID when the list simply lacks it', async () => {
+    const output = await runDiscovery(() => ({ workflow_runs: [] }))
+    expect(output).toContain('was not found')
+    expect(output).toContain('no listed run carried this invocation ID')
+  })
+
+  it('reports the swallowed error when the run list never reads successfully', async () => {
+    const output = await runDiscovery(() => new Response('upstream', { status: 503 }))
+    expect(output).toContain('no run list was ever read successfully')
+    expect(output).toContain('GitHub runs list 503')
+  })
+})

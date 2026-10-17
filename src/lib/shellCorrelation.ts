@@ -34,19 +34,35 @@ export function isCorrelatedShellRun(
   dispatchedAt: number,
   now = Date.now(),
 ): boolean {
-  if (typeof run.id !== 'number' || !Number.isInteger(run.id) || run.id <= 0) return false
-  if (run.event !== 'workflow_dispatch') return false
-  if (run.head_branch !== 'main') return false
+  return explainShellRunMismatch(run, invocationId, dispatchedAt, now) === null
+}
+
+/**
+ * Why a listed run was not accepted as this dispatch's run, or null when it is accepted.
+ * Single source of truth for isCorrelatedShellRun, so a diagnostic can never disagree with the
+ * real decision. Reasons are short and safe to show; GitHub-supplied values are not echoed here.
+ */
+export function explainShellRunMismatch(
+  run: Partial<ShellWorkflowRun>,
+  invocationId: string,
+  dispatchedAt: number,
+  now = Date.now(),
+): string | null {
+  if (typeof run.id !== 'number' || !Number.isInteger(run.id) || run.id <= 0) return 'run has no valid id'
+  if (run.event !== 'workflow_dispatch') return 'event is not workflow_dispatch'
+  if (run.head_branch !== 'main') return 'head_branch is not main'
   // Match invocation ID in name or display_title — GitHub may truncate or vary display_title.
   const label = `${run.name ?? ''} ${run.display_title ?? ''}`
-  if (!label.includes(invocationId)) return false
-  if (typeof run.created_at !== 'string' || run.created_at.length === 0) return false
+  if (!label.includes(invocationId)) return 'run name does not contain the invocation ID'
+  if (typeof run.created_at !== 'string' || run.created_at.length === 0) return 'created_at is missing'
 
   const createdAt = Date.parse(run.created_at)
-  if (Number.isNaN(createdAt)) return false
+  if (Number.isNaN(createdAt)) return 'created_at is not a valid time'
   // Allow GitHub's dispatch/indexing delay and modest clock skew, but never
   // accept an old run or a run that claims to be from the future.
-  return createdAt >= dispatchedAt - 60_000 && createdAt <= now + 60_000
+  if (createdAt < dispatchedAt - 60_000) return `created_at is ${Math.round((dispatchedAt - createdAt) / 1000)}s before dispatch (limit 60s); this device's clock may be ahead of GitHub's`
+  if (createdAt > now + 60_000) return `created_at is ${Math.round((createdAt - now) / 1000)}s in this device's future (limit 60s); this device's clock may be behind GitHub's`
+  return null
 }
 
 /**

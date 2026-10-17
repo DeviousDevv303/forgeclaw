@@ -23,7 +23,7 @@ import {
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign, type GuardianPosture, DEFAULT_GUARDIAN_POSTURE, postureFromTier1Active } from './guardianGate'
 import { runDdgWorkflowSearch } from './ddgWorkflowSearch'
-import { isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, SHELL_LOG_POLL_INTERVAL_MS, SHELL_LOG_RETRIEVAL_TIMEOUT_MS, SHELL_RUN_LIST_TIMEOUT_MS, type ShellWorkflowRun } from './shellCorrelation'
+import { explainShellRunMismatch, isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, SHELL_LOG_POLL_INTERVAL_MS, SHELL_LOG_RETRIEVAL_TIMEOUT_MS, SHELL_RUN_LIST_TIMEOUT_MS, type ShellWorkflowRun } from './shellCorrelation'
 import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
@@ -1105,7 +1105,19 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           throw new Error(describeGithubDispatchFailure(dispatchRes.status, dispatchRes.statusText))
         }
 
+        // What discovery saw, so a "not found" can say why instead of guessing. Names and IDs only;
+        // nothing here is secret, and GitHub-supplied text is truncated before it is shown.
+        const discovery = {
+          polls: 0,
+          lastError: '' as string,
+          listed: -1,
+          newest: '' as string,
+          sameIdReason: '' as string,
+        }
+        const brief = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').slice(0, 80)
+
         const findCorrelatedRun = async (): Promise<ShellWorkflowRun | undefined> => {
+          discovery.polls += 1
           const runsRes = await toolFetch(
             ctx,
             `${workflowUrl}/runs?event=workflow_dispatch&per_page=100`,
@@ -1117,6 +1129,13 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
           const runsData = await runsRes.json() as { workflow_runs?: ShellWorkflowRun[] }
           const runs = runsData.workflow_runs || []
+          discovery.listed = runs.length
+          const newest = runs[0]
+          discovery.newest = newest
+            ? `"${brief(newest.name || newest.display_title)}" created ${brief(newest.created_at)} (${brief(newest.event)}, ${brief(newest.head_branch)})`
+            : 'none'
+          const sameId = runs.find(run => `${run.name ?? ''} ${run.display_title ?? ''}`.includes(invocationId))
+          discovery.sameIdReason = sameId ? (explainShellRunMismatch(sameId, invocationId, dispatchStartedAt) ?? '') : ''
           return runs.find(run => isCorrelatedShellRun(run, invocationId, dispatchStartedAt))
         }
 
@@ -1135,6 +1154,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
             // dispatched workflow. Keep polling within the bounded window;
             // authentication and configuration failures still surface.
             const detail = error instanceof Error ? error.message : String(error)
+            discovery.lastError = brief(detail)
             if (!/timed out|failed to fetch|network|GitHub runs list (?:429|500|502|503|504)/i.test(detail)) throw error
           }
           if (run) break
@@ -1151,7 +1171,17 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
 
         if (!run) {
-          throw new Error(`Shell execution dispatched but correlated run "${invocationId}" was not found.`)
+          const sameIdLine = discovery.listed < 0
+            ? 'no run list was ever read successfully'
+            : discovery.sameIdReason
+              ? `a run with this invocation ID was listed but rejected: ${discovery.sameIdReason}`
+              : `no listed run carried this invocation ID (${discovery.listed} run(s) in the last list)`
+          throw new Error(
+            `Shell execution dispatched but correlated run "${invocationId}" was not found.\n`
+            + `Discovery: ${discovery.polls} poll(s) over ${Math.round((Date.now() - dispatchStartedAt) / 1000)}s; `
+            + `last swallowed error: ${discovery.lastError || 'none'}; ${sameIdLine}; newest listed run: ${discovery.newest || 'n/a'}.\n`
+            + `Runs: https://github.com/${sOwner}/${sRepo}/actions/workflows/shell-exec.yml`,
+          )
         }
 
         if (!shouldWait) {
