@@ -29,6 +29,7 @@ import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { isToolFailureOutput } from './lib/toolOutcome'
 import { createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
 import { outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
+import { routeLiveDataQuestion } from './lib/liveDataRouting'
 import { DEFAULT_MOONSHOT_MODEL } from './lib/ai/providers/moonshotProvider'
 import { corpusRepository } from './lib/corpus'
 import { parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
@@ -1266,7 +1267,13 @@ function App() {
         ? extractExplicitShellCommand(promptText)
         : null
       const toolDetected = !directShellCommand && isExplicitToolRequest(promptText)
-      const explicitTool = toolDetected ? extractExplicitToolCall(promptText) : null
+      // Live-world questions ("any UFC fights tonight?") go straight to web_search on the DeepSeek
+      // provider: its 16B CPU workflow takes 9-23 min per hop and has no live data. Other providers
+      // can call tools themselves, so they are left alone.
+      const liveDataCall = !directShellCommand && !toolDetected && !imageUrl && activeProvider === 'corpus'
+        ? routeLiveDataQuestion(promptText)
+        : null
+      const explicitTool = toolDetected ? extractExplicitToolCall(promptText) : liveDataCall
       if (explicitTool) {
         const call: ToolCall = { id: `direct-tool-${Date.now()}`, name: explicitTool.name, input: explicitTool.input }
         const activityId = `act_${call.id}`
