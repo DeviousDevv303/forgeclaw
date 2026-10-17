@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  explainShellRunMismatch,
   isCorrelatedShellRun,
   MAX_SHELL_OUTPUT_CHARS,
   normalizeShellWorkingDirectoryInput,
@@ -147,5 +148,32 @@ describe('Shell execution log parsing', () => {
       commandOutput: 'command output',
       exitCode: 1,
     })
+  })
+})
+
+describe('explainShellRunMismatch', () => {
+  it('returns null exactly when the run is accepted', () => {
+    expect(explainShellRunMismatch(run(), invocationId, dispatchedAt, now)).toBeNull()
+  })
+
+  it('agrees with isCorrelatedShellRun for every rejection it explains', () => {
+    const cases: Array<Partial<ShellWorkflowRun>> = [
+      run({ event: 'push' }),
+      run({ head_branch: 'feature' }),
+      run({ name: 'other', display_title: 'other' }),
+      run({ created_at: 'not a date' }),
+      run({ created_at: '2026-09-30T13:50:00.000Z' }),
+      run({ created_at: '2026-09-30T14:10:00.000Z' }),
+      run({ id: 0 }),
+    ]
+    for (const candidate of cases) {
+      expect(explainShellRunMismatch(candidate, invocationId, dispatchedAt, now)).toEqual(expect.any(String))
+      expect(isCorrelatedShellRun(candidate, invocationId, dispatchedAt, now)).toBe(false)
+    }
+  })
+
+  it('names clock skew in both directions', () => {
+    expect(explainShellRunMismatch(run({ created_at: '2026-09-30T13:50:00.000Z' }), invocationId, dispatchedAt, now)).toContain('clock may be ahead')
+    expect(explainShellRunMismatch(run({ created_at: '2026-09-30T14:10:00.000Z' }), invocationId, dispatchedAt, now)).toContain('clock may be behind')
   })
 })
