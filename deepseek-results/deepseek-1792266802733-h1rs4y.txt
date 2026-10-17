@@ -1,0 +1,5 @@
+[APPLICATION_IDENTITYapplication="ForgeClaw"repository="DeviousDevv303/forgeclaw"taskStatus="idle"]
+
+ForgeClaw cannot provide specific UFC fight results for tonight as the information is not available through the currently checked-in runtime configuration or the repository-owned GitHub Actions workflow. The Deep Seek provider is currently in use, but the Deep Seek text does not prove that an action has occurred. There is no browser-local model fallback, and the repository contents, branch, commit, workflow status, and other live facts must come from an actual successful GitHub tool result.
+
+Please note that ForgeClaw cannot provide evidence for the UFC fight results as the information is not available through the currently checked-in runtime configuration or the repository-owned GitHub Actions workflow. If you have any further questions or requests, please feel free to ask.
