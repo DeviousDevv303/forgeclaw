@@ -1,0 +1,1 @@
+The reason for the failure of the "IsthereanyUFCfightstonight" query is that the Deep Seek 16B model is not available, so the workflow falls back to the public 1.3B checkpoint. This results in a boilerplate refusal with no data returned. The user's request, "IsthereanyUFCfightstonight", was not fulfilled because the model could not load or run.
