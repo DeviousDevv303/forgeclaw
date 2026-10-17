@@ -220,6 +220,20 @@ describe('direct dispatch covers the operator tool set', () => {
     expect(route('memory_write key="k value="v"')!.error).toBeDefined()
   })
 
+  it.each([
+    ['web_search query="wind turbine blade erosion,', 'wind turbine blade erosion'],
+    ['web_search query="wind turbine blade erosion;', 'wind turbine blade erosion'],
+  ])('drops trailing separator punctuation from an auto-closed value in %s', (prompt, query) => {
+    const call = route(prompt)!
+    expect(call.error).toBeUndefined()
+    expect(call.input).toEqual({ query })
+    expect(call.notes?.[0]).toContain(`query="${query}"`)
+  })
+
+  it('treats a value that is only separator punctuation as empty', () => {
+    expect(route('web_search query=",')!.error).toBeDefined()
+  })
+
   it('does not auto-close an empty value (nothing was typed after the quote)', () => {
     expect(route('github_verify_commit sha="')!.error).toBeDefined()
   })
