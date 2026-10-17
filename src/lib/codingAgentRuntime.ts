@@ -250,9 +250,11 @@ export function extractExplicitToolCall(prompt: string): ExplicitToolCall | null
       const rest = argText.slice(restStart).trim()
       const followedByAnotherArg = /\w+\s*=/.test(rest)
       const nonAscii = /[\u0080-\uFFFF]/.test(rest)
-      if (rest && !followedByAnotherArg && !nonAscii) {
-        input[m[1]] = rest
-        notes.push(`closing quote was missing on ${m[1]}; read it as ${m[1]}="${rest}"`)
+      // A trailing , or ; is separator punctuation from how the line was typed, not part of the value.
+      const value = rest.replace(/[,;]+$/, '').trimEnd()
+      if (value && !followedByAnotherArg && !nonAscii) {
+        input[m[1]] = value
+        notes.push(`closing quote was missing on ${m[1]}; read it as ${m[1]}="${value}"`)
         break
       }
       malformed.push(m[1])

@@ -27,6 +27,7 @@ import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { isToolFailureOutput } from './lib/toolOutcome'
+import { outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { DEFAULT_MOONSHOT_MODEL } from './lib/ai/providers/moonshotProvider'
 import { corpusRepository } from './lib/corpus'
 import { parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
@@ -736,6 +737,8 @@ function App() {
   const chatListeningRef = useRef(false)
   const voiceTranscriptRef = useRef('')
   const chatVoiceSpokenRef = useRef('')
+  // Last spoken text that fed a prompt, so the learning log can tell voice prompts from typed ones.
+  const voiceOriginRef = useRef('')
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const utterancesRef = useRef<SpeechSynthesisUtterance[]>([])         // prevent Chrome GC of in-flight utterances
@@ -807,22 +810,39 @@ function App() {
     chatRecognitionRef.current?.stop()
   }, [])
 
-  const logToCorpus = async (prompt: string, response: string, source: string) => {
+  const promptOrigin = (prompt: string): 'voice' | 'typed' => {
+    const spoken = voiceOriginRef.current.trim()
+    return spoken && prompt.includes(spoken) ? 'voice' : 'typed'
+  }
+
+  /** Record one learning event (voice/chat/tool/shell) as an unapproved CORPUS candidate. Best-effort; never blocks the request. */
+  const recordLearning = async (event: Omit<LearningEventInput, 'runtime' | 'model'>) => {
+    const stored = await recordLearningEvent({ ...event, runtime: activeProvider, model: normalizedActiveModel })
+    if (!stored && event.input.trim()) {
+      emitFailure({ source: 'forgemind', severity: 'warning', message: 'CORPUS learning event was not stored (local storage unavailable or full).' })
+    }
+  }
+
+  const logToCorpus = async (
+    prompt: string,
+    response: string,
+    source: string,
+    event: Partial<Pick<LearningEventInput, 'channel' | 'outcome' | 'toolName' | 'actor'>> = {},
+  ) => {
     setCorpus(prev => {
       const next = [...prev, { prompt, response, source, timestamp: new Date().toISOString() }]
       return next.length > CORPUS_MAX ? next.slice(next.length - CORPUS_MAX) : next
     })
-    try {
-      await corpusRepository.appendInteraction({
-        input: prompt,
-        context: '',
-        result: response,
-        runtime: activeProvider,
-        model: normalizedActiveModel,
-      })
-    } catch (error) {
-      emitFailure({ source: 'forgemind', severity: 'warning', message: `DeepSeek local persistence unavailable: ${error instanceof Error ? error.message : String(error)}` })
-    }
+    const origin = promptOrigin(prompt)
+    await recordLearning({
+      channel: event.channel ?? (origin === 'voice' ? 'voice' : 'chat'),
+      input: prompt,
+      result: response,
+      outcome: event.outcome ?? 'completed',
+      toolName: event.toolName,
+      actor: event.actor,
+      origin,
+    })
   }
 
   const parseAndExecuteTags = (text: string) => {
@@ -974,6 +994,7 @@ function App() {
         })
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         const isError = output.startsWith('[TOOL ERROR]')
+        void recordLearning({ channel: 'tool', input: `ask_deepseek ${JSON.stringify(call.input)}`, result: output, outcome: outcomeFromToolOutput(output), toolName: call.name, actor: 'operator' })
         setActivityLog(prev => prev.map(entry => entry.id === activityId
           ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' }
           : entry,
@@ -1248,6 +1269,7 @@ function App() {
           : rawOutput
         // Judge the tool's own output: the parser-note prefix must not hide a leading [TOOL ERROR] or ✗.
         const isError = isToolFailureOutput(rawOutput)
+        void recordLearning({ channel: 'tool', input: promptText, result: rawOutput, outcome: outcomeFromToolOutput(rawOutput), toolName: call.name, actor: 'operator', origin: promptOrigin(promptText) })
         const result: ToolResult = { toolCallId: call.id, name: call.name, output, isError }
         setCodingAgentState(recordToolProgress(call.name, output))
         setActivityLog(prev => prev.map(entry => entry.id === activityId ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' } : entry))
@@ -1327,7 +1349,7 @@ function App() {
         setRequestStatus(isError ? 'blocked' : 'success')
         setLastRequestError(isError ? output : '')
         setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
-        await logToCorpus(promptText, output, `${activeProvider}:${normalizedActiveModel}`)
+        await logToCorpus(promptText, output, `${activeProvider}:${normalizedActiveModel}`, { channel: 'shell', outcome: outcomeFromToolOutput(output), toolName: 'shell_exec', actor: 'operator' })
         resolveTask(taskId)
         return
       }
@@ -1473,6 +1495,7 @@ function App() {
             : await executeTool(call, toolCtx)
           if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
           const isErr = isToolFailureOutput(output)
+          void recordLearning({ channel: call.name === 'shell_exec' ? 'shell' : 'tool', input: `${call.name} ${JSON.stringify(call.input)}`, result: output, outcome: output.startsWith('Skipped:') ? 'attempted' : outcomeFromToolOutput(output), toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
           toolAttempts.push({
             name: call.name,
             input: JSON.stringify(call.input, Object.keys(call.input).sort()),
@@ -2079,6 +2102,7 @@ function App() {
     const text = voiceTranscript.trim()
     if (!text) return
     stopVoiceRecognition()
+    voiceOriginRef.current = text
     setActiveTab('forgemind')
     if (sendNow) {
       setInput('')
@@ -2116,6 +2140,7 @@ function App() {
     chatListeningRef.current = true
     startRecognition((text) => {
       const spokenText = text.trim()
+      if (spokenText) voiceOriginRef.current = spokenText
       const basePrompt = chatVoiceBaseRef.current
       setInput(basePrompt && spokenText ? `${basePrompt} ${spokenText}` : spokenText || basePrompt)
     }, setChatListening, chatRecognitionRef, {
@@ -2505,7 +2530,7 @@ function App() {
                   <div style={{ height: '100%', width: `${Math.min(100, (corpus.length / CORPUS_MAX) * 100).toFixed(1)}%`, background: corpus.length >= CORPUS_MAX ? '#f97316' : '#22c55e', transition: 'width 0.3s' }} />
                 </div>
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '6px' }}>
-                  Every interaction is captured automatically. Oldest entries roll off at {CORPUS_MAX.toLocaleString()}. Used as context on similar future queries.
+                  Chat, voice, tool and shell activity is recorded locally as unapproved learning candidates (secrets redacted). Nothing is trusted or learned from until it is admitted. This counter is the recent-context buffer; oldest entries roll off at {CORPUS_MAX.toLocaleString()}.
                 </div>
               </div>
 
