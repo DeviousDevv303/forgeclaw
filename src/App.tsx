@@ -1,6 +1,6 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { FileUploadButton } from './components/FileUploadButton'
 import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
 // import { SupabaseProvider } from './components/SupabaseProvider'
@@ -27,6 +27,7 @@ import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { isToolFailureOutput } from './lib/toolOutcome'
+import { createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
 import { outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { DEFAULT_MOONSHOT_MODEL } from './lib/ai/providers/moonshotProvider'
 import { corpusRepository } from './lib/corpus'
@@ -629,9 +630,16 @@ function App() {
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
   const [selectedLanguage, setSelectedLanguage] = useState<string>('en')
   const [rate] = useState<number>(1.0)
-  const [elApiKey, setElApiKey] = useState<string>(() => safeGetItem('fc_el_api_key') || '')
-  const [elVoiceId, setElVoiceId] = useState<string>(() => safeGetItem('fc_el_voice_id') || '')
-  const elAudioRef = useRef<HTMLAudioElement | null>(null)
+  // Single owner of read-aloud: one voice at a time, stopped by a new read-aloud or by the mic,
+  // and deliberately NOT stopped when the app is hidden or the view changes (see lib/speech.ts).
+  const speech = useMemo(() => createSpeechController({
+    // The controller only needs a narrow slice of the browser API; cast once at this boundary.
+    synth: (typeof window !== 'undefined' && 'speechSynthesis' in window
+      ? window.speechSynthesis
+      : { speak: () => {}, cancel: () => {}, resume: () => {} }) as unknown as SpeechSynthLike,
+    createUtterance: text => new SpeechSynthesisUtterance(text) as unknown as SpeechUtteranceLike,
+    onChange: setSpeakingId,
+  }), [])
   const [openReasoningIds, setOpenReasoningIds] = useState<Set<string>>(new Set())
   const [hoveredStepId, setHoveredStepId] = useState<string | null>(null)
   const [showConnectors, setShowConnectors] = useState(false)
@@ -741,7 +749,6 @@ function App() {
   const voiceOriginRef = useRef('')
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const utterancesRef = useRef<SpeechSynthesisUtterance[]>([])         // prevent Chrome GC of in-flight utterances
   const ttsResumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const LANGUAGE_NAMES: Record<string, string> = {
@@ -793,6 +800,13 @@ function App() {
     // Set handler BEFORE first getVoices() call — fixes Chrome voice-loading race
     window.speechSynthesis.onvoiceschanged = loadVoices
     loadVoices()
+  }, [])
+
+  // ElevenLabs support was removed at the operator's request; drop any key/voice ID saved earlier
+  // so nothing sensitive is left behind in local storage.
+  useEffect(() => {
+    safeRemoveItem('fc_el_api_key')
+    safeRemoveItem('fc_el_voice_id')
   }, [])
 
   // Keep Chrome TTS engine warm — prevents silent jams after long idle periods
@@ -1753,135 +1767,15 @@ function App() {
     navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000)
   }
 
-  const browserSpeak = (id: string, clean: string) => {
-    if (!clean) { setSpeakingId(null); return }
-    const synth = window.speechSynthesis
-    console.log('[TTS] browserSpeak called:', { id, chars: clean.length })
-    synth.cancel()
-
-    const u = new SpeechSynthesisUtterance(clean)
-    utterancesRef.current.push(u)
-
-    const voice = getVoiceForLanguage(selectedLanguage)
-    if (voice) { u.voice = voice; console.log('[TTS] voice:', voice.name) }
-    else { console.warn('[TTS] no voice found for lang:', selectedLanguage) }
-    u.rate = rate
-
-    let started = false
-    u.onstart = () => { started = true; console.log('[TTS] onstart fired') }
-    u.onerror  = (e) => {
-      console.warn('[TTS] onerror:', e.error)
-      setSpeakingId(null)
-      utterancesRef.current = utterancesRef.current.filter(x => x !== u)
-    }
-    u.onend = () => {
-      console.log('[TTS] onend')
-      setSpeakingId(null)
-      utterancesRef.current = utterancesRef.current.filter(x => x !== u)
-    }
-
-    setSpeakingId(id)
-    // resume() immediately before speak() — Chrome can re-suspend in the gap if called earlier
-    setTimeout(() => {
-      try {
-        synth.resume()
-        synth.speak(u)
-        console.log('[TTS] speak() enqueued — pending:', synth.pending, 'speaking:', synth.speaking)
-        // Jam detection: if onstart hasn't fired in 2s, engine is stuck — retry once
-        setTimeout(() => {
-          if (!started) {
-            console.warn('[TTS] jam detected — auto-retrying')
-            synth.cancel()
-            utterancesRef.current = utterancesRef.current.filter(x => x !== u)
-            const retry = new SpeechSynthesisUtterance(clean)
-            if (voice) retry.voice = voice
-            retry.rate = rate
-            let retryStarted = false
-            retry.onstart = () => { retryStarted = true; console.log('[TTS] retry onstart fired') }
-            retry.onerror = (e) => {
-              console.warn('[TTS] retry onerror:', e.error)
-              setSpeakingId(null)
-              utterancesRef.current = utterancesRef.current.filter(x => x !== retry)
-            }
-            retry.onend   = () => {
-              console.log('[TTS] retry onend')
-              setSpeakingId(null)
-              utterancesRef.current = utterancesRef.current.filter(x => x !== retry)
-            }
-            utterancesRef.current.push(retry)
-            synth.resume()
-            synth.speak(retry)
-            // Give up after another 3s
-            setTimeout(() => {
-              if (!retryStarted) {
-                console.warn('[TTS] retry also jammed — giving up')
-                setSpeakingId(null)
-                utterancesRef.current = utterancesRef.current.filter(x => x !== retry)
-              }
-            }, 3000)
-          }
-        }, 2000)
-      } catch (err) {
-        console.error('[TTS] speak() threw DOMException:', err)
-        setSpeakingId(null)
-        utterancesRef.current = utterancesRef.current.filter(x => x !== u)
-      }
-    }, 150)
-  }
-
-  const handleSpeak = async (id: string, text: string) => {
-    // Stop if already speaking this message
-    if (speakingId === id) {
-      window.speechSynthesis.cancel()
-      elAudioRef.current?.pause()
-      elAudioRef.current = null
-      setSpeakingId(null)
-      return
-    }
-    // Stop anything currently playing
-    window.speechSynthesis.cancel()
-    elAudioRef.current?.pause()
-    elAudioRef.current = null
-
+  const handleSpeak = (id: string, text: string) => {
+    // Pressing the message that is already speaking stops it.
+    if (speakingId === id) { speech.stop(); return }
     const clean = cleanForSpeech(text)
     if (!clean) return
-
-    // ElevenLabs path — requires API key + voice ID
-    if (elApiKey && elVoiceId) {
-      setSpeakingId(id)
-      try {
-        const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${elVoiceId}/stream`, {
-          method: 'POST',
-          headers: {
-            'xi-api-key': elApiKey,
-            'Content-Type': 'application/json',
-            Accept: 'audio/mpeg',
-          },
-          body: JSON.stringify({
-            text: clean,
-            model_id: 'eleven_multilingual_v2',
-            voice_settings: { stability: 0.45, similarity_boost: 0.85, style: 0.35, use_speaker_boost: true },
-          }),
-        })
-        if (!res.ok) throw new Error(`ElevenLabs ${res.status}`)
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        const audio = new Audio(url)
-        elAudioRef.current = audio
-        audio.onended = () => { setSpeakingId(null); URL.revokeObjectURL(url) }
-        audio.onerror = () => { setSpeakingId(null); URL.revokeObjectURL(url) }
-        audio.play()
-      } catch (err) {
-        setSpeakingId(null)
-        emitFailure({ source: 'forgemind', severity: 'warning', message: `ElevenLabs TTS: ${err instanceof Error ? err.message : String(err)}` })
-        browserSpeak(id, clean)
-      }
-      return
-    }
-
-    browserSpeak(id, clean)
+    const voice = getVoiceForLanguage(selectedLanguage)
+    // speak() stops anything already playing first, so two read-alouds never overlap.
+    speech.speak(id, clean, { voice: voice ?? undefined, rate })
   }
-
 
   const handleFeedback = (id: string, type: 'up' | 'down') => {
     const message = messages.find(m => m.id === id)
@@ -2119,6 +2013,7 @@ function App() {
   const toggleVoiceMic = () => {
     if (listening) { stopVoiceRecognition(); return }
     setVoiceInputError('')
+    speech.stop() // starting a voice message ends any read-aloud
     if (chatListening) stopChatVoiceRecognition()
     voiceListeningRef.current = true
     startRecognition((text) => {
@@ -2134,6 +2029,7 @@ function App() {
   const toggleChatVoicePrompt = () => {
     if (chatListening) { stopChatVoiceRecognition(); return }
     setVoiceInputError('')
+    speech.stop() // starting a voice message ends any read-aloud
     if (listening) stopVoiceRecognition()
     chatVoiceBaseRef.current = input.trim()
     chatVoiceSpokenRef.current = ''
@@ -2154,6 +2050,7 @@ function App() {
     setActiveTab(tabId)
     if (tabId === 'voice' && !listening) {
       setVoiceInputError('')
+      speech.stop() // opening the voice tab starts the mic, which ends any read-aloud
       voiceTranscriptRef.current = ''
       setVoiceTranscript('')
       if (chatListening) stopChatVoiceRecognition()
@@ -2592,33 +2489,6 @@ function App() {
                 </div>
               </div>
 
-              {/* ElevenLabs TTS */}
-              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Voice — ElevenLabs API Key
-                </label>
-                <input
-                  type="password"
-                  placeholder="sk_..."
-                  value={elApiKey}
-                  onChange={e => { setElApiKey(e.target.value); safeSetItem('fc_el_api_key', e.target.value) }}
-                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
-                />
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Voice — ElevenLabs Voice ID
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. qNkzaJoHLLdpvgh5tISm"
-                  value={elVoiceId}
-                  onChange={e => { setElVoiceId(e.target.value); safeSetItem('fc_el_voice_id', e.target.value) }}
-                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
-                />
-                <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
-                  Add an ElevenLabs key and custom Voice ID to read ForgeClaw replies aloud. Falls back to browser TTS if empty.
-                </div>
-              </div>
-
               {/* Web Search API key */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -3037,7 +2907,6 @@ function App() {
                       { name: 'Gmail', icon: '📧', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: 'Calendar', icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: 'Web Search', icon: '🔍', key: 'fc_brave_key', connected: !!safeGetItem('fc_brave_key') },
-                      { name: 'ElevenLabs', icon: '🔊', key: 'fc_el_api_key', connected: !!elApiKey },
                       { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
