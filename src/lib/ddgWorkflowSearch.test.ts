@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDdgResults, parseDdgLog, runDdgWorkflowSearch, sanitizeDdgQuery, DDG_RESULT_MARKER } from './ddgWorkflowSearch'
+import { formatDdgResults, parseDdgLog, runDdgWorkflowSearch, sanitizeDdgQuery, DDG_RESULT_MARKER, DDG_MAX_SNIPPET_CHARS } from './ddgWorkflowSearch'
 
 const hits = [{ title: 'Blade erosion', href: 'https://example.com/a', body: 'Leading edge erosion.\nSecond line' }]
 const resultLine = `${DDG_RESULT_MARKER} ${JSON.stringify([{ query: 'q', results: hits }])}`
@@ -19,6 +19,14 @@ describe('parseDdgLog', () => {
 })
 
 describe('formatDdgResults / sanitizeDdgQuery', () => {
+  it('caps very long snippets at the snippet limit', () => {
+    const long = [{ title: 'Long', href: 'https://example.com/l', body: 'word '.repeat(300) }]
+    const out = formatDdgResults('q', 1, [{ query: 'q', results: long }])
+    const snippetLine = out.split('\n').find(line => line.startsWith('   word'))!
+    expect(snippetLine.trim().length).toBeLessThanOrEqual(DDG_MAX_SNIPPET_CHARS + 1)
+    expect(snippetLine.endsWith('…')).toBe(true)
+  })
+
   it('labels results as untrusted and flattens snippets', () => {
     const out = formatDdgResults('q', 5, [{ query: 'q', results: hits }])
     expect(out).toContain('untrusted web content')
