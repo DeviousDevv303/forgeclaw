@@ -10,7 +10,7 @@ on:
   pull_request_review:
     types: [submitted]
   repository_dispatch:
-    types: [claude-task]
+    types: [claude-task, claude-fix]
 
 jobs:
   claude:
@@ -168,3 +168,116 @@ jobs:
           claude_args: |
             --max-turns 15
             --allowedTools Read,Glob,Grep
+
+  # ── claude-fix: ForgeClaw (or the operator) asks Claude to FIX code ────────────────────────────
+  # Added by Claude Sonnet 5.5 at the operator's request ("forgeclaw trigger it to fix code").
+  # Safety model, enforced by steps rather than by the prompt alone:
+  #   - never pushes to main: work happens on claude-fix/<run id>, and the result is a pull request;
+  #   - a protected-path check deletes the branch and fails the run if it touches workflows,
+  #     Guardian/tool-dispatch code, package-control files, foundation tests or the license;
+  #   - the PR is opened by a fixed step, not by the model, and a human still reviews and merges;
+  #   - the task text is passed only as the action's `prompt` input, never interpolated into a shell.
+  # Dispatch: POST /repos/{owner}/{repo}/dispatches  {"event_type":"claude-fix","client_payload":{"prompt":"..."}}
+  claude-fix:
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'claude-fix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: claude-fix
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+      id-token: write
+    env:
+      FIX_BRANCH: claude-fix/${{ github.run_id }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify Anthropic API credential
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPICAPIKEY }}
+          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPICWORKSPACEID }}
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /tmp/anthropic-models.json --write-out '%{http_code}' \
+            --request GET \
+            --header "x-api-key: ${ANTHROPIC_API_KEY}" \
+            --header 'anthropic-version: 2023-06-01' \
+            --header "anthropic-workspace-id: ${ANTHROPIC_WORKSPACE_ID}" \
+            https://api.anthropic.com/v1/models)"
+          echo "Anthropic API HTTP status: ${status}"
+          if [[ "${status}" != 2* ]]; then
+            cat /tmp/anthropic-models.json
+            exit 1
+          fi
+
+      - name: Run Claude Code fix
+        id: claude-fix
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_CUSTOM_HEADERS: |
+            anthropic-workspace-id: ${{ secrets.ANTHROPICWORKSPACEID }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPICAPIKEY }}
+          show_full_output: true
+          display_report: true
+          prompt: |
+            REPOSITORY: ${{ github.repository }}
+            EVENT: repository_dispatch (claude-fix)
+            ACTOR: ${{ github.actor }}
+            WORK BRANCH (use exactly this name): ${{ env.FIX_BRANCH }}
+
+            TASK:
+            ${{ github.event.client_payload.prompt }}
+
+            FORGECLAW FIX BOUNDARY:
+            - This is ForgeClaw. Follow the repository's Guardian and constitutional rules.
+            - Do exactly the requested task. No scope expansion, no unrelated refactors, no new dependencies.
+            - Create the branch named above from main, commit there, and push only that branch. Never push to main.
+            - Do NOT modify: anything under .github/, src/lib/guardianGate.ts, src/lib/forgeTools.ts,
+              src/lib/shellDispatch.ts, tests/foundation/, package.json, package-lock.json, LICENSE.
+              A check will delete your branch and fail the run if you do. If the fix needs one of these,
+              stop and report that instead.
+            - Before committing, run: npx tsc -b, npx eslint ., npx vitest run, npm run build.
+            - Commit message must state: who (Claude via claude-fix), what changed, why, what was tested, what is unverified.
+            - Report concrete evidence. Say "not verified" rather than claiming completion you did not check.
+            - Do not open the pull request yourself; the workflow does that after its checks.
+
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(git checkout -b claude-fix/*),Bash(git add:*),Bash(git commit:*),Bash(git push origin claude-fix/*),Bash(git status:*),Bash(git diff:*),Bash(npm ci),Bash(npm ci --ignore-scripts),Bash(npx tsc -b),Bash(npx eslint .),Bash(npx vitest run:*),Bash(npm run build)"
+
+      - name: Enforce protected paths and open the pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASK_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git fetch origin "$FIX_BRANCH" 2>/dev/null; then
+            echo "No $FIX_BRANCH was pushed; nothing to check or open."
+            exit 0
+          fi
+          changed="$(git diff --name-only origin/main...FETCH_HEAD)"
+          echo "Files changed on $FIX_BRANCH:"
+          echo "$changed"
+          protected='^(\.github/|src/lib/guardianGate\.ts$|src/lib/forgeTools\.ts$|src/lib/shellDispatch\.ts$|tests/foundation/|package\.json$|package-lock\.json$|LICENSE)'
+          if echo "$changed" | grep -E "$protected"; then
+            echo "::error::claude-fix touched a protected path. Deleting $FIX_BRANCH and failing."
+            git push origin --delete "$FIX_BRANCH"
+            exit 1
+          fi
+          if [ -z "$changed" ]; then
+            echo "Branch has no changes against main; not opening a pull request."
+            exit 0
+          fi
+          gh pr create --base main --head "$FIX_BRANCH" \
+            --title "claude-fix: ${FIX_BRANCH}" \
+            --body "Opened by the claude-fix workflow after its protected-path check passed (see run: ${TASK_URL}). Review the diff, the commit message (what/why/tested/unverified) and the Build Gate before merging. Nothing was merged automatically. Pull requests opened with the built-in workflow token do not start other workflows: if the Build Gate check does not appear, close and reopen this PR to run it."
