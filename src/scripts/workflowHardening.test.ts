@@ -61,7 +61,7 @@ describe('protected-paths policy', () => {
   })
 
   it('checker script compiles', () => {
-    expect(() => execFileSync('python3', ['-m', 'py_compile', CHECKER])).not.toThrow()
+    expect(() => execFileSync('python3', ['-B', '-c', 'import ast,sys; ast.parse(open(sys.argv[1]).read())', CHECKER])).not.toThrow()
   })
 })
 
