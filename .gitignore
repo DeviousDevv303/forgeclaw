@@ -28,3 +28,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Claude Code local guard audit log
+.claude/guard-audit.log
