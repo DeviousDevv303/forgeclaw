@@ -44,9 +44,9 @@ interface Connection {
 }
 
 const DENSITY_MAP: Record<string, number[]> = {
-  low:    [6, 8, 10, 8, 6],   // 38 nodes
-  medium: [8, 12, 16, 12, 8], // 56 nodes
-  high:   [10, 16, 20, 16, 10] // 72 nodes
+  low:    [8, 10, 4, 10, 8],   // 40 nodes, 4 cubes
+  medium: [10, 14, 6, 14, 10], // 54 nodes, 6 cubes
+  high:   [12, 18, 8, 18, 12]  // 68 nodes, 8 cubes
 };
 
 /**
@@ -186,14 +186,11 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         // Layer 2 (center) spreads across a WIDE ellipse for 3D cube
         // legibility — 45% of width, 35% of height. Cubes need room to breathe.
         const isCenter = layer === 2;
-        const ex = isCenter ? width * 0.45 : radius;
-        const ey = isCenter ? height * 0.35 : radius * 0.6;
+        const ex = isCenter ? width * 0.18 : radius;
+        const ey = isCenter ? height * 0.12 : radius * 0.6;
         const centerAngle = (Math.PI * 2 / count) * i + (Math.PI / 6);
-        // Push cubes toward the edges: scale the ellipse offset so the
-        // central content area stays clear for chat text.
-        const edgeBias = 1.25;
-        const nx = width / 2 + Math.cos(centerAngle) * ex * edgeBias + (Math.random() - 0.5) * 40;
-        const ny = height / 2 + Math.sin(centerAngle) * ey * edgeBias + (Math.random() - 0.5) * 40;
+        const nx = width / 2 + Math.cos(centerAngle) * ex + (Math.random() - 0.5) * 40;
+        const ny = height / 2 + Math.sin(centerAngle) * ey + (Math.random() - 0.5) * 40;
 
         nodes.set(nodeId, {
           x: isCenter ? nx : layerX + (Math.random() - 0.5) * 50,
@@ -600,6 +597,13 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           if (node.x > width - 50) { node.x = width - 50; node.vx *= -0.8; }
           if (node.y < 50) { node.y = 50; node.vy *= -0.8; }
           if (node.y > height - 50) { node.y = height - 50; node.vy *= -0.8; }
+          // Keep cubes in the middle band, away from header/input UI
+          if (node.layer === 2) {
+            const safeTop = height * 0.25;
+            const safeBottom = height * 0.75;
+            if (node.y < safeTop) { node.y = safeTop; node.vy = Math.abs(node.vy); }
+            if (node.y > safeBottom) { node.y = safeBottom; node.vy = -Math.abs(node.vy); }
+          }
 
           // Mouse interaction — guard against exact-zero only
           const dx = mouseRef.current.x - node.x;
@@ -755,7 +759,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
   }, [activeTab, primaryColor, accentColor]);
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity: 0.55 }}>
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity: 0.25 }}>
       <canvas
         ref={canvasRef}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0.6 }}
