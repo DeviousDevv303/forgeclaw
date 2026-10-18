@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { FileUploadButton } from './components/FileUploadButton'
 import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
+import { ThroneBackdrop } from './components/ThroneBackdrop'
 // import { SupabaseProvider } from './components/SupabaseProvider'
 import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
@@ -2232,6 +2233,8 @@ function App() {
         })}
       </div>
 
+      {/* Throne backdrop (sibling before neural canvas in DOM order) */}
+      <ThroneBackdrop opacity={0.35} />
       {/* Neural Network Background */}
       <NeuralNetworkBackground
         messageCount={messages.length}

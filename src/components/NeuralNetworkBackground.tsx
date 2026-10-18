@@ -47,6 +47,55 @@ const DENSITY_MAP: Record<string, number[]> = {
   medium: [8, 12, 16, 12, 8], // 56 nodes
   high:   [10, 16, 20, 16, 10] // 72 nodes
 };
+
+/**
+ * Pre-rendered Rubik's cube sprite (64×64), drawn once and reused.
+ * Standard Rubik's palette; subtle vertical shading for depth.
+ * Drawn at MIN_CUBE_PX minimum — smaller would be an unreadable blob.
+ */
+const CUBE_SPRITE_SIZE = 64;
+/** Minimum drawn cube size — below this a cube is an unreadable blob. */
+const MIN_CUBE_PX = 28;
+let cubeSpriteCache: HTMLCanvasElement | null = null;
+
+function getCubeSprite(): HTMLCanvasElement {
+  if (cubeSpriteCache) return cubeSpriteCache;
+  const c = document.createElement('canvas');
+  c.width = CUBE_SPRITE_SIZE;
+  c.height = CUBE_SPRITE_SIZE;
+  const ctx = c.getContext('2d');
+  if (ctx) {
+    const faces = ['#ffffff', '#ffcf00', '#ff3b30', '#ff9500', '#34c759', '#0a84ff'];
+    const gap = 3;
+    const cell = (CUBE_SPRITE_SIZE - gap * 4) / 3;
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) {
+        const inset = row * 1.5;
+        const x = gap + col * (cell + gap) + inset / 2;
+        const y = gap + row * (cell + gap);
+        const w = cell - inset;
+        ctx.fillStyle = faces[(row * 3 + col) % faces.length];
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, cell, 4);
+        ctx.fill();
+        const shade = ctx.createLinearGradient(0, y, 0, y + cell);
+        shade.addColorStop(0, 'rgba(255,255,255,0.25)');
+        shade.addColorStop(1, 'rgba(0,0,0,0.25)');
+        ctx.fillStyle = shade;
+        ctx.beginPath();
+        ctx.roundRect(x, y, w, cell, 4);
+        ctx.fill();
+      }
+    }
+    ctx.strokeStyle = 'rgba(10,10,10,0.9)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(1.5, 1.5, CUBE_SPRITE_SIZE - 3, CUBE_SPRITE_SIZE - 3, 8);
+    ctx.stroke();
+  }
+  cubeSpriteCache = c;
+  return c;
+}
 const DENSITY_ORDER = ['low', 'medium', 'high'] as const;
 
 const TAB_PALETTE: Record<string, { primary: string; accent: string }> = {
@@ -397,11 +446,24 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         ctx.fillStyle = glowGradient;
         ctx.fill();
 
-        // Core
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = primaryColor;
-        ctx.fill();
+        // Core: center-layer nodes render as Rubik's cubes (min 28px);
+        // others keep the arc. Blocked red tint applies via primaryColor.
+        if (node.layer === 2) {
+          const sprite = getCubeSprite();
+          const size = Math.max(radius * 2, MIN_CUBE_PX);
+          ctx.drawImage(sprite, node.x - size / 2, node.y - size / 2, size, size);
+          if (st.phase === 'blocked') {
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, size / 2, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 59, 48, 0.35)';
+            ctx.fill();
+          }
+        } else {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+          ctx.fillStyle = primaryColor;
+          ctx.fill();
+        }
       });
 
       // Draw connections at rest strength — red when blocked, matching the
@@ -597,11 +659,24 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         ctx.fillStyle = glowGradient;
         ctx.fill();
 
-        // Core
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, radius * toolBoost, 0, Math.PI * 2);
-        ctx.fillStyle = primaryColor;
-        ctx.fill();
+        // Core: center-layer nodes render as Rubik's cubes (min 28px,
+        // scaled by toolBoost); others keep the arc. Blocked red tint overlays.
+        if (node.layer === 2) {
+          const sprite = getCubeSprite();
+          const size = Math.max(radius * toolBoost * 2, MIN_CUBE_PX);
+          ctx.drawImage(sprite, node.x - size / 2, node.y - size / 2, size, size);
+          if (st.phase === 'blocked') {
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, size / 2, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 59, 48, 0.35)';
+            ctx.fill();
+          }
+        } else {
+          ctx.beginPath();
+          ctx.arc(node.x, node.y, radius * toolBoost, 0, Math.PI * 2);
+          ctx.fillStyle = primaryColor;
+          ctx.fill();
+        }
 
         // Highlight
         ctx.beginPath();
