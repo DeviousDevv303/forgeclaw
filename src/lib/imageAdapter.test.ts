@@ -115,6 +115,14 @@ describe('allowlist and workflow wiring', () => {
     expect(workflow).toContain(".github/requirements-image.txt")
   })
 
+  it('keys the weights cache per model so one model cannot shadow another', () => {
+    // actions/cache never overwrites an existing key: a shared key meant whichever model ran first
+    // (sd-turbo) was cached and the others re-downloaded on every run.
+    const key = workflow.split('\n').find(l => l.trim().startsWith('key: image-models-'))
+    expect(key).toBeDefined()
+    expect(key).toContain("inputs.model || 'sd15'")
+  })
+
   it('ships exact dependency pins, including torch', () => {
     const lines = read('.github/requirements-image.txt').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'))
     expect(lines.length).toBeGreaterThan(5)
