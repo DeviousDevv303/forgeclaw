@@ -32,8 +32,9 @@ function makeCtx() {
     restore: vi.fn(),
     setTransform: vi.fn(),
     scale: vi.fn(),
-    set fillStyle(_: string) {},
-    set strokeStyle(_: string) {},
+    styles: [] as string[],
+    set fillStyle(v: string) { this.styles.push(String(v)) },
+    set strokeStyle(v: string) { this.styles.push(String(v)) },
     set globalAlpha(_: number) {},
     set lineWidth(_: number) {},
     canvas: { width: 800, height: 600 },
@@ -44,10 +45,16 @@ describe('NeuralNetworkBackground', () => {
   let rafCallbacks: FrameRequestCallback[];
   let rafId = 0;
   let mockCtx: ReturnType<typeof makeCtx>;
+  let reducedMotion = false;
+  let clock = 0;
 
   beforeEach(() => {
     rafCallbacks = [];
     rafId = 0;
+    reducedMotion = false;
+    clock = 1000;
+    // The component measures FPS with performance.now(), not the RAF timestamp.
+    vi.spyOn(performance, 'now').mockImplementation(() => clock);
     mockCtx = makeCtx();
 
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
@@ -66,7 +73,7 @@ describe('NeuralNetworkBackground', () => {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
       value: vi.fn().mockImplementation((query: string) => ({
-        matches: false,
+        matches: reducedMotion && query.includes('prefers-reduced-motion'),
         media: query,
         onchange: null,
         addListener: vi.fn(),
@@ -83,40 +90,38 @@ describe('NeuralNetworkBackground', () => {
   });
 
   it('keeps the animation loop running after an automatic density change', () => {
+    // Start at 'high' so a slow device can step DOWN (step-up is impossible at the cap).
     render(React.createElement(NeuralNetworkBackground, {
       state: IDLE_NEURAL_STATE,
       messageCount: 0,
       activeTab: 'chat',
+      density: 'high',
     }));
 
-    // Drive frames with high FPS (>55 avg) to trigger a density step-up.
-    // The bug: after initNetwork() the code did `return` without scheduling
-    // the next frame, killing the loop at ~frame 61.
-    let now = 1000;
-    const frameCount = 70;
-    for (let i = 0; i < frameCount; i++) {
+    // ~20 FPS (50 ms/frame) for 150 frames: the 60-sample window fills and the
+    // average (<30) forces a step-down and initNetwork(). Regression guarded: a
+    // `return` after initNetwork() skipped requestAnimationFrame and killed the loop.
+    // Then ~62 FPS (16 ms/frame): the average climbs past 55 and density steps
+    // back UP, exercising the other initNetwork() branch.
+    for (let i = 0; i < 300; i++) {
       const cbs = rafCallbacks.splice(0);
-      expect(cbs.length).toBeGreaterThan(0); // loop must still be alive
-      now += 16; // ~62 FPS
-      for (const cb of cbs) cb(now);
+      expect(cbs.length, `loop died at frame ${i}`).toBeGreaterThan(0);
+      clock += i < 150 ? 50 : 16;
+      for (const cb of cbs) cb(clock);
     }
-
-    // After 70 frames (past the 60-sample density window), the loop must
-    // still have a pending frame scheduled.
     expect(rafCallbacks.length).toBeGreaterThan(0);
   });
 
-  it('applies red tint when blocked', () => {
-    const blockedState = { ...IDLE_NEURAL_STATE, phase: 'blocked' as const };
-    const { container } = render(
-      React.createElement(NeuralNetworkBackground, {
-        state: blockedState,
-        messageCount: 0,
-        activeTab: 'chat',
-      })
-    );
-    // Component renders without crashing in blocked state; canvas exists.
-    const canvas = container.querySelector('canvas');
-    expect(canvas).toBeTruthy();
+  it('draws the reduced-motion static frame in red when blocked, and not when idle', () => {
+    reducedMotion = true;
+    const RED = 'rgba(239, 68, 68';
+    render(React.createElement(NeuralNetworkBackground, { state: IDLE_NEURAL_STATE, messageCount: 0, activeTab: 'chat' }));
+    expect(mockCtx.styles.length).toBeGreaterThan(0);
+    expect(mockCtx.styles.some(c => c.startsWith(RED))).toBe(false);
+
+    mockCtx.styles.length = 0;
+    const blocked = { ...IDLE_NEURAL_STATE, phase: 'blocked' as const };
+    render(React.createElement(NeuralNetworkBackground, { state: blocked, messageCount: 0, activeTab: 'chat' }));
+    expect(mockCtx.styles.some(c => c.startsWith(RED))).toBe(true);
   });
 });
