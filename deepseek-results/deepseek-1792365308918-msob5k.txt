@@ -1,0 +1,18 @@
+Toclone the ForgeClaw repository using either HTTPS or SSH, please follow these steps:
+
+1. Choose an option from the ones provided below:
+
+ a. HTTPS: `git clone https://github.com/DeviousDevv303/forgeclaw.git`
+ b. SSH: `git clone git@github.com:DeviousDevv303/forgeclaw.git`
+ c. Or, use GitHub CLI (clones and checks out PR #120 into a local branch): `bash-l "set-e;git clone https://github.com/DeviousDevv303/forgeclaw.git;cd forgeclaw;git fetch origin pull/120/head:pr-120;git checkout pr-120;npm ci;npx vitest runsrc/hooks/useNeuralState.test.ts"`
+
+2. Once the repository is cloned and you are in the ForgeClaw directory, fetch and checkout PR #120 into a local branch:
+ ```
+ cd forgeclaw
+ git fetch origin pull/120/head:pr-120
+ git checkout pr-120
+ ```
+ 
+3. Or, use the one-liner provided in the GitHub CLI option to clone, checkout the PR, install dependencies, and run the failing test.
+
+After completing these steps, you will have cloned the ForgeClaw repository and fetched/checked out PR #120 into a local branch. This prepares the environment for further development and testing.
