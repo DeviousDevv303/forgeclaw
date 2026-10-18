@@ -17,8 +17,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import type { AgentEvent, ForgeOpsState } from '../types/forgeOps'
-import { takeNewEvents } from '../lib/forgeEventCursor'
+import type { ForgeOpsState } from '../types/forgeOps'
 import { recordLearningEvent } from '../lib/learningEvents'
 
 export type NeuralPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'blocked' | 'streaming'
@@ -93,16 +92,16 @@ export function useNeuralState(
   const [neuralState, setNeuralState] = useState<NeuralState>({ ...IDLE_NEURAL_STATE, provider })
 
   // Refs for values that shouldn't trigger re-renders
-  const lastEventRef = useRef<AgentEvent | null>(null)
+  const lastEventRef = useRef<object | null>(null)
   const lastContentLengthRef = useRef(options.contentLength)
   const lastContentTimeRef = useRef(Date.now())
   const lastTokenTimeRef = useRef(0)
   const velocityRef = useRef(0)
   const agentPhaseRef = useRef<NeuralPhase>('idle')
   const phaseSequenceRef = useRef<string[]>([])
+  const completedAtRef = useRef(0)
   const requestStartRef = useRef<number>(0)
   const consecutiveFailuresRef = useRef(0)
-  const completedAtRef = useRef(0)
   const learningBudgetRef = useRef<LearningBudget>({})
 
   // Keep provider in sync without resetting the rest of the state
@@ -128,10 +127,20 @@ export function useNeuralState(
     lastContentTimeRef.current = now
   })
 
-  // Process new ForgeOps events
+  // Process new ForgeOps events. Track by identity, not count — the
+  // ForgeOps window slides (capped at 60), so count-based tracking goes
+  // blind once the window is full.
   useEffect(() => {
     const events = forgeOpsState.events
-    const newEvents = takeNewEvents(events, lastEventRef.current)
+    let newEvents: typeof events
+    if (events.length === 0) {
+      newEvents = []
+    } else if (lastEventRef.current === null) {
+      newEvents = events.slice()
+    } else {
+      const idx = events.lastIndexOf(lastEventRef.current as never)
+      newEvents = idx >= 0 ? events.slice(idx + 1) : events.slice()
+    }
     if (newEvents.length === 0) return
     lastEventRef.current = events[events.length - 1]
 
@@ -155,9 +164,6 @@ export function useNeuralState(
             phaseChanged = true
             phaseSequenceRef.current.push(mapped)
 
-            // Phase transitions are captured in phaseSequenceRef (surfaced via
-            // [LATENCY_PROFILE]); per-transition [SYSTEM_PHASE] records were
-            // removed as redundant (reviewer directive 2026-10-18).
           }
           // Blocked clears on next non-blocked phase change
           if (mapped !== 'blocked' && errorLevel > 0 && event.phase !== 'BLOCKED') {
@@ -171,7 +177,6 @@ export function useNeuralState(
             agentPhase = 'blocked'
             phaseChanged = true
             phaseSequenceRef.current.push('blocked')
-            // No per-transition record (see PHASE_CHANGE above).
           }
           break
         }
