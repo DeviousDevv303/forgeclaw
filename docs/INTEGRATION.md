@@ -72,8 +72,8 @@ Directive helpers are also available:
 
 ## 5. Known constraint fixed alongside this contract
 
-`useForgeOps` keeps only the last 60 events.
-Consumers that found new events by array length stopped reacting for the rest of the session once 60 events had arrived.
+`useForgeOps` keeps a bounded window of events (`MAX_EVENTS`, raised from 60 to 500).
+Consumers that found new events by array length stopped reacting for the rest of the session once the window was full.
 `useNeuralState` had this bug: the background and cubes froze after a few chat turns.
 Both consumers now use `takeNewEvents()` from `src/lib/forgeEventCursor.ts`, which tracks the last event seen by identity.
 Any new consumer must use it too.

@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 //
-// useForgeOps keeps only the last MAX_EVENTS (60) events, so once the window is
+// useForgeOps keeps only the last MAX_EVENTS events, so once the window is
 // full its length never changes. Consumers must track the last event they saw by
 // identity, not by array length, or they stop seeing new events for the rest of
 // the session.
