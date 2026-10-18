@@ -585,7 +585,6 @@ function App() {
   const initialProvider: ProviderId = resolveInitialProvider(savedProvider)
   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
   // Neural background state: derived from the ForgeOps event stream (observe-only).
-  // contentLength drives token-velocity estimation via message growth between renders.
   const neuralState = useNeuralState(forgeOpsState, activeProvider, {
     contentLength: messages.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
   })
