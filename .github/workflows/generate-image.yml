@@ -1,5 +1,6 @@
-# Repository-owned image generation. Stable Diffusion 1.5 is public and CPU-compatible,
-# so this workflow does not require HF_TOKEN or gated model approval.
+# Repository-owned image generation, model-swappable through .github/scripts/generate_image.py.
+# Default: Stable Diffusion 1.5 (public, CPU-compatible, no HF_TOKEN or gated approval).
+# Opt-in: sdxl-turbo (staged loading) and sd-turbo. See the script for per-model licence notes.
 name: Generate Image
 run-name: Generate Image ${{ inputs.invocation_id }}
 on:
@@ -24,6 +25,11 @@ on:
         required: false
         default: '512'
         type: string
+      model:
+        description: 'Model key: sd15 (default), sdxl-turbo or sd-turbo; Turbo models are 512x512 max'
+        required: false
+        default: sd15
+        type: string
       invocation_id:
         description: Correlation identifier
         required: true
@@ -32,7 +38,7 @@ permissions:
   contents: write
 jobs:
   generate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Check out repository
@@ -45,69 +51,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: sd-v15-${{ runner.os }}-${{ hashFiles('.github/workflows/generate-image.yml') }}
+          key: image-models-${{ runner.os }}-${{ hashFiles('.github/workflows/generate-image.yml', '.github/scripts/generate_image.py', '.github/requirements-image.txt') }}
       - name: Install CPU dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install diffusers transformers accelerate safetensors
+          python -m pip install torch==2.14.1+cpu torchvision==0.29.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r .github/requirements-image.txt
       - name: Generate image
         env:
           PROMPT: ${{ inputs.prompt }}
           STYLE: ${{ inputs.style }}
           WIDTH: ${{ inputs.width }}
           HEIGHT: ${{ inputs.height }}
+          MODEL: ${{ inputs.model }}
           INVOCATION_ID: ${{ inputs.invocation_id }}
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import torch
-          from diffusers import DPMSolverMultistepScheduler, StableDiffusionPipeline
-
-          prompt = os.environ['PROMPT'].strip()
-          style = os.environ.get('STYLE', 'realistic').strip() or 'realistic'
-          width = int(os.environ.get('WIDTH', '512'))
-          height = int(os.environ.get('HEIGHT', '512'))
-          if not prompt or len(prompt) > 4000:
-              raise SystemExit('prompt must contain 1-4000 characters')
-          if not (256 <= width <= 1024 and 256 <= height <= 1024):
-              raise SystemExit('width and height must be between 256 and 1024')
-          if width % 8 or height % 8:
-              raise SystemExit('width and height must be divisible by 8')
-
-          model_id = 'runwayml/stable-diffusion-v1-5'
-          print(f'Loading public CPU model: {model_id}')
-          torch.set_num_threads(min(4, os.cpu_count() or 1))
-          pipe = StableDiffusionPipeline.from_pretrained(
-              model_id,
-              torch_dtype=torch.float32,
-              use_safetensors=True,
-          )
-          pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
-          pipe.enable_attention_slicing()
-          generation_prompt = f'{prompt}, {style} style, high quality, detailed'
-          negative_prompt = 'blurry, low quality, distorted, deformed, ugly, watermark, signature'
-          print(f'Generating {width}x{height}: {generation_prompt}')
-          image = pipe(
-              prompt=generation_prompt,
-              negative_prompt=negative_prompt,
-              width=width,
-              height=height,
-              num_inference_steps=30,
-              guidance_scale=7.5,
-          ).images[0]
-
-          output_path = Path(f'generated_{width}x{height}.png')
-          image.save(output_path)
-          Path('generation_metadata.txt').write_text(
-              f'Prompt: {prompt}\nStyle: {style}\nSize: {width}x{height}\n'
-              f'Model: {model_id}\nSteps: 30\nGuidance Scale: 7.5\n'
-              f'Invocation: {os.environ["INVOCATION_ID"]}\n',
-              encoding='utf-8',
-          )
-          print(f'Saved {output_path}')
-          PY
+        run: python .github/scripts/generate_image.py
       - name: Publish browser-readable image mirror
         env:
           IMAGE_PATH: generated_${{ inputs.width }}x${{ inputs.height }}.png
@@ -150,5 +108,6 @@ jobs:
           path: |
             generated_*.png
             generation_metadata.txt
+            generation_meta.json
           if-no-files-found: error
           retention-days: 7
