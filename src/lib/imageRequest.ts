@@ -13,11 +13,14 @@ export function isImageGenerationRequest(text: string): boolean {
     || new RegExp(`\\b${IMAGE_NOUNS}\\b.{0,40}\\b${CREATION_VERBS}\\b`, 'i').test(normalized)
 }
 
+// Everything from the first runtime envelope block onward is application
+// context (identity, runtime state, attachments), never part of the user's
+// image description. The legacy FORGECLAW_RUNTIME_STATE name is kept so older
+// stored prompts still strip cleanly.
+const RUNTIME_ENVELOPE = /\n\n\[(?:APPLICATION_IDENTITY|RUNTIME_STATE|FORGECLAW_RUNTIME_STATE|IMAGE_ATTACHMENT)\b[\s\S]*$/i
+
 export function extractImagePrompt(text: string): string {
-  return text
-    .replace(/\n\n\[FORGECLAW_RUNTIME_STATE\][\s\S]*$/i, '')
-    .replace(/\n\n\[IMAGE_ATTACHMENT\][\s\S]*$/i, '')
-    .trim()
+  return text.replace(RUNTIME_ENVELOPE, '').trim()
 }
 
 export function inferImageStyle(text: string): string {

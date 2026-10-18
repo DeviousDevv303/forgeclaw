@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from './imageRequest'
+import { buildRuntimeRequestContext } from './codingAgentRuntime'
 
 describe('deterministic image request routing', () => {
   it('recognizes explicit image creation requests', () => {
@@ -16,5 +17,14 @@ describe('deterministic image request routing', () => {
     const request = 'Generate a cinematic image of a mountain\n\n[FORGECLAW_RUNTIME_STATE]\ninternal state'
     expect(extractImagePrompt(request)).toBe('Generate a cinematic image of a mountain')
     expect(inferImageStyle(request)).toBe('cinematic')
+  })
+
+  it('strips the real runtime envelope App.tsx appends, so it never reaches the image model', () => {
+    // Mirrors App.tsx effectivePrompt composition; uses the live builder so a
+    // renamed marker breaks this test instead of leaking into prompts.
+    const userText = 'generate an image of a red fox in snow at dawn'
+    const context = buildRuntimeRequestContext({ owner: 'DeviousDevv303', repo: 'forgeclaw', taskStatus: 'idle', requiresRepositoryTool: true })
+    expect(extractImagePrompt(`${userText}\n\n${context}`)).toBe(userText)
+    expect(extractImagePrompt(`${userText}\n\n[IMAGE_ATTACHMENT]\ndata:image/png;base64,AAAA\n\n${context}`)).toBe(userText)
   })
 })
