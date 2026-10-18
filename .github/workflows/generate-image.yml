@@ -51,7 +51,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: image-models-${{ runner.os }}-${{ hashFiles('.github/workflows/generate-image.yml', '.github/scripts/generate_image.py', '.github/requirements-image.txt') }}
+          key: image-models-${{ runner.os }}-${{ inputs.model || 'sd15' }}-${{ hashFiles('.github/workflows/generate-image.yml', '.github/scripts/generate_image.py', '.github/requirements-image.txt') }}
       - name: Install CPU dependencies
         run: |
           python -m pip install --upgrade pip
