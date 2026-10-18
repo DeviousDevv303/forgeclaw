@@ -220,13 +220,14 @@ describe('useNeuralState', () => {
     expect(failures.length).toBe(1)
     expect((failures[0] as { input: string }).input).toContain('[TOOL_FAILURE]')
 
+    // No [SYSTEM_PHASE] records (removed as redundant; phaseSequence covers it)
     const phases = recorded.filter((e: unknown) =>
       (e as { input: string }).input.startsWith('[SYSTEM_PHASE]'),
     )
-    expect(phases.length).toBe(1)
+    expect(phases.length).toBe(0)
   })
 
-  it('records phase transitions as learning events', () => {
+  it('does NOT record per-transition [SYSTEM_PHASE] events (phaseSequence covers it)', () => {
     const { rerender } = renderHook(
       ({ events }) => useNeuralState(stateWithEvents(events), 'moonshot', { contentLength: 0 }),
       { initialProps: { events: [] as AgentEvent[] } },
@@ -244,10 +245,7 @@ describe('useNeuralState', () => {
     const phaseEvents = recorded.filter((e: unknown) =>
       (e as { input: string }).input.startsWith('[SYSTEM_PHASE]'),
     )
-    expect(phaseEvents.length).toBeGreaterThanOrEqual(1)
-    const first = phaseEvents[0] as { input: string; toolName: string; model: string }
-    expect(first.toolName).toBe('system_monitor')
-    expect(first.model).toBe('moonshot')
+    expect(phaseEvents.length).toBe(0)
   })
 
   it('records a latency profile on MISSION_COMPLETE', () => {

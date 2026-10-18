@@ -134,7 +134,6 @@ export function useNeuralState(
     let activeToolCount = 0
     let errorLevel = neuralState.errorLevel
     let phaseChanged = false
-    let prevPhase = agentPhase
 
     // Recompute active tools from current toolBus (source of truth)
     const toolBus = forgeOpsState.toolBus || {}
@@ -147,27 +146,13 @@ export function useNeuralState(
         case 'PHASE_CHANGE': {
           const mapped = mapAgentPhase(event.phase)
           if (mapped !== agentPhase) {
-            prevPhase = agentPhase
             agentPhase = mapped
             phaseChanged = true
             phaseSequenceRef.current.push(mapped)
 
-            // Addendum §1: record phase transitions as learning events.
-            // Budget key is 'tool:phase' (not bare 'tool') so a burst of
-            // phase changes can never starve failure records, which share
-            // the 'tool' event channel but are more valuable.
-            if (budgetAllows(learningBudgetRef.current, 'tool:phase', now)) {
-              void recordLearningEvent({
-                channel: 'tool',
-                input: `[SYSTEM_PHASE] ${prevPhase} -> ${mapped}`,
-                result: `provider=${provider}; activeTools=${activeToolCount}; tokenVelocity=${velocityRef.current.toFixed(1)}`,
-                outcome: mapped === 'blocked' ? 'blocked' : 'completed',
-                runtime: 'forgeclaw-ui',
-                model: provider,
-                toolName: 'system_monitor',
-                actor: 'agent',
-              })
-            }
+            // Phase transitions are captured in phaseSequenceRef (surfaced via
+            // [LATENCY_PROFILE]); per-transition [SYSTEM_PHASE] records were
+            // removed as redundant (reviewer directive 2026-10-18).
           }
           // Blocked clears on next non-blocked phase change
           if (mapped !== 'blocked' && errorLevel > 0 && event.phase !== 'BLOCKED') {
@@ -178,22 +163,10 @@ export function useNeuralState(
 
         case 'MISSION_BLOCKED': {
           if (agentPhase !== 'blocked') {
-            prevPhase = agentPhase
             agentPhase = 'blocked'
             phaseChanged = true
             phaseSequenceRef.current.push('blocked')
-            if (budgetAllows(learningBudgetRef.current, 'tool:phase', now)) {
-              void recordLearningEvent({
-                channel: 'tool',
-                input: `[SYSTEM_PHASE] ${prevPhase} -> blocked`,
-                result: `provider=${provider}; reason=${event.reason.slice(0, 200)}`,
-                outcome: 'blocked',
-                runtime: 'forgeclaw-ui',
-                model: provider,
-                toolName: 'system_monitor',
-                actor: 'agent',
-              })
-            }
+            // No per-transition record (see PHASE_CHANGE above).
           }
           break
         }
@@ -229,7 +202,6 @@ export function useNeuralState(
           // New work clears idle AND blocked (e.g. after user hits STOP,
           // which emits MISSION_BLOCKED). A following PHASE_CHANGE refines it.
           if (agentPhase === 'idle' || agentPhase === 'blocked') {
-            prevPhase = agentPhase
             agentPhase = 'planning'
             phaseChanged = true
           }
