@@ -109,6 +109,9 @@ export function isCodingTaskRequest(prompt: string, options?: { hasAttachment?: 
  * and the existing Guardian gate.
  */
 export function isExplicitShellRequest(prompt: string): boolean {
+  // An explicit prefix (/shell, "$ ", "!cmd") is the operator saying "this is a shell command",
+  // whatever the first word is.
+  if (forcedShellCommand(prompt) !== null) return true
   const text = stripShellPrefix(prompt).trim().toLowerCase()
   if (!text) {
     return false
@@ -116,8 +119,44 @@ export function isExplicitShellRequest(prompt: string): boolean {
   if (/\bshell_exec\b|\bshell command\b|\b(?:run|execute)\s+(?:the\s+)?(?:shell|command|bash)\b/.test(text)) {
     return true
   }
-  const result = /^(?:please\s+)?(?:(?:run|execute)\s+(?:the\s+)?|)(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/.test(text)
-  return result
+  const command = text.replace(/^(?:please\s+)?(?:(?:run|execute)\s+(?:the\s+)?)?/, '')
+  return looksLikeShellCommand(command) || extractExplicitShellCommand(prompt) !== null
+}
+
+/**
+ * Prefixes that force shell routing: `/shell <cmd>`, `$ <cmd>` (dollar and a space, so "$5 for coffee"
+ * is untouched) and `!<cmd>` (bang directly followed by a command-like character). Returns the command
+ * text, or null when the prompt has no such prefix.
+ */
+export function forcedShellCommand(prompt: string): string | null {
+  const text = prompt.trim()
+  const strong = /^\/shell\s+([\s\S]+)$/i.exec(text) ?? /^\$\s+([\s\S]+)$/.exec(text)
+  if (strong?.[1]?.trim()) return strong[1].trim()
+  // "!" is also ordinary punctuation ("!important note"), so it only forces shell for a command-like word.
+  const bang = /^!(?=[A-Za-z./~])([\s\S]+)$/.exec(text)?.[1]?.trim()
+  if (bang && (looksLikeShellCommand(bang) || COMMON_CLI.has(bang.split(/\s+/)[0].toLowerCase()))) return bang
+  return null
+}
+
+const COMMON_CLI = new Set(['echo', 'wc', 'tree', 'diff', 'which', 'whoami', 'date', 'uname', 'env', 'df', 'du', 'stat', 'file', 'rg', 'jq', 'curl', 'tsc', 'eslint', 'vitest', 'bash', 'sh', 'touch', 'rm', 'tar', 'ps', 'printf', 'tee', 'xargs', 'ls', 'cat', 'pwd', 'git', 'npm', 'node', 'python', 'python3'])
+
+// Words that are also ordinary English. Without shell-looking arguments ("find a good restaurant",
+// "test my patience", "git gud") they are conversation, not commands.
+const UNAMBIGUOUS_EXECUTABLES = new Set(['pwd', 'ls', 'npm', 'pnpm', 'yarn', 'npx'])
+const AMBIGUOUS_EXECUTABLES = new Set(['git', 'node', 'python', 'python3', 'cd', 'cat', 'head', 'tail', 'find', 'grep', 'sed', 'awk', 'sort', 'uniq', 'mkdir', 'cp', 'mv', 'test'])
+const GIT_SUBCOMMANDS = new Set(['status', 'log', 'diff', 'show', 'branch', 'checkout', 'switch', 'clone', 'fetch', 'pull', 'push', 'add', 'commit', 'merge', 'rebase', 'remote', 'stash', 'tag', 'reset', 'restore', 'rev-parse', 'ls-files', 'ls-remote', 'blame', 'grep', 'config', 'init', 'cherry-pick', 'revert', 'describe', 'worktree', 'submodule', 'apply'])
+
+/** True when text starts with a known CLI executable AND, for ambiguous words, reads like a command. */
+export function looksLikeShellCommand(command: string): boolean {
+  const match = /^([A-Za-z][A-Za-z0-9]*)(?:\s+([\s\S]*))?$/.exec(command.trim())
+  if (!match) return false
+  const executable = match[1].toLowerCase()
+  const rest = (match[2] ?? '').trim()
+  if (UNAMBIGUOUS_EXECUTABLES.has(executable)) return true
+  if (!AMBIGUOUS_EXECUTABLES.has(executable) || !rest) return false
+  if (executable === 'git') return rest.startsWith('-') || GIT_SUBCOMMANDS.has(rest.split(/\s+/)[0].toLowerCase())
+  if (rest.startsWith('-') || /[|&;<>`]|\$\(/.test(rest) || /(^|\s)["']/.test(rest)) return true
+  return rest.split(/\s+/).some(token => /^[.~/]/.test(token) || token.includes('/') || /\.[A-Za-z0-9]{1,8}$/.test(token))
 }
 
 /**
@@ -135,6 +174,11 @@ function stripShellPrefix(prompt: string): string {
 }
 
 export function extractExplicitShellCommand(prompt: string): string | null {
+  const forced = forcedShellCommand(prompt)
+  if (forced !== null) {
+    const unwrapped = forced.replace(/^```(?:bash|sh)?\s*/i, '').replace(/\s*```$/, '').trim()
+    return unwrapped ? normalizeKnownShellExecutable(unwrapped) : null
+  }
   const text = stripShellPrefix(prompt)
   if (!text) {
     return null
@@ -147,8 +191,7 @@ export function extractExplicitShellCommand(prompt: string): string | null {
   command = command.replace(/^(?:please\s+)?(?:run|execute)\s+(?:the\s+)?/i, '').trim()
   command = command.replace(/^`+|`+$/g, '').trim()
 
-  const executable = /^(?:git|npm|pnpm|yarn|npx|node|python(?:3)?|pwd|ls|cd|cat|head|tail|find|grep|sed|awk|sort|uniq|mkdir|cp|mv|test)\b/i
-  return executable.test(command) ? normalizeKnownShellExecutable(command) : null
+  return looksLikeShellCommand(command) ? normalizeKnownShellExecutable(command) : null
 }
 
 /**
