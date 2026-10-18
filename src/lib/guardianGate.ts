@@ -9,6 +9,7 @@ const ALWAYS_COSIGN = new Set([
   'send_whatsapp',       // external message, irreversible
   'github_run_workflow', // triggers production pipelines
   'sculpt_self',         // creates a self-modification pull request
+  'shell_patch',         // dispatches shell-repair.yml: pushes a branch and opens a pull request
   'generate_image',      // dispatches external image generation compute
   'generateimage',       // execution alias for generate_image
   'gmail_send',          // external email, irreversible
