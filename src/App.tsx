@@ -89,6 +89,7 @@ import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
 import { FOUNDER_PRINCIPLES, WHY_FORGECLAW_EXISTS } from './lib/founderPrinciples'
 import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
+import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -180,19 +181,19 @@ function getSpeechErrorMessage(error?: string): string {
   switch (error) {
     case 'not-allowed':
     case 'service-not-allowed':
-      return 'Microphone permission was blocked. Allow mic access in the browser and try again.'
+      return translate(getLang(), 'speech.blocked')
     case 'audio-capture':
-      return 'No microphone was detected. Check your input device and try again.'
+      return translate(getLang(), 'speech.noMic')
     case 'network':
-      return 'Speech recognition needs browser network access. Check connection or browser speech settings.'
+      return translate(getLang(), 'speech.network')
     case 'no-speech':
-      return 'No speech was detected. Tap the mic again and speak after the browser permission prompt.'
+      return translate(getLang(), 'speech.noSpeech')
     case 'language-not-supported':
-      return 'This speech language is not supported by the browser.'
+      return translate(getLang(), 'speech.langUnsupported')
     case 'aborted':
-      return 'Voice prompt stopped.'
+      return translate(getLang(), 'speech.aborted')
     default:
-      return 'Voice prompt stopped. Check microphone permission and try again.'
+      return translate(getLang(), 'speech.default')
   }
 }
 
@@ -201,7 +202,7 @@ function getSpeechErrorMessage(error?: string): string {
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
 const RESPONSE_LANGUAGE_INSTRUCTIONS: Record<string, string> = {
   en: 'Respond in English unless the user asks for another language.',
-  es: 'Respond in Spanish unless the user asks for another language.',
+  es: 'Respond in Spanish (Latin American, as spoken in Mexico; use "tú" unless the user uses "usted") unless the user asks for another language.',
   ru: 'Respond in Russian unless the user asks for another language.',
   zh: 'Respond in Chinese unless the user asks for another language.',
 }
@@ -643,7 +644,8 @@ function App() {
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
   const [speakingId, setSpeakingId] = useState<string | null>(null)
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([])
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('en')
+  // Language: shared store (persisted, mirrored to <html lang>); t() translates the interface.
+  const { lang: selectedLanguage, setLang: setSelectedLanguage, t, locale } = useI18n()
   const [rate] = useState<number>(1.0)
   // Single owner of read-aloud: one voice at a time, stopped by a new read-aloud or by the mic,
   // and deliberately NOT stopped when the app is hidden or the view changes (see lib/speech.ts).
@@ -774,8 +776,11 @@ function App() {
 
   const getVoiceForLanguage = (lang: string): SpeechSynthesisVoice | null => {
     const langVoices = voices.filter(v => v.lang.toLowerCase().startsWith(lang))
-    const defaultVoice = langVoices.find(v => v.default)
-    return defaultVoice || langVoices[0] || null
+    // Prefer the exact regional voice (es-MX for Spanish) before any other voice of that language.
+    const tag = (LOCALE_TAGS[lang as Lang] ?? '').toLowerCase()
+    const regional = langVoices.filter(v => v.lang.toLowerCase().replace('_', '-') === tag)
+    const pool = regional.length ? regional : langVoices
+    return pool.find(v => v.default) || pool[0] || null
   }
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -1847,14 +1852,14 @@ function App() {
   }
 
   const handleClearMemory = () => {
-    if (!window.confirm('WIPE ALL CHAT HISTORY AND CORPUS? (API keys are kept)')) return
+    if (!window.confirm(t('confirm.wipe'))) return
     safeRemoveItem('forgemind_history'); safeRemoveItem('forgemind_corpus')
     setMessages([]); setCorpus([]); setLastSource(null); setOpenReasoningIds(new Set())
     emitFailure({ source: 'forgemind', severity: 'info', message: 'Session memory wiped by user.' })
   }
 
   const testAnthropicKey = async () => {
-    if (!anthropicApiKey.trim()) { setAnthropicApiKeyStatus('invalid'); setTestKeyError('No Anthropic key entered'); return }
+    if (!anthropicApiKey.trim()) { setAnthropicApiKeyStatus('invalid'); setTestKeyError(t('test.noAnthropicKey')); return }
     setTestingKey(true)
     setTestKeyError('')
     try {
@@ -1876,7 +1881,7 @@ function App() {
     setTestKeyError('')
     try {
       await testProviderKey(localEndpoint, 'local')
-      setTestKeyError('Local llama.cpp endpoint is reachable')
+      setTestKeyError(t('test.localReachable'))
     } catch (err) {
       setTestKeyError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -1886,14 +1891,14 @@ function App() {
 
   const syncCorpus = async () => {
     if (!corpusWebhookUrl.trim()) {
-      setCorpusSyncStatus('No webhook configured; local-only mode remains active.')
+      setCorpusSyncStatus(t('corpus.noWebhook'))
       return
     }
-    setCorpusSyncStatus('Syncing pending candidates…')
+    setCorpusSyncStatus(t('corpus.syncing'))
     const result = await corpusRepository.syncPending(corpusWebhookUrl.trim())
     setCorpusSyncStatus(result.status === 'synced'
-      ? `Synced ${result.attempted} candidate update${result.attempted === 1 ? '' : 's'}; admission still requires authorization.`
-      : `Webhook unavailable; ${Math.max(0, result.attempted - result.admitted)} candidate${Math.max(0, result.attempted - result.admitted) === 1 ? '' : 's'} remain local.`)
+      ? t(result.attempted === 1 ? 'corpus.syncedOne' : 'corpus.syncedMany', { n: result.attempted })
+      : t(Math.max(0, result.attempted - result.admitted) === 1 ? 'corpus.unavailableOne' : 'corpus.unavailableMany', { n: Math.max(0, result.attempted - result.admitted) }))
   }
 
   const handleExportCorpus = () => {
@@ -1955,7 +1960,7 @@ function App() {
     const rec = new SR()
     rec.continuous = true
     rec.interimResults = true
-    rec.lang = selectedLanguage === 'zh' ? 'zh-CN' : selectedLanguage === 'ru' ? 'ru-RU' : selectedLanguage === 'es' ? 'es-ES' : 'en-US'
+    rec.lang = LOCALE_TAGS[selectedLanguage]
     let finalSoFar = ''
     rec.onstart = () => {
       onFailure?.('')
@@ -2103,19 +2108,19 @@ function App() {
   }
 
   const getStatusIndicator = () => {
-    if (activeProvider === 'local') return <span style={{ color: localEndpoint ? '#6b6b6b' : '#ef4444' }}>{localEndpoint ? activeModelLabel : 'Local endpoint missing'}</span>
+    if (activeProvider === 'local') return <span style={{ color: localEndpoint ? '#6b6b6b' : '#ef4444' }}>{localEndpoint ? activeModelLabel : t('status.localEndpointMissing')}</span>
     const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : true
-    if (!keyPresent) return <span style={{ color: '#ef4444' }}>Anthropic: no API key</span>
+    if (!keyPresent) return <span style={{ color: '#ef4444' }}>{t('status.anthropicNoKey')}</span>
     if (activeProvider === 'corpus') return <span style={{ color: '#6b6b6b' }}>DeepSeek 16B · GitHub Actions</span>
     return <span style={{ color: lastSource === 'cloud' ? '#3b82f6' : '#6b6b6b', fontWeight: lastSource === 'cloud' ? 'bold' : 'normal' }}>{activeModelLabel}</span>
   }
 
   const TABS: { id: Tab; label: string; badge?: string }[] = [
-    { id: 'forgemind',   label: 'FORGE' },
-    { id: 'agents',      label: 'AGENTS' },
-    { id: 'voice',       label: 'MIC' },
-    { id: 'activity',    label: 'ACTIVITY', badge: unresolvedCount > 0 ? String(unresolvedCount) : activityLog.some(e => e.status === 'running') ? '•' : undefined },
-    { id: 'settings',    label: 'SETTINGS' },
+    { id: 'forgemind',   label: t('tab.forge') },
+    { id: 'agents',      label: t('tab.agents') },
+    { id: 'voice',       label: t('tab.mic') },
+    { id: 'activity',    label: t('tab.activity'), badge: unresolvedCount > 0 ? String(unresolvedCount) : activityLog.some(e => e.status === 'running') ? '•' : undefined },
+    { id: 'settings',    label: t('tab.settings') },
   ]
 
   return (
@@ -2126,7 +2131,7 @@ function App() {
           onClick={() => window.location.reload()}
           style={{ background: '#7c2d12', color: '#fed7aa', border: 'none', borderBottom: '1px solid #f97316', padding: '8px 16px', fontFamily: 'monospace', fontSize: '11px', letterSpacing: '0.5px', cursor: 'pointer', textAlign: 'center' }}
         >
-          New build {newerBuild.commit.slice(0, 7)} deployed (running {BUILD_COMMIT.slice(0, 7)}) — tap to reload
+          {t('banner.newBuild', { commit: newerBuild.commit.slice(0, 7), current: BUILD_COMMIT.slice(0, 7) })}
         </button>
       )}
       {/* Header */}
@@ -2137,14 +2142,14 @@ function App() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {/* Language selector */}
-          <select value={selectedLanguage} onChange={e => setSelectedLanguage(e.target.value)} style={{ background: '#111', color: '#f97316', border: '1px solid #222', borderRadius: '4px', padding: '4px 8px', fontSize: '10px', fontFamily: 'monospace', outline: 'none' }}>
+          <select aria-label={t('lang.selectorLabel')} title={t('lang.selectorLabel')} value={selectedLanguage} onChange={e => setSelectedLanguage(e.target.value)} style={{ background: '#111', color: '#f97316', border: '1px solid #222', borderRadius: '4px', padding: '4px 8px', fontSize: '10px', fontFamily: 'monospace', outline: 'none' }}>
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
           </select>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             {/* GitHub token dot */}
             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
               <span
-                title={`GitHub token: ${safeGetItem('gh_token') ? 'set' : 'not set'} — click to open Settings`}
+                title={t('header.ghTitle', { state: t(safeGetItem('gh_token') ? 'state.set' : 'state.notSet') })}
                 onClick={() => setActiveTab('settings')}
                 style={{
                   width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
@@ -2157,7 +2162,7 @@ function App() {
               >GH</span>
               {/* WhatsApp dot */}
               <span
-                title={`WhatsApp: ${safeGetItem('wa_credentials') ? 'configured' : 'not set'} — click to open Settings`}
+                title={t('header.waTitle', { state: t(safeGetItem('wa_credentials') ? 'state.configured' : 'state.notSet') })}
                 onClick={() => setActiveTab('settings')}
                 style={{
                   width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
@@ -2171,8 +2176,8 @@ function App() {
             </div>
             <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
           </div>
-          <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>WIPE</button>
-          <button onClick={handleExportCorpus} style={headerBtnStyle}>EXPORT</button>
+          <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>{t('header.wipe')}</button>
+          <button onClick={handleExportCorpus} style={headerBtnStyle}>{t('header.export')}</button>
         </div>
       </header>
 
@@ -2267,7 +2272,7 @@ function App() {
 
               {/* Provider Selector */}
               <div style={{ marginBottom: '14px' }}>
-                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Runtime Provider</label>
+                <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.runtimeProvider')}</label>
                 <select
                   value={activeProvider}
                   onChange={e => setActiveProvider(e.target.value as ProviderId)}
@@ -2284,21 +2289,21 @@ function App() {
               {activeProvider === 'moonshot' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
-                  <div><div style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold' }}>Moonshot (Kimi)</div><div style={{ color: '#666', fontSize: '10px' }}>OpenAI-compatible Moonshot API with native tool calling.</div></div>
+                  <div><div style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold' }}>Moonshot (Kimi)</div><div style={{ color: '#666', fontSize: '10px' }}>{t('settings.moonshotDesc')}</div></div>
                 </div>
               )}
               {activeProvider === 'anthropic' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#d97757', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Anthropic</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Claude Messages API — native tool support</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>{t('settings.anthropicDesc')}</span>
                 </div>
               )}
               {activeProvider === 'corpus' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>DeepSeek 16B · GitHub Actions</span>
-                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Repository-owned workflow. Failures are surfaced directly; no browser-local fallback is used.</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>{t('settings.corpusDesc')}</span>
                 </div>
               )}
 
@@ -2306,32 +2311,32 @@ function App() {
               {activeProvider === 'local' && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#a855f7', display: 'inline-block' }} />
-                  <div><div style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold' }}>Local Inference (llama.cpp)</div><div style={{ color: '#666', fontSize: '10px' }}>Local llama.cpp inference through the OpenAI-compatible /v1 endpoint.</div></div>
+                  <div><div style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold' }}>Local Inference (llama.cpp)</div><div style={{ color: '#666', fontSize: '10px' }}>{t('settings.localDesc')}</div></div>
                 </div>
               )}
 
               {/* Model selector — provider-specific */}
               {activeProvider === 'moonshot' && (
                 <div style={{ marginBottom: '14px' }}>
-                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Kimi Model</label>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.kimiModel')}</label>
                   <select value={moonshotModel} onChange={e => setMoonshotModel(e.target.value)} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
                     {moonshotProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note} ({m.contextK}K ctx)</option>)}
                   </select>
-                  <div style={{ color: '#22c55e', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>Moonshot API with native function/tool calling.</div>
+                  <div style={{ color: '#22c55e', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{t('settings.kimiModelDesc')}</div>
                 </div>
               )}
               {activeProvider === 'anthropic' && (
                 <div style={{ marginBottom: '14px' }}>
-                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Claude Model</label>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.claudeModel')}</label>
                   <select value={anthropicModel} onChange={e => setAnthropicModel(e.target.value)} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
                     {anthropicProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note} ({m.contextK}K ctx)</option>)}
                   </select>
-                  <div style={{ color: '#d97757', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Anthropic Messages API with native tool calling.</div>
+                  <div style={{ color: '#d97757', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.claudeModelDesc')}</div>
                 </div>
               )}
               {activeProvider === 'local' && (
                 <div style={{ marginBottom: '14px' }}>
-                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Local Model</label>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.localModel')}</label>
                   <select value={localModel} onChange={e => { setLocalModel(e.target.value); safeSetItem('fm_local_model', e.target.value) }} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
                     {localInferenceProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note}</option>)}
                   </select>
@@ -2342,20 +2347,20 @@ function App() {
               {activeProvider === 'moonshot' && (
                 <>
                   <div style={{ marginBottom: '14px' }}>
-                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Moonshot / Kimi API Key</label>
+                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.moonshotKey')}</label>
                     <input type={showApiKey ? 'text' : 'password'} placeholder="sk-..." value={moonshotApiKey} onChange={e => setMoonshotApiKey(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
-                    <div style={{ color: '#666', fontSize: '10px', marginTop: '5px', fontFamily: 'monospace', lineHeight: 1.5 }}>Create a key in the Moonshot/Kimi console, then paste it here. It is stored only in this browser.</div>
+                    <div style={{ color: '#666', fontSize: '10px', marginTop: '5px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.moonshotKeyHelp')}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                    <button onClick={async () => { if (!moonshotApiKey.trim()) { setTestKeyError('No Moonshot/Kimi key entered'); return }; setTestingKey(true); setTestKeyError(''); try { await testProviderKey(moonshotApiKey, 'moonshot'); setTestKeyError('Moonshot/Kimi API key verified') } catch (err) { setTestKeyError(err instanceof Error ? err.message : String(err)) } finally { setTestingKey(false) } }} disabled={testingKey || !moonshotApiKey} style={{ flex: 1, background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST KIMI KEY'}</button>
+                    <button onClick={async () => { if (!moonshotApiKey.trim()) { setTestKeyError(t('test.noMoonshotKey')); return }; setTestingKey(true); setTestKeyError(''); try { await testProviderKey(moonshotApiKey, 'moonshot'); setTestKeyError('Moonshot/Kimi API key verified') } catch (err) { setTestKeyError(err instanceof Error ? err.message : String(err)) } finally { setTestingKey(false) } }} disabled={testingKey || !moonshotApiKey} style={{ flex: 1, background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? t('test.testing') : 'TEST KIMI KEY'}</button>
                   </div>
-                  <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px', color: testKeyError.includes('verified') ? '#22c55e' : '#eab308', fontFamily: 'monospace' }}>{moonshotApiKey ? (testKeyError || 'Key saved locally; click Test Kimi Key to verify') : 'Moonshot/Kimi: enter an API key (sk-...)'}</div>
+                  <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px', color: testKeyError.includes('verified') ? '#22c55e' : '#eab308', fontFamily: 'monospace' }}>{moonshotApiKey ? (testKeyError || t('settings.moonshotKeySaved')) : t('settings.moonshotKeyMissing')}</div>
                 </>
               )}
               {activeProvider === 'anthropic' && (
                 <>
                   <div style={{ marginBottom: '14px' }}>
-                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Anthropic API Key</label>
+                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.anthropicKey')}</label>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <input type={showApiKey ? 'text' : 'password'} placeholder="sk-ant-..." value={anthropicApiKey} onChange={e => { setAnthropicApiKey(e.target.value); setAnthropicApiKeyStatus('unverified') }} style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${anthropicApiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
                       <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>{showApiKey ? '🙈' : '👁'}</button>
@@ -2363,38 +2368,38 @@ function App() {
                     {testKeyError && <div style={{ color: anthropicApiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
                   </div>
                   <div style={{ marginBottom: '14px' }}>
-                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Anthropic Workspace ID (if required)</label>
+                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.workspaceId')}</label>
                     <input type="text" placeholder="wrkspc_..." value={anthropicWorkspaceId} onChange={e => setAnthropicWorkspaceId(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
-                    <div style={{ color: '#666', fontSize: '10px', marginTop: '5px', fontFamily: 'monospace', lineHeight: 1.5 }}>Sent only as the anthropic-workspace-id header. Find it in Claude Console → Settings → Workspaces.</div>
+                    <div style={{ color: '#666', fontSize: '10px', marginTop: '5px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.workspaceIdHelp')}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                    <button onClick={testAnthropicKey} disabled={testingKey || !anthropicApiKey} style={{ flex: 1, background: testingKey ? '#333' : '#d97757', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST CLAUDE KEY'}</button>
+                    <button onClick={testAnthropicKey} disabled={testingKey || !anthropicApiKey} style={{ flex: 1, background: testingKey ? '#333' : '#d97757', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? t('test.testing') : t('settings.testClaudeKey')}</button>
                   </div>
                   <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
-                    {!anthropicApiKey && <span style={{ color: '#ef4444' }}>Anthropic: no API key — paste one in Settings (sk-ant-...)</span>}
-                    {anthropicApiKey && anthropicApiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>Key saved locally; click Test Claude Key to verify</span>}
-                    {anthropicApiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>Claude API key verified</span>}
+                    {!anthropicApiKey && <span style={{ color: '#ef4444' }}>{t('settings.anthropicNoKeyHelp')}</span>}
+                    {anthropicApiKey && anthropicApiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>{t('settings.claudeKeySaved')}</span>}
+                    {anthropicApiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>{t('settings.claudeKeyVerified')}</span>}
                   </div>
                 </>
               )}
 
               {activeProvider === 'local' && (
                 <div style={{ marginBottom: '14px' }}>
-                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>llama.cpp Server Endpoint</label>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.localEndpoint')}</label>
                   <input type="url" placeholder="http://127.0.0.1:8080/v1" value={localEndpoint} onChange={e => { setLocalEndpoint(e.target.value); safeSetItem('fm_local_endpoint', e.target.value) }} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
-                  <button onClick={testLocalEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#a855f7', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? 'Testing...' : 'TEST LOCAL ENDPOINT'}</button>
+                  <button onClick={testLocalEndpoint} disabled={testingKey} style={{ width: '100%', marginTop: '8px', background: testingKey ? '#333' : '#a855f7', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? t('test.testing') : t('settings.testLocal')}</button>
                   {testKeyError && <div style={{ color: testKeyError.includes('reachable') ? '#22c55e' : '#eab308', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
-                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>Start llama-server locally with a GGUF model and its configured OpenAI-compatible /v1 endpoint.</div>
+                  <div style={{ color: '#777', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.localHelp')}</div>
                 </div>
               )}
 
               {activeProvider === 'corpus' && (
                 <div style={{ marginBottom: '14px' }}>
-                  <div style={{ color: '#777', fontSize: '10px', fontFamily: 'monospace', lineHeight: 1.5 }}>Local CORPUS records: {corpusRepository.getInteractionCount()} · approved: {corpusRepository.getApprovedCount()} · candidates: {corpusRepository.getCandidateCount()} · version: {corpusRepository.getVersion()}.</div>
+                  <div style={{ color: '#777', fontSize: '10px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.corpusRecords', { records: corpusRepository.getInteractionCount(), approved: corpusRepository.getApprovedCount(), candidates: corpusRepository.getCandidateCount(), version: corpusRepository.getVersion() })}</div>
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #222' }}>
-                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Optional Corpus Webhook</label>
+                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.corpusWebhook')}</label>
                     <input type="url" placeholder="https://example.invalid/deepseek-sync" value={corpusWebhookUrl} onChange={e => setCorpusWebhookUrl(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
-                    <button onClick={syncCorpus} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>SYNC PENDING CANDIDATES</button>
+                    <button onClick={syncCorpus} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{t('settings.syncPending')}</button>
                     {corpusSyncStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusSyncStatus}</div>}
                   </div>
                 </div>
@@ -2403,17 +2408,17 @@ function App() {
 
               {/* Operator diagnostics */}
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
-                <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>Operator Diagnostics</div>
+                <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>{t('settings.operatorDiagnostics')}</div>
                 {[
-                  ['runtime provider', activeProvider === 'corpus' ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],
-                  ['runtime model', activeModelLabel],
-                  ['last route level', lastRuntimeRoute],
-                  ['auth state', activeProvider === 'local' ? (localEndpoint ? 'endpoint configured' : 'missing') : activeProvider === 'anthropic' ? (anthropicApiKey ? 'present' : 'missing') : activeProvider === 'moonshot' ? (moonshotApiKey ? 'present' : 'missing') : safeGetItem('gh_token') ? 'GitHub workflow token present' : 'GitHub workflow token missing'],
-                  ['request status', requestStatus],
-                  ['last error', lastRequestError || diagnostics.lastError || 'none'],
-                  ['latency', lastRequestLatencyMs === null ? 'n/a' : `${lastRequestLatencyMs} ms`],
-                  ['build commit', BUILD_COMMIT],
-                  ['build time', BUILD_TIME],
+                  [t('diag.rowRuntimeProvider'), activeProvider === 'corpus' ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],
+                  [t('diag.rowRuntimeModel'), activeModelLabel],
+                  [t('diag.rowLastRoute'), lastRuntimeRoute],
+                  [t('diag.rowAuthState'), activeProvider === 'local' ? (localEndpoint ? t('diag.endpointConfigured') : t('diag.missingLower')) : activeProvider === 'anthropic' ? (anthropicApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'moonshot' ? (moonshotApiKey ? t('diag.presentLower') : t('diag.missingLower')) : safeGetItem('gh_token') ? t('diag.githubTokenPresent') : t('diag.githubTokenMissing')],
+                  [t('diag.rowRequestStatus'), requestStatus],
+                  [t('diag.rowLastError'), lastRequestError || diagnostics.lastError || t('diag.none')],
+                  [t('diag.rowLatency'), lastRequestLatencyMs === null ? t('diag.na') : `${lastRequestLatencyMs} ms`],
+                  [t('diag.rowBuildCommit'), BUILD_COMMIT],
+                  [t('diag.rowBuildTime'), BUILD_TIME],
                 ].map(([label, value]) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', padding: '3px 0', borderBottom: '1px solid #111' }}>
                     <span style={{ color: '#555', fontSize: '10px', textTransform: 'uppercase' }}>{label}</span>
@@ -2425,7 +2430,7 @@ function App() {
               {/* Corpus Memory Progress */}
               <div style={{ marginTop: '12px', borderTop: '1px solid #1a1a1a', paddingTop: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Corpus Memory</span>
+                  <span style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.corpusMemory')}</span>
                   <span style={{ color: corpus.length >= 9000 ? '#ef4444' : '#22c55e', fontSize: '10px', fontFamily: 'monospace' }}>
                     {corpus.length.toLocaleString()} / 10,000
                   </span>
@@ -2439,14 +2444,14 @@ function App() {
                     disabled={!corpus.length}
                     style={{ flex: 1, background: '#1a1a1a', border: '1px solid #333', color: corpus.length ? '#888' : '#444', borderRadius: '4px', padding: '6px', cursor: corpus.length ? 'pointer' : 'not-allowed', fontSize: '10px', fontWeight: 'bold', letterSpacing: '0.5px', textTransform: 'uppercase' }}
                   >
-                    EXPORT ({corpus.length.toLocaleString()})
+                    {t('settings.exportCount', { n: corpus.length.toLocaleString() })}
                   </button>
                   <button
                     onClick={() => { setCorpus([]); safeRemoveItem('forgemind_corpus') }}
                     disabled={!corpus.length}
                     style={{ flex: 1, background: '#1a0505', border: '1px solid #3a1010', color: corpus.length ? '#ef4444' : '#444', borderRadius: '4px', padding: '6px', cursor: corpus.length ? 'pointer' : 'not-allowed', fontSize: '10px', fontWeight: 'bold', letterSpacing: '0.5px', textTransform: 'uppercase' }}
                   >
-                    CLEAR
+                    {t('settings.clear')}
                   </button>
                 </div>
               </div>
@@ -2454,7 +2459,7 @@ function App() {
               {/* Corpus training stats */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Training Corpus</label>
+                  <label style={{ color: '#888', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.trainingCorpus')}</label>
                   <span style={{ color: corpus.length >= CORPUS_MAX ? '#f97316' : '#22c55e', fontSize: '10px', fontFamily: 'monospace' }}>
                     {corpus.length.toLocaleString()} / {CORPUS_MAX.toLocaleString()}
                   </span>
@@ -2463,7 +2468,7 @@ function App() {
                   <div style={{ height: '100%', width: `${Math.min(100, (corpus.length / CORPUS_MAX) * 100).toFixed(1)}%`, background: corpus.length >= CORPUS_MAX ? '#f97316' : '#22c55e', transition: 'width 0.3s' }} />
                 </div>
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '6px' }}>
-                  Chat, voice, tool and shell activity is recorded locally as unapproved learning candidates (secrets redacted). Nothing is trusted or learned from until it is admitted. This counter is the recent-context buffer; oldest entries roll off at {CORPUS_MAX.toLocaleString()}.
+                  {t('settings.trainingCorpusHelp', { max: CORPUS_MAX.toLocaleString() })}
                 </div>
               </div>
 
@@ -2471,9 +2476,9 @@ function App() {
               {/* GitHub Token */}              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <label style={{ color: '#f97316', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', fontFamily: 'monospace' }}>
-                    GitHub Token
+                    {t('settings.githubToken')}
                   </label>
-                  {ghToken && <span style={{ color: '#22c55e', fontSize: '10px', fontFamily: 'monospace' }}>● SET</span>}
+                  {ghToken && <span style={{ color: '#22c55e', fontSize: '10px', fontFamily: 'monospace' }}>{t('settings.tokenSet')}</span>}
                 </div>
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '6px' }}>
                   <input
@@ -2494,16 +2499,16 @@ function App() {
                     onClick={() => { persistGithubToken(ghToken); setGhTokenSaved(true); setTimeout(() => setGhTokenSaved(false), 2000) }}
                     style={{ background: ghTokenSaved ? '#14532d' : '#1a1a1a', border: `1px solid ${ghTokenSaved ? '#22c55e' : '#333'}`, color: ghTokenSaved ? '#22c55e' : '#888', borderRadius: '4px', padding: '0 12px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', fontWeight: 'bold', whiteSpace: 'nowrap' }}
                   >
-                    {ghTokenSaved ? '✓ SAVED' : 'SAVE'}
+                    {ghTokenSaved ? t('settings.saved') : t('settings.save')}
                   </button>
                 </div>
                 <div style={{ color: '#444', fontSize: '10px', marginBottom: '10px' }}>
-                  Shell execution requires a valid token. A GitHub 401 means the saved token was rejected (commonly expired, revoked, or malformed): replace it here privately; never paste it into chat. Fine-grained PAT: select this repository and grant Actions: Read and write. Classic PAT: grant repo scope. Organization approval or SSO may also be required.{' '}
-                  <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer" style={{ color: '#f97316' }}>Manage GitHub tokens</a>.
+                  {t('settings.githubTokenHelp')}{' '}
+                  <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer" style={{ color: '#f97316' }}>{t('settings.manageTokens')}</a>.
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <div>
-                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Default Owner / Org</label>
+                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.defaultOwner')}</label>
                     <input
                       type="text"
                       placeholder="DeviousDevv303"
@@ -2513,7 +2518,7 @@ function App() {
                     />
                   </div>
                   <div>
-                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Default Repo</label>
+                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.defaultRepo')}</label>
                     <input
                       type="text"
                       placeholder="forgeclaw"
@@ -2528,7 +2533,7 @@ function App() {
               {/* Web Search API key */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Web Search — Brave API Key
+                  {t('settings.braveKey')}
                 </label>
                 <input
                   type="password"
@@ -2538,14 +2543,14 @@ function App() {
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
                 />
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
-                  Optional. Enables web_search tool with full results. DuckDuckGo used as fallback.
+                  {t('settings.braveKeyHelp')}
                 </div>
               </div>
 
               {/* Google OAuth Token */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Google OAuth Token — Gmail + Calendar
+                  {t('settings.googleToken')}
                 </label>
                 <input
                   type="password"
@@ -2555,7 +2560,7 @@ function App() {
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
                 />
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
-                  Google Cloud Console → APIs → OAuth 2.0. Scopes needed: gmail.send, gmail.readonly, calendar, calendar.readonly.
+                  {t('settings.googleTokenHelp')}
                 </div>
               </div>
 
@@ -2566,73 +2571,73 @@ function App() {
 
               {/* Operator Health / Diagnostics */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
-                <div style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold', marginBottom: '12px' }}>OPERATOR HEALTH</div>
+                <div style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold', marginBottom: '12px' }}>{t('diag.title')}</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   {/* Provider */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>PROVIDER</div>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{t('diag.provider')}</div>
                     <div style={{ color: '#22c55e', fontSize: '14px', fontWeight: 'bold' }}>● {activeProvider}</div>
-                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>Active runtime provider</div>
+                    <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{t('diag.activeProvider')}</div>
                   </div>
 
                   {/* Model */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>MODEL</div>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{t('diag.model')}</div>
                     <div style={{ color: '#ccc', fontSize: '14px', fontWeight: 'bold' }}>{activeModelLabel}</div>
                     <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>{normalizedActiveModel}</div>
                   </div>
 
                   {/* API / workflow credential */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{activeProvider === 'corpus' ? 'CREDENTIALS' : 'API KEY'}</div>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{activeProvider === 'corpus' ? t('diag.credentials') : t('diag.apiKey')}</div>
                     <div style={{ color: activeProvider === 'corpus' ? '#22c55e' : diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
-                      {activeProvider === 'corpus' ? '● GITHUB WORKFLOW TOKEN' : diagnostics.keyPresent ? '● PRESENT' : '● MISSING'}
+                      {activeProvider === 'corpus' ? t('diag.githubWorkflowToken') : diagnostics.keyPresent ? t('diag.present') : t('diag.missing')}
                     </div>
                     <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                      {activeProvider === 'corpus' ? (safeGetItem('gh_token') ? 'DeepSeek workflow GitHub token saved' : 'DeepSeek workflow requires GitHub token in Settings') : diagnostics.keyPresent ? 'Key format valid' : 'Enter key above'}
+                      {activeProvider === 'corpus' ? (safeGetItem('gh_token') ? t('diag.workflowTokenSaved') : t('diag.workflowTokenNeeded')) : diagnostics.keyPresent ? t('diag.keyFormatValid') : t('diag.enterKeyAbove')}
                     </div>
                   </div>
 
                   {/* Last Request */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST REQUEST</div>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{t('diag.lastRequest')}</div>
                     <div style={{
                       color: diagnostics.lastRequestStatus === 'success' ? '#22c55e' : diagnostics.lastRequestStatus === 'error' ? '#ef4444' : '#555',
                       fontSize: '14px', fontWeight: 'bold'
                     }}>
-                      {diagnostics.lastRequestStatus === 'success' ? '● OK' : diagnostics.lastRequestStatus === 'error' ? '● FAILED' : '—'}
+                      {diagnostics.lastRequestStatus === 'success' ? t('diag.ok') : diagnostics.lastRequestStatus === 'error' ? t('diag.failed') : '—'}
                     </div>
                     <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                      {diagnostics.lastLatencyMs !== null ? `${diagnostics.lastLatencyMs}ms` : 'No requests yet'}
+                      {diagnostics.lastLatencyMs !== null ? `${diagnostics.lastLatencyMs}ms` : t('diag.noRequests')}
                     </div>
                   </div>
 
                   {/* Last Error */}
                   {/* Request Metrics — measured outside the prompt */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>REQUEST METRICS (EST.)</div>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{t('diag.requestMetrics')}</div>
                     <div style={{ color: '#888', fontSize: '10px', fontFamily: 'monospace', lineHeight: '1.7' }}>
                       {diagnostics.lastRequestMetrics
                         ? `system ${diagnostics.lastRequestMetrics.systemTokens}t · user ${diagnostics.lastRequestMetrics.userTokens}t · tools ${diagnostics.lastRequestMetrics.toolDefinitionTokens}t · results ${diagnostics.lastRequestMetrics.toolResultTokens}t · total ${diagnostics.lastRequestMetrics.totalRequestTokens}t · model calls ${diagnostics.lastRequestMetrics.modelCalls} · tool calls ${diagnostics.lastRequestMetrics.toolCalls}`
-                        : 'No request metrics yet'}
+                        : t('diag.noMetrics')}
                     </div>
                   </div>
 
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>LAST ERROR</div>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{t('diag.lastError')}</div>
                     <div style={{
                       color: diagnostics.lastError ? '#ef4444' : '#333',
                       fontSize: '12px',
                       fontFamily: 'monospace',
                       wordBreak: 'break-word'
                     }}>
-                      {diagnostics.lastError ?? 'None recorded'}
+                      {diagnostics.lastError ?? t('diag.noneRecorded')}
                     </div>
                   </div>
 
                   {/* Build Version */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', gridColumn: '1 / -1' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>BUILD</div>
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{t('diag.build')}</div>
                     <div style={{ color: '#888', fontSize: '12px', fontFamily: 'monospace' }}>
                       {diagnostics.buildVersion}
                     </div>
@@ -2658,10 +2663,10 @@ function App() {
               {resumePrompt && (
                 <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '10px', fontFamily: 'monospace' }}>
                   <div style={{ color: '#93c5fd', fontSize: '10px', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '6px' }}>
-                    UNFINISHED TASK DETECTED — NOT RUNNING (tap RESUME TASK to run it)
+                    {t('resume.title')}
                   </div>
                   <div style={{ color: '#94a3b8', fontSize: '11px', marginBottom: '8px' }}>
-                    {(codingAgentState.task || 'Coding task').slice(0, 160)}{(codingAgentState.task || '').length > 160 ? '…' : ''} · {codingAgentState.owner}/{codingAgentState.repo}@{codingAgentState.branch} · HEAD {codingAgentState.headShaShort || 'unknown'}
+                    {(codingAgentState.task || t('resume.defaultTask')).slice(0, 160)}{(codingAgentState.task || '').length > 160 ? '…' : ''} · {codingAgentState.owner}/{codingAgentState.repo}@{codingAgentState.branch} · HEAD {codingAgentState.headShaShort || t('resume.unknown')}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button
@@ -2670,21 +2675,21 @@ function App() {
                       disabled={loading}
                       style={{ background: loading ? '#1a1a1a' : '#1e3a5f', border: '1px solid #334155', color: loading ? '#555' : '#93c5fd', borderRadius: '4px', padding: '6px 12px', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '10px', fontWeight: 'bold', fontFamily: 'monospace' }}
                     >
-                      RESUME TASK
+                      {t('resume.resume')}
                     </button>
                     <button
                       type="button"
                       onClick={() => setResumePrompt(null)}
                       style={{ background: '#1a1a1a', border: '1px solid #333', color: '#888', borderRadius: '4px', padding: '6px 12px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}
                     >
-                      DISMISS
+                      {t('resume.dismiss')}
                     </button>
                   </div>
                 </div>
               )}
               {messages.length === 0 ? (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, color: '#444', gap: '16px' }}>
-                  <p>System initialized. Awaiting input...</p>
+                  <p>{t('chat.empty')}</p>
                   {/* Reasoning Stream from activity events */}
                   {reasoning.chains.map(chain => (
                     <ReasoningChainComponent key={chain.id} chain={chain} />
@@ -2711,7 +2716,7 @@ function App() {
                       {/* Message bubble — clean response only */}
                       <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined }}>
                         {msg.imageUrl && (
-                          <img src={msg.imageUrl} alt="uploaded" style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
+                          <img src={msg.imageUrl} alt={t('chat.uploadedAlt')} style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
                         )}
                         {msg.streaming ? (
                           <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
@@ -2726,24 +2731,24 @@ function App() {
                         )}
                         {msg.role === 'assistant' && (
                           <div style={{ marginTop: '10px', display: 'flex', gap: '8px', borderTop: '1px solid #222', paddingTop: '8px', alignItems: 'center' }}>
-                            <button onClick={() => handleCopy(msg.id, msg.content)} style={actionButtonStyle}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
+                            <button onClick={() => handleCopy(msg.id, msg.content)} style={actionButtonStyle}>{copiedId === msg.id ? '✓' : t('chat.copy')}</button>
                             <button onClick={() => handleSpeak(msg.id, msg.content)} style={{ ...actionButtonStyle, fontSize: '13px' }}>{speakingId === msg.id ? '⏸' : '▶'}</button>
-                            <button onClick={() => handleFeedback(msg.id, 'up')} title="Helpful" style={{ background: msg.feedback === 'up' ? '#2563eb' : 'transparent', border: msg.feedback === 'up' ? '1px solid #2563eb' : '1px solid #333', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', lineHeight: 1, transition: 'all 0.15s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <button onClick={() => handleFeedback(msg.id, 'up')} title={t('chat.helpful')} style={{ background: msg.feedback === 'up' ? '#2563eb' : 'transparent', border: msg.feedback === 'up' ? '1px solid #2563eb' : '1px solid #333', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', lineHeight: 1, transition: 'all 0.15s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                               <svg width="13" height="13" viewBox="0 0 24 24" fill={msg.feedback === 'up' ? '#fff' : '#aaa'}><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg>
                             </button>
-                            <button onClick={() => handleFeedback(msg.id, 'down')} title="Not helpful" style={{ background: msg.feedback === 'down' ? '#991b1b' : 'transparent', border: msg.feedback === 'down' ? '1px solid #991b1b' : '1px solid #333', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', lineHeight: 1, transition: 'all 0.15s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <button onClick={() => handleFeedback(msg.id, 'down')} title={t('chat.notHelpful')} style={{ background: msg.feedback === 'down' ? '#991b1b' : 'transparent', border: msg.feedback === 'down' ? '1px solid #991b1b' : '1px solid #333', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', lineHeight: 1, transition: 'all 0.15s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                               <svg width="13" height="13" viewBox="0 0 24 24" fill={msg.feedback === 'down' ? '#fff' : '#aaa'}><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L10.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
                             </button>
                           </div>
                         )}
                         {msg.role === 'user' && (
                           <div style={{ marginTop: '8px', display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
-                            <button onClick={() => handleCopy(msg.id, msg.content)} style={{ ...actionButtonStyle, color: '#000', border: '1px solid rgba(0,0,0,0.3)' }}>{copiedId === msg.id ? '✓' : 'COPY'}</button>
+                            <button onClick={() => handleCopy(msg.id, msg.content)} style={{ ...actionButtonStyle, color: '#000', border: '1px solid rgba(0,0,0,0.3)' }}>{copiedId === msg.id ? '✓' : t('chat.copy')}</button>
                             {msg.tasteImageId && (
                               <>
-                                <span style={{ color: '#333', fontSize: '10px', fontFamily: 'monospace' }}>TASTE</span>
+                                <span style={{ color: '#333', fontSize: '10px', fontFamily: 'monospace' }}>{t('chat.taste')}</span>
                                 {(['up', 'down', 'fire'] as TasteSignal[]).map(signal => (
-                                  <button key={signal} onClick={() => void handleTasteFeedback(msg.id, signal)} title={`Taste: ${signal}`} style={{ ...actionButtonStyle, color: msg.tasteFeedback === signal ? '#f97316' : '#333', border: '1px solid rgba(0,0,0,0.3)' }}>{signal === 'fire' ? '🔥' : signal === 'up' ? '👍' : '👎'}</button>
+                                  <button key={signal} onClick={() => void handleTasteFeedback(msg.id, signal)} title={t('chat.tasteTitle', { signal: t(signal === 'fire' ? 'taste.fire' : signal === 'up' ? 'taste.up' : 'taste.down') })} style={{ ...actionButtonStyle, color: msg.tasteFeedback === signal ? '#f97316' : '#333', border: '1px solid rgba(0,0,0,0.3)' }}>{signal === 'fire' ? '🔥' : signal === 'up' ? '👍' : '👎'}</button>
                                 ))}
                               </>
                             )}
@@ -2789,14 +2794,14 @@ function App() {
                     textTransform: 'uppercase', fontFamily: 'monospace',
                   }}
                 >
-                  {guardianPosture === 'full-cosign' ? '🛡 FULL CO-SIGN' : guardianPosture === 'operator-shell' ? '⚡ OPERATOR-SHELL' : '⚡ AUTONOMOUS'}
+                  {guardianPosture === 'full-cosign' ? t('guardian.fullCosign') : guardianPosture === 'operator-shell' ? t('guardian.operatorShell') : t('guardian.autonomous')}
                 </button>
                 <span style={{ color: '#3a5c3a', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>
                   {guardianPosture === 'full-cosign'
-                    ? 'all mutating ops require co-sign'
+                    ? t('guardian.fullCosignDesc')
                     : guardianPosture === 'operator-shell'
-                    ? 'shell autonomous · repo writes co-sign'
-                    : 'all operations run without co-sign'}
+                    ? t('guardian.operatorShellDesc')
+                    : t('guardian.autonomousDesc')}
                 </span>
               </div>
 
@@ -2805,26 +2810,26 @@ function App() {
                 <div key={cs.id} style={{ margin: '0 0 8px', background: '#080d08', border: '1px solid #1e3a1e', borderRadius: '8px', padding: '14px 16px', fontFamily: 'monospace' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
                     <span style={{ fontSize: '14px' }}>🛡️</span>
-                    <span style={{ color: '#22c55e', fontSize: '10px', letterSpacing: '2px', fontWeight: 'bold' }}>GUARDIAN GATE</span>
-                    <span style={{ color: '#ef4444', fontSize: '10px', letterSpacing: '1px', marginLeft: 'auto' }}>REQUIRES CO-SIGN</span>
+                    <span style={{ color: '#22c55e', fontSize: '10px', letterSpacing: '2px', fontWeight: 'bold' }}>{t('guardian.gate')}</span>
+                    <span style={{ color: '#ef4444', fontSize: '10px', letterSpacing: '1px', marginLeft: 'auto' }}>{t('guardian.requires')}</span>
                   </div>
                   <div style={{ color: '#4ade80', fontSize: '11px', marginBottom: '6px' }}>
-                    Tool: <span style={{ color: '#86efac' }}>{cs.toolName}</span>
+                    {t('guardian.tool')} <span style={{ color: '#86efac' }}>{cs.toolName}</span>
                   </div>
                   {cs.toolName === 'shell_exec' && typeof cs.toolInput.command === 'string' && (
                     <div style={{ background: '#0d0800', border: '1px solid #c4762a55', borderRadius: '4px', padding: '8px', marginBottom: '8px' }}>
-                      <div style={{ color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>⚠ SHELL COMMAND</div>
+                      <div style={{ color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>{t('guardian.shellCommand')}</div>
                       <div style={{ color: '#d4d0c8', fontSize: '10px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>$ {cs.toolInput.command}</div>
                       {typeof cs.toolInput.reason === 'string' && (
-                        <div style={{ color: '#6b7280', fontSize: '9px', marginTop: '5px' }}>reason: {cs.toolInput.reason}</div>
+                        <div style={{ color: '#6b7280', fontSize: '9px', marginTop: '5px' }}>{t('guardian.reason')} {cs.toolInput.reason}</div>
                       )}
                     </div>
                   )}
                   {cs.toolName === 'github_write_file' && (
                     <div style={{ background: '#0d0800', border: '1px solid #c4762a55', borderRadius: '4px', padding: '8px', marginBottom: '8px' }}>
-                      <div style={{ color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>⚠ REPOSITORY WRITE</div>
+                      <div style={{ color: '#c4762a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>{t('guardian.repoWrite')}</div>
                       <div style={{ color: '#d4d0c8', fontSize: '10px', fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                        {String(cs.toolInput.path ?? '')} @ {typeof cs.toolInput.branch === 'string' && cs.toolInput.branch ? cs.toolInput.branch : 'default branch'}
+                        {String(cs.toolInput.path ?? '')} @ {typeof cs.toolInput.branch === 'string' && cs.toolInput.branch ? cs.toolInput.branch : t('guardian.defaultBranch')}
                       </div>
                       <div style={{ color: '#9ca3af', fontSize: '10px', fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', marginTop: '5px', maxHeight: '80px', overflowY: 'auto' }}>
                         {String(cs.toolInput.content ?? '').slice(0, 500)}{String(cs.toolInput.content ?? '').length > 500 ? '…' : ''}
@@ -2832,7 +2837,7 @@ function App() {
                     </div>
                   )}
                   <div style={{ background: '#040904', border: '1px solid #1a2e1a', borderRadius: '4px', padding: '8px', marginBottom: '10px', maxHeight: '80px', overflowY: 'auto' }}>
-                    <div style={{ color: '#4a7a3a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>REASONING SNAPSHOT</div>
+                    <div style={{ color: '#4a7a3a', fontSize: '10px', marginBottom: '4px', letterSpacing: '1px' }}>{t('guardian.reasoningSnapshot')}</div>
                     <div style={{ color: '#4a7a3a', fontSize: '10px', lineHeight: '1.5', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{cs.reasoning.slice(0, 300)}{cs.reasoning.length > 300 ? '…' : ''}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
@@ -2840,13 +2845,13 @@ function App() {
                       onClick={() => settleCoSign(cs.id, false)}
                       style={{ flex: 1, background: '#1a0505', border: '1px solid #7f1d1d', color: '#ef4444', borderRadius: '5px', padding: '7px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1px', textTransform: 'uppercase' }}
                     >
-                      REJECT
+                      {t('guardian.reject')}
                     </button>
                     <button
                       onClick={() => settleCoSign(cs.id, true)}
                       style={{ flex: 1, background: '#051a05', border: '1px solid #14532d', color: '#22c55e', borderRadius: '5px', padding: '7px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1px', textTransform: 'uppercase' }}
                     >
-                      APPROVE
+                      {t('guardian.approve')}
                     </button>
                   </div>
                 </div>
@@ -2870,7 +2875,7 @@ function App() {
                       animation: chatListening ? 'pulse 1.2s infinite' : 'none',
                       flexShrink: 0,
                     }} />
-                    <span>{chatListening ? 'Listening - speak your prompt' : voiceInputError}</span>
+                    <span>{chatListening ? t('chat.listening') : voiceInputError}</span>
                   </div>
                 )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '6px 10px' }}>
@@ -2879,7 +2884,7 @@ function App() {
                   <button
                     onClick={() => setShowConnectors(s => !s)}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', padding: '4px', position: 'relative', flexShrink: 0 }}
-                    title="Tools & connectors"
+                    title={t('chat.toolsTitle')}
                   >
                     <span style={{ fontSize: '16px' }}>🛠️</span>
                     {activityLog.length > 0 && (
@@ -2896,8 +2901,8 @@ function App() {
                   <button
                     onClick={toggleChatVoicePrompt}
                     disabled={loading}
-                    title={chatListening ? 'Stop voice prompt' : 'Voice prompt'}
-                    aria-label={chatListening ? 'Stop voice prompt' : 'Start voice prompt'}
+                    title={chatListening ? t('chat.voiceStopTitle') : t('chat.voiceStartTitle')}
+                    aria-label={chatListening ? t('chat.voiceStopTitle') : t('chat.voiceStartAria')}
                     style={{
                       width: '42px',
                       height: '32px',
@@ -2917,13 +2922,13 @@ function App() {
                       animation: chatListening ? 'micPulse 1.2s infinite' : 'none',
                     }}
                   >
-                    {chatListening ? 'REC' : 'MIC'}
+                    {chatListening ? t('chat.rec') : t('chat.mic')}
                   </button>
-                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder="Ask anything… or /deepseek <question>" value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
+                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder={t('chat.placeholder')} value={input} onChange={e => setInput(e.target.value)} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
                   {loading ? (
-                    <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '6px 14px', borderRadius: '5px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={stopGeneration} aria-label="Stop generation">STOP</button>
+                    <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '6px 14px', borderRadius: '5px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={stopGeneration} aria-label={t('chat.stopAria')}>{t('chat.stop')}</button>
                   ) : (
-                    <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage}>SEND</button>
+                    <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage}>{t('chat.send')}</button>
                   )}
                 </div>
                 {/* Connectors panel — quick-toggle sheet */}
@@ -2935,14 +2940,14 @@ function App() {
                     boxShadow: '0 -4px 20px rgba(0,0,0,0.6)',
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                      <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '2px', fontWeight: 'bold', fontFamily: 'monospace' }}>CONNECTORS</span>
+                      <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '2px', fontWeight: 'bold', fontFamily: 'monospace' }}>{t('connectors.title')}</span>
                       <button onClick={() => setShowConnectors(false)} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '16px' }}>×</button>
                     </div>
                     {[
                       { name: 'GitHub', icon: '⚙️', key: 'gh_token', connected: !!ghToken },
                       { name: 'Gmail', icon: '📧', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
-                      { name: 'Calendar', icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
-                      { name: 'Web Search', icon: '🔍', key: 'fc_brave_key', connected: !!safeGetItem('fc_brave_key') },
+                      { name: t('connectors.calendar'), icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
+                      { name: t('connectors.webSearch'), icon: '🔍', key: 'fc_brave_key', connected: !!safeGetItem('fc_brave_key') },
                       { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
@@ -2955,7 +2960,7 @@ function App() {
                           fontSize: '10px', fontFamily: 'monospace',
                           letterSpacing: '0.5px',
                         }}>
-                          {conn.connected ? '● ON' : '○ OFF'}
+                          {conn.connected ? t('connectors.on') : t('connectors.off')}
                         </span>
                       </div>
                     ))}
@@ -2964,7 +2969,7 @@ function App() {
                         onClick={() => { setActiveTab('settings'); setShowConnectors(false) }}
                         style={{ background: 'none', border: '1px solid #333', color: '#888', padding: '6px 12px', borderRadius: '5px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', width: '100%' }}
                       >
-                        MANAGE CONNECTORS → SETTINGS
+                        {t('connectors.manage')}
                       </button>
                     </div>
                   </div>
@@ -2990,14 +2995,14 @@ function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
-              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>{activityView === 'failures' ? 'FAILURES' : 'EXECUTION LOG'}</span>
+              <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>{activityView === 'failures' ? t('activity.failures') : t('activity.executionLog')}</span>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <button onClick={() => setActivityView('log')} style={{ background: activityView === 'log' ? '#1a1a1a' : 'none', border: '1px solid #222', color: activityView === 'log' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>LOG</button>
-                <button onClick={() => setActivityView('failures')} style={{ background: activityView === 'failures' ? '#1a1a1a' : 'none', border: unresolvedCount > 0 ? '1px solid #7f1d1d' : '1px solid #222', color: unresolvedCount > 0 ? '#ef4444' : activityView === 'failures' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>FAILURES{unresolvedCount > 0 ? ` ${unresolvedCount}` : ''}</button>
+                <button onClick={() => setActivityView('log')} style={{ background: activityView === 'log' ? '#1a1a1a' : 'none', border: '1px solid #222', color: activityView === 'log' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>{t('activity.log')}</button>
+                <button onClick={() => setActivityView('failures')} style={{ background: activityView === 'failures' ? '#1a1a1a' : 'none', border: unresolvedCount > 0 ? '1px solid #7f1d1d' : '1px solid #222', color: unresolvedCount > 0 ? '#ef4444' : activityView === 'failures' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>{t('activity.failures')}{unresolvedCount > 0 ? ` ${unresolvedCount}` : ''}</button>
                 {activityView === 'log' && activityLog.length > 0 && (
-                  <button onClick={() => setActivityLog([])} style={{ background: 'none', border: '1px solid #222', color: '#444', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>CLEAR</button>
+                  <button onClick={() => setActivityLog([])} style={{ background: 'none', border: '1px solid #222', color: '#444', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>{t('activity.clear')}</button>
                 )}
-                <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{messages.filter(m => m.role === 'assistant').length} RESPONSES · {messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0)} TOOL CALLS</span>
+                <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{t('activity.summary', { responses: messages.filter(m => m.role === 'assistant').length, tools: messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0) })}</span>
               </div>
             </div>
 
@@ -3033,7 +3038,7 @@ function App() {
                       description: Object.entries(e.input).slice(0, 2).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(' · '),
                       toolName: e.tool,
                       toolIcon: toolIconMap[e.tool] || '🛠️',
-                      computerLabel: "Forge's computer",
+                      computerLabel: t('activity.computer'),
                       toolPreview: e.output ? e.output.split('\n')[0].slice(0, 80) : undefined,
                       ...(e.output ? { skills: [e.output.split('\n')[0].slice(0, 80)] } : {}),
                     }
@@ -3045,19 +3050,19 @@ function App() {
             )}
 
             {activityView === 'log' && messages.length === 0 && activityLog.length === 0 && (
-              <div style={{ color: '#333', fontSize: '10px', textAlign: 'center', marginTop: '40px', letterSpacing: '2px' }}>NO ACTIVITY YET</div>
+              <div style={{ color: '#333', fontSize: '10px', textAlign: 'center', marginTop: '40px', letterSpacing: '2px' }}>{t('activity.none')}</div>
             )}
 
             {activityView === 'log' && messages.map((msg) => {
               const ts = new Date(msg.timestamp)
-              const timeStr = ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-              const dateStr = ts.toLocaleDateString([], { month: 'short', day: 'numeric' })
+              const timeStr = ts.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              const dateStr = ts.toLocaleDateString(locale, { month: 'short', day: 'numeric' })
 
               if (msg.role === 'user') {
                 return (
                   <div key={msg.id} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '5px 0', borderBottom: '1px solid #0f0f0f', opacity: hoveredStepId ? 0.3 : 1, transition: 'opacity 0.15s' }}>
                     <span style={{ color: '#333', fontSize: '8px', flexShrink: 0, marginTop: '2px', width: '90px' }}>{dateStr} {timeStr}</span>
-                    <span style={{ color: '#f9731644', fontSize: '8px', letterSpacing: '1px', flexShrink: 0, marginTop: '2px' }}>USER</span>
+                    <span style={{ color: '#f9731644', fontSize: '8px', letterSpacing: '1px', flexShrink: 0, marginTop: '2px' }}>{t('activity.user')}</span>
                     <span style={{ color: '#555', fontSize: '10px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{msg.content.slice(0, 120)}</span>
                   </div>
                 )
@@ -3067,7 +3072,7 @@ function App() {
               const toolCount = msg.toolResults?.length ?? 0
               const toolErrors = msg.toolResults?.filter(t => t.isError).length ?? 0
               const hasThinking = !!buildMessageTrace(msg)
-              const src = msg.source === 'local' ? 'LOCAL' : 'CLOUD'
+              const src = msg.source === 'local' ? t('activity.local') : t('activity.cloud')
               const srcColor = msg.source === 'local' ? '#10b981' : '#3b82f6'
               // This response block contains the hovered step
               const blockHovered = hoveredStepId && msg.toolResults?.some(tr => tr.reasoningStepId === hoveredStepId)
@@ -3082,10 +3087,10 @@ function App() {
                       {msg.content.slice(0, 100)}
                     </span>
                     <div style={{ display: 'flex', gap: '6px', flexShrink: 0, alignItems: 'center' }}>
-                      {hasThinking && <span style={{ color: '#2a4a22', fontSize: '7px', border: '1px solid #2a4a22', padding: '0 3px', borderRadius: '2px', letterSpacing: '1px' }}>TRACE</span>}
+                      {hasThinking && <span style={{ color: '#2a4a22', fontSize: '7px', border: '1px solid #2a4a22', padding: '0 3px', borderRadius: '2px', letterSpacing: '1px' }}>{t('activity.trace')}</span>}
                       {toolCount > 0 && (
                         <span style={{ color: toolErrors > 0 ? '#cc333388' : '#5a9e4488', fontSize: '7px', border: `1px solid ${toolErrors > 0 ? '#cc333344' : '#5a9e4444'}`, padding: '0 3px', borderRadius: '2px', letterSpacing: '1px' }}>
-                          {toolCount} TOOL{toolCount !== 1 ? 'S' : ''}{toolErrors > 0 ? ` · ${toolErrors} ERR` : ''}
+                          {t(toolCount === 1 ? 'activity.toolOne' : 'activity.toolMany', { n: toolCount })}{toolErrors > 0 ? ` · ${t('activity.errors', { n: toolErrors })}` : ''}
                         </span>
                       )}
                     </div>
@@ -3105,7 +3110,7 @@ function App() {
                         <span style={{ color: '#2a3a2a', fontSize: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                           {tr.output.split('\n')[0].slice(0, 100)}
                         </span>
-                        <span style={{ color: tr.isError ? '#cc333388' : '#5a9e4488', fontSize: '7px', flexShrink: 0 }}>{tr.isError ? 'FAILED' : 'OK'}</span>
+                        <span style={{ color: tr.isError ? '#cc333388' : '#5a9e4488', fontSize: '7px', flexShrink: 0 }}>{tr.isError ? t('activity.failed') : t('activity.ok')}</span>
                       </div>
                     )
                   })}
@@ -3123,7 +3128,7 @@ function App() {
 
               {/* ── READ ALOUD section ── */}
               <div style={{ display: 'none', padding: '20px 20px 0', borderBottom: '1px solid #111' }}>
-                <div style={{ fontSize: '10px', color: '#f97316', letterSpacing: '2px', fontFamily: 'monospace', marginBottom: '10px', fontWeight: 'bold' }}>READ ALOUD</div>
+                <div style={{ fontSize: '10px', color: '#f97316', letterSpacing: '2px', fontFamily: 'monospace', marginBottom: '10px', fontWeight: 'bold' }}>{t('mic.readAloud')}</div>
                 {lastAI ? (
                   <div style={{ background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '12px 14px', marginBottom: '12px' }}>
                     <div style={{ fontFamily: "'Courier New', monospace", fontSize: '13px', color: '#bbb', lineHeight: '1.6', maxHeight: '120px', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
@@ -3140,21 +3145,21 @@ function App() {
                           cursor: 'pointer', fontSize: '12px', fontFamily: 'monospace', letterSpacing: '2px',
                         }}
                       >
-                        {speakingId === lastAI.id ? '⏹ STOP' : '▶ SPEAK'}
+                        {speakingId === lastAI.id ? t('mic.stopSpeaking') : t('mic.speak')}
                       </button>
                       {speakingId === lastAI.id && (
-                        <span style={{ color: '#ef4444', fontSize: '10px', fontFamily: 'monospace', animation: 'pulse 1.2s infinite' }}>● SPEAKING</span>
+                        <span style={{ color: '#ef4444', fontSize: '10px', fontFamily: 'monospace', animation: 'pulse 1.2s infinite' }}>{t('mic.speaking')}</span>
                       )}
                     </div>
                   </div>
                 ) : (
-                  <div style={{ color: '#2a2a2a', fontSize: '11px', fontFamily: 'monospace', paddingBottom: '16px' }}>No AI response yet — send a message first.</div>
+                  <div style={{ color: '#2a2a2a', fontSize: '11px', fontFamily: 'monospace', paddingBottom: '16px' }}>{t('mic.noResponse')}</div>
                 )}
               </div>
 
               {/* ── SPEECH INPUT section ── */}
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px', padding: '28px 20px' }}>
-                <div style={{ fontSize: '10px', color: '#39ff14', letterSpacing: '3px', fontFamily: 'monospace', alignSelf: 'flex-start', fontWeight: 'bold' }}>MIC PROMPT</div>
+                <div style={{ fontSize: '10px', color: '#39ff14', letterSpacing: '3px', fontFamily: 'monospace', alignSelf: 'flex-start', fontWeight: 'bold' }}>{t('mic.prompt')}</div>
 
                 <button
                   onClick={toggleVoiceMic}
@@ -3171,40 +3176,40 @@ function App() {
                     fontWeight: 'bold',
                     letterSpacing: '2px',
                   }}
-                  title={listening ? 'Tap to stop dictation' : 'Tap to start dictation'}
+                  title={listening ? t('mic.tapStop') : t('mic.tapStart')}
                 >
-                  {listening ? 'REC' : 'MIC'}
+                  {listening ? t('chat.rec') : t('chat.mic')}
                 </button>
 
                 <span style={{ color: listening ? '#39ff14' : '#333', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
-                  {listening ? 'RECORDING' : 'TAP MIC OR CLICK THE MIC TAB'}
+                  {listening ? t('mic.recording') : t('mic.tapOrTab')}
                 </span>
 
                 <div style={{ width: '100%', maxWidth: '600px', marginTop: '-12px', color: voiceInputError ? '#ef4444' : listening ? '#39ff14' : '#555', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', lineHeight: 1.5, textAlign: 'center', textTransform: 'uppercase' }}>
-                  {voiceInputError || (listening ? 'Mic armed - speak naturally, tap again to stop' : 'The MIC tab arms dictation and turns your voice into the chat prompt')}
+                  {voiceInputError || (listening ? t('mic.armed') : t('mic.hint'))}
                 </div>
 
                 <div style={{ width: '100%', maxWidth: '600px', minHeight: '150px', background: '#0d0d0d', border: `1px solid ${listening ? '#1f5f2b' : '#1e1e1e'}`, borderRadius: '10px', padding: '16px', fontFamily: "'Courier New', monospace", fontSize: '14px', color: '#c8c8c8', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word', boxShadow: listening ? '0 0 24px rgba(57,255,20,0.08)' : 'none' }}>
-                  {voiceTranscript || <span style={{ color: '#2a2a2a' }}>Your dictated prompt will appear here...</span>}
+                  {voiceTranscript || <span style={{ color: '#2a2a2a' }}>{t('mic.transcriptPlaceholder')}</span>}
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button onClick={() => { voiceTranscriptRef.current = ''; setVoiceTranscript('') }} style={{ background: 'none', border: '1px solid #2a2a2a', color: '#555', padding: '7px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px' }}>
-                    CLEAR
+                    {t('mic.clear')}
                   </button>
                   <button
                     onClick={() => sendVoiceTranscriptToChat(false)}
                     disabled={!voiceTranscript.trim()}
                     style={{ background: voiceTranscript.trim() ? '#f97316' : '#1a1a1a', color: voiceTranscript.trim() ? '#000' : '#333', padding: '7px 18px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}
                   >
-                    PUT IN CHAT
+                    {t('mic.putInChat')}
                   </button>
                   <button
                     onClick={() => sendVoiceTranscriptToChat(true)}
                     disabled={!voiceTranscript.trim() || loading}
                     style={{ background: voiceTranscript.trim() && !loading ? '#39ff14' : '#1a1a1a', color: voiceTranscript.trim() && !loading ? '#031005' : '#333', padding: '7px 18px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() && !loading ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}
                   >
-                    SEND PROMPT
+                    {t('mic.sendPrompt')}
                   </button>
                 </div>
               </div>
