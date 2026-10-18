@@ -47,6 +47,7 @@ jobs:
           git fetch --no-tags origin main
           git show origin/main:.github/scripts/check-protected.py > "$RUNNER_TEMP/check-protected.py"
           git show origin/main:.github/protected-paths.txt > "$RUNNER_TEMP/protected-paths.txt"
+          git show origin/main:.github/scripts/check-symlinks.sh > "$RUNNER_TEMP/check-symlinks.sh"
 
       # Layer 1: input validation.
       - name: Validate repair inputs
@@ -123,6 +124,7 @@ jobs:
             git diff --no-renames --name-only -z origin/main
             git ls-files -z --others --exclude-standard
           } | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
+          bash "$RUNNER_TEMP/check-symlinks.sh"
 
       - name: Post-patch verify
         id: verify
@@ -134,11 +136,14 @@ jobs:
       # Layer 5: no push on verification failure, with a reviewable artifact.
       - name: Record repair failure
         if: steps.verify.outcome != 'success'
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          REPAIR_BRANCH: ${{ inputs.repair_branch }}
         run: |
           set -euo pipefail
           {
-            echo "invocation_id=${{ inputs.invocation_id }}"
-            echo "branch=${{ inputs.repair_branch }}"
+            echo "invocation_id=$INVOCATION_ID"
+            echo "branch=$REPAIR_BRANCH"
             echo 'post_patch_verify=failed'
             echo
             cat verify.log 2>/dev/null || true
@@ -157,6 +162,17 @@ jobs:
       - name: Stop after failed verification
         if: steps.verify.outcome != 'success'
         run: exit 1
+
+      # The verify step executes patched code, so re-run the checks on the final tree before it is
+      # committed. Policy and scripts come from the copies loaded from main, never from the working tree.
+      - name: Re-check protected paths after verification
+        run: |
+          set -euo pipefail
+          {
+            git diff --no-renames --name-only -z origin/main
+            git ls-files -z --others --exclude-standard
+          } | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
+          bash "$RUNNER_TEMP/check-symlinks.sh"
 
       - name: Commit and push repair branch
         env:
