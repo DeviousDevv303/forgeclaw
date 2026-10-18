@@ -9,6 +9,7 @@ import { tasteProvider } from './providers/tasteProvider'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { buildDeepSeekTaskPayload } from './deepseekContext'
+import { stripReasoningArtifacts } from './responseFilter'
 import { withResponseLanguage } from '../responseLanguage'
 
 export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, anthropic: anthropicProvider, local: localInferenceProvider, nexus: corpusProvider, taste: tasteProvider } as const
@@ -94,10 +95,11 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
     if (selected === 'corpus' && failed) return { success: false, error: classifyError(new Error(failed.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
     const latest = latestCurrentToolResult(request)
     if (selected === 'corpus' && latest?.name === 'deepseek_reason' && isSuccessfulDeepSeekToolResult(latest.content)) {
-      const answer = latest.content.split('\n\n').slice(1).join('\n\n').trim()
+      const raw = latest.content.split('\n\n').slice(1).join('\n\n').trim()
+      const answer = stripReasoningArtifacts(raw)
       if (answer) return success({ text: answer, provider: 'deepseek', model: `DeepSeek 16B Actions (${deepSeekCheckpointLabel(latest.content)})`, stopReason: 'deepseek-synthesis-complete' })
     }
-    if (selected === 'corpus') return { success: false, error: classifyError(new Error('DeepSeek 16B returned no usable result.'), selected) }
+    if (selected === 'corpus') return { success: false, error: classifyError(new Error('DeepSeek 16B is temporarily unavailable (GitHub Actions unreachable). Please try again in a moment.'), selected) }
     return success(selected === 'local' ? await sendLocalWithTimeout(request, apiKey) : await provider.send(request, apiKey))
   } catch (error) { return { success: false, error: classifyError(error, selected) } }
 }

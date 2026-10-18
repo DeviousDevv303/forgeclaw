@@ -4,8 +4,10 @@
 export const PROVIDER_IDS = ['moonshot', 'corpus', 'local', 'anthropic', 'nexus'] as const
 export type ProviderId = typeof PROVIDER_IDS[number]
 
-/** Moonshot/Kimi is the canonical ForgeClaw reasoning runtime; DeepSeek remains selectable. */
-export const DEFAULT_PROVIDER: ProviderId = 'moonshot'
+/** Corpus (DeepSeek 16B via GitHub Actions) is the default — no API key needed.
+ * New users get working AI immediately; Moonshot/Kimi remains selectable
+ * for those with a key. */
+export const DEFAULT_PROVIDER: ProviderId = 'corpus'
 
 export function resolveInitialProvider(savedProvider: string | null): ProviderId {
   if (savedProvider === 'nexus') return DEFAULT_PROVIDER
