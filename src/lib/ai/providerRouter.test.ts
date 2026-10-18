@@ -3,10 +3,10 @@ import { detectBestProvider, getBestProvider, providers, sendViaRouter } from '.
 import type { AIRequest } from './types'
 
 describe('provider router', () => {
-  it('uses Corpus (DeepSeek 16B via Actions) as the default without probing localhost', async () => {
+  it('uses DeepSeek 16B as the default without probing localhost', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    await expect(getBestProvider('')).resolves.toEqual({ providerId: 'corpus', model: 'deepseek-16b', level: 1 })
+    await expect(getBestProvider('')).resolves.toEqual({ providerId: 'deepseek', model: 'deepseek-16b', level: 1 })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

@@ -12,7 +12,12 @@ import { buildDeepSeekTaskPayload } from './deepseekContext'
 import { stripReasoningArtifacts } from './responseFilter'
 import { withResponseLanguage } from '../responseLanguage'
 
-export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, anthropic: anthropicProvider, local: localInferenceProvider, nexus: corpusProvider, taste: tasteProvider } as const
+/** True for providers that run DeepSeek 16B via GitHub Actions. */
+export function isDeepSeekProvider(providerId: string): boolean {
+  return providerId === 'corpus' || providerId === 'deepseek';
+}
+
+export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, deepseek: corpusProvider, anthropic: anthropicProvider, local: localInferenceProvider, nexus: corpusProvider, taste: tasteProvider } as const
 export type ProviderId = keyof typeof providers
 export interface ProviderChoice { providerId: ProviderId; model: string; level: 1 | 2 | 3 | 4 }
 export const LOCAL_PROVIDER_TIMEOUT_MS = 4_000
@@ -24,7 +29,7 @@ export async function detectBestProvider(apiKey = '', preferredModel = DEFAULT_L
   return { providerId: 'local', model: preferredModel, level: 2 }
 }
 export async function getBestProvider(apiKey: string, preferred: ProviderId = DEFAULT_PROVIDER, preferredModel = ''): Promise<ProviderChoice> {
-  if (preferred === 'nexus') preferred = 'corpus'
+  if (preferred === 'nexus') preferred = 'deepseek'
   if (preferred !== 'local') return { providerId: preferred, model: preferredModel || providers[preferred].models[0]?.id || 'deepseek-16b', level: 1 }
   return detectBestProvider(apiKey, preferredModel || DEFAULT_LOCAL_MODEL)
 }
@@ -58,12 +63,12 @@ function isGuardianBlockedResult(content: string) { return /^\s*\[GUARDIAN (?:BL
 function isSuccessfulDeepSeekToolResult(content: string) { return content.startsWith('✓ DeepSeek-16B completed as ') }
 function deepSeekCheckpointLabel(content: string) { return content.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable' }
 function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: ProviderId): boolean {
-  if (providerId !== 'corpus' || !request.tools?.some(t => t.name === 'github_repo_state') || hasToolResult(request, 'github_repo_state')) return false
+  if (!isDeepSeekProvider(providerId) || !request.tools?.some(t => t.name === 'github_repo_state') || hasToolResult(request, 'github_repo_state')) return false
   const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? ''
   return /repository evidence comes from github tools|\b(repo|repository|codebase|forgeclaw|source|file|branch|commit|github)\b/i.test(text)
 }
 function shouldBootstrapDeepSeekReasoning(request: AIRequest, providerId: ProviderId): boolean {
-  if (providerId !== 'corpus' || !request.tools?.some(t => t.name === 'deepseek_reason')) return false
+  if (!isDeepSeekProvider(providerId) || !request.tools?.some(t => t.name === 'deepseek_reason')) return false
   if (failedDeepSeekToolResult(request)) return false
   const latest = latestCurrentToolResult(request)
   return !latest || latest.name !== 'deepseek_reason'
@@ -82,7 +87,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   const lastUser = [...request.messages].reverse().find(m => m.role === 'user')
   if (lastUser && isImageGenerationRequest(lastUser.content)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `direct-image-${Date.now()}`, name: 'generate_image', input: { prompt: extractImagePrompt(lastUser.content), style: inferImageStyle(extractImagePrompt(lastUser.content)), width: 512, height: 512 } }], stopReason: 'direct-image-intent' })
   const prior = latestCurrentToolResult(request)
-  if (selected === 'corpus' && prior?.name === 'deepseek_reason' && isGuardianBlockedResult(prior.content)) return { success: false, error: classifyError(new Error(`Guardian blocked the DeepSeek reasoning step. ${prior.content.slice(0, 300)}`), selected) }
+  if (isDeepSeekProvider(selected) && prior?.name === 'deepseek_reason' && isGuardianBlockedResult(prior.content)) return { success: false, error: classifyError(new Error(`Guardian blocked the DeepSeek reasoning step. ${prior.content.slice(0, 300)}`), selected) }
   // Repository facts must be established before DeepSeek receives a coding or
   // repository-oriented task. Previously this check ran first, so a request
   // exposing both tools could dispatch DeepSeek without a verified HEAD result;
@@ -92,14 +97,14 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   if (!(await provider.isConfigured(apiKey))) return { success: false, error: { class: 'AUTH_FAILURE', message: `${provider.label} API key or endpoint required.`, provider: selected, retryable: false } }
   try {
     const failed = failedDeepSeekToolResult(request)
-    if (selected === 'corpus' && failed) return { success: false, error: classifyError(new Error(failed.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
+    if (isDeepSeekProvider(selected) && failed) return { success: false, error: classifyError(new Error(failed.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
     const latest = latestCurrentToolResult(request)
-    if (selected === 'corpus' && latest?.name === 'deepseek_reason' && isSuccessfulDeepSeekToolResult(latest.content)) {
+    if (isDeepSeekProvider(selected) && latest?.name === 'deepseek_reason' && isSuccessfulDeepSeekToolResult(latest.content)) {
       const raw = latest.content.split('\n\n').slice(1).join('\n\n').trim()
       const answer = stripReasoningArtifacts(raw)
       if (answer) return success({ text: answer, provider: 'deepseek', model: `DeepSeek 16B Actions (${deepSeekCheckpointLabel(latest.content)})`, stopReason: 'deepseek-synthesis-complete' })
     }
-    if (selected === 'corpus') return { success: false, error: classifyError(new Error('DeepSeek 16B is temporarily unavailable (GitHub Actions unreachable). Please try again in a moment.'), selected) }
+    if (isDeepSeekProvider(selected)) return { success: false, error: classifyError(new Error('DeepSeek 16B is temporarily unavailable (GitHub Actions unreachable). Please try again in a moment.'), selected) }
     return success(selected === 'local' ? await sendLocalWithTimeout(request, apiKey) : await provider.send(request, apiKey))
   } catch (error) { return { success: false, error: classifyError(error, selected) } }
 }
