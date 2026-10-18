@@ -39,8 +39,11 @@ export interface ArtifactInfo {
 export const IMAGE_WORKFLOW_ID = 'generate-image.yml'
 export const IMAGE_ARTIFACT_PREFIX = 'generated-image-'
 export const IMAGE_MIRROR_BRANCH = 'generated-images'
-export const IMAGE_MAX_WAIT_MS = 40 * 60 * 1000
-const IMAGE_DISCOVERY_TIMEOUT_MS = 30_000
+// The workflow job is killed at 45 minutes; wait slightly longer so a run alive in minute 40-45 is not
+// reported as timed out while it is still generating.
+export const IMAGE_MAX_WAIT_MS = 46 * 60 * 1000
+// Matches shell/DeepSeek run discovery (120s). 30s was 4x shorter than the other paths for no reason.
+const IMAGE_DISCOVERY_TIMEOUT_MS = 120_000
 
 const discoveryDelays = [100, 250, 500, 1000, 2000] as const
 const statusDelays = [1000, 2000, 3000, 5000, 8000] as const

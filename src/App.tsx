@@ -1566,7 +1566,7 @@ function App() {
         // summarize it, which could reintroduce malformed token output.
         if (result.toolCalls.some(call => call.id.startsWith('direct-image-'))) {
           const imageToolOutput = iterResults.map(toolResult => toolResult.output).join('\n\n')
-          const invocationMatch = imageToolOutput.match(/Invocation:\s*(sd-[A-Za-z0-9-]+)/)
+          const invocationMatch = imageToolOutput.match(/Invocation:\s*((?:sd|img)-[A-Za-z0-9-]+)/)
           if (invocationMatch?.[1]) {
             generatedImageUrl = takeGeneratedImage(invocationMatch[1])
           }
