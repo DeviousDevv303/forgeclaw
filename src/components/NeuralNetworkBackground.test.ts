@@ -167,6 +167,20 @@ describe('NeuralNetworkBackground', () => {
     expect(mockCtx.styles.some(c => c.startsWith(GREEN))).toBe(true)
   })
 
+  it('cubes follow the reactive core: pieces explode on an error event from window', () => {
+    render(React.createElement(NeuralNetworkBackground, { state: IDLE_NEURAL_STATE, messageCount: 0, activeTab: 'chat' }))
+    const draw = mockCtx.drawImage as unknown as ReturnType<typeof vi.fn>
+    const frame = () => { const cbs = rafCallbacks.splice(0); clock += 16; for (const cb of cbs) cb(clock) }
+    frame()
+    draw.mockClear(); frame()
+    expect(draw.mock.calls.every(c => c.length === 5)).toBe(true) // whole sprites only
+    window.dispatchEvent(new CustomEvent('forgeclaw:state', { detail: { state: 'error', activity: 1, intensity: 7, source: 'shell', timestamp: Date.now(), emotion: 'angry', energy: 90 } }))
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 300) // mid-explosion
+    draw.mockClear(); frame()
+    expect(draw.mock.calls.some(c => c.length === 9)).toBe(true) // 9-arg drawImage = individual pieces
+    vi.mocked(Date.now).mockRestore()
+  })
+
   it('draws the reduced-motion static frame in red when blocked, and not when idle', () => {
     reducedMotion = true;
     const RED = 'rgba(239, 68, 68';
