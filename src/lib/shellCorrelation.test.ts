@@ -144,6 +144,20 @@ describe('Shell execution log parsing', () => {
     expect(parsed.commandOutput).toContain('[truncated 500 more characters]')
   })
 
+  it('keeps the command output\'s own leading indentation (only the log timestamp is stripped)', () => {
+    const log = [
+      '2026-10-18T15:14:00.1234567Z === FORGECLAW EXECUTION ===',
+      '2026-10-18T15:14:00.1234567Z start=now',
+      '2026-10-18T15:14:00.1234567Z {',
+      '2026-10-18T15:14:00.1234567Z   "name": "forgeclaw",',
+      '2026-10-18T15:14:00.1234567Z     "nested": true',
+      '2026-10-18T15:14:00.1234567Z }',
+      '2026-10-18T15:14:00.1234567Z exit_code=0',
+      '2026-10-18T15:14:00.1234567Z end=now',
+    ].join('\n')
+    expect(parseShellExecutionLog(log, 'success').commandOutput).toBe('{\n  "name": "forgeclaw",\n    "nested": true\n}')
+  })
+
   it('uses the workflow\'s LAST exit_code line, so command output cannot spoof the exit code', () => {
     const log = '=== FORGECLAW EXECUTION ===\nstart=now\nexit_code=0\nreal failure\nexit_code=1\nend=now'
     const parsed = parseShellExecutionLog(log, 'failure')

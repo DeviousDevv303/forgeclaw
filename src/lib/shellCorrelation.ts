@@ -131,11 +131,15 @@ export interface ParsedShellOutput {
 export function parseShellExecutionLog(rawLogs: string, conclusion: string | null): ParsedShellOutput {
   const marker = '=== FORGECLAW EXECUTION ==='
   const markerIndex = rawLogs.indexOf(marker)
+  // Strip exactly the timestamp separator GitHub used on the marker line, and nothing more, so the
+  // command's own leading indentation (JSON, code, tables) survives.
+  const separator = rawLogs.match(/\dZ([ \t]*)=== FORGECLAW EXECUTION ===/)?.[1].length ?? 1
+  const stampPattern = new RegExp(`^\\d{4}-\\d{2}-\\d{2}T[\\d:.+-]+Z[ \\t]{0,${Math.max(1, separator)}}`)
   const executionLog = (markerIndex >= 0 ? rawLogs.slice(markerIndex) : rawLogs)
     // eslint-disable-next-line no-control-regex
     .replace(/\u001b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
     .split('\n')
-    .map(line => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.+-]+Z\s+/, ''))
+    .map(line => line.replace(stampPattern, ''))
     .join('\n')
     .trim()
   // The workflow prints exit_code=N as its LAST status line, after the command ran. A command can
