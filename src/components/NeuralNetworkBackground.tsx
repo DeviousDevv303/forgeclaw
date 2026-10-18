@@ -2,6 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import React, { useEffect, useRef, useCallback } from 'react';
 import type { NeuralState, NeuralPhase } from '../hooks/useNeuralState';
+import { cubeScale, cubeShake, cubeSpinRate, nextCubeAngle, solveProgress } from './cubeMotion';
 
 interface NeuralNetworkBackgroundProps {
   messageCount: number;
@@ -30,6 +31,8 @@ interface Node {
   id: number;
   /** Lit while representing an in-flight tool (layer 2 only). */
   toolLit?: boolean;
+  /** Current cube rotation in radians (layer 2 only). */
+  cubeAngle?: number;
 }
 
 interface Connection {
@@ -156,10 +159,11 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       activeToolCount: 0,
       tokenVelocity: 0,
       errorLevel: 0,
+      completedAt: 0,
     };
   }
   const neural: NeuralState = state || {
-    phase: 'idle', provider: 'corpus', activeToolCount: 0, tokenVelocity: 0, errorLevel: 0,
+    phase: 'idle', provider: 'corpus', activeToolCount: 0, tokenVelocity: 0, errorLevel: 0, completedAt: 0,
   };
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -181,6 +185,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
   const effectiveDensityRef = useRef<'low' | 'medium' | 'high'>(density);
   const fpsSamplesRef = useRef<number[]>([]);
   const lastFrameTimeRef = useRef(0);
+  const lastCubeFrameRef = useRef(0);
   // Verifying sweep
   const sweepStartRef = useRef<number>(0);
   // Tool node assignment (layer 2 node ids lit per in-flight tool)
@@ -556,6 +561,11 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       const connections = connectionsRef.current;
       const time = Date.now() * 0.001;
       const nowTs = Date.now();
+      // Cube motion clock (seconds since last frame, clamped so a hidden tab can't jump).
+      const cubeNow = performance.now();
+      const cubeDt = lastCubeFrameRef.current > 0 ? Math.min(0.1, Math.max(0, (cubeNow - lastCubeFrameRef.current) / 1000)) : 0;
+      lastCubeFrameRef.current = cubeNow;
+      const solve = solveProgress(st.completedAt, nowTs);
 
       // Verifying sweep: excite layers 0→4 sequentially over 1.5s
       let sweepLayer = -1;
@@ -669,13 +679,30 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         // Core: center-layer nodes render as Rubik's cubes (min 28px,
         // scaled by toolBoost); others keep the arc. Blocked red tint overlays.
         if (node.layer === 2) {
+          // Reactive cube: spin follows phase/token velocity, lit tools spin
+          // faster and pop, errors shake, MISSION_COMPLETE "solves" (squares up
+          // with a green flash). All derived from NeuralState; see cubeMotion.ts.
+          const lit = Boolean(node.toolLit);
+          node.cubeAngle = nextCubeAngle(node.cubeAngle ?? node.id * 0.37, cubeSpinRate(st.phase, st.tokenVelocity, lit), cubeDt, solve !== null);
+          const { dx, dy } = cubeShake(st.errorLevel, nowTs, node.id);
           const sprite = getCubeSprite();
-          const size = Math.max(radius * toolBoost * 2, MIN_CUBE_PX);
-          ctx.drawImage(sprite, node.x - size / 2, node.y - size / 2, size, size);
+          const size = Math.max(radius * toolBoost * 2, MIN_CUBE_PX) * cubeScale(lit, st.phase);
+          const cx = node.x + dx;
+          const cy = node.y + dy;
+          ctx.save();
+          ctx.translate(cx, cy);
+          ctx.rotate(node.cubeAngle);
+          ctx.drawImage(sprite, -size / 2, -size / 2, size, size);
+          ctx.restore();
           if (st.phase === 'blocked') {
             ctx.beginPath();
-            ctx.arc(node.x, node.y, size / 2, 0, Math.PI * 2);
+            ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
             ctx.fillStyle = 'rgba(255, 59, 48, 0.35)';
+            ctx.fill();
+          } else if (solve !== null) {
+            ctx.beginPath();
+            ctx.arc(cx, cy, size * 0.75, 0, Math.PI * 2);
+            ctx.fillStyle = `rgba(52, 199, 89, ${(0.45 * (1 - solve)).toFixed(3)})`;
             ctx.fill();
           }
         } else {

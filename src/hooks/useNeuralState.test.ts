@@ -271,6 +271,19 @@ describe('useNeuralState', () => {
     expect((latency[0] as { result: string }).result).toContain('latencyMs=')
   })
 
+  it('stamps completedAt on MISSION_COMPLETE so the cubes can play their solve moment', () => {
+    const { result, rerender } = renderHook(
+      ({ events }) => useNeuralState(stateWithEvents(events), 'corpus', { contentLength: 0 }),
+      { initialProps: { events: [] as AgentEvent[] } },
+    )
+    expect(result.current.completedAt).toBe(0)
+    const before = Date.now()
+    act(() => {
+      rerender({ events: [evt({ type: 'OBJECTIVE_RECEIVED', objective: 'x' }), evt({ type: 'MISSION_COMPLETE' })] })
+    })
+    expect(result.current.completedAt).toBeGreaterThanOrEqual(before)
+  })
+
   it('clears blocked on OBJECTIVE_RECEIVED (e.g. after user hits STOP)', () => {
     const { result, rerender } = renderHook(
       ({ events }) => useNeuralState(stateWithEvents(events), 'corpus', { contentLength: 0 }),
