@@ -106,10 +106,12 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       activeToolCount: 0,
       tokenVelocity: 0,
       errorLevel: 0,
+      completedAt: 0,
     };
   }
   const neural: NeuralState = state || {
     phase: 'idle', provider: 'corpus', activeToolCount: 0, tokenVelocity: 0, errorLevel: 0,
+    completedAt: 0,
   };
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -181,20 +183,21 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       for (let i = 0; i < count; i++) {
         const angle = (Math.PI * 2 / count) * i + (layer * Math.PI / 4);
         const radius = Math.min(width, height) * 0.15;
-        // Layer 2 (center) spreads across a wide ellipse for 3D cube legibility;
-        // other layers keep the circular arrangement.
+        // Layer 2 (center) spreads across a WIDE ellipse for 3D cube
+        // legibility — 45% of width, 35% of height. Cubes need room to breathe.
         const isCenter = layer === 2;
-        const ex = isCenter ? width * 0.35 : radius;
-        const ey = isCenter ? height * 0.22 : radius * 0.6;
-        const nx = layerX + Math.cos(angle) * ex * (0.7 + Math.random() * 0.3);
-        const ny = height / 2 + Math.sin(angle) * ey * (0.7 + Math.random() * 0.3);
+        const ex = isCenter ? width * 0.45 : radius;
+        const ey = isCenter ? height * 0.35 : radius * 0.6;
+        const centerAngle = (Math.PI * 2 / count) * i + (Math.PI / 6);
+        const nx = width / 2 + Math.cos(centerAngle) * ex + (Math.random() - 0.5) * 60;
+        const ny = height / 2 + Math.sin(centerAngle) * ey + (Math.random() - 0.5) * 60;
 
         nodes.set(nodeId, {
           x: isCenter ? nx : layerX + (Math.random() - 0.5) * 50,
           y: isCenter ? ny : height / 2 + Math.sin(angle) * radius * (0.5 + Math.random() * 0.5),
           vx: (Math.random() - 0.5) * 0.3,
           vy: (Math.random() - 0.5) * 0.3,
-          radius: 3 + Math.random() * 4,
+          radius: 5 + Math.random() * 3,
           pulsePhase: Math.random() * Math.PI * 2,
           layer: layer,
           id: nodeId
@@ -562,6 +565,26 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           ctx.fill();
         }
       });
+
+      // Cube repulsion — push layer-2 nodes apart so 3D cubes don't overlap
+      const layer2List = Array.from(nodes.values()).filter(n => n.layer === 2);
+      const CUBE_REPULSION = 80;
+      for (let ri = 0; ri < layer2List.length; ri++) {
+        for (let rj = ri + 1; rj < layer2List.length; rj++) {
+          const ra = layer2List[ri];
+          const rb = layer2List[rj];
+          const rdx = rb.x - ra.x;
+          const rdy = rb.y - ra.y;
+          const rdist = Math.sqrt(rdx * rdx + rdy * rdy);
+          if (rdist < CUBE_REPULSION && rdist > 0.01) {
+            const rforce = ((CUBE_REPULSION - rdist) / CUBE_REPULSION) * 2;
+            const rfx = (rdx / rdist) * rforce;
+            const rfy = (rdy / rdist) * rforce;
+            ra.vx -= rfx; ra.vy -= rfy;
+            rb.vx += rfx; rb.vy += rfy;
+          }
+        }
+      }
 
       // Update and draw nodes
       nodes.forEach(node => {
