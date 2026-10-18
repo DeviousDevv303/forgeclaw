@@ -28,8 +28,20 @@ describe('reactive core wiring in App', () => {
     fireEvent.change(box, { target: { value: '/deepseek what is ForgeClaw?' } })
     fireEvent.keyDown(box, { key: 'Enter' })
     await waitFor(() => expect(states.some(s => s.state === 'running')).toBe(true), { timeout: 5000 })
-    expect(states[0].state).toBe('thinking')
+    // Typing the message emits an idle/anticipatory broadcast first; the agent's first real state is thinking.
+    expect(states.find(s => s.state !== 'idle')?.state).toBe('thinking')
     expect(window.forgeCore?.getSnapshot()).toBeTruthy()
+    window.removeEventListener('forgeclaw:state', onState)
+  })
+
+  it('feels anticipation when the operator types in the chat box', async () => {
+    const seen: Array<{ emotion: string }> = []
+    const onState = (e: Event) => seen.push((e as CustomEvent).detail)
+    window.addEventListener('forgeclaw:state', onState)
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'h' } })
+    await waitFor(() => expect(seen.some(s => s.emotion === 'anticipatory')).toBe(true))
     window.removeEventListener('forgeclaw:state', onState)
   })
 })

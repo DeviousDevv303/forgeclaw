@@ -12,6 +12,10 @@ import type { AgentEvent } from '../types/forgeOps'
 
 export type CoreState = 'idle' | 'thinking' | 'running' | 'success' | 'error'
 export type CoreSource = 'agent' | 'shell' | 'git' | 'system'
+/** Emotional layer (merged from the "CubeSoul" proposal): what the cubes should feel. */
+export type CoreEmotion = 'calm' | 'curious' | 'anticipatory' | 'excited' | 'frantic' | 'satisfied' | 'angry' | 'pain'
+/** One-off coordinated animations. */
+export type CoreGesture = 'wave' | 'celebrate'
 
 /** The exact schema both layers use (directive §Integration Points). */
 export interface ForgeClawStateEvent {
@@ -22,6 +26,12 @@ export interface ForgeClawStateEvent {
   intensity: number
   source: CoreSource
   timestamp: number
+  /** Emotional layer: current feeling. */
+  emotion: CoreEmotion
+  /** 0–100; builds with activity, decays after 3 s of quiet. */
+  energy: number
+  /** Present only on the broadcast that should trigger a one-off animation. */
+  gesture?: CoreGesture
 }
 
 export const STATE_EVENT_NAME = 'forgeclaw:state'
@@ -30,6 +40,12 @@ export const SUCCESS_HOLD_MS = 1500
 const HISTORY_LIMIT = 20
 
 const ACTIVITY: Record<CoreState, number> = { idle: 0.1, thinking: 0.4, running: 0.8, success: 0.3, error: 1.0 }
+/** Quiet time before energy starts to decay, then one decay step per DECAY_STEP_MS. */
+export const DECAY_DELAY_MS = 3000
+export const DECAY_STEP_MS = 1000
+const TYPING_THROTTLE_MS = 1000
+const READ_TOOLS = new Set(['github_read_file', 'github_list_files', 'github_repo_state', 'github_search_code', 'github_verify_commit'])
+const WRITE_TOOLS = new Set(['github_write_file', 'shell_patch'])
 
 /** Tool name → which subsystem it belongs to. */
 export function sourceForTool(tool: string): CoreSource {
@@ -62,6 +78,32 @@ export function mapForgeOpsEvent(event: AgentEvent): { state: CoreState; intensi
   }
 }
 
+/**
+ * Pure mapping from a ForgeOps event to a feeling. `gain` is added to energy.
+ * Sources the CubeSoul sketch named via a non-existent app.on(...) emitter are
+ * taken from the real stream: shell start/success/failure, GitHub reads
+ * ("fetch" -> wave) and writes ("push" -> celebrate), blocks and Guardian.
+ */
+export function emotionForEvent(event: AgentEvent): { emotion: CoreEmotion; gain: number; gesture?: CoreGesture } | null {
+  switch (event.type) {
+    case 'OBJECTIVE_RECEIVED': return { emotion: 'curious', gain: 30 }
+    case 'TOOL_START': {
+      if (sourceForTool(event.tool) === 'shell') return { emotion: 'frantic', gain: 80 }
+      if (READ_TOOLS.has(event.tool)) return { emotion: 'excited', gain: 40, gesture: 'wave' }
+      return { emotion: 'excited', gain: 60 }
+    }
+    case 'TOOL_SUCCESS':
+      if (WRITE_TOOLS.has(event.tool)) return { emotion: 'satisfied', gain: 20, gesture: 'celebrate' }
+      return sourceForTool(event.tool) === 'shell' ? { emotion: 'satisfied', gain: 20 } : null
+    case 'TOOL_FAILURE': return { emotion: 'angry', gain: 90 }
+    case 'MISSION_COMPLETE': return { emotion: 'satisfied', gain: 20 }
+    case 'MISSION_BLOCKED':
+    case 'GUARDIAN_WARNING': return { emotion: 'pain', gain: 100 }
+    case 'RESET': return { emotion: 'calm', gain: 0 }
+    default: return null
+  }
+}
+
 type Listener = (event: ForgeClawStateEvent) => void
 
 export class ForgeClawReactiveCore {
@@ -69,8 +111,12 @@ export class ForgeClawReactiveCore {
   activityLevel = ACTIVITY.idle
   /** Most recent broadcasts (oldest first), so a late-mounting visual layer can catch up. */
   eventQueue: ForgeClawStateEvent[] = []
+  emotion: CoreEmotion = 'calm'
+  energy = 0
   private listeners = new Set<Listener>()
   private relaxTimer: ReturnType<typeof setTimeout> | null = null
+  private decayTimer: ReturnType<typeof setTimeout> | null = null
+  private lastTypingAt = -Infinity
   private target: EventTarget | null
   private now: () => number
 
@@ -82,39 +128,71 @@ export class ForgeClawReactiveCore {
   /** Feed one real ForgeOps event. */
   ingest(event: AgentEvent): void {
     const next = mapForgeOpsEvent(event)
-    if (next) this.setState(next.state, { severity: next.intensity, source: next.source })
+    const feeling = emotionForEvent(event)
+    if (event.type === 'RESET') { this.energy = 0 }
+    if (feeling) this.feel(feeling.emotion, feeling.gain)
+    const gesture = feeling?.gesture
+    if (next) this.setState(next.state, { severity: next.intensity, source: next.source, gesture })
+    else if (feeling) this.emit({ intensity: 1, source: 'tool' in event ? sourceForTool(event.tool) : 'agent', gesture })
   }
 
-  setState(state: CoreState, data: { severity?: number; source?: CoreSource } = {}): ForgeClawStateEvent {
+  /** The operator is typing in the chat box: anticipation, throttled, only while idle. */
+  userTyping(): void {
+    const t = this.now()
+    if (this.state !== 'idle' || t - this.lastTypingAt < TYPING_THROTTLE_MS) return
+    this.lastTypingAt = t
+    this.feel('anticipatory', 40)
+    this.emit({ intensity: 2, source: 'system' })
+  }
+
+  private feel(emotion: CoreEmotion, gain: number) {
+    this.emotion = emotion
+    this.energy = Math.min(100, this.energy + Math.max(0, gain))
+    this.scheduleDecay(DECAY_DELAY_MS)
+  }
+
+  private scheduleDecay(ms: number) {
+    if (this.decayTimer) clearTimeout(this.decayTimer)
+    this.decayTimer = setTimeout(() => {
+      this.decayTimer = null
+      this.energy *= 0.7
+      if (this.energy < 5) { this.energy = 0; this.emotion = 'calm' }
+      this.emit({ intensity: 1, source: 'system' })
+      if (this.energy > 0) this.scheduleDecay(DECAY_STEP_MS)
+    }, ms)
+  }
+
+  /** Re-broadcast the current state with the current feeling. */
+  private emit(extra: { intensity: number; source: CoreSource; gesture?: CoreGesture }) {
+    this.broadcast(this.message(this.state, this.activityLevel, extra.intensity, extra.source, extra.gesture))
+  }
+
+  private message(state: CoreState, activity: number, intensity: number, source: CoreSource, gesture?: CoreGesture): ForgeClawStateEvent {
+    return {
+      state, activity, intensity, source, timestamp: this.now(),
+      emotion: this.emotion, energy: Math.round(this.energy),
+      ...(gesture ? { gesture } : {}),
+    }
+  }
+
+  setState(state: CoreState, data: { severity?: number; source?: CoreSource; gesture?: CoreGesture } = {}): ForgeClawStateEvent {
     this.clearRelax()
     this.state = state
     this.activityLevel = this.getActivityLevel(state)
-    const message = this.broadcast({
-      state,
-      activity: this.activityLevel,
-      intensity: clampIntensity(data.severity ?? 1),
-      source: data.source ?? 'agent',
-      timestamp: this.now(),
-    })
+    const message = this.broadcast(this.message(state, this.activityLevel, clampIntensity(data.severity ?? 1), data.source ?? 'agent', data.gesture))
     if (state === 'success') this.relaxTimer = setTimeout(() => { this.relaxTimer = null; this.setState('idle', { source: 'system' }) }, SUCCESS_HOLD_MS)
     return message
   }
 
   /** One-off activity burst without leaving the current state (directive: shell exec / complete). */
   pulse(kind: 'execution' | 'complete', activity: number): ForgeClawStateEvent {
-    return this.broadcast({
-      state: kind === 'complete' ? 'success' : 'running',
-      activity: clamp01(activity),
-      intensity: kind === 'complete' ? 6 : 5,
-      source: 'shell',
-      timestamp: this.now(),
-    })
+    return this.broadcast(this.message(kind === 'complete' ? 'success' : 'running', clamp01(activity), kind === 'complete' ? 6 : 5, 'shell'))
   }
 
   /** Named trigger (directive: git activity). */
   trigger(name: 'git_activity'): ForgeClawStateEvent {
     void name
-    return this.broadcast({ state: 'running', activity: ACTIVITY.running, intensity: 4, source: 'git', timestamp: this.now() })
+    return this.broadcast(this.message('running', ACTIVITY.running, 4, 'git', 'wave'))
   }
 
   getActivityLevel(state: CoreState): number {
@@ -124,7 +202,7 @@ export class ForgeClawReactiveCore {
   /** Last broadcast, or an idle snapshot before anything happened. */
   getSnapshot(): ForgeClawStateEvent {
     return this.eventQueue[this.eventQueue.length - 1]
-      ?? { state: this.state, activity: this.activityLevel, intensity: 1, source: 'system', timestamp: this.now() }
+      ?? this.message(this.state, this.activityLevel, 1, 'system')
   }
 
   /** In-process subscription (tests, React). Returns an unsubscribe function. */
@@ -146,6 +224,7 @@ export class ForgeClawReactiveCore {
 
   dispose(): void {
     this.clearRelax()
+    if (this.decayTimer) { clearTimeout(this.decayTimer); this.decayTimer = null }
     this.listeners.clear()
   }
 

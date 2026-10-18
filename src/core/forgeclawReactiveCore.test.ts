@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentEvent } from '../types/forgeOps'
-import { ForgeClawReactiveCore, STATE_EVENT_NAME, SUCCESS_HOLD_MS, installForgeCore, mapForgeOpsEvent, sourceForTool, type ForgeClawStateEvent } from './forgeclawReactiveCore'
+import { DECAY_DELAY_MS, DECAY_STEP_MS, ForgeClawReactiveCore, STATE_EVENT_NAME, SUCCESS_HOLD_MS, emotionForEvent, installForgeCore, mapForgeOpsEvent, sourceForTool, type ForgeClawStateEvent } from './forgeclawReactiveCore'
 import { takeNewEvents } from '../lib/forgeEventCursor'
 
 const ev = (e: Record<string, unknown>) => ({ timestamp: 1, ...e }) as unknown as AgentEvent
@@ -38,8 +38,8 @@ describe('reactive core: broadcast contract', () => {
     window.addEventListener(STATE_EVENT_NAME, onState)
     core.ingest(ev({ type: 'TOOL_START', tool: 'shell_exec', iter: 0 }))
     window.removeEventListener(STATE_EVENT_NAME, onState)
-    expect(got).toEqual([{ state: 'running', activity: 0.8, intensity: 7, source: 'shell', timestamp: 42 }])
-    expect(Object.keys(got[0]).sort()).toEqual(['activity', 'intensity', 'source', 'state', 'timestamp'])
+    expect(got).toEqual([{ state: 'running', activity: 0.8, intensity: 7, source: 'shell', timestamp: 42, emotion: 'frantic', energy: 80 }])
+    expect(Object.keys(got[0]).sort()).toEqual(['activity', 'emotion', 'energy', 'intensity', 'source', 'state', 'timestamp'])
   })
 
   it('never leaks prompt text, error reasons or tool output into payloads', () => {
@@ -103,5 +103,73 @@ describe('event cursor (60-event ForgeOps window)', () => {
     expect(takeNewEvents(win, { i: -1 }).length).toBe(60) // last seen slid out: all visible are newer
     expect(takeNewEvents([], last)).toEqual([])
     expect(takeNewEvents(win, null).length).toBe(60)
+  })
+})
+
+describe('emotional layer (merged CubeSoul ideas, real signals only)', () => {
+  const core = () => new ForgeClawReactiveCore({ target: null })
+  const last = (c: ForgeClawReactiveCore) => c.eventQueue[c.eventQueue.length - 1]
+
+  it('maps real events to feelings and gestures', () => {
+    expect(emotionForEvent(ev({ type: 'OBJECTIVE_RECEIVED', objective: 'x' }))).toEqual({ emotion: 'curious', gain: 30 })
+    expect(emotionForEvent(ev({ type: 'TOOL_START', tool: 'shell_exec', iter: 0 }))?.emotion).toBe('frantic')
+    expect(emotionForEvent(ev({ type: 'TOOL_START', tool: 'github_read_file', iter: 0 }))?.gesture).toBe('wave')
+    expect(emotionForEvent(ev({ type: 'TOOL_SUCCESS', tool: 'github_write_file' }))).toEqual({ emotion: 'satisfied', gain: 20, gesture: 'celebrate' })
+    expect(emotionForEvent(ev({ type: 'TOOL_SUCCESS', tool: 'shell_exec' }))?.emotion).toBe('satisfied')
+    expect(emotionForEvent(ev({ type: 'TOOL_SUCCESS', tool: 'deepseek_reason' }))).toBeNull()
+    expect(emotionForEvent(ev({ type: 'TOOL_FAILURE', tool: 'shell_exec', failClass: 'NETWORK' }))?.emotion).toBe('angry')
+    expect(emotionForEvent(ev({ type: 'MISSION_BLOCKED', reason: 'r' }))?.emotion).toBe('pain')
+    expect(emotionForEvent(ev({ type: 'CHECKPOINT', iter: 1, total: 2 }))).toBeNull()
+  })
+
+  it('broadcasts a gesture once, on the event that earns it, and keeps state for state-less events', () => {
+    const c = core()
+    c.ingest(ev({ type: 'TOOL_START', tool: 'github_write_file', iter: 0 }))
+    expect(last(c).gesture).toBeUndefined()
+    c.ingest(ev({ type: 'TOOL_SUCCESS', tool: 'github_write_file' }))
+    expect(last(c)).toMatchObject({ state: 'running', emotion: 'satisfied', gesture: 'celebrate', source: 'git' })
+    c.ingest(ev({ type: 'TOOL_START', tool: 'github_repo_state', iter: 1 }))
+    expect(last(c)).toMatchObject({ state: 'running', gesture: 'wave', source: 'git' })
+  })
+
+  it('builds energy with activity, caps at 100, then decays to calm after quiet', () => {
+    vi.useFakeTimers()
+    const c = core()
+    c.ingest(ev({ type: 'TOOL_START', tool: 'shell_exec', iter: 0 }))
+    c.ingest(ev({ type: 'TOOL_FAILURE', tool: 'shell_exec', failClass: 'NETWORK' }))
+    expect(c.energy).toBe(100)
+    expect(last(c).emotion).toBe('angry')
+    vi.advanceTimersByTime(DECAY_DELAY_MS - 1)
+    expect(c.energy).toBe(100)
+    vi.advanceTimersByTime(1)
+    expect(c.energy).toBeCloseTo(70)
+    vi.advanceTimersByTime(DECAY_STEP_MS * 20)
+    expect(c.energy).toBe(0)
+    expect(c.emotion).toBe('calm')
+    expect(last(c)).toMatchObject({ emotion: 'calm', energy: 0 })
+    c.dispose()
+  })
+
+  it('feels anticipation while the operator types, only when idle, throttled', () => {
+    let t = 0
+    const c = new ForgeClawReactiveCore({ target: null, now: () => t })
+    c.userTyping()
+    expect(last(c)).toMatchObject({ state: 'idle', emotion: 'anticipatory', energy: 40 })
+    const n = c.eventQueue.length
+    t = 500; c.userTyping()
+    expect(c.eventQueue.length).toBe(n)
+    t = 1500; c.setState('running'); c.userTyping()
+    expect(last(c).emotion).toBe('anticipatory')
+    expect(last(c).state).toBe('running')
+    expect(c.eventQueue.length).toBe(n + 1)
+    c.dispose()
+  })
+
+  it('RESET calms down and empties energy', () => {
+    const c = core()
+    c.ingest(ev({ type: 'MISSION_BLOCKED', reason: 'r' }))
+    c.ingest(ev({ type: 'RESET' }))
+    expect(last(c)).toMatchObject({ state: 'idle', emotion: 'calm', energy: 0 })
+    c.dispose()
   })
 })
