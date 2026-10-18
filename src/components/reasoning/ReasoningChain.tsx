@@ -3,6 +3,7 @@
 import { useState, memo } from 'react'
 import type { ReasoningChain as ReasoningChainType } from '../../types/reasoning'
 import { ReasoningPhase } from './ReasoningPhase'
+import { useI18n } from '../../lib/i18n'
 
 interface ReasoningChainProps {
   chain: ReasoningChainType
@@ -10,6 +11,7 @@ interface ReasoningChainProps {
 
 export const ReasoningChainComponent = memo(function ReasoningChainComponent({ chain }: ReasoningChainProps) {
   const [collapsed, setCollapsed] = useState(false)
+  const { t } = useI18n()
   const isComplete = !!chain.completedAt
   const activeSteps = chain.steps.filter(s => s.status === 'active').length
 
@@ -29,8 +31,8 @@ export const ReasoningChainComponent = memo(function ReasoningChainComponent({ c
         >{chain.rootLabel}</span>
         <span className="text-xs text-slate-600 ml-auto"
         >
-          {chain.steps.length} steps
-          {isComplete && ' · done'}
+          {t('chain.steps', { n: chain.steps.length })}
+          {isComplete && t('chain.done')}
         </span>
         <span className="text-slate-600 text-xs"
         >{collapsed ? '▶' : '▼'}</span>
@@ -42,7 +44,7 @@ export const ReasoningChainComponent = memo(function ReasoningChainComponent({ c
         >
           {chain.steps.length === 0 ? (
             <div className="text-xs text-slate-600 italic"
-            >Waiting for steps...</div>
+            >{t('chain.waiting')}</div>
           ) : (
             chain.steps.map(step => (
               <ReasoningPhase key={step.id} step={step} />

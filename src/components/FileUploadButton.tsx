@@ -1,6 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useRef, useState } from 'react'
+import { useI18n } from '../lib/i18n'
 
 interface FileUploadButtonProps {
   onFileSelect: (file: File, content: string) => void
@@ -18,10 +19,11 @@ const ACCEPTED_TYPES = [
 export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [reading, setReading] = useState(false)
+  const { t } = useI18n()
 
   const handleFile = async (file: File) => {
     if (file.size > 5 * 1024 * 1024) {
-      alert('File exceeds 5MB limit')
+      alert(t('fileupload.tooBig'))
       return
     }
 
@@ -51,7 +53,7 @@ export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonPro
 
       onFileSelect(file, content)
     } catch (err) {
-      alert(`Failed to read file: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      alert(t('fileupload.readFailed', { reason: err instanceof Error ? err.message : t('fileupload.unknownError') }))
     } finally {
       setReading(false)
       if (inputRef.current) inputRef.current.value = ''
@@ -63,7 +65,7 @@ export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonPro
       <button
         onClick={() => inputRef.current?.click()}
         disabled={disabled || reading}
-        title="Attach file"
+        title={t('fileupload.attach')}
         style={{
           background: 'transparent',
           border: 'none',

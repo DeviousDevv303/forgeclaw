@@ -2,6 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import type { ForgeOpsState, AgentEvent } from '../types/forgeOps'
 import { parsePlanText } from './Planner.parse'
+import { useI18n, translate, getLang, type Key, type Params } from '../lib/i18n'
 
 interface LiveExecutionProps {
   state: ForgeOpsState
@@ -17,40 +18,47 @@ interface LiveStep {
   status: StepStatus
 }
 
-function eventLabel(event: AgentEvent): string {
+type TFn = (key: Key, params?: Params) => string
+
+function phaseLabel(phase: string, t: TFn): string {
+  const key = `live.phase.${phase}` as Key
+  return translate(getLang(), key) === key ? phase.replace('_', ' ').toLowerCase() : t(key)
+}
+
+function eventLabel(event: AgentEvent, t: TFn): string {
   switch (event.type) {
     case 'OBJECTIVE_RECEIVED':
-      return `Objective: ${event.objective.slice(0, 90)}`
+      return t('live.event.objective', { text: event.objective.slice(0, 90) })
     case 'PHASE_CHANGE':
-      return `Phase changed: ${event.phase.replace('_', ' ').toLowerCase()}`
+      return t('live.event.phase', { phase: phaseLabel(event.phase, t) })
     case 'TOOL_START':
-      return `Running ${event.tool}`
+      return t('live.event.toolStart', { tool: event.tool })
     case 'TOOL_SUCCESS':
-      return `${event.tool} completed`
+      return t('live.event.toolSuccess', { tool: event.tool })
     case 'TOOL_FAILURE':
-      return `${event.tool} failed: ${event.failClass}`
+      return t('live.event.toolFailure', { tool: event.tool, reason: event.failClass })
     case 'RETRY_DECISION':
-      return event.shouldRetry ? `Retrying: ${event.strategy}` : `No retry: ${event.strategy}`
+      return event.shouldRetry ? t('live.event.retry', { strategy: event.strategy }) : t('live.event.noRetry', { strategy: event.strategy })
     case 'PATHS_COLLAPSED':
-      return `Chose path: ${event.chosen}`
+      return t('live.event.path', { path: event.chosen })
     case 'CHECKPOINT':
-      return `Checkpoint ${event.iter}/${event.total}`
+      return t('live.event.checkpoint', { iter: event.iter, total: event.total })
     case 'MISSION_COMPLETE':
-      return 'Task complete'
+      return t('live.event.complete')
     case 'MISSION_BLOCKED':
-      return `Blocked: ${event.reason}`
+      return t('live.event.blocked', { reason: event.reason })
     case 'GUARDIAN_WARNING':
-      return `Guardian: ${event.reason}`
+      return t('live.event.guardian', { reason: event.reason })
     case 'THREAD_SPAWN':
-      return `Subtask started: ${event.parentTool}`
+      return t('live.event.spawn', { tool: event.parentTool })
     case 'THREAD_MERGE':
-      return `Subtask merged: ${event.threadId}`
+      return t('live.event.merge', { id: event.threadId })
     case 'CONFIDENCE_UPDATE':
-      return `Confidence updated: ${Math.round(event.value * 100)}%`
+      return t('live.event.confidence', { pct: Math.round(event.value * 100) })
     case 'RESET':
-      return 'Execution reset'
+      return t('live.event.reset')
     default:
-      return 'Execution event'
+      return t('live.event.generic')
   }
 }
 
@@ -61,16 +69,16 @@ function statusColor(status: StepStatus): string {
   return '#555'
 }
 
-function buildPlanSteps(planText: string | undefined, state: ForgeOpsState, isActive: boolean): LiveStep[] {
+function buildPlanSteps(planText: string | undefined, state: ForgeOpsState, isActive: boolean, t: TFn): LiveStep[] {
   const parsed = parsePlanText(planText ?? '')
   if (parsed.length === 0) {
     const activeTool = Object.entries(state.toolBus).find(([, status]) => status === 'active')?.[0]
     const failedTool = Object.entries(state.toolBus).find(([, status]) => status === 'error')?.[0]
     return [
       state.objective ? { id: 'objective', title: state.objective.slice(0, 100), status: 'done' } : undefined,
-      activeTool ? { id: 'active-tool', title: `Run ${activeTool}`, status: 'active' } : undefined,
-      failedTool ? { id: 'failed-tool', title: `Inspect ${failedTool} failure`, status: 'error' } : undefined,
-      isActive ? { id: 'active', title: 'Continue execution', status: 'active' } : undefined,
+      activeTool ? { id: 'active-tool', title: t('live.stepRun', { tool: activeTool }), status: 'active' } : undefined,
+      failedTool ? { id: 'failed-tool', title: t('live.stepInspect', { tool: failedTool }), status: 'error' } : undefined,
+      isActive ? { id: 'active', title: t('live.stepContinue'), status: 'active' } : undefined,
     ].filter(Boolean) as LiveStep[]
   }
 
@@ -94,24 +102,25 @@ function buildPlanSteps(planText: string | undefined, state: ForgeOpsState, isAc
 }
 
 export function LiveExecution({ state, currentPlan, isActive }: LiveExecutionProps) {
+  const { t, locale } = useI18n()
   const hasWorkEvent = state.events.some(event =>
     ['TOOL_START', 'TOOL_SUCCESS', 'TOOL_FAILURE', 'RETRY_DECISION', 'PATHS_COLLAPSED', 'CHECKPOINT', 'MISSION_BLOCKED', 'THREAD_SPAWN', 'THREAD_MERGE', 'GUARDIAN_WARNING'].includes(event.type)
   )
   const shouldShow = isActive || hasWorkEvent || state.phase === 'BLOCKED'
   if (!shouldShow) return null
 
-  const steps = buildPlanSteps(currentPlan, state, isActive).slice(0, 5)
+  const steps = buildPlanSteps(currentPlan, state, isActive, t).slice(0, 5)
   const recentEvents = state.events.slice(-4).reverse()
   const activeStep = steps.find(step => step.status === 'active' || step.status === 'error')
   const doneCount = steps.filter(step => step.status === 'done').length
   const progress = steps.length > 0 ? Math.round((doneCount / steps.length) * 100) : 0
   const statusLabel = state.phase === 'BLOCKED'
-    ? 'BLOCKED'
+    ? t('live.blocked')
     : isActive
-      ? 'RUNNING'
+      ? t('live.running')
       : state.phase === 'COMPLETE'
-        ? 'COMPLETE'
-        : state.phase.replace('_', ' ')
+        ? t('live.complete')
+        : phaseLabel(state.phase, t).toLocaleUpperCase(locale)
 
   return (
     <section style={{
@@ -134,10 +143,10 @@ export function LiveExecution({ state, currentPlan, isActive }: LiveExecutionPro
       }}>
         <div>
           <div style={{ color: '#f97316', fontSize: '10px', letterSpacing: '2px', fontWeight: 800 }}>
-            LIVE EXECUTION
+            {t('live.title')}
           </div>
           <div style={{ color: '#94a3b8', fontSize: '10px', marginTop: '4px', lineHeight: 1.4 }}>
-            {activeStep?.title ?? state.objective.slice(0, 120) ?? 'Monitoring current task'}
+            {activeStep?.title ?? state.objective.slice(0, 120) ?? t('live.monitoring')}
           </div>
         </div>
         <span style={{
@@ -202,8 +211,8 @@ export function LiveExecution({ state, currentPlan, isActive }: LiveExecutionPro
         }}>
           {recentEvents.map(event => (
             <div key={`${event.type}-${event.timestamp}`} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px' }}>
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{eventLabel(event)}</span>
-              <span style={{ color: '#334155', flexShrink: 0 }}>{new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{eventLabel(event, t)}</span>
+              <span style={{ color: '#334155', flexShrink: 0 }}>{new Date(event.timestamp).toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
           ))}
         </div>

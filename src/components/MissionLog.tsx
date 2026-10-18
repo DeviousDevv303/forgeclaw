@@ -1,6 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useState, useEffect, useRef } from 'react'
+import { useI18n } from '../lib/i18n'
 
 export interface MissionTask {
   id: string
@@ -32,6 +33,7 @@ function formatElapsed(ms: number): string {
 }
 
 function TaskNode({ task, depth = 0 }: { task: MissionTask; depth?: number }) {
+  const { t } = useI18n()
   const [expanded, setExpanded] = useState(true)
   const [liveMs, setLiveMs] = useState(task.elapsedMs || 0)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -133,7 +135,7 @@ function TaskNode({ task, depth = 0 }: { task: MissionTask; depth?: number }) {
                   letterSpacing: '0.5px',
                   marginBottom: '2px',
                 }}>
-                  {task.computerLabel || "Forge's computer"}
+                  {task.computerLabel || t('activity.computer')}
                 </div>
                 <div style={{
                   color: '#555',
@@ -175,7 +177,7 @@ function TaskNode({ task, depth = 0 }: { task: MissionTask; depth?: number }) {
         <div style={{ margin: '4px 0 8px 26px', padding: '8px 10px', background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
             <span style={{ color: '#555', fontSize: '10px' }}>💡</span>
-            <span style={{ color: '#666', fontSize: '10px', letterSpacing: '0.5px' }}>Knowledge recalled ({task.knowledge.length})</span>
+            <span style={{ color: '#666', fontSize: '10px', letterSpacing: '0.5px' }}>{t('mission.knowledge', { n: task.knowledge.length })}</span>
           </div>
           {task.knowledge.map((k, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '3px 0' }}>
@@ -201,7 +203,8 @@ function TaskNode({ task, depth = 0 }: { task: MissionTask; depth?: number }) {
 }
 
 export function MissionLog({ tasks, isThinking, thinkingTitle }: MissionLogProps) {
-  const activeTask = tasks.find(t => t.status === 'active')
+  const { t } = useI18n()
+  const activeTask = tasks.find(x => x.status === 'active')
 
   return (
     <div style={{ border: '1px solid #1a1a1a', borderRadius: '8px', overflow: 'hidden', background: '#080808' }}>
@@ -212,12 +215,12 @@ export function MissionLog({ tasks, isThinking, thinkingTitle }: MissionLogProps
           width: '7px',
           height: '7px',
           borderRadius: '50%',
-          background: isThinking ? '#f97316' : tasks.some(t => t.status === 'error') ? '#ef4444' : '#22c55e',
+          background: isThinking ? '#f97316' : tasks.some(x => x.status === 'error') ? '#ef4444' : '#22c55e',
           animation: isThinking ? 'pulse 1s infinite' : 'none',
         }} />
-        <span style={{ color: '#f97316', fontSize: '9px', letterSpacing: '2px', fontWeight: 'bold', fontFamily: 'monospace' }}>LIVE AGENT WORK</span>
+        <span style={{ color: '#f97316', fontSize: '9px', letterSpacing: '2px', fontWeight: 'bold', fontFamily: 'monospace' }}>{t('mission.title')}</span>
         <span style={{ color: '#333', fontSize: '8px', marginLeft: 'auto', fontFamily: 'monospace' }}>
-          {tasks.filter(t => t.status === 'done').length}/{tasks.length} COMPLETE
+          {t('mission.complete', { done: tasks.filter(x => x.status === 'done').length, total: tasks.length })}
         </span>
       </div>
 
@@ -225,7 +228,7 @@ export function MissionLog({ tasks, isThinking, thinkingTitle }: MissionLogProps
       {isThinking && activeTask && (
         <div style={{ padding: '8px 12px', background: '#0a0d0a', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: '#3b82f6', animation: 'pulse 1.2s infinite' }} />
-          <span style={{ color: '#3b82f6', fontSize: '9px', letterSpacing: '1px', fontFamily: 'monospace' }}>THINKING</span>
+          <span style={{ color: '#3b82f6', fontSize: '9px', letterSpacing: '1px', fontFamily: 'monospace' }}>{t('mission.thinking')}</span>
           <span style={{ color: '#555', fontSize: '10px', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {thinkingTitle || activeTask.title}
           </span>
@@ -241,7 +244,7 @@ export function MissionLog({ tasks, isThinking, thinkingTitle }: MissionLogProps
 
       {tasks.length === 0 && (
         <div style={{ padding: '20px', textAlign: 'center', color: '#333', fontSize: '10px', letterSpacing: '1px' }}>
-          NO ACTIVE TASKS
+          {t('mission.none')}
         </div>
       )}
     </div>
