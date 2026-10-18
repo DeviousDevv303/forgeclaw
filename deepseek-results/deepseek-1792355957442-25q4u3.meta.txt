@@ -1,0 +1,9 @@
+invocation_id=deepseek-1792355957442-25q4u3
+model=deepseek-ai/deepseek-llm-7b-chat
+role=primary checkpoint
+degraded=false
+creative_retry_attempted=false
+creative_retry_succeeded=false
+output_cleanup_applied=true
+tool_call_tail_dropped=true
+elapsed_seconds=1733.4
