@@ -195,7 +195,7 @@ export function drawCube3D(
   }
 
   const project = (x: number, y: number, z: number) => {
-    const scale = 400 / (400 + z * s);
+    const scale = 250 / (250 + z * s);
     return { x: cx + x * s * scale, y: cy + y * s * scale, scale };
   };
 
