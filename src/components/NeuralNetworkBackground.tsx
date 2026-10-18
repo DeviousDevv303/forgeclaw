@@ -66,6 +66,103 @@ export interface CubeLook {
   angleOffset: number;
   glow: number;
   glowColor: { r: number; g: number; b: number };
+  jitter: number;
+  flash: number;
+}
+
+/**
+ * Map app phase to cube emotional state.
+ * scramble: 0=solved, 1=fully mixed (executing/streaming scrambles)
+ * glow: 0-1 intensity; glowColor shifts by phase
+ * jitter: 0-1 shake amount (blocked shakes hard)
+ * flash: 0-1 white flash overlay (verifying flashes)
+ */
+export function cubeLook(
+  phase: string,
+  t: number,
+  seed: number,
+): { look: CubeLook; scramble: number; explode: number } {
+  const wobble = Math.sin(t * 2 + seed) * 0.1;
+  switch (phase) {
+    case 'blocked':
+      return {
+        look: {
+          angleOffset: wobble * 3,
+          glow: 0.8,
+          glowColor: { r: 255, g: 59, b: 48 },
+          jitter: 0.7,
+          flash: 0,
+        },
+        scramble: 0.3, explode: 0,
+      };
+    case 'executing':
+    case 'streaming':
+      return {
+        look: {
+          angleOffset: wobble,
+          glow: 0.6,
+          glowColor: { r: 255, g: 149, b: 0 },
+          jitter: 0.3,
+          flash: 0,
+        },
+        scramble: 0.8, explode: 0,
+      };
+    case 'verifying':
+      return {
+        look: {
+          angleOffset: wobble * 0.5,
+          glow: 0.5,
+          glowColor: { r: 10, g: 132, b: 255 },
+          jitter: 0.1,
+          flash: 0.5 + 0.5 * Math.sin(t * 8),
+        },
+        scramble: 0.2, explode: 0,
+      };
+    case 'idle':
+    default:
+      return {
+        look: {
+          angleOffset: wobble * 0.3,
+          glow: 0.3,
+          glowColor: { r: 255, g: 149, b: 0 },
+          jitter: 0,
+          flash: 0,
+        },
+        scramble: 0, explode: 0,
+      };
+  }
+}
+
+/**
+ * Scramble faces with cross-face swaps (realistic mixing).
+ * Swaps stickers between different faces, not within one face.
+ */
+export function scrambleFaces(
+  faces: Cube3DState['faces'],
+  amount: number,
+  seed: number,
+): Cube3DState['faces'] {
+  const result: Cube3DState['faces'] = {
+    U: [...faces.U], D: [...faces.D], F: [...faces.F],
+    B: [...faces.B], L: [...faces.L], R: [...faces.R],
+  };
+  const faceKeys = ['U', 'D', 'F', 'B', 'L', 'R'] as const;
+  const swaps = Math.floor(amount * 18);
+  const rand = (s: number) => {
+    const x = Math.sin(s * 137.5) * 10000;
+    return x - Math.floor(x);
+  };
+  for (let i = 0; i < swaps; i++) {
+    const f1 = faceKeys[Math.floor(rand(seed + i * 2) * 6)];
+    let f2 = faceKeys[Math.floor(rand(seed + i * 2 + 1) * 6)];
+    if (f1 === f2) f2 = faceKeys[(faceKeys.indexOf(f1) + 1) % 6];
+    const s1 = Math.floor(rand(seed + i * 3) * 9);
+    const s2 = Math.floor(rand(seed + i * 3 + 1) * 9);
+    const tmp = result[f1][s1];
+    result[f1][s1] = result[f2][s2];
+    result[f2][s2] = tmp;
+  }
+  return result;
 }
 
 /** Minimum 3D cube size — below this the faces aren't legible. */
@@ -128,16 +225,17 @@ export function drawCube3D(
   const rotY = state.rotation.y + look.angleOffset * 0.7;
   const rotZ = state.rotation.z;
 
-  // 1. Glow FIRST (behind)
-  if (look.glow > 0) {
+  // 1. Glow FIRST (behind). Guarded: jsdom and older engines may lack
+  // createRadialGradient; optional chaining keeps tests and edge runtimes alive.
+  if (look.glow > 0 && typeof ctx.createRadialGradient === 'function') {
     const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 1.5);
-    const c = look.glowColor;
-    g.addColorStop(0, `rgba(${c.r},${c.g},${c.b},${look.glow * 0.3})`);
-    g.addColorStop(1, `rgba(${c.r},${c.g},${c.b},0)`);
-    ctx.beginPath();
-    ctx.arc(cx, cy, size * 1.5, 0, Math.PI * 2);
+    const gc = look.glowColor;
+    g.addColorStop(0, `rgba(${gc.r},${gc.g},${gc.b},${look.glow * 0.3})`);
+    g.addColorStop(1, `rgba(${gc.r},${gc.g},${gc.b},0)`);
+    ctx.beginPath?.();
+    ctx.arc?.(cx, cy, size * 1.5, 0, Math.PI * 2);
     ctx.fillStyle = g;
-    ctx.fill();
+    ctx.fill?.();
   }
 
   const project = (x: number, y: number, z: number) => {
@@ -183,12 +281,12 @@ export function drawCube3D(
     const nz2 = ny * Math.sin(rotX) + nz1 * Math.cos(rotX);
     if (nz2 < -0.1) continue;
 
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (const p of pts) ctx.lineTo(p.x, p.y);
-    ctx.closePath();
+    ctx.beginPath?.();
+    ctx.moveTo?.(pts[0].x, pts[0].y);
+    for (const p of pts) ctx.lineTo?.(p.x, p.y);
+    ctx.closePath?.();
     ctx.fillStyle = '#1a1a1a';
-    ctx.fill();
+    ctx.fill?.();
 
     for (let row = 0; row < 3; row++) {
       for (let col = 0; col < 3; col++) {
@@ -199,7 +297,7 @@ export function drawCube3D(
         const bottom = lerpPt(pts[3], pts[2], u);
         const p = lerpPt(top, bottom, vv);
         const stickerSize = size * 0.28 * p.scale;
-        ctx.drawImage(
+        ctx.drawImage?.(
           getStickerSprite(color),
           p.x - stickerSize / 2, p.y - stickerSize / 2,
           stickerSize, stickerSize,
@@ -336,11 +434,17 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       for (let i = 0; i < count; i++) {
         const angle = (Math.PI * 2 / count) * i + (layer * Math.PI / 4);
         const radius = Math.min(width, height) * 0.15;
-        const y = height / 2 + Math.sin(angle) * radius * (0.5 + Math.random() * 0.5);
+        // Layer 2 (center) spreads across a wide ellipse for 3D cube legibility;
+        // other layers keep the circular arrangement.
+        const isCenter = layer === 2;
+        const ex = isCenter ? width * 0.35 : radius;
+        const ey = isCenter ? height * 0.22 : radius * 0.6;
+        const nx = layerX + Math.cos(angle) * ex * (0.7 + Math.random() * 0.3);
+        const ny = height / 2 + Math.sin(angle) * ey * (0.7 + Math.random() * 0.3);
 
         nodes.set(nodeId, {
-          x: layerX + (Math.random() - 0.5) * 50,
-          y: y,
+          x: isCenter ? nx : layerX + (Math.random() - 0.5) * 50,
+          y: isCenter ? ny : height / 2 + Math.sin(angle) * radius * (0.5 + Math.random() * 0.5),
           vx: (Math.random() - 0.5) * 0.3,
           vy: (Math.random() - 0.5) * 0.3,
           radius: 3 + Math.random() * 4,
@@ -562,17 +666,13 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         // others keep the arc.
         if (node.layer === 2) {
           const size = Math.max(radius * 2, MIN_CUBE_PX);
+          const { look, scramble, explode } = cubeLook(st.phase, 0, node.id);
           const cubeState: Cube3DState = {
-            faces: solvedCubeFaces(),
+            faces: scramble > 0
+              ? scrambleFaces(solvedCubeFaces(), scramble, node.id)
+              : solvedCubeFaces(),
             rotation: { x: 0.4, y: 0.6, z: 0 },
-            scramble: 0, explode: 0,
-          };
-          const look: CubeLook = {
-            angleOffset: 0,
-            glow: st.phase === 'blocked' ? 0.8 : 0.4,
-            glowColor: st.phase === 'blocked'
-              ? { r: 255, g: 59, b: 48 }
-              : { r: 255, g: 149, b: 0 },
+            scramble, explode,
           };
           drawCube3D(ctx, node.x, node.y, size, cubeState, look);
         } else {
@@ -781,23 +881,22 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         if (node.layer === 2) {
           const size = Math.max(radius * toolBoost * 2, MIN_CUBE_PX);
           const t = performance.now() / 1000;
+          const { look, scramble, explode } = cubeLook(st.phase, t, node.id);
+          // Jitter offsets position for blocked/shake states
+          const jx = look.jitter > 0 ? (Math.random() - 0.5) * look.jitter * 8 : 0;
+          const jy = look.jitter > 0 ? (Math.random() - 0.5) * look.jitter * 8 : 0;
           const cubeState: Cube3DState = {
-            faces: solvedCubeFaces(),
+            faces: scramble > 0
+              ? scrambleFaces(solvedCubeFaces(), scramble, node.id)
+              : solvedCubeFaces(),
             rotation: {
               x: 0.4 + Math.sin(t * 0.5 + node.x * 0.01) * 0.2,
               y: 0.6 + t * 0.3 + node.y * 0.01,
               z: 0,
             },
-            scramble: 0, explode: 0,
+            scramble, explode,
           };
-          const look: CubeLook = {
-            angleOffset: 0,
-            glow: st.phase === 'blocked' ? 0.8 : 0.4,
-            glowColor: st.phase === 'blocked'
-              ? { r: 255, g: 59, b: 48 }
-              : { r: 255, g: 149, b: 0 },
-          };
-          drawCube3D(ctx, node.x, node.y, size, cubeState, look);
+          drawCube3D(ctx, node.x + jx, node.y + jy, size, cubeState, look);
         } else {
           ctx.beginPath();
           ctx.arc(node.x, node.y, radius * toolBoost, 0, Math.PI * 2);
