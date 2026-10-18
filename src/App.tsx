@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { FileUploadButton } from './components/FileUploadButton'
 import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
+import { ThroneBackdrop } from './components/ThroneBackdrop'
 // import { SupabaseProvider } from './components/SupabaseProvider'
 import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
@@ -585,7 +586,6 @@ function App() {
   const initialProvider: ProviderId = resolveInitialProvider(savedProvider)
   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
   // Neural background state: derived from the ForgeOps event stream (observe-only).
-  // contentLength drives token-velocity estimation via message growth between renders.
   const neuralState = useNeuralState(forgeOpsState, activeProvider, {
     contentLength: messages.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
   })
@@ -2232,6 +2232,8 @@ function App() {
         })}
       </div>
 
+      {/* Throne backdrop (sibling before neural canvas in DOM order) */}
+      <ThroneBackdrop opacity={0.35} />
       {/* Neural Network Background */}
       <NeuralNetworkBackground
         messageCount={messages.length}
