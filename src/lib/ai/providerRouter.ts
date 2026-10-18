@@ -9,6 +9,7 @@ import { tasteProvider } from './providers/tasteProvider'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { buildDeepSeekTaskPayload } from './deepseekContext'
+import { withResponseLanguage } from '../responseLanguage'
 
 export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, anthropic: anthropicProvider, local: localInferenceProvider, nexus: corpusProvider, taste: tasteProvider } as const
 export type ProviderId = keyof typeof providers
@@ -70,7 +71,9 @@ function buildDeepSeekToolInput(request: AIRequest): { task: string; context?: s
   const turn = currentTurnMessages(request); const task = [...turn].reverse().find(m => m.role === 'user')?.content || ''; const names = new Map<string, string>()
   for (const message of turn) if (message.role === 'assistant') for (const call of message.tool_calls ?? []) names.set(call.id, call.name)
   const verified = turn.filter(m => m.role === 'tool' && m.tool_call_id && !/^\s*(?:\[TOOL ERROR\]|\[GUARDIAN (?:BLOCKED?|REJECTED)\])/i.test(m.content)).map(m => `${names.get(m.tool_call_id!) || 'tool'} result:\n${m.content}`).join('\n\n')
-  return buildDeepSeekTaskPayload(task, verified)
+  // The workflow never sees request.systemPrompt, so the selected UI language rides in the task.
+  const payload = buildDeepSeekTaskPayload(task, verified)
+  return { ...payload, task: withResponseLanguage(payload.task, request.responseLanguage) }
 }
 
 export async function sendViaRouter(request: AIRequest, apiKey: string, providerId: ProviderId = DEFAULT_PROVIDER): Promise<{ success: true; response: AIResponse } | { success: false; error: AIError }> {

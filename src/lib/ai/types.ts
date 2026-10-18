@@ -11,6 +11,8 @@ export interface AIRequest {
   onToken?: (token: string) => void
   signal?: AbortSignal
   workspaceId?: string
+  /** UI language selected in the header ('en' | 'es' | 'ru' | 'zh'); forwarded to providers without a system-prompt channel. */
+  responseLanguage?: string
 }
 
 export interface AIMessage {
