@@ -542,8 +542,9 @@ function App() {
     setResumePrompt(
       `Resume the unfinished ForgeClaw coding task. Repository evidence must be read with github_repo_state before continuing.`,
     )
-    // Auto-persist: task continues automatically on app reopen.
-    setAutoResumePending(true)
+    // A reload shows the unfinished task and waits for a tap (RESUME TASK). It must not dispatch
+    // anything by itself: each resume can start a 9-23 minute DeepSeek run, and a stray or pasted
+    // task would otherwise re-run on every reload.
     // Factual trail only — no execution narration, no reasoning display.
     const resumed = saveCodingAgentState({
       activity: appendActivity(resumable, 'session resumed after reload', `HEAD ${resumable.headShaShort || 'unknown'}`),
@@ -689,7 +690,6 @@ function App() {
   const [codingAgentState, setCodingAgentState] = useState<CodingAgentState>(() => loadCodingAgentState())
   const [agentResumedState, setAgentResumedState] = useState<CodingAgentState | null>(null)
   const [resumePrompt, setResumePrompt] = useState<string | null>(null)
-  const [autoResumePending, setAutoResumePending] = useState(false)
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
   const [guardianPosture, setGuardianPosture] = useState<GuardianPosture>('operator-shell')
   const [newerBuild, setNewerBuild] = useState<DeployedBuild | null>(null)
@@ -1715,16 +1715,6 @@ function App() {
     }
   }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, guardianPosture, requestGuardianApproval, agentResumedState]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-persist: resume in-progress task automatically on app reopen.
-  useEffect(() => {
-    if (autoResumePending && resumePrompt && !loading && agentResumedState) {
-      const text = resumePrompt
-      setResumePrompt(null)
-      setAutoResumePending(false)
-      void sendPrompt(text, undefined, { resumeTask: true })
-    }
-  }, [autoResumePending, resumePrompt, loading, agentResumedState, sendPrompt])
-
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
     if (chatListening) {
@@ -2629,10 +2619,10 @@ function App() {
               {resumePrompt && (
                 <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '6px', padding: '10px', fontFamily: 'monospace' }}>
                   <div style={{ color: '#93c5fd', fontSize: '10px', fontWeight: 'bold', letterSpacing: '1px', marginBottom: '6px' }}>
-                    UNFINISHED TASK DETECTED — AUTO-RESUMING
+                    UNFINISHED TASK DETECTED — NOT RUNNING (tap RESUME TASK to run it)
                   </div>
                   <div style={{ color: '#94a3b8', fontSize: '11px', marginBottom: '8px' }}>
-                    {codingAgentState.task || 'Coding task'} · {codingAgentState.owner}/{codingAgentState.repo}@{codingAgentState.branch} · HEAD {codingAgentState.headShaShort || 'unknown'}
+                    {(codingAgentState.task || 'Coding task').slice(0, 160)}{(codingAgentState.task || '').length > 160 ? '…' : ''} · {codingAgentState.owner}/{codingAgentState.repo}@{codingAgentState.branch} · HEAD {codingAgentState.headShaShort || 'unknown'}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
                     <button
