@@ -26,6 +26,9 @@ function makeCtx() {
     moveTo: vi.fn(),
     lineTo: vi.fn(),
     drawImage: vi.fn(),
+    roundRect: vi.fn(),
+    rect: vi.fn(),
+    createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
     createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
     fillRect: vi.fn(),
     save: vi.fn(),
@@ -110,6 +113,23 @@ describe('NeuralNetworkBackground', () => {
       for (const cb of cbs) cb(clock);
     }
     expect(rafCallbacks.length).toBeGreaterThan(0);
+  });
+
+  it('still starts on engines without ctx.roundRect (older Chrome/WebView/Safari)', async () => {
+    const legacy = mockCtx as unknown as { roundRect?: unknown };
+    delete legacy.roundRect;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Fresh module: the cube sprite is cached at module scope by earlier tests.
+    vi.resetModules();
+    const fresh = await import('./NeuralNetworkBackground');
+    render(React.createElement(fresh.NeuralNetworkBackground, { state: IDLE_NEURAL_STATE, messageCount: 0, activeTab: 'chat' }));
+    expect(warn.mock.calls.some(args => String(args[0]).includes('init failed'))).toBe(false);
+    for (let i = 0; i < 5; i++) {
+      const cbs = rafCallbacks.splice(0);
+      expect(cbs.length, `loop died at frame ${i}`).toBeGreaterThan(0);
+      clock += 16;
+      for (const cb of cbs) cb(clock);
+    }
   });
 
   it('draws the reduced-motion static frame in red when blocked, and not when idle', () => {

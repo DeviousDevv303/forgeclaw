@@ -58,6 +58,13 @@ const CUBE_SPRITE_SIZE = 64;
 const MIN_CUBE_PX = 28;
 let cubeSpriteCache: HTMLCanvasElement | null = null;
 
+// roundRect is missing on older engines (Chrome/WebView < 99, Safari < 16);
+// a throw here would abort the whole background, so fall back to square corners.
+function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, r);
+  else ctx.rect(x, y, w, h);
+}
+
 function getCubeSprite(): HTMLCanvasElement {
   if (cubeSpriteCache) return cubeSpriteCache;
   const c = document.createElement('canvas');
@@ -76,21 +83,21 @@ function getCubeSprite(): HTMLCanvasElement {
         const w = cell - inset;
         ctx.fillStyle = faces[(row * 3 + col) % faces.length];
         ctx.beginPath();
-        ctx.roundRect(x, y, w, cell, 4);
+        roundedRect(ctx, x, y, w, cell, 4);
         ctx.fill();
         const shade = ctx.createLinearGradient(0, y, 0, y + cell);
         shade.addColorStop(0, 'rgba(255,255,255,0.25)');
         shade.addColorStop(1, 'rgba(0,0,0,0.25)');
         ctx.fillStyle = shade;
         ctx.beginPath();
-        ctx.roundRect(x, y, w, cell, 4);
+        roundedRect(ctx, x, y, w, cell, 4);
         ctx.fill();
       }
     }
     ctx.strokeStyle = 'rgba(10,10,10,0.9)';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.roundRect(1.5, 1.5, CUBE_SPRITE_SIZE - 3, CUBE_SPRITE_SIZE - 3, 8);
+    roundedRect(ctx, 1.5, 1.5, CUBE_SPRITE_SIZE - 3, CUBE_SPRITE_SIZE - 3, 8);
     ctx.stroke();
   }
   cubeSpriteCache = c;
