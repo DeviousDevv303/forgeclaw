@@ -1,7 +1,7 @@
 // Guards the shared protected-path policy (.github/protected-paths.txt) and the workflow hardening
 // that depends on it. Drift between workflows was the root cause of the Project D findings.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -23,14 +23,14 @@ function check(...paths: string[]) {
 describe('protected-paths policy', () => {
   it('protects every build-time executable config and control-plane path', () => {
     for (const required of [
-      '.github/', 'package.json', 'package-lock.json', 'vite.config.*', 'vitest.config.*', 'eslint.config.*',
+      '.github/', '.gitattributes', 'package.json', 'package-lock.json', 'vite.config.*', 'vitest.config.*', 'eslint.config.*',
       'tsconfig*.json', 'scripts/', 'src/lib/guardianGate.ts', 'src/lib/forgeTools.ts',
       'src/core/autonomyEngine.ts', 'engine/', 'foundation/', 'tests/foundation/', 'LICENSE*',
     ]) expect(entries, required).toContain(required)
   })
 
   it('has no exact-path entry that points at a file which does not exist (the dead shellDispatch.ts case)', () => {
-    const precautionary = new Set(['.npmrc', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'pnpm-workspace.yaml'])
+    const precautionary = new Set(['.gitattributes', '.npmrc', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'pnpm-workspace.yaml'])
     const exact = entries.filter(e => !e.includes('*') && !e.endsWith('/') && !precautionary.has(e))
     const dead = exact.filter(e => !existsSync(e))
     expect(dead).toEqual([])
@@ -98,5 +98,74 @@ describe('workflow hardening', () => {
   it('limits who and what can trigger the comment-driven claude job', () => {
     expect(claude).toContain('author_association')
     expect(claude).toContain('--disallowedTools "Bash,WebFetch,WebSearch"')
+  })
+})
+
+describe('symlink guard (.github/scripts/check-symlinks.sh)', () => {
+  const GUARD = join(process.cwd(), '.github/scripts/check-symlinks.sh')
+
+  function repo() {
+    const dir = mkdtempSync(join(tmpdir(), 'symlink-guard-'))
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' })
+    git('init', '-q', '-b', 'main')
+    git('config', 'user.email', 't@t')
+    git('config', 'user.name', 't')
+    writeFileSync(join(dir, 'a.txt'), 'x\n')
+    git('add', 'a.txt')
+    git('commit', '-qm', 'init')
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    return { dir, git }
+  }
+  const run = (dir: string) => spawnSync('bash', [GUARD], { cwd: dir, encoding: 'utf8' })
+
+  it('passes an ordinary new file', () => {
+    const { dir } = repo()
+    writeFileSync(join(dir, 'b.txt'), 'y\n')
+    expect(run(dir).status).toBe(0)
+  })
+
+  it('refuses a new untracked symlink', () => {
+    const { dir } = repo()
+    symlinkSync('/etc/passwd', join(dir, 'lnk'))
+    const result = run(dir)
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain('lnk')
+  })
+
+  it('refuses a tracked file replaced by a symlink', () => {
+    const { dir } = repo()
+    rmSync(join(dir, 'a.txt'))
+    symlinkSync('/etc/passwd', join(dir, 'a.txt'))
+    expect(run(dir).status).toBe(1)
+  })
+
+  it('refuses a symlink that git apply accepted (the shell-repair path)', () => {
+    const { dir, git } = repo()
+    const patch = [
+      'diff --git a/lnk b/lnk', 'new file mode 120000', '--- /dev/null', '+++ b/lnk', '@@ -0,0 +1 @@',
+      '+/etc/passwd', '\\ No newline at end of file', '',
+    ].join('\n')
+    writeFileSync(join(dir, 'p.diff'), patch)
+    git('apply', 'p.diff')
+    rmSync(join(dir, 'p.diff'))
+    expect(run(dir).status).toBe(1)
+  })
+
+  it('is loaded from main alongside the other policy files, and used before and after the build', () => {
+    const repair = read('.github/workflows/shell-repair.yml')
+    expect(repair).toContain('git show origin/main:.github/scripts/check-symlinks.sh')
+    expect(repair.match(/check-symlinks\.sh"/g)!.length).toBeGreaterThanOrEqual(2)
+    expect(repair.match(/check-protected\.py" "\$RUNNER_TEMP\/protected-paths\.txt"/g)!.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('shell-repair input handling', () => {
+  it('never interpolates workflow inputs into a run: script', () => {
+    const lines = read('.github/workflows/shell-repair.yml').split('\n')
+    const offenders = lines.filter(line =>
+      line.includes('${{ inputs.')
+      && !/^\s*(run-name|group|name):/.test(line)
+      && !/^\s+[A-Z_]+: \$\{\{ inputs\./.test(line))
+    expect(offenders).toEqual([])
   })
 })
