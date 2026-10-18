@@ -421,7 +421,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
             faces: scramble > 0
               ? scrambleFaces(solvedCubeFaces(), scramble, node.id)
               : solvedCubeFaces(),
-            rotation: { x: 0.4, y: 0.6, z: 0 },
+            rotation: { x: 0.55, y: 0.85, z: 0 },
             scramble, explode,
           };
           drawCube3D(ctx, node.x, node.y, size, cubeState, look);
@@ -660,8 +660,8 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
               ? scrambleFaces(solvedCubeFaces(), scramble, node.id)
               : solvedCubeFaces(),
             rotation: {
-              x: 0.4 + Math.sin(t * 0.5 + node.x * 0.01) * 0.2,
-              y: 0.6 + t * 0.3 + node.y * 0.01,
+              x: 0.55 + Math.sin(t * 0.5 + node.x * 0.01) * 0.15,
+              y: 0.85 + t * 0.25 + node.y * 0.01,
               z: 0,
             },
             scramble, explode,
