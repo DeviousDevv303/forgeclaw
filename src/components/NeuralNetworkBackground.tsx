@@ -189,8 +189,11 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         const ex = isCenter ? width * 0.45 : radius;
         const ey = isCenter ? height * 0.35 : radius * 0.6;
         const centerAngle = (Math.PI * 2 / count) * i + (Math.PI / 6);
-        const nx = width / 2 + Math.cos(centerAngle) * ex + (Math.random() - 0.5) * 60;
-        const ny = height / 2 + Math.sin(centerAngle) * ey + (Math.random() - 0.5) * 60;
+        // Push cubes toward the edges: scale the ellipse offset so the
+        // central content area stays clear for chat text.
+        const edgeBias = 1.25;
+        const nx = width / 2 + Math.cos(centerAngle) * ex * edgeBias + (Math.random() - 0.5) * 40;
+        const ny = height / 2 + Math.sin(centerAngle) * ey * edgeBias + (Math.random() - 0.5) * 40;
 
         nodes.set(nodeId, {
           x: isCenter ? nx : layerX + (Math.random() - 0.5) * 50,
@@ -752,7 +755,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
   }, [activeTab, primaryColor, accentColor]);
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none' }}>
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity: 0.55 }}>
       <canvas
         ref={canvasRef}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0.6 }}
