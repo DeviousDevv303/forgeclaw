@@ -80,6 +80,7 @@ import { getDiscardedPaths } from './lib/agentCore'
 import { TasteProviderClient, type TasteSignal } from './lib/ai/providers/tasteProvider'
 import { TasteStatusPanel } from './components/TasteStatusPanel'
 import { useForgeOps } from './hooks/useForgeOps'
+import { useNeuralState } from './hooks/useNeuralState'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
 import type { AgentPhase } from './types/forgeOps'
@@ -583,6 +584,11 @@ function App() {
   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
   const initialProvider: ProviderId = resolveInitialProvider(savedProvider)
   const [activeProvider, setActiveProvider] = useState<ProviderId>(initialProvider)
+  // Neural background state: derived from the ForgeOps event stream (observe-only).
+  // contentLength drives token-velocity estimation via message growth between renders.
+  const neuralState = useNeuralState(forgeOpsState, activeProvider, {
+    contentLength: messages.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
+  })
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>(() => readAnthropicKey())
   const [anthropicApiKeyStatus, setAnthropicApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [anthropicModel, setAnthropicModel] = useState<string>(() => readAnthropicModel())
@@ -2229,7 +2235,7 @@ function App() {
       {/* Neural Network Background */}
       <NeuralNetworkBackground
         messageCount={messages.length}
-        isProcessing={loading}
+        state={neuralState}
         activeTab={activeTab}
         density="low"
       />
