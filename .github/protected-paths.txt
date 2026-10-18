@@ -1,0 +1,37 @@
+# Single source of truth for paths that autonomous workflows may never change.
+# Read by .github/scripts/check-protected.py from origin/main (never from the proposed change),
+# and used by claude.yml (claude-fix), shell-repair.yml and self-sculpt.yml.
+# Matching (case-insensitive):
+#   entry ending in "/"            -> every path under that directory
+#   entry without "/"              -> matches that file name at ANY depth (globs allowed)
+#   entry containing "/" (no end /) -> matches that exact repo-relative path (globs allowed)
+# Categories:
+#   1. control plane: workflows, hooks, submodule config
+#   2. dependency control: manifests and lockfiles (a changed manifest runs code at install time)
+#   3. build/lint/test configs: these EXECUTE during `npm run build`, `eslint` and `vitest`
+#   4. Guardian and tool-dispatch code
+#   5. foundation, engine and the licence
+.github/
+.githooks/
+.gitmodules
+package.json
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+bun.lockb
+pnpm-workspace.yaml
+.npmrc
+vite.config.*
+vitest.config.*
+eslint.config.*
+postcss.config.*
+tailwind.config.*
+tsconfig*.json
+scripts/
+src/lib/guardianGate.ts
+src/lib/forgeTools.ts
+src/core/autonomyEngine.ts
+engine/
+foundation/
+tests/foundation/
+LICENSE*

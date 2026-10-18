@@ -39,6 +39,15 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          # Hardening: no write-capable token on disk while patched code is built.
+          persist-credentials: false
+      - name: Load protected-path policy from main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git show origin/main:.github/scripts/check-protected.py > "$RUNNER_TEMP/check-protected.py"
+          git show origin/main:.github/protected-paths.txt > "$RUNNER_TEMP/protected-paths.txt"
+
       # Layer 1: input validation.
       - name: Validate repair inputs
         env:
@@ -106,31 +115,14 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin main
-          python - <<'PY'
-          import subprocess
-          protected = (
-              '.github/workflows/', 'package.json', 'package-lock.json',
-              'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'pnpm-workspace.yaml',
-              'src/lib/guardianGate.ts', 'src/lib/forgeTools.ts',
-              'src/core/autonomyEngine.ts', 'engine/', 'foundation/',
-          )
-          # Compare origin/main to the complete working tree. The patch is
-          # intentionally uncommitted at this point, so origin/main...HEAD
-          # alone would miss modified tracked files and allow protected paths
-          # to reach the commit/push step.
-          changed = set(subprocess.check_output(
-              ['git', 'diff', '--name-only', 'origin/main'], text=True
-          ).splitlines())
-          changed.update(subprocess.check_output(
-              ['git', 'ls-files', '--others', '--exclude-standard'], text=True
-          ).splitlines())
-          def blocked(path):
-              return any(path == item or item.endswith('/') and path.startswith(item) for item in protected)
-          refused = sorted(path for path in changed if blocked(path))
-          if refused:
-              raise SystemExit('Protected paths changed:\n' + '\n'.join(refused))
-          print(f'Protected-path check passed for {len(changed)} changed path(s).')
-          PY
+          # Policy: .github/protected-paths.txt as it exists on main (loaded before the patch).
+          # The patch is intentionally uncommitted here, so compare origin/main to the whole working
+          # tree. --no-renames lists BOTH sides of a rename, otherwise moving a protected file would
+          # only show its new name.
+          {
+            git diff --no-renames --name-only -z origin/main
+            git ls-files -z --others --exclude-standard
+          } | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
 
       - name: Post-patch verify
         id: verify
@@ -168,6 +160,7 @@ jobs:
 
       - name: Commit and push repair branch
         env:
+          GH_TOKEN: ${{ github.token }}
           REPAIR_BRANCH: ${{ inputs.repair_branch }}
           REPAIR_REASON: ${{ inputs.reason }}
         run: |
@@ -178,7 +171,9 @@ jobs:
           fi
           git add --all
           git commit -m "repair: $(printf '%s' "$REPAIR_REASON" | tr '\n\r' '  ' | cut -c1-200)"
-          git push --set-upstream origin "HEAD:$REPAIR_BRANCH"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push --set-upstream origin "HEAD:$REPAIR_BRANCH"
 
       # Layer 6: PR-only landing path. This step never merges the PR.
       - name: Create labeled pull request

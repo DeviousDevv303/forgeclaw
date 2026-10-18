@@ -779,15 +779,15 @@ describe('shell_exec run discovery diagnostics', () => {
     return 'value' in result ? result.value : result.error
   }
 
-  it('says a run with the invocation ID was listed but rejected, and why (clock skew case)', async () => {
+  it('says a run with the invocation ID was listed but rejected, and why (stale-run case)', async () => {
     const output = await runDiscovery(id => ({ workflow_runs: [{
       id: 7, name: `Shell exec ${id}`, display_title: `Shell exec ${id}`, event: 'workflow_dispatch', status: 'completed',
-      conclusion: 'success', created_at: new Date(Date.now() - 10 * 60_000).toISOString(), head_branch: 'main',
+      conclusion: 'success', created_at: new Date(Date.now() - 3 * 60 * 60_000).toISOString(), head_branch: 'main',
       html_url: 'https://github.com/x/y/actions/runs/7', run_number: 1,
     }] }))
     expect(output).toContain('was not found')
     expect(output).toContain('listed but rejected')
-    expect(output).toContain('clock may be ahead')
+    expect(output).toContain('before dispatch')
     expect(output).toContain('shell-exec.yml')
   })
 
