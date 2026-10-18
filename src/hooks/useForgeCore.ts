@@ -10,6 +10,8 @@ import { takeNewEvents } from '../lib/forgeEventCursor'
 
 export function useForgeCore(forgeOpsState: ForgeOpsState): void {
   const lastEventRef = useRef<AgentEvent | null>(null)
+  // Install on mount so listeners (and the chat box's userTyping) work before the first event.
+  useEffect(() => { installForgeCore() }, [])
   useEffect(() => {
     const events = forgeOpsState.events
     const fresh = takeNewEvents(events, lastEventRef.current)

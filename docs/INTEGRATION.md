@@ -32,6 +32,30 @@ It never calls `executeTool()`, never touches Guardian or `requiresCoSign`, and 
 | `source` | `'agent' \| 'shell' \| 'git' \| 'system'` | Which subsystem caused it |
 | `timestamp` | ms since epoch | When the core broadcast it |
 
+| `emotion` | `'calm' \| 'curious' \| 'anticipatory' \| 'excited' \| 'frantic' \| 'satisfied' \| 'angry' \| 'pain'` | Emotional layer (merged from the "CubeSoul" proposal) |
+| `energy` | integer 0–100 | Builds with activity (capped), decays ×0.7 per second after 3 s of quiet, back to `calm` below 5 |
+| `gesture` | `'wave' \| 'celebrate'` (optional) | Present only on the one broadcast that should fire a one-off animation |
+
+There is still exactly **one** event (`forgeclaw:state`). The CubeSoul sketch's separate `cube:soul` event and its `app.on(...)` emitter were not adopted. That emitter doesn't exist, and a second event would split the contract.
+
+### Emotional layer mapping (source of truth: `emotionForEvent`)
+
+| Real signal | emotion | energy gain | gesture |
+| --- | --- | --- | --- |
+| `OBJECTIVE_RECEIVED` | curious | 30 | |
+| operator typing in the chat box (only while `idle`, at most 1/s) | anticipatory | 40 | |
+| `TOOL_START` shell tool | frantic | 80 | |
+| `TOOL_START` GitHub read (`github_read_file`, `_list_files`, `_repo_state`, `_search_code`, `_verify_commit`) ("fetch") | excited | 40 | wave |
+| `TOOL_START` other tool | excited | 60 | |
+| `TOOL_SUCCESS` `github_write_file` / `shell_patch` ("push") | satisfied | 20 | celebrate |
+| `TOOL_SUCCESS` shell tool | satisfied | 20 | |
+| `TOOL_FAILURE` | angry | 90 | |
+| `MISSION_COMPLETE` | satisfied | 20 | |
+| `MISSION_BLOCKED`, `GUARDIAN_WARNING` | pain | 100 | |
+| `RESET` | calm | energy set to 0 | |
+
+Decay broadcasts reuse the current `state`, with `source: 'system'` and `intensity: 1`.
+
 **Privacy:** payloads never include prompt text, error messages, tool output or credentials. A test enforces this.
 
 ## 3. Mapping (source of truth: `mapForgeOpsEvent` in `src/core/forgeclawReactiveCore.ts`)
