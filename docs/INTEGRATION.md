@@ -94,6 +94,26 @@ Directive helpers are also available:
 5. **No WebGL:** fall back to the existing 2D canvas cubes in `NeuralNetworkBackground.tsx`. They already react to the same states through `useNeuralState`: spin, pop, shake, freeze, and the green "solve" flash (`src/components/cubeMotion.ts`).
 6. **Targets:** reaction within 100 ms of the broadcast (dispatch is synchronous). 60 fps on a mid-range phone.
 
+## 4b. Living cubes (2D body, shipped)
+
+The live 2D canvas cubes now consume `forgeclaw:state` directly. They are the reference "body" until a 3D layer replaces them.
+- Rules: `cubeLook()` in `src/components/cubeMotion.ts`, with one unit test per behavior row.
+- All motion is computed from timestamps inside the render loop. There are no per-cube timers.
+
+| emotion / gesture | Cubes |
+| --- | --- |
+| calm | slow drift, breathing glow, a lazy quarter turn about every 9 s |
+| curious (AI thinking) | rapid micro-rotations, pulsing glow, slight jitter |
+| anticipatory (typing) | wobble + scale bounce |
+| excited | faster spin, glow |
+| frantic (shell) | 4.5 rad/s spin, shake, scrambled faces flicker, intense glow |
+| satisfied (success) | slow spin, green glow + fading flash (plus the existing square-up "solve") |
+| angry / pain (error) | the 9 pieces fly apart and snap back (800 ms), red glow + flash, shake |
+| gesture `wave` (git read) | Mexican wave: a full turn + blue flash, staggered 100 ms left to right |
+| gesture `celebrate` (git write) | double spin + gold glow, staggered 50 ms |
+
+Energy scales glow intensity. `blocked` still freezes rotation, except while exploding. Measured at 61 fps in Chromium at phone size while frantic.
+
 ## 5. Known constraint fixed alongside this contract
 
 `useForgeOps` keeps a bounded window of events (`MAX_EVENTS`, raised from 60 to 500).
