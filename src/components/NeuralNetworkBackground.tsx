@@ -2,8 +2,6 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import React, { useEffect, useRef, useCallback } from 'react';
 import type { NeuralState, NeuralPhase } from '../hooks/useNeuralState';
-import { CALM_SOUL, cubeJitter, cubeLook, cubeScale, cubeShake, cubeSpinRate, nextCubeAngle, solveProgress, type SoulSignal } from './cubeMotion';
-import { STATE_EVENT_NAME, type ForgeClawStateEvent } from '../core/forgeclawReactiveCore';
 
 interface NeuralNetworkBackgroundProps {
   messageCount: number;
@@ -32,8 +30,6 @@ interface Node {
   id: number;
   /** Lit while representing an in-flight tool (layer 2 only). */
   toolLit?: boolean;
-  /** Current cube rotation in radians (layer 2 only). */
-  cubeAngle?: number;
 }
 
 interface Connection {
@@ -53,64 +49,164 @@ const DENSITY_MAP: Record<string, number[]> = {
 };
 
 /**
- * Pre-rendered Rubik's cube sprite (64×64), drawn once and reused.
- * Standard Rubik's palette; subtle vertical shading for depth.
- * Drawn at MIN_CUBE_PX minimum — smaller would be an unreadable blob.
+ * 3D Rubik's cube state per node. (Claude to move to cubeMotion.ts;
+ * defined here until that lands.)
  */
-const CUBE_SPRITE_SIZE = 64;
-/** Minimum drawn cube size — below this a cube is an unreadable blob. */
-const MIN_CUBE_PX = 28;
-const cubeSpriteCache = new Map<number, HTMLCanvasElement>();
-/** Scrambled variants (1..SCRAMBLE_VARIANTS) flicker while the cubes are frantic. */
-const SCRAMBLE_VARIANTS = 4;
-
-// roundRect is missing on older engines (Chrome/WebView < 99, Safari < 16);
-// a throw here would abort the whole background, so fall back to square corners.
-function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  if (typeof ctx.roundRect === 'function') ctx.roundRect(x, y, w, h, r);
-  else ctx.rect(x, y, w, h);
+export interface Cube3DState {
+  faces: {
+    U: string[]; D: string[]; F: string[];
+    B: string[]; L: string[]; R: string[];
+  };
+  rotation: { x: number; y: number; z: number };
+  scramble: number;
+  explode: number;
 }
 
-function getCubeSprite(variant = 0): HTMLCanvasElement {
-  const cached = cubeSpriteCache.get(variant);
-  if (cached) return cached;
+export interface CubeLook {
+  angleOffset: number;
+  glow: number;
+  glowColor: { r: number; g: number; b: number };
+}
+
+/** Minimum 3D cube size — below this the faces aren't legible. */
+const MIN_CUBE_PX = 60;
+
+/** Standard solved faces. */
+export function solvedCubeFaces(): Cube3DState['faces'] {
+  return {
+    U: Array(9).fill('#ffffff'),
+    D: Array(9).fill('#ffcf00'),
+    F: Array(9).fill('#34c759'),
+    B: Array(9).fill('#0a84ff'),
+    L: Array(9).fill('#ff9500'),
+    R: Array(9).fill('#ff3b30'),
+  };
+}
+
+// Sticker sprite cache: pre-render each color once, drawImage per frame.
+const stickerCache = new Map<string, HTMLCanvasElement>();
+function getStickerSprite(color: string): HTMLCanvasElement {
+  const hit = stickerCache.get(color);
+  if (hit) return hit;
   const c = document.createElement('canvas');
-  c.width = CUBE_SPRITE_SIZE;
-  c.height = CUBE_SPRITE_SIZE;
+  c.width = 32; c.height = 32;
   const ctx = c.getContext('2d');
   if (ctx) {
-    const faces = ['#ffffff', '#ffcf00', '#ff3b30', '#ff9500', '#34c759', '#0a84ff'];
-    // Variant 0 is the solved-looking pattern; others are deterministic scrambles.
-    const faceFor = (i: number) => variant === 0 ? faces[i % faces.length] : faces[(i * (variant + 2) + variant * 5 + ((i * i) % 7)) % faces.length];
-    const gap = 3;
-    const cell = (CUBE_SPRITE_SIZE - gap * 4) / 3;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(2, 2, 28, 28, 4);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.beginPath();
+    ctx.roundRect(2, 2, 28, 14, 4);
+    ctx.fill();
+  }
+  stickerCache.set(color, c);
+  return c;
+}
+
+function lerpPt(a: { x: number; y: number; scale: number },
+                b: { x: number; y: number; scale: number }, t: number) {
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    scale: a.scale + (b.scale - a.scale) * t,
+  };
+}
+
+/**
+ * Draw a 3D Rubik's cube on 2D canvas. Glow renders BEHIND the cube
+ * (alpha 0.3) so celebrate/explode moments don't wash out stickers.
+ */
+export function drawCube3D(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, size: number,
+  state: Cube3DState, look: CubeLook,
+) {
+  const s = size / 2;
+  const rotX = state.rotation.x + look.angleOffset;
+  const rotY = state.rotation.y + look.angleOffset * 0.7;
+  const rotZ = state.rotation.z;
+
+  // 1. Glow FIRST (behind)
+  if (look.glow > 0) {
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 1.5);
+    const c = look.glowColor;
+    g.addColorStop(0, `rgba(${c.r},${c.g},${c.b},${look.glow * 0.3})`);
+    g.addColorStop(1, `rgba(${c.r},${c.g},${c.b},0)`);
+    ctx.beginPath();
+    ctx.arc(cx, cy, size * 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+  }
+
+  const project = (x: number, y: number, z: number) => {
+    const scale = 400 / (400 + z * s);
+    return { x: cx + x * s * scale, y: cy + y * s * scale, scale };
+  };
+
+  const v = [
+    [-1,-1,-1], [1,-1,-1], [1,1,-1], [-1,1,-1],
+    [-1,-1,1],  [1,-1,1],  [1,1,1],  [-1,1,1],
+  ];
+  const rotated = v.map(([x, y, z]) => {
+    const x1 = x * Math.cos(rotY) - z * Math.sin(rotY);
+    const z1 = x * Math.sin(rotY) + z * Math.cos(rotY);
+    const y1 = y * Math.cos(rotX) - z1 * Math.sin(rotX);
+    const z2 = y * Math.sin(rotX) + z1 * Math.cos(rotX);
+    const x2 = x1 * Math.cos(rotZ) - y1 * Math.sin(rotZ);
+    const y2 = x1 * Math.sin(rotZ) + y1 * Math.cos(rotZ);
+    return [x2, y2, z2];
+  });
+
+  const faces = [
+    { idx: [4,5,6,7], normal: [0,0,1],  color: state.faces.F },
+    { idx: [0,3,2,1], normal: [0,0,-1], color: state.faces.B },
+    { idx: [0,1,5,4], normal: [0,-1,0], color: state.faces.D },
+    { idx: [2,3,7,6], normal: [0,1,0],  color: state.faces.U },
+    { idx: [0,4,7,3], normal: [-1,0,0], color: state.faces.L },
+    { idx: [1,2,6,5], normal: [1,0,0],  color: state.faces.R },
+  ];
+  faces.sort((a, b) => {
+    const za = a.idx.reduce((sum, i) => sum + rotated[i][2], 0) / 4;
+    const zb = b.idx.reduce((sum, i) => sum + rotated[i][2], 0) / 4;
+    return za - zb;
+  });
+
+  for (const face of faces) {
+    const pts = face.idx.map(i => {
+      const [x, y, z] = rotated[i];
+      return project(x, y, z);
+    });
+    const [nx, ny, nz] = face.normal;
+    const nz1 = nx * Math.sin(rotY) + nz * Math.cos(rotY);
+    const nz2 = ny * Math.sin(rotX) + nz1 * Math.cos(rotX);
+    if (nz2 < -0.1) continue;
+
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (const p of pts) ctx.lineTo(p.x, p.y);
+    ctx.closePath();
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fill();
+
     for (let row = 0; row < 3; row++) {
       for (let col = 0; col < 3; col++) {
-        const inset = row * 1.5;
-        const x = gap + col * (cell + gap) + inset / 2;
-        const y = gap + row * (cell + gap);
-        const w = cell - inset;
-        ctx.fillStyle = faceFor(row * 3 + col);
-        ctx.beginPath();
-        roundedRect(ctx, x, y, w, cell, 4);
-        ctx.fill();
-        const shade = ctx.createLinearGradient(0, y, 0, y + cell);
-        shade.addColorStop(0, 'rgba(255,255,255,0.25)');
-        shade.addColorStop(1, 'rgba(0,0,0,0.25)');
-        ctx.fillStyle = shade;
-        ctx.beginPath();
-        roundedRect(ctx, x, y, w, cell, 4);
-        ctx.fill();
+        const color = face.color[row * 3 + col];
+        const u = (col - 1) / 3 + 0.5;
+        const vv = (row - 1) / 3 + 0.5;
+        const top = lerpPt(pts[0], pts[1], u);
+        const bottom = lerpPt(pts[3], pts[2], u);
+        const p = lerpPt(top, bottom, vv);
+        const stickerSize = size * 0.28 * p.scale;
+        ctx.drawImage(
+          getStickerSprite(color),
+          p.x - stickerSize / 2, p.y - stickerSize / 2,
+          stickerSize, stickerSize,
+        );
       }
     }
-    ctx.strokeStyle = 'rgba(10,10,10,0.9)';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    roundedRect(ctx, 1.5, 1.5, CUBE_SPRITE_SIZE - 3, CUBE_SPRITE_SIZE - 3, 8);
-    ctx.stroke();
   }
-  cubeSpriteCache.set(variant, c);
-  return c;
 }
 const DENSITY_ORDER = ['low', 'medium', 'high'] as const;
 
@@ -165,11 +261,10 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       activeToolCount: 0,
       tokenVelocity: 0,
       errorLevel: 0,
-      completedAt: 0,
     };
   }
   const neural: NeuralState = state || {
-    phase: 'idle', provider: 'corpus', activeToolCount: 0, tokenVelocity: 0, errorLevel: 0, completedAt: 0,
+    phase: 'idle', provider: 'corpus', activeToolCount: 0, tokenVelocity: 0, errorLevel: 0,
   };
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -191,9 +286,6 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
   const effectiveDensityRef = useRef<'low' | 'medium' | 'high'>(density);
   const fpsSamplesRef = useRef<number[]>([]);
   const lastFrameTimeRef = useRef(0);
-  const lastCubeFrameRef = useRef(0);
-  // Emotional signal from the reactive core (window 'forgeclaw:state').
-  const soulRef = useRef<SoulSignal>(CALM_SOUL);
   // Verifying sweep
   const sweepStartRef = useRef<number>(0);
   // Tool node assignment (layer 2 node ids lit per in-flight tool)
@@ -284,29 +376,6 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
     connectionsRef.current = connections;
     toolNodesRef.current = [];
     prevToolCountRef.current = 0;
-  }, []);
-
-  // Listen to the reactive core. Stored in a ref: the canvas loop reads it every
-  // frame, so emotion changes never re-render React.
-  useEffect(() => {
-    const apply = (m: Pick<ForgeClawStateEvent, 'emotion' | 'energy' | 'gesture' | 'timestamp'>) => {
-      const prev = soulRef.current;
-      soulRef.current = {
-        emotion: m.emotion,
-        energy: m.energy,
-        emotionAt: m.emotion !== prev.emotion ? m.timestamp : prev.emotionAt,
-        gesture: m.gesture ?? prev.gesture,
-        gestureAt: m.gesture ? m.timestamp : prev.gestureAt,
-      };
-    };
-    const snap = typeof window !== 'undefined' ? window.forgeCore?.getSnapshot() : undefined;
-    if (snap) apply(snap);
-    const onState = (e: Event) => {
-      const d = (e as CustomEvent<ForgeClawStateEvent>).detail;
-      if (d && typeof d.emotion === 'string') apply(d);
-    };
-    window.addEventListener(STATE_EVENT_NAME, onState);
-    return () => window.removeEventListener(STATE_EVENT_NAME, onState);
   }, []);
 
   useEffect(() => {
@@ -489,18 +558,23 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         ctx.fillStyle = glowGradient;
         ctx.fill();
 
-        // Core: center-layer nodes render as Rubik's cubes (min 28px);
-        // others keep the arc. Blocked red tint applies via primaryColor.
+        // Core: center-layer nodes render as 3D Rubik's cubes (min 60px);
+        // others keep the arc.
         if (node.layer === 2) {
-          const sprite = getCubeSprite();
           const size = Math.max(radius * 2, MIN_CUBE_PX);
-          ctx.drawImage(sprite, node.x - size / 2, node.y - size / 2, size, size);
-          if (st.phase === 'blocked') {
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, size / 2, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(255, 59, 48, 0.35)';
-            ctx.fill();
-          }
+          const cubeState: Cube3DState = {
+            faces: solvedCubeFaces(),
+            rotation: { x: 0.4, y: 0.6, z: 0 },
+            scramble: 0, explode: 0,
+          };
+          const look: CubeLook = {
+            angleOffset: 0,
+            glow: st.phase === 'blocked' ? 0.8 : 0.4,
+            glowColor: st.phase === 'blocked'
+              ? { r: 255, g: 59, b: 48 }
+              : { r: 255, g: 149, b: 0 },
+          };
+          drawCube3D(ctx, node.x, node.y, size, cubeState, look);
         } else {
           ctx.beginPath();
           ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
@@ -592,15 +666,6 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       const connections = connectionsRef.current;
       const time = Date.now() * 0.001;
       const nowTs = Date.now();
-      // Cube motion clock (seconds since last frame, clamped so a hidden tab can't jump).
-      const cubeNow = performance.now();
-      const cubeDt = lastCubeFrameRef.current > 0 ? Math.min(0.1, Math.max(0, (cubeNow - lastCubeFrameRef.current) / 1000)) : 0;
-      lastCubeFrameRef.current = cubeNow;
-      const solve = solveProgress(st.completedAt, nowTs);
-      const soul = soulRef.current;
-      // Left-to-right order of the cubes, for the Mexican wave.
-      const cubeOrder = new Map<number, number>();
-      [...nodesRef.current.values()].filter(n => n.layer === 2).sort((a, b) => a.x - b.x).forEach((n, i) => cubeOrder.set(n.id, i));
 
       // Verifying sweep: excite layers 0→4 sequentially over 1.5s
       let sweepLayer = -1;
@@ -711,71 +776,28 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         ctx.fillStyle = glowGradient;
         ctx.fill();
 
-        // Core: center-layer nodes render as Rubik's cubes (min 28px,
-        // scaled by toolBoost); others keep the arc. Blocked red tint overlays.
+        // Core: center-layer nodes render as 3D Rubik's cubes (min 60px,
+        // scaled by toolBoost); others keep the arc.
         if (node.layer === 2) {
-          // Reactive cube: spin follows phase/token velocity, lit tools spin
-          // faster and pop, errors shake, MISSION_COMPLETE "solves" (squares up
-          // with a green flash). All derived from NeuralState; see cubeMotion.ts.
-          const lit = Boolean(node.toolLit);
-          // Emotional body (core) on top of the phase rules (neural state).
-          const look = cubeLook(soul, nowTs, cubeOrder.get(node.id) ?? 0, node.id);
-          const exploding = look.explode > 0;
-          const phaseRate = cubeSpinRate(st.phase, st.tokenVelocity, lit);
-          const rate = st.phase === 'blocked' && !exploding ? 0 : Math.max(phaseRate, look.spin * (lit ? 2 : 1));
-          node.cubeAngle = nextCubeAngle(node.cubeAngle ?? node.id * 0.37, rate, cubeDt, solve !== null);
-          const shake = cubeShake(st.errorLevel, nowTs, node.id);
-          const jit = cubeJitter(look.jitterPx, nowTs, node.id);
-          const variant = look.scrambled ? 1 + ((Math.floor(nowTs / 120) + node.id) % SCRAMBLE_VARIANTS) : 0;
-          const sprite = getCubeSprite(variant);
-          const size = Math.max(radius * toolBoost * 2, MIN_CUBE_PX) * cubeScale(lit, st.phase) * look.scale;
-          const cx = node.x + shake.dx + jit.dx;
-          const cy = node.y + shake.dy + jit.dy;
-          // Emotional glow behind the cube (breathing when calm, red on errors, gold on celebrate).
-          if (look.glow > 0.02) {
-            const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 1.1);
-            g.addColorStop(0, `rgba(${look.glowColor.r}, ${look.glowColor.g}, ${look.glowColor.b}, ${(look.glow * 0.55).toFixed(3)})`);
-            g.addColorStop(1, `rgba(${look.glowColor.r}, ${look.glowColor.g}, ${look.glowColor.b}, 0)`);
-            ctx.beginPath();
-            ctx.arc(cx, cy, size * 1.1, 0, Math.PI * 2);
-            ctx.fillStyle = g;
-            ctx.fill();
-          }
-          ctx.save();
-          ctx.translate(cx, cy);
-          ctx.rotate(node.cubeAngle + look.angleOffset);
-          if (exploding) {
-            // Nine pieces fly outward from the center, then snap back.
-            const piece = CUBE_SPRITE_SIZE / 3;
-            const drawn = size / 3;
-            const spread = look.explode * size * 0.6;
-            for (let row = 0; row < 3; row++) {
-              for (let col = 0; col < 3; col++) {
-                ctx.drawImage(sprite, col * piece, row * piece, piece, piece,
-                  -size / 2 + col * drawn + (col - 1) * spread, -size / 2 + row * drawn + (row - 1) * spread, drawn, drawn);
-              }
-            }
-          } else {
-            ctx.drawImage(sprite, -size / 2, -size / 2, size, size);
-          }
-          ctx.restore();
-          if (look.flash) {
-            ctx.beginPath();
-            ctx.arc(cx, cy, size * 0.75, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(${look.flash.color.r}, ${look.flash.color.g}, ${look.flash.color.b}, ${look.flash.alpha.toFixed(3)})`;
-            ctx.fill();
-          }
-          if (st.phase === 'blocked') {
-            ctx.beginPath();
-            ctx.arc(cx, cy, size / 2, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(255, 59, 48, 0.35)';
-            ctx.fill();
-          } else if (solve !== null) {
-            ctx.beginPath();
-            ctx.arc(cx, cy, size * 0.75, 0, Math.PI * 2);
-            ctx.fillStyle = `rgba(52, 199, 89, ${(0.45 * (1 - solve)).toFixed(3)})`;
-            ctx.fill();
-          }
+          const size = Math.max(radius * toolBoost * 2, MIN_CUBE_PX);
+          const t = performance.now() / 1000;
+          const cubeState: Cube3DState = {
+            faces: solvedCubeFaces(),
+            rotation: {
+              x: 0.4 + Math.sin(t * 0.5 + node.x * 0.01) * 0.2,
+              y: 0.6 + t * 0.3 + node.y * 0.01,
+              z: 0,
+            },
+            scramble: 0, explode: 0,
+          };
+          const look: CubeLook = {
+            angleOffset: 0,
+            glow: st.phase === 'blocked' ? 0.8 : 0.4,
+            glowColor: st.phase === 'blocked'
+              ? { r: 255, g: 59, b: 48 }
+              : { r: 255, g: 149, b: 0 },
+          };
+          drawCube3D(ctx, node.x, node.y, size, cubeState, look);
         } else {
           ctx.beginPath();
           ctx.arc(node.x, node.y, radius * toolBoost, 0, Math.PI * 2);
