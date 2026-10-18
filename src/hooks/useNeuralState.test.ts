@@ -271,6 +271,20 @@ describe('useNeuralState', () => {
     expect((latency[0] as { result: string }).result).toContain('latencyMs=')
   })
 
+  it('keeps reacting after the 60-event ForgeOps cap is reached (window slides, length stays 60)', () => {
+    const { result, rerender } = renderHook(
+      ({ events }) => useNeuralState(stateWithEvents(events), 'corpus', { contentLength: 0 }),
+      { initialProps: { events: [] as AgentEvent[] } },
+    )
+    // Mirror useForgeOps: append, then keep only the last 60.
+    let window: AgentEvent[] = []
+    const push = (e: AgentEvent) => { window = [...window, e].slice(-60); act(() => { rerender({ events: window }) }) }
+    for (let i = 0; i < 70; i++) push(evt({ type: 'CHECKPOINT', iter: i, total: 70 }))
+    expect(window.length).toBe(60)
+    push(evt({ type: 'MISSION_BLOCKED', reason: 'late failure' }))
+    expect(result.current.phase).toBe('blocked')
+  })
+
   it('stamps completedAt on MISSION_COMPLETE so the cubes can play their solve moment', () => {
     const { result, rerender } = renderHook(
       ({ events }) => useNeuralState(stateWithEvents(events), 'corpus', { contentLength: 0 }),

@@ -17,7 +17,8 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import type { ForgeOpsState } from '../types/forgeOps'
+import type { AgentEvent, ForgeOpsState } from '../types/forgeOps'
+import { takeNewEvents } from '../lib/forgeEventCursor'
 import { recordLearningEvent } from '../lib/learningEvents'
 
 export type NeuralPhase = 'idle' | 'planning' | 'executing' | 'verifying' | 'blocked' | 'streaming'
@@ -92,7 +93,7 @@ export function useNeuralState(
   const [neuralState, setNeuralState] = useState<NeuralState>({ ...IDLE_NEURAL_STATE, provider })
 
   // Refs for values that shouldn't trigger re-renders
-  const lastEventCountRef = useRef(0)
+  const lastEventRef = useRef<AgentEvent | null>(null)
   const lastContentLengthRef = useRef(options.contentLength)
   const lastContentTimeRef = useRef(Date.now())
   const lastTokenTimeRef = useRef(0)
@@ -130,9 +131,9 @@ export function useNeuralState(
   // Process new ForgeOps events
   useEffect(() => {
     const events = forgeOpsState.events
-    const newEvents = events.slice(lastEventCountRef.current)
+    const newEvents = takeNewEvents(events, lastEventRef.current)
     if (newEvents.length === 0) return
-    lastEventCountRef.current = events.length
+    lastEventRef.current = events[events.length - 1]
 
     let agentPhase = agentPhaseRef.current
     let activeToolCount = 0
