@@ -265,7 +265,9 @@ jobs:
             echo "No $FIX_BRANCH was pushed; nothing to check or open."
             exit 0
           fi
-          changed="$(git diff --name-only origin/main...FETCH_HEAD)"
+          # --no-renames: with rename detection, moving a protected file shows only its NEW path, which would
+          # slip past the check. Without it, both the old (deleted) and new paths are listed.
+          changed="$(git diff --no-renames --name-only origin/main...FETCH_HEAD)"
           echo "Files changed on $FIX_BRANCH:"
           echo "$changed"
           protected='^(\.github/|src/lib/guardianGate\.ts$|src/lib/forgeTools\.ts$|src/lib/shellDispatch\.ts$|tests/foundation/|package\.json$|package-lock\.json$|LICENSE)'
