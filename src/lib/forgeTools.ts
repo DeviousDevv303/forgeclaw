@@ -102,6 +102,9 @@ function normalizeRepositoryPath(path: string): string {
   return path.replace(/^\/+/, '')
 }
 
+// Allowlist mirrored by MODELS in .github/scripts/generate_image.py (a test keeps them in sync).
+export const IMAGE_MODELS = ['sd15', 'sdxl-turbo', 'sd-turbo'] as const
+
 // ─── Tool Definitions ─────────────────────────────────────────────────────────
 
 export const FORGE_TOOLS: ToolDef[] = [
@@ -446,7 +449,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'generate_image',
-    description: 'Generate an image with public Stable Diffusion v1.5 through the repository-owned GitHub Actions workflow. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request may be recorded as an unapproved learning candidate.',
+    description: 'Generate an image on CPU through the repository-owned GitHub Actions workflow. Default model is public Stable Diffusion v1.5; optional model "sdxl-turbo" or "sd-turbo" is faster but limited to 512x512 and carries Stability AI Community License terms. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request may be recorded as an unapproved learning candidate.',
     parameters: {
       type: 'object',
       properties: {
@@ -454,6 +457,7 @@ export const FORGE_TOOLS: ToolDef[] = [
         style: { type: 'string', description: 'Style such as realistic, artistic, or cartoon' },
         width: { type: 'number', description: 'Width in pixels, 256-1024, divisible by 8; defaults to 512' },
         height: { type: 'number', description: 'Height in pixels, 256-1024, divisible by 8; defaults to 512' },
+        model: { type: 'string', enum: [...IMAGE_MODELS], description: 'Optional model key; defaults to sd15. Turbo models are limited to 512x512.' },
       },
       required: ['prompt'],
     },
@@ -1443,6 +1447,9 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         if (!Number.isInteger(width) || !Number.isInteger(height) || width < 256 || width > 1024 || height < 256 || height > 1024 || width % 8 !== 0 || height % 8 !== 0) {
           throw new Error('Image width and height must be integers from 256 to 1024 and divisible by 8.')
         }
+        const model = input.model === undefined || input.model === '' ? 'sd15' : String(input.model)
+        if (!(IMAGE_MODELS as readonly string[]).includes(model)) throw new Error(`Unknown image model '${model}'. Allowed: ${IMAGE_MODELS.join(', ')}.`)
+        if (model !== 'sd15' && (width > 512 || height > 512)) throw new Error(`Image model '${model}' is only verified up to 512x512.`)
         if (!token) throw new Error('No GitHub token configured.')
 
         let tastePrompt = ''
@@ -1461,7 +1468,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ref: 'main',
-            inputs: { prompt: improved.prompt, style, width: String(width), height: String(height), invocation_id: invocationId },
+            inputs: { prompt: improved.prompt, style, width: String(width), height: String(height), model, invocation_id: invocationId },
           }),
         })
 
