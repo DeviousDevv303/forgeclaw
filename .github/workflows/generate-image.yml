@@ -130,8 +130,20 @@ jobs:
           cp "$IMAGE_PATH" "/tmp/generated-images-worktree/generated-images/${INVOCATION_ID}.png"
           git -C /tmp/generated-images-worktree add "generated-images/${INVOCATION_ID}.png"
           git -C /tmp/generated-images-worktree commit -m "image: publish ${INVOCATION_ID}"
-          git -C /tmp/generated-images-worktree push origin HEAD:generated-images
+          # Two runs finishing together race on this branch (non-fast-forward). Rebase onto the
+          # newest tip and retry instead of failing the step, which would also skip the artifact upload.
+          for attempt in 1 2 3 4 5; do
+            if git -C /tmp/generated-images-worktree push origin HEAD:generated-images; then exit 0; fi
+            echo "Mirror push attempt ${attempt} failed; rebasing onto the latest generated-images tip."
+            git -C /tmp/generated-images-worktree fetch origin generated-images
+            git -C /tmp/generated-images-worktree rebase origin/generated-images
+            sleep $((attempt * 3))
+          done
+          echo '::error::Could not publish the image mirror after 5 attempts (the artifact upload below still runs).'
+          exit 1
       - name: Upload generated artifact
+        # Run even if the mirror push failed, so the image stays retrievable through the artifact path.
+        if: ${{ always() && hashFiles('generated_*.png') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: generated-image-${{ inputs.invocation_id }}
