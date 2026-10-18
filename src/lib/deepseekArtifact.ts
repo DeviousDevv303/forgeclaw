@@ -30,7 +30,16 @@ export const DEEPSEEK_WORKFLOW_ID = 'deepseek-16b.yml'
 export const DEEPSEEK_ARTIFACT_PREFIX = 'deepseek-'
 export const DEEPSEEK_MIRROR_BRANCH = 'deepseek-results'
 export const DEEPSEEK_MIRROR_DIR = 'deepseek-results'
-export const DEEPSEEK_MAX_WAIT_MS = 35 * 60 * 1000
+// The workflow job is killed at 30 minutes (deepseek-16b.yml timeout-minutes). Waiting a little longer
+// covers result publishing, but not the 5 extra minutes a run that can never finish used to cost.
+export const DEEPSEEK_MAX_WAIT_MS = 31 * 60 * 1000
+
+/** Exact text deepseek-16b.yml writes when the model returned nothing. It is a failure, not an answer. */
+export const DEEPSEEK_EMPTY_RESPONSE_PLACEHOLDER = '(DeepSeek produced an empty response)'
+export function isEmptyDeepSeekResponse(text: string): boolean {
+  const trimmed = text.trim()
+  return trimmed.length === 0 || trimmed === DEEPSEEK_EMPTY_RESPONSE_PLACEHOLDER
+}
 
 const DISCOVERY_TIMEOUT_MS = 120_000
 const MIRROR_TIMEOUT_MS = 20_000

@@ -14,11 +14,12 @@ on:
 
 jobs:
   claude:
+    # Hardening: only the owner/members/collaborators can trigger this job (public repo: anyone can comment).
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -67,6 +68,10 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPICAPIKEY }}
           anthropic_workspace_id: ${{ secrets.ANTHROPICWORKSPACEID }}
           show_full_output: true
+          # Hardening: explicit limits for the comment-triggered job. No shell and no web access, bounded turns.
+          claude_args: |
+            --max-turns 20
+            --disallowedTools "Bash,WebFetch,WebSearch"
 
           # Optional: Customize the trigger phrase (default: @claude)
           # trigger_phrase: "/claude"
@@ -217,6 +222,14 @@ jobs:
             exit 1
           fi
 
+      # Policy is copied out of the checkout BEFORE the model runs, so the model cannot edit the
+      # checker or the list that will judge its branch.
+      - name: Load protected-path policy from main
+        run: |
+          set -euo pipefail
+          git show origin/main:.github/scripts/check-protected.py > "$RUNNER_TEMP/check-protected.py"
+          git show origin/main:.github/protected-paths.txt > "$RUNNER_TEMP/protected-paths.txt"
+
       - name: Run Claude Code fix
         id: claude-fix
         uses: anthropics/claude-code-action@v1
@@ -240,8 +253,9 @@ jobs:
             - This is ForgeClaw. Follow the repository's Guardian and constitutional rules.
             - Do exactly the requested task. No scope expansion, no unrelated refactors, no new dependencies.
             - Create the branch named above from main, commit there, and push only that branch. Never push to main.
-            - Do NOT modify: anything under .github/, src/lib/guardianGate.ts, src/lib/forgeTools.ts,
-              src/lib/shellDispatch.ts, tests/foundation/, package.json, package-lock.json, LICENSE.
+            - Do NOT modify any path listed in .github/protected-paths.txt (workflows, package manifests and
+              lockfiles, build/lint/test configs such as vite/vitest/eslint/tsconfig, Guardian and tool
+              dispatch code, foundation/engine, tests/foundation, scripts/, LICENSE). Read that file first.
               A check will delete your branch and fail the run if you do. If the fix needs one of these,
               stop and report that instead.
             - Before committing, run: npx tsc -b, npx eslint ., npx vitest run, npm run build.
@@ -265,11 +279,13 @@ jobs:
             echo "No $FIX_BRANCH was pushed; nothing to check or open."
             exit 0
           fi
-          changed="$(git diff --name-only origin/main...FETCH_HEAD)"
+          # --no-renames: with rename detection, moving a protected file shows only its NEW path, which would
+          # slip past the check. Without it, both the old (deleted) and new paths are listed.
+          changed="$(git diff --no-renames --name-only origin/main...FETCH_HEAD)"
           echo "Files changed on $FIX_BRANCH:"
           echo "$changed"
-          protected='^(\.github/|src/lib/guardianGate\.ts$|src/lib/forgeTools\.ts$|src/lib/shellDispatch\.ts$|tests/foundation/|package\.json$|package-lock\.json$|LICENSE)'
-          if echo "$changed" | grep -E "$protected"; then
+          # Shared policy (.github/protected-paths.txt); NUL-separated so odd file names cannot slip through.
+          if ! git diff --no-renames --name-only -z origin/main...FETCH_HEAD | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"; then
             echo "::error::claude-fix touched a protected path. Deleting $FIX_BRANCH and failing."
             git push origin --delete "$FIX_BRANCH"
             exit 1

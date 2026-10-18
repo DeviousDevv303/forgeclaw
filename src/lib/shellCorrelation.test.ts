@@ -71,8 +71,8 @@ describe('Shell workflow correlation', () => {
   })
 
   it('rejects stale, future, wrong-event, wrong-ref, malformed, and invalid runs', () => {
-    expect(isCorrelatedShellRun(run({ created_at: '2026-09-30T13:52:00.000Z' }), invocationId, dispatchedAt, now)).toBe(false)
-    expect(isCorrelatedShellRun(run({ created_at: '2026-09-30T13:56:00.000Z' }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ created_at: '2026-09-30T11:00:00.000Z' }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ created_at: '2026-09-30T17:00:00.000Z' }), invocationId, dispatchedAt, now)).toBe(false)
     expect(isCorrelatedShellRun(run({ event: 'push' }), invocationId, dispatchedAt, now)).toBe(false)
     expect(isCorrelatedShellRun(run({ head_branch: 'feature/other' }), invocationId, dispatchedAt, now)).toBe(false)
     expect(isCorrelatedShellRun(run({ id: 0 }), invocationId, dispatchedAt, now)).toBe(false)
@@ -140,7 +140,17 @@ describe('Shell execution log parsing', () => {
     const output = 'x'.repeat(MAX_SHELL_OUTPUT_CHARS + 500)
     const parsed = parseShellExecutionLog(`=== FORGECLAW EXECUTION ===\nstart=now\n${output}\nexit_code=0`, 'success')
     expect(parsed.exitCode).toBe(0)
-    expect(parsed.commandOutput).toHaveLength(MAX_SHELL_OUTPUT_CHARS)
+    expect(parsed.commandOutput.startsWith('x'.repeat(MAX_SHELL_OUTPUT_CHARS))).toBe(true)
+    expect(parsed.commandOutput).toContain('[truncated 500 more characters]')
+  })
+
+  it('uses the workflow\'s LAST exit_code line, so command output cannot spoof the exit code', () => {
+    const log = '=== FORGECLAW EXECUTION ===\nstart=now\nexit_code=0\nreal failure\nexit_code=1\nend=now'
+    const parsed = parseShellExecutionLog(log, 'failure')
+    expect(parsed.exitCode).toBe(1)
+    expect(parsed.commandOutput).toBe('exit_code=0\nreal failure')
+    const ok = parseShellExecutionLog('=== FORGECLAW EXECUTION ===\nstart=now\nexit_code=1 is just text\nexit_code=0\nend=now', 'success')
+    expect(ok.exitCode).toBe(0)
   })
 
   it('uses a nonzero fallback when a failed run has no exit marker', () => {
@@ -162,8 +172,8 @@ describe('explainShellRunMismatch', () => {
       run({ head_branch: 'feature' }),
       run({ name: 'other', display_title: 'other' }),
       run({ created_at: 'not a date' }),
-      run({ created_at: '2026-09-30T13:50:00.000Z' }),
-      run({ created_at: '2026-09-30T14:10:00.000Z' }),
+      run({ created_at: '2026-09-30T10:00:00.000Z' }),
+      run({ created_at: '2026-09-30T18:00:00.000Z' }),
       run({ id: 0 }),
     ]
     for (const candidate of cases) {
@@ -172,8 +182,15 @@ describe('explainShellRunMismatch', () => {
     }
   })
 
-  it('names clock skew in both directions', () => {
-    expect(explainShellRunMismatch(run({ created_at: '2026-09-30T13:50:00.000Z' }), invocationId, dispatchedAt, now)).toContain('clock may be ahead')
-    expect(explainShellRunMismatch(run({ created_at: '2026-09-30T14:10:00.000Z' }), invocationId, dispatchedAt, now)).toContain('clock may be behind')
+  it('does NOT reject the right run for ordinary device clock drift (the Oct 16 failure class)', () => {
+    for (const created_at of ['2026-09-30T13:44:00.000Z', '2026-09-30T14:04:00.000Z']) {
+      expect(explainShellRunMismatch(run({ created_at }), invocationId, dispatchedAt, now)).toBeNull()
+      expect(isCorrelatedShellRun(run({ created_at }), invocationId, dispatchedAt, now)).toBe(true)
+    }
+  })
+
+  it('still rejects an hours-old run and says how old it is', () => {
+    expect(explainShellRunMismatch(run({ created_at: '2026-09-30T10:00:00.000Z' }), invocationId, dispatchedAt, now)).toContain('before dispatch')
+    expect(explainShellRunMismatch(run({ created_at: '2026-09-30T18:00:00.000Z' }), invocationId, dispatchedAt, now)).toContain('future')
   })
 })

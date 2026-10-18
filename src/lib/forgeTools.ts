@@ -29,7 +29,7 @@ import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellL
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
 import { TasteProviderClient } from './ai/providers/tasteProvider'
-import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, waitForDeepSeekResult } from './deepseekArtifact'
+import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
 
 // These runtime envelopes are for the chat/model boundary only. They must not
 // become part of a user-facing image prompt, where Stable Diffusion may render
@@ -393,7 +393,7 @@ export const FORGE_TOOLS: ToolDef[] = [
       properties: {
         command: { type: 'string', description: 'Shell command to execute. Can include &&, ||, pipes, redirects. Runs in bash -c.' },
         working_directory: { type: 'string', description: 'Working directory inside the checked-out repository. Use "." for the root or a relative path like "src/lib". Local models may emit "/workspace" or "/workspace/<repo>"; these are normalized to the repository root. Do not use any other absolute path.' },
-        timeout_seconds: { type: 'number', description: 'Maximum seconds to wait for completion. Default: 180. Max: 600.' },
+        timeout_seconds: { type: 'number', description: 'Maximum seconds to wait for completion. Default: 600. Max: 600.' },
         wait: { type: 'boolean', description: 'If true (default), polls until completion or timeout. If false, dispatches and returns immediately with run ID.' },
         exercise_id: { type: 'string', description: 'Optional stable Shell competency exercise ID. Verified results become an unapproved CORPUS candidate.' },
         owner: { type: 'string', description: 'GitHub owner' },
@@ -805,6 +805,9 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           throw new Error(`deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: ${explanation}${detail ? ` DeepSeek dispatch response: ${detail.slice(0, 300)}` : ''}`)
         }
         const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
+        if (isEmptyDeepSeekResponse(completed.result)) {
+          return `[TOOL ERROR] DeepSeek-16B run ${completed.run.html_url} finished but produced an empty response, so there is no answer to show. Nothing was recorded for learning. Try again or rephrase.`
+        }
         let learningStatus = 'not requested'
         if (nexusLearn) {
           // Learning persistence is independent of reasoning success. Its status
@@ -1060,7 +1063,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
       // ── Shell execution via GitHub Actions ───────────────────────────────────
       case 'shell_exec': {
         const command    = normalizeKnownShellExecutable(typeof input.command === 'string' ? input.command : String(input.command || ''))
-        const maxWait    = Math.min(parseInt(String(input.timeout_seconds || '180'), 10) || 180, 600)
+        const maxWait    = Math.min(parseInt(String(input.timeout_seconds || '600'), 10) || 600, 600)
         const shouldWait = (input.wait as boolean) !== false
 
         const sOwner = (input.owner as string) || ctx.ghOwner
@@ -1220,7 +1223,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         }
 
         if (finalRun.status !== 'completed') {
-          return `[TOOL ERROR] Shell execution timed out after ${maxWait}s. Run #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nLast status: ${lastStatus}\nConclusion: ${finalRun.conclusion ?? 'unknown'}\nURL: ${finalRun.html_url}`
+          return `[TOOL ERROR] Shell execution timed out waiting after ${maxWait}s, but the run may STILL BE RUNNING on GitHub. Do NOT retry the command (a retry would execute it a second time); open the URL to check. Run #${finalRun.run_number} (id: ${finalRun.id})\nInvocation: ${invocationId}\nLast status: ${lastStatus}\nConclusion: ${finalRun.conclusion ?? 'unknown'}\nURL: ${finalRun.html_url}`
         }
 
         type WorkflowJob = { id: number; name: string; conclusion: string | null }

@@ -2,6 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission.
 
 export const MAX_SHELL_OUTPUT_CHARS = 6_000
+export const SHELL_STALE_RUN_WINDOW_MS = 60 * 60_000
 export const SHELL_RUN_LIST_TIMEOUT_MS = 120_000
 export const SHELL_LOG_RETRIEVAL_TIMEOUT_MS = 300_000
 export const SHELL_LOG_POLL_INTERVAL_MS = 5_000
@@ -58,10 +59,11 @@ export function explainShellRunMismatch(
 
   const createdAt = Date.parse(run.created_at)
   if (Number.isNaN(createdAt)) return 'created_at is not a valid time'
-  // Allow GitHub's dispatch/indexing delay and modest clock skew, but never
-  // accept an old run or a run that claims to be from the future.
-  if (createdAt < dispatchedAt - 60_000) return `created_at is ${Math.round((dispatchedAt - createdAt) / 1000)}s before dispatch (limit 60s); this device's clock may be ahead of GitHub's`
-  if (createdAt > now + 60_000) return `created_at is ${Math.round((createdAt - now) / 1000)}s in this device's future (limit 60s); this device's clock may be behind GitHub's`
+  // The invocation ID (timestamp + random suffix) is already unique, so a tight time window adds no
+  // safety but can falsely reject the right run when the device clock drifts. Keep only a very wide
+  // sanity bound against reusing a stale run from a different session.
+  if (createdAt < dispatchedAt - SHELL_STALE_RUN_WINDOW_MS) return `created_at is ${Math.round((dispatchedAt - createdAt) / 1000)}s before dispatch (limit ${SHELL_STALE_RUN_WINDOW_MS / 1000}s)`
+  if (createdAt > now + SHELL_STALE_RUN_WINDOW_MS) return `created_at is ${Math.round((createdAt - now) / 1000)}s in this device's future (limit ${SHELL_STALE_RUN_WINDOW_MS / 1000}s)`
   return null
 }
 
@@ -136,14 +138,23 @@ export function parseShellExecutionLog(rawLogs: string, conclusion: string | nul
     .map(line => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.+-]+Z\s+/, ''))
     .join('\n')
     .trim()
-  const exitMatch = executionLog.match(/(?:^|\n)exit_code=(\d+)/)
-  const exitCode = exitMatch ? Number(exitMatch[1]) : (conclusion === 'success' ? 0 : 1)
+  // The workflow prints exit_code=N as its LAST status line, after the command ran. A command can
+  // print its own "exit_code=0" line, so use the last match, never the first.
+  const exitMatches = [...executionLog.matchAll(/(?:^|\n)exit_code=(\d+)/g)]
+  const lastExit = exitMatches.at(-1)
+  const exitCode = lastExit ? Number(lastExit[1]) : (conclusion === 'success' ? 0 : 1)
   const outputStart = executionLog.indexOf('\nstart=')
   const outputAfterStart = outputStart >= 0 ? executionLog.slice(outputStart + 1) : executionLog
-  const exitIndex = outputAfterStart.search(/\nexit_code=\d+/)
+  const exitIndex = lastExit ? outputAfterStart.lastIndexOf(`\nexit_code=${lastExit[1]}`) : -1
   const commandOutput = (exitIndex >= 0 ? outputAfterStart.slice(0, exitIndex) : outputAfterStart)
     .replace(/^start=[^\n]*\n?/, '')
     .replace(/\n?end=[^\n]*$/, '')
     .trim()
-  return { commandOutput: commandOutput.slice(0, MAX_SHELL_OUTPUT_CHARS), exitCode }
+  const overflow = commandOutput.length - MAX_SHELL_OUTPUT_CHARS
+  return {
+    commandOutput: overflow > 0
+      ? `${commandOutput.slice(0, MAX_SHELL_OUTPUT_CHARS)}\n[truncated ${overflow} more characters]`
+      : commandOutput,
+    exitCode,
+  }
 }

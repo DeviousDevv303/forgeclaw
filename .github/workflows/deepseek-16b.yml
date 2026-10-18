@@ -329,8 +329,16 @@ jobs:
 
           elapsed = round(time.time() - started, 1)
 
+          degraded = model_used != PRIMARY_MODEL
           if not result:
               result = '(DeepSeek produced an empty response)'
+          elif degraded:
+              # Make the downgrade impossible to miss: the answer text itself carries the warning.
+              result = (
+                  f'\u26a0 DEGRADED ANSWER: the primary model ({PRIMARY_MODEL}) failed ({note}); '
+                  f'this reply came from the much smaller fallback {FALLBACK_MODEL} and may be wrong. '
+                  'Do not rely on it without checking.\n\n' + result
+              )
 
           with open('result.txt', 'w', encoding='utf-8') as handle:
               handle.write(result)
@@ -339,6 +347,7 @@ jobs:
                   f'invocation_id={invocation_id}\n'
                   f'model={model_used}\n'
                   f'role={note}\n'
+                  f'degraded={str(degraded).lower()}\n'
                   f'creative_retry_attempted={str(creative_retry_attempted).lower()}\n'
                   f'creative_retry_succeeded={str(creative_retry_succeeded).lower()}\n'
                   f'output_cleanup_applied={str(output_cleanup_applied).lower()}\n'
