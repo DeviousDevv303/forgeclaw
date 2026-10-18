@@ -7,7 +7,8 @@ import type { ProviderId } from '../lib/modelProviders'
 import { modelSupportsTools } from '../lib/modelProviders'
 import { FORGE_TOOLS, loadToolContext } from '../lib/forgeTools'
 import type { ToolCall } from '../lib/forgeTools'
-import { runSubAgent, CAPABILITY_LABELS, toolsForCapability } from '../lib/managedAgent'
+import { runSubAgent, toolsForCapability } from '../lib/managedAgent'
+import { useI18n, type Key } from '../lib/i18n'
 import type { AgentCapability, SubAgentBudgetReport } from '../lib/managedAgent'
 import { resolveGithubToken } from '../lib/githubAuth'
 import { MAX_NEXUS_CONTEXT_TOKENS } from '../lib/ai/nexusContext'
@@ -60,6 +61,8 @@ function chatKey(agentId: string): string {
  * The inference only produces a starting value in the editor; authority is still
  * enforced by the runtime's capability filter, never by this heuristic.
  */
+const CAPABILITIES: AgentCapability[] = ['chat', 'coding-readonly', 'coding']
+
 function resolveCapability(agent: CustomAgent): AgentCapability {
   if (agent.capability) return agent.capability
   const text = `${agent.name} ${agent.systemPrompt}`.toLowerCase()
@@ -94,6 +97,7 @@ function CapabilityChip({ label, tone }: { label: string; tone: ChipTone }) {
 }
 
 export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPosture = 'operator-shell', requestGuardianApproval }: AgentsPanelProps) {
+  const { t, locale } = useI18n()
   const [agents, setAgents] = useState<CustomAgent[]>(loadAgents)
   const [activeAgent, setActiveAgent] = useState<CustomAgent | null>(null)
   const [editing, setEditing] = useState<CustomAgent | null>(null)
@@ -243,22 +247,22 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
   const runtimeNotice = ((): { text: string; tone: 'blocked' | 'warn' } | null => {
     if (activeCapability !== 'chat' && !githubCredentialConfigured) {
       return {
-        text: 'NO GITHUB CREDENTIAL — this agent cannot authenticate repository operations. Save a PAT in Settings. The agent will report the failure rather than invent repository state.',
+        text: t('agents.notice.noCredential'),
         tone: 'blocked',
       }
     }
     if (lastRunReport && !lastRunReport.nativeTools) {
       const parts = [
-        `MANUAL TOOL PROTOCOL — ${activeProvider} has no native function calling. The runtime injects a tool catalog and parses emitted tool-call blocks.`,
-        `Last run offered ${lastRunReport.catalogTools.length} tool(s) within the ${MAX_NEXUS_CONTEXT_TOKENS}-byte browser-local budget.`,
+        t('agents.notice.manualProtocol', { provider: activeProvider }),
+        t('agents.notice.lastRun', { n: lastRunReport.catalogTools.length, bytes: MAX_NEXUS_CONTEXT_TOKENS }),
       ]
       if (lastRunReport.unavailableTools.length) {
-        parts.push(`Not offered in that budgeted run: ${lastRunReport.unavailableTools.join(', ')}. Raise the capability-appropriate budget or use a provider with native tool calling to reach them.`)
+        parts.push(t('agents.notice.notOffered', { tools: lastRunReport.unavailableTools.join(', ') }))
       }
       return { text: parts.join(' '), tone: 'warn' }
     }
     if (activeCapability === 'chat') {
-      return { text: 'CHAT PROFILE — no tools are granted, so this agent reasons only and cannot read or change the repository.', tone: 'warn' }
+      return { text: t('agents.notice.chatProfile'), tone: 'warn' }
     }
     return null
   })()
@@ -269,42 +273,42 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
         <div style={{ maxWidth: '480px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button onClick={() => setEditing(null)} style={{ ...btnStyle(), padding: '4px 10px' }}>← BACK</button>
+            <button onClick={() => setEditing(null)} style={{ ...btnStyle(), padding: '4px 10px' }}>{t('agents.back')}</button>
             <span style={{ color: '#f97316', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}>
-              {editing.id ? 'EDIT AGENT' : 'NEW AGENT'}
+              {editing.id ? t('agents.editTitle') : t('agents.newTitle')}
             </span>
           </div>
           <div>
-            <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Name</label>
-            <input style={inputStyle} placeholder="e.g. Legal Analyst, Code Reviewer…" value={draftName} onChange={e => setDraftName(e.target.value)} />
+            <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('agents.name')}</label>
+            <input style={inputStyle} placeholder={t('agents.namePlaceholder')} value={draftName} onChange={e => setDraftName(e.target.value)} />
           </div>
           <div>
-            <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>System Prompt</label>
+            <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('agents.systemPrompt')}</label>
             <textarea
               style={{ ...inputStyle, height: '220px', resize: 'vertical' }}
-              placeholder="You are a specialist in… Be concise. Use plain prose."
+              placeholder={t('agents.systemPromptPlaceholder')}
               value={draftPrompt}
               onChange={e => setDraftPrompt(e.target.value)}
             />
           </div>
           <div>
-            <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Capability Profile</label>
+            <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('agents.capabilityProfile')}</label>
             <select
               style={{ ...inputStyle, cursor: 'pointer' }}
               value={draftCapability}
               onChange={e => setDraftCapability(e.target.value as AgentCapability)}
             >
-              {(Object.keys(CAPABILITY_LABELS) as AgentCapability[]).map(capability => (
-                <option key={capability} value={capability}>{CAPABILITY_LABELS[capability]}</option>
+              {CAPABILITIES.map(capability => (
+                <option key={capability} value={capability}>{t(`agents.cap.${capability}` as Key)}</option>
               ))}
             </select>
             <div style={{ color: '#444', fontSize: '10px', marginTop: '6px', lineHeight: '1.5' }}>
-              Enforced by the runtime, not by the prompt. {toolsForCapability(draftCapability, FORGE_TOOLS).length} tool(s) granted.
-              {draftCapability === 'coding' && ' Writes to main and destructive actions still require Guardian co-sign.'}
+              {t('agents.capabilityHelp', { n: toolsForCapability(draftCapability, FORGE_TOOLS).length })}
+              {draftCapability === 'coding' && t('agents.codingGuardianNote')}
             </div>
           </div>
           <button onClick={saveAgent} disabled={!draftName.trim() || !draftPrompt.trim()} style={{ ...btnStyle(true), opacity: (!draftName.trim() || !draftPrompt.trim()) ? 0.4 : 1 }}>
-            SAVE AGENT
+            {t('agents.save')}
           </button>
         </div>
       </div>
@@ -316,27 +320,27 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ padding: '8px 16px', borderBottom: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '10px', background: '#0a0a0a' }}>
-          <button onClick={() => setActiveAgent(null)} style={{ ...btnStyle(), padding: '3px 10px', fontSize: '10px' }}>← AGENTS</button>
+          <button onClick={() => setActiveAgent(null)} style={{ ...btnStyle(), padding: '3px 10px', fontSize: '10px' }}>{t('agents.backToList')}</button>
           <span style={{ color: '#f97316', fontSize: '11px', fontFamily: 'monospace', fontWeight: 'bold', letterSpacing: '1px' }}>{activeAgent.name}</span>
         </div>
         <div style={{ padding: '8px 16px', borderBottom: '1px solid #1a1a1a', background: '#080808', display: 'flex', flexDirection: 'column', gap: '6px' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', fontFamily: 'monospace', fontSize: '9px' }}>
-            <CapabilityChip label={`PROFILE: ${CAPABILITY_LABELS[activeCapability]}`} tone={activeCapability === 'chat' ? 'muted' : 'ok'} />
-            <CapabilityChip label={`PROVIDER: ${activeProvider}`} tone="muted" />
+            <CapabilityChip label={t('agents.chipProfile', { value: t(`agents.cap.${activeCapability}` as Key) })} tone={activeCapability === 'chat' ? 'muted' : 'ok'} />
+            <CapabilityChip label={t('agents.chipProvider', { value: activeProvider })} tone="muted" />
             <CapabilityChip
-              label={providerToolMode === 'native' ? 'TOOL MODE: NATIVE' : 'TOOL MODE: MANUAL PROTOCOL'}
+              label={providerToolMode === 'native' ? t('agents.chipToolNative') : t('agents.chipToolManual')}
               tone={providerToolMode === 'native' ? 'ok' : 'warn'}
             />
             <CapabilityChip
-              label={githubCredentialConfigured ? 'GITHUB CREDENTIAL: CONFIGURED' : 'GITHUB CREDENTIAL: NOT CONFIGURED'}
+              label={githubCredentialConfigured ? t('agents.chipGhOk') : t('agents.chipGhNo')}
               tone={githubCredentialConfigured ? 'ok' : 'warn'}
             />
             <CapabilityChip
-              label={activeCapability === 'chat' ? 'TOOLS: NONE (chat profile)' : `TOOLS GRANTED: ${grantedToolCount}`}
+              label={activeCapability === 'chat' ? t('agents.chipToolsNone') : t('agents.chipToolsGranted', { n: grantedToolCount })}
               tone={activeCapability === 'chat' ? 'muted' : 'ok'}
             />
             <CapabilityChip
-              label={guardianPosture === 'full-cosign' ? 'GUARDIAN: FULL CO-SIGN' : guardianPosture === 'operator-shell' ? 'GUARDIAN: OPERATOR-SHELL' : 'GUARDIAN: AUTONOMOUS (NOT ARMED)'}
+              label={guardianPosture === 'full-cosign' ? t('agents.chipGuardianFull') : guardianPosture === 'operator-shell' ? t('agents.chipGuardianOp') : t('agents.chipGuardianAuto')}
               tone={guardianPosture !== 'autonomous' ? 'ok' : 'muted'}
             />
           </div>
@@ -346,13 +350,13 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
             </div>
           )}
           <div style={{ color: '#333', fontSize: '9px', fontFamily: 'monospace' }}>
-            A configured credential authenticates GitHub access. It does not by itself grant this agent authority; the profile above and Guardian decide that.
+            {t('agents.credentialNote')}
           </div>
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {chatMessages.length === 0 && (
             <div style={{ color: '#333', fontSize: '10px', fontFamily: 'monospace', textAlign: 'center', marginTop: '40px' }}>
-              {activeAgent.name} is ready. Send a message.
+              {t('agents.ready', { name: activeAgent.name })}
             </div>
           )}
           {chatMessages.map((m, i) => (
@@ -374,16 +378,16 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
         <div style={{ padding: '10px 16px', borderTop: '1px solid #1a1a1a', display: 'flex', gap: '8px', background: '#0a0a0a' }}>
           <input
             style={{ flex: 1, background: '#111', color: '#ccc', border: '1px solid #222', borderRadius: '6px', padding: '10px 12px', fontSize: '13px', outline: 'none' }}
-            placeholder="Message…"
+            placeholder={t('agents.messagePlaceholder')}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
             disabled={loading}
           />
           {loading ? (
-            <button onClick={stopGeneration} style={{ ...btnStyle(), padding: '10px 18px', color: '#fecaca', borderColor: '#ef4444', background: '#3f1111' }}>STOP</button>
+            <button onClick={stopGeneration} style={{ ...btnStyle(), padding: '10px 18px', color: '#fecaca', borderColor: '#ef4444', background: '#3f1111' }}>{t('chat.stop')}</button>
           ) : (
-            <button onClick={sendMessage} disabled={!input.trim()} style={{ ...btnStyle(true), padding: '10px 18px', opacity: !input.trim() ? 0.5 : 1 }}>SEND</button>
+            <button onClick={sendMessage} disabled={!input.trim()} style={{ ...btnStyle(true), padding: '10px 18px', opacity: !input.trim() ? 0.5 : 1 }}>{t('chat.send')}</button>
           )}
         </div>
       </div>
@@ -395,14 +399,14 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
     <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
       <div style={{ maxWidth: '480px', margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-          <span style={{ color: '#f97316', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}>AGENTS</span>
-          <button onClick={openNew} style={btnStyle(true)}>+ NEW AGENT</button>
+          <span style={{ color: '#f97316', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}>{t('tab.agents')}</span>
+          <button onClick={openNew} style={btnStyle(true)}>{t('agents.newBtn')}</button>
         </div>
 
         {agents.length === 0 && (
           <div style={{ textAlign: 'center', color: '#333', fontSize: '11px', fontFamily: 'monospace', marginTop: '60px', lineHeight: '2' }}>
-            No agents yet.<br />
-            Create one with a custom system prompt<br />and launch it for a dedicated chat.
+            {t('agents.none')}<br />
+            {t('agents.noneHelp1')}<br />{t('agents.noneHelp2')}
           </div>
         )}
 
@@ -412,7 +416,7 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                 <span style={{ color: '#ccc', fontSize: '13px', fontWeight: 'bold', fontFamily: 'system-ui' }}>{agent.name}</span>
                 <div style={{ display: 'flex', gap: '6px' }}>
-                  <button onClick={() => openEdit(agent)} style={{ ...btnStyle(), padding: '3px 8px', fontSize: '10px' }}>EDIT</button>
+                  <button onClick={() => openEdit(agent)} style={{ ...btnStyle(), padding: '3px 8px', fontSize: '10px' }}>{t('agents.edit')}</button>
                   <button onClick={() => deleteAgent(agent.id)} style={{ ...btnStyle(), padding: '3px 8px', fontSize: '10px', color: '#555' }}>✕</button>
                 </div>
               </div>
@@ -421,13 +425,13 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
               </div>
               <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', fontFamily: 'monospace', fontSize: '9px' }}>
                 <CapabilityChip
-                  label={CAPABILITY_LABELS[resolveCapability(agent)].toUpperCase()}
+                  label={t(`agents.cap.${resolveCapability(agent)}` as Key).toLocaleUpperCase(locale)}
                   tone={resolveCapability(agent) === 'chat' ? 'muted' : 'ok'}
                 />
-                <CapabilityChip label={`${toolsForCapability(resolveCapability(agent), FORGE_TOOLS).length} TOOLS`} tone="muted" />
+                <CapabilityChip label={t('agents.toolCount', { n: toolsForCapability(resolveCapability(agent), FORGE_TOOLS).length })} tone="muted" />
               </div>
               <button onClick={() => openAgent(agent)} style={{ ...btnStyle(true), width: '100%', padding: '7px' }}>
-                OPEN CHAT
+                {t('agents.openChat')}
               </button>
             </div>
           ))}

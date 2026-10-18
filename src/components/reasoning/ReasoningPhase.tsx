@@ -2,6 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useState, memo } from 'react'
 import type { ReasoningStep } from '../../types/reasoning'
+import { useI18n } from '../../lib/i18n'
 
 const DEPTH_MARGINS = ['ml-0', 'ml-4', 'ml-8', 'ml-12']
 
@@ -11,6 +12,7 @@ interface ReasoningPhaseProps {
 }
 
 export const ReasoningPhase = memo(function ReasoningPhase({ step, depth = 0 }: ReasoningPhaseProps) {
+  const { locale } = useI18n()
   const [expanded, setExpanded] = useState(step.status === 'active' || step.status === 'error')
 
   const statusClasses = {
@@ -39,7 +41,7 @@ export const ReasoningPhase = memo(function ReasoningPhase({ step, depth = 0 }: 
             {step.label}
           </span>
           <span className="text-xs text-slate-600 ml-auto">
-            {new Date(step.timestamp).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            {new Date(step.timestamp).toLocaleTimeString(locale, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             {step.durationMs && ` +${step.durationMs}ms`}
           </span>
           {step.children && step.children.length > 0 && (

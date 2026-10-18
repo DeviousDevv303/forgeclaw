@@ -3,11 +3,12 @@
 import { useState } from 'react'
 import { useWhatsApp } from '../hooks/useWhatsApp'
 import type { WACredentials } from '../hooks/useWhatsApp'
+import { useI18n } from '../lib/i18n'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString('en-US', {
+function formatTime(ts: number, locale: string): string {
+  return new Date(ts).toLocaleTimeString(locale, {
     hour12: false, hour: '2-digit', minute: '2-digit',
   })
 }
@@ -19,22 +20,22 @@ function SetupScreen({ credentials, onUpdate }: {
   onUpdate: (patch: Partial<WACredentials>) => void
 }) {
   const [show, setShow] = useState(false)
+  const { t } = useI18n()
   const fields: { key: keyof WACredentials; label: string; placeholder: string; secret?: boolean }[] = [
-    { key: 'phoneNumberId',    label: 'Phone Number ID',   placeholder: '123456789012345' },
-    { key: 'accessToken',      label: 'Access Token',      placeholder: 'EAAxx...', secret: true },
-    { key: 'recipientNumber',  label: 'Default Recipient', placeholder: '+13055551234' },
-    { key: 'verifyToken',      label: 'Verify Token',      placeholder: 'any-random-secret', secret: true },
-    { key: 'inboxOwner',       label: 'GitHub Owner',      placeholder: 'DeviousDevv303' },
-    { key: 'inboxRepo',        label: 'GitHub Repo',       placeholder: 'forgeclaw' },
-    { key: 'ghToken',          label: 'GitHub Token',      placeholder: 'ghp_...', secret: true },
+    { key: 'phoneNumberId',    label: t('wa.phoneNumberId'),   placeholder: '123456789012345' },
+    { key: 'accessToken',      label: t('wa.accessToken'),      placeholder: 'EAAxx...', secret: true },
+    { key: 'recipientNumber',  label: t('wa.recipient'), placeholder: '+13055551234' },
+    { key: 'verifyToken',      label: t('wa.verifyToken'),      placeholder: 'any-random-secret', secret: true },
+    { key: 'inboxOwner',       label: t('wa.ghOwner'),      placeholder: 'DeviousDevv303' },
+    { key: 'inboxRepo',        label: t('wa.ghRepo'),       placeholder: 'forgeclaw' },
+    { key: 'ghToken',          label: t('wa.ghToken'),      placeholder: 'ghp_...', secret: true },
   ]
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', maxWidth: '480px', margin: '0 auto', paddingTop: '16px' }}>
-      <div style={{ color: '#f97316', fontSize: '11px', letterSpacing: '1px' }}>WHATSAPP SETUP</div>
+      <div style={{ color: '#f97316', fontSize: '11px', letterSpacing: '1px' }}>{t('wa.setupTitle')}</div>
       <div style={{ color: '#555', fontSize: '11px', lineHeight: '1.6' }}>
-        Enter your Meta WhatsApp Business credentials. You'll also need to deploy the webhook relay
-        (see <code style={{ color: '#f97316' }}>src/scripts/whatsappWebhookRelay.js</code>) to receive inbound messages.
+        {t('wa.introBefore')}<code style={{ color: '#f97316' }}>src/scripts/whatsappWebhookRelay.js</code>{t('wa.introAfter')}
       </div>
 
       {fields.map(f => (
@@ -51,15 +52,15 @@ function SetupScreen({ credentials, onUpdate }: {
       ))}
 
       <button onClick={() => setShow(s => !s)} style={{ ...ghostBtn, fontSize: '10px', alignSelf: 'flex-start' }}>
-        {show ? 'Hide secrets' : 'Show secrets'}
+        {show ? t('wa.hideSecrets') : t('wa.showSecrets')}
       </button>
 
       <div style={{ background: '#0f0f0f', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px', fontSize: '10px', color: '#555', lineHeight: '1.7' }}>
-        <div style={{ color: '#f97316', marginBottom: '6px', letterSpacing: '1px' }}>WEBHOOK RELAY SETUP</div>
-        <div>1. Deploy <code style={{ color: '#ccc' }}>src/scripts/whatsappWebhookRelay.js</code> as a Cloudflare Worker</div>
-        <div>2. Set these Worker environment vars: <code style={{ color: '#ccc' }}>VERIFY_TOKEN</code>, <code style={{ color: '#ccc' }}>GH_TOKEN</code>, <code style={{ color: '#ccc' }}>GH_OWNER</code>, <code style={{ color: '#ccc' }}>GH_REPO</code></div>
-        <div>3. In Meta App Dashboard → WhatsApp → Configuration, set Callback URL to your Worker URL</div>
-        <div>4. Use the same Verify Token you entered above</div>
+        <div style={{ color: '#f97316', marginBottom: '6px', letterSpacing: '1px' }}>{t('wa.relayTitle')}</div>
+        <div>{t('wa.step1Before')}<code style={{ color: '#ccc' }}>src/scripts/whatsappWebhookRelay.js</code>{t('wa.step1After')}</div>
+        <div>{t('wa.step2')}<code style={{ color: '#ccc' }}>VERIFY_TOKEN</code>, <code style={{ color: '#ccc' }}>GH_TOKEN</code>, <code style={{ color: '#ccc' }}>GH_OWNER</code>, <code style={{ color: '#ccc' }}>GH_REPO</code></div>
+        <div>{t('wa.step3')}</div>
+        <div>{t('wa.step4')}</div>
       </div>
     </div>
   )
@@ -68,6 +69,7 @@ function SetupScreen({ credentials, onUpdate }: {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function WhatsAppConnector() {
+  const { t, locale } = useI18n()
   const {
     credentials, updateCredentials,
     messages, sending, sendError,
@@ -96,14 +98,14 @@ export function WhatsAppConnector() {
         <span style={{ color: '#25d366', fontSize: '16px' }}>●</span>
         <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '1px' }}>WHATSAPP</span>
         <span style={{ color: '#555', fontSize: '10px' }}>
-          {connected ? `→ ${credentials.recipientNumber}` : 'Not configured'}
+          {connected ? `→ ${credentials.recipientNumber}` : t('wa.notConfigured')}
         </span>
-        {isPolling && <span style={{ color: '#555', fontSize: '9px', marginLeft: 'auto' }}>polling...</span>}
+        {isPolling && <span style={{ color: '#555', fontSize: '9px', marginLeft: 'auto' }}>{t('wa.polling')}</span>}
         <div style={{ marginLeft: isPolling ? '0' : 'auto', display: 'flex', gap: '6px' }}>
           <button onClick={() => setShowSettings(s => !s)} style={ghostBtn}>
-            {showSettings ? 'CHAT' : 'SETUP'}
+            {showSettings ? t('wa.chat') : t('wa.setup')}
           </button>
-          <button onClick={clearMessages} style={{ ...ghostBtn, opacity: 0.5 }}>CLEAR</button>
+          <button onClick={clearMessages} style={{ ...ghostBtn, opacity: 0.5 }}>{t('wa.clear')}</button>
         </div>
       </div>
 
@@ -117,7 +119,7 @@ export function WhatsAppConnector() {
           <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '12px', paddingTop: '12px', paddingBottom: '8px', minHeight: 0 }}>
             {messages.length === 0 ? (
               <div style={{ color: '#333', fontSize: '12px', textAlign: 'center', marginTop: '40px' }}>
-                {connected ? 'No messages yet. Send one below.' : 'Configure credentials in SETUP to start.'}
+                {connected ? t('wa.noMessages') : t('wa.configureFirst')}
               </div>
             ) : (
               messages.map(msg => {
@@ -139,7 +141,7 @@ export function WhatsAppConnector() {
                     </div>
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       {!isOut && <span style={{ color: '#555', fontSize: '9px' }}>{msg.from}</span>}
-                      <span style={{ color: '#444', fontSize: '9px' }}>{formatTime(msg.timestamp)}</span>
+                      <span style={{ color: '#444', fontSize: '9px' }}>{formatTime(msg.timestamp, locale)}</span>
                       {isOut && (
                         <span style={{ color: statusColor, fontSize: '9px' }}>
                           {msg.status === 'sending' ? '○' : msg.status === 'failed' ? '✗' : '✓'}
@@ -154,7 +156,7 @@ export function WhatsAppConnector() {
 
           {/* Error strip */}
           {sendError && (
-            <div style={{ color: '#ef4444', fontSize: '10px', padding: '4px 0' }}>[ERROR]: {sendError}</div>
+            <div style={{ color: '#ef4444', fontSize: '10px', padding: '4px 0' }}>{t('wa.error')} {sendError}</div>
           )}
 
           {/* Input */}
@@ -164,7 +166,7 @@ export function WhatsAppConnector() {
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={connected ? 'Message...' : 'Configure credentials first'}
+                placeholder={connected ? t('wa.messagePlaceholder') : t('wa.configurePlaceholder')}
                 disabled={!connected || sending}
                 rows={2}
                 style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', minHeight: '40px', WebkitAppearance: 'none' }}
@@ -174,7 +176,7 @@ export function WhatsAppConnector() {
                 disabled={!connected || !input.trim() || sending}
                 style={{ background: connected ? '#25d366' : '#333', color: '#000', padding: '0 16px', borderRadius: '6px', border: 'none', fontWeight: 'bold', cursor: connected && !sending ? 'pointer' : 'not-allowed', fontSize: '12px', textTransform: 'uppercase', opacity: !connected || sending ? 0.5 : 1 }}
               >
-                {sending ? '...' : 'SEND'}
+                {sending ? '...' : t('wa.send')}
               </button>
             </div>
           </div>

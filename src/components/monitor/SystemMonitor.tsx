@@ -7,6 +7,7 @@ import { MonitorEventRow } from './MonitorEventRow'
 import { AgentLane } from './AgentLane'
 import { ProposalCard } from './ProposalCard'
 import { AgentSyncMessage } from './AgentSyncMessage'
+import { useI18n } from '../../lib/i18n'
 
 interface SystemMonitorProps {
   events: AgentActivityEvent[]
@@ -27,6 +28,7 @@ export const SystemMonitor = memo(function SystemMonitor({
   onAcknowledge,
   onReject,
 }: SystemMonitorProps) {
+  const { t } = useI18n()
   const [internalExpanded, setInternalExpanded] = useState(expandedProp ?? false)
   // When expandedProp is provided, it acts as the controlled value
   const expanded = expandedProp !== undefined ? expandedProp : internalExpanded
@@ -63,14 +65,14 @@ export const SystemMonitor = memo(function SystemMonitor({
           {isActive ? '⚡' : '💤'}
         </span>
         <span className="text-slate-400 font-mono">
-          Cristian's Computer
+          {t('monitor.computer')}
         </span>
         <span className="text-xs text-slate-600 ml-auto">
           {displayEvents.length > 0
-            ? `${displayEvents.length} events`
-            : 'System idle'}
+            ? t('monitor.events', { n: displayEvents.length })
+            : t('monitor.idle')}
         </span>
-        {hasErrors && <span className="text-red-400 ml-auto">● Error</span>}
+        {hasErrors && <span className="text-red-400 ml-auto">{t('monitor.error')}</span>}
         <span className="text-slate-600 ml-auto">{expanded ? '▼' : '▶'}</span>
       </button>
 
@@ -104,7 +106,7 @@ export const SystemMonitor = memo(function SystemMonitor({
           {/* Agent Sync scrollback */}
           {agentMessages.length > 0 && (
             <div className="border-t border-slate-700 pt-2 mb-2">
-              <div className="text-xs text-slate-500 mb-1">Agent Sync</div>
+              <div className="text-xs text-slate-500 mb-1">{t('monitor.agentSync')}</div>
               <div className="space-y-0.5">
                 {agentMessages.map((msg) => (
                   <AgentSyncMessage key={`${msg.agentId}-${msg.timestamp}`} event={msg} />

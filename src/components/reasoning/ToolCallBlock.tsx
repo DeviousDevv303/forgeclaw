@@ -2,6 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { memo, useState } from 'react'
 import type { ToolCall } from './types'
+import { useI18n } from '../../lib/i18n'
 
 const STATUS_COLOR: Record<ToolCall['status'], string> = {
   pending: '#555',
@@ -19,6 +20,7 @@ const STATUS_ICON: Record<ToolCall['status'], string> = {
 
 export const ToolCallBlock = memo(function ToolCallBlock({ toolCall }: { toolCall: ToolCall }) {
   const [open, setOpen] = useState(false)
+  const { t } = useI18n()
   const color = STATUS_COLOR[toolCall.status]
 
   return (
@@ -36,13 +38,13 @@ export const ToolCallBlock = memo(function ToolCallBlock({ toolCall }: { toolCal
       </button>
       {open && (
         <div style={{ marginTop: '6px', borderTop: '1px solid #222', paddingTop: '6px' }}>
-          <div style={{ color: '#555', marginBottom: '4px', fontSize: '9px', letterSpacing: '1px' }}>ARGS</div>
+          <div style={{ color: '#555', marginBottom: '4px', fontSize: '9px', letterSpacing: '1px' }}>{t('toolcall.args')}</div>
           <pre style={{ color: '#888', margin: 0, fontSize: '9px', overflow: 'auto', maxHeight: '80px' }}>
             {JSON.stringify(toolCall.args, null, 2)}
           </pre>
           {toolCall.result != null && (
             <>
-              <div style={{ color: '#555', marginTop: '6px', marginBottom: '4px', fontSize: '9px', letterSpacing: '1px' }}>RESULT</div>
+              <div style={{ color: '#555', marginTop: '6px', marginBottom: '4px', fontSize: '9px', letterSpacing: '1px' }}>{t('toolcall.result')}</div>
               <pre style={{ color: '#10b981', margin: 0, fontSize: '9px', overflow: 'auto', maxHeight: '60px' }}>
                 {toolCall.result}
               </pre>

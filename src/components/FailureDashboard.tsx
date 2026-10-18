@@ -1,6 +1,8 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import type { FailureEvent } from '../types/errorBus'
+import { useI18n } from '../lib/i18n'
+import type { Key } from '../lib/i18n'
 
 interface FailureDashboardProps {
   ledger: FailureEvent[]
@@ -30,6 +32,7 @@ const SEVERITY_BORDER: Record<string, string> = {
 }
 
 export function FailureDashboard({ ledger, onResolve, onClearResolved }: FailureDashboardProps) {
+  const { t } = useI18n()
   const unresolved = ledger.filter(e => !e.resolved)
   const resolved   = ledger.filter(e => e.resolved)
 
@@ -38,9 +41,9 @@ export function FailureDashboard({ ledger, onResolve, onClearResolved }: Failure
 
       {/* Toolbar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '1px' }}>FAILURE LEDGER</span>
+        <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '1px' }}>{t('fail.ledger')}</span>
         <span style={{ color: '#444', fontSize: '10px' }}>
-          {unresolved.length} active · {resolved.length} resolved
+          {t('fail.counts', { active: unresolved.length, resolved: resolved.length })}
         </span>
         {resolved.length > 0 && (
           <button
@@ -59,7 +62,7 @@ export function FailureDashboard({ ledger, onResolve, onClearResolved }: Failure
               letterSpacing: '0.5px',
             }}
           >
-            CLEAR RESOLVED
+            {t('fail.clearResolved')}
           </button>
         )}
       </div>
@@ -68,7 +71,7 @@ export function FailureDashboard({ ledger, onResolve, onClearResolved }: Failure
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {ledger.length === 0 && (
           <div style={{ color: '#333', fontSize: '12px', textAlign: 'center', marginTop: '40px' }}>
-            No failures logged.
+            {t('fail.none')}
           </div>
         )}
 
@@ -101,7 +104,7 @@ export function FailureDashboard({ ledger, onResolve, onClearResolved }: Failure
                   letterSpacing: '0.5px',
                   textTransform: 'uppercase',
                 }}>
-                  {event.severity}
+                  {(['info', 'warning', 'error', 'critical'] as const).includes(event.severity as 'info') ? t(`severity.${event.severity}` as Key) : event.severity}
                 </span>
                 <span style={{ fontSize: '9px', color: '#555', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
                   {event.source}
@@ -124,11 +127,11 @@ export function FailureDashboard({ ledger, onResolve, onClearResolved }: Failure
                       textTransform: 'uppercase',
                     }}
                   >
-                    RESOLVE
+                    {t('fail.resolve')}
                   </button>
                 )}
                 {event.resolved && (
-                  <span style={{ fontSize: '8px', color: '#22c55e', letterSpacing: '0.5px' }}>✓ RESOLVED</span>
+                  <span style={{ fontSize: '8px', color: '#22c55e', letterSpacing: '0.5px' }}>{t('fail.resolved')}</span>
                 )}
               </div>
 
@@ -140,7 +143,7 @@ export function FailureDashboard({ ledger, onResolve, onClearResolved }: Failure
               {/* Context (if present) */}
               {event.context && Object.keys(event.context).length > 0 && (
                 <details style={{ marginTop: '6px' }}>
-                  <summary style={{ fontSize: '9px', color: '#444', cursor: 'pointer', letterSpacing: '0.5px' }}>CONTEXT</summary>
+                  <summary style={{ fontSize: '9px', color: '#444', cursor: 'pointer', letterSpacing: '0.5px' }}>{t('fail.context')}</summary>
                   <pre style={{ fontSize: '10px', color: '#555', marginTop: '4px', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
                     {JSON.stringify(event.context, null, 2)}
                   </pre>

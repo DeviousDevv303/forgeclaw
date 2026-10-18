@@ -1,5 +1,6 @@
 // ForgeClaw - Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+import { useI18n } from '../lib/i18n'
 
 interface ReasoningTraceProps {
   trace: string
@@ -19,8 +20,9 @@ function splitTraceLine(line: string): { label?: string; value: string } {
 }
 
 export function ReasoningTrace({ trace, isOpen, onToggle }: ReasoningTraceProps) {
+  const { t } = useI18n()
   const lines = trace.split('\n').map(line => line.trimEnd()).filter(Boolean)
-  const firstLine = lines[0] ?? 'Operational trace ready'
+  const firstLine = lines[0] ?? t('trace.ready')
 
   return (
     <div style={{ width: '100%', maxWidth: '90%', marginTop: '8px' }}>
@@ -49,14 +51,14 @@ export function ReasoningTrace({ trace, isOpen, onToggle }: ReasoningTraceProps)
             {isOpen ? 'v' : '>'}
           </span>
           <span style={{ color: TRACE_LASER, fontSize: '14px', fontFamily: TRACE_FONT, letterSpacing: '0.6px', textShadow: `0 0 11px ${TRACE_LASER_SOFT}`, flexShrink: 0 }}>
-            Reasoning Trace
+            {t('trace.title')}
           </span>
           <span style={{ color: 'rgba(57,255,20,0.42)', fontSize: '10px', fontFamily: "'Courier New', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {firstLine}
           </span>
         </span>
         <span style={{ color: 'rgba(57,255,20,0.52)', border: '1px solid rgba(57,255,20,0.18)', borderRadius: '999px', padding: '2px 7px', fontSize: '8px', letterSpacing: '1px', fontFamily: "'Courier New', monospace", flexShrink: 0 }}>
-          PUBLIC TRACE
+          {t('trace.public')}
         </span>
       </button>
 

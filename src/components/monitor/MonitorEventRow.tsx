@@ -1,6 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { memo } from 'react'
+import { useI18n, type Key } from '../../lib/i18n'
 import type { AgentActivityEvent } from '../../types/reasoning'
 
 interface MonitorEventRowProps {
@@ -8,6 +9,7 @@ interface MonitorEventRowProps {
 }
 
 export const MonitorEventRow = memo(function MonitorEventRow({ event }: MonitorEventRowProps) {
+  const { t } = useI18n()
   const typeColors: Record<string, string> = {
     tool_call: 'text-yellow-400',
     file_read: 'text-blue-400',
@@ -17,13 +19,13 @@ export const MonitorEventRow = memo(function MonitorEventRow({ event }: MonitorE
     error: 'text-red-400',
   }
 
-  const typeLabels: Record<string, string> = {
-    tool_call: 'TOOL',
-    file_read: 'READ',
-    file_write: 'WRITE',
-    reasoning_phase: 'REASON',
-    agent_status: 'STATUS',
-    error: 'ERROR',
+  const typeLabels: Record<string, Key> = {
+    tool_call: 'event.tool_call',
+    file_read: 'event.file_read',
+    file_write: 'event.file_write',
+    reasoning_phase: 'event.reasoning_phase',
+    agent_status: 'event.agent_status',
+    error: 'event.error',
   }
 
   // Type-safe detail extraction
@@ -50,7 +52,7 @@ export const MonitorEventRow = memo(function MonitorEventRow({ event }: MonitorE
   return (
     <div className="flex items-center gap-2 text-xs font-mono">
       <span className={typeColors[event.type] || 'text-slate-400'}>
-        {typeLabels[event.type] || event.type.toUpperCase()}
+        {typeLabels[event.type] ? t(typeLabels[event.type]) : event.type.toUpperCase()}
       </span>
       <span className="text-slate-500">{detail}</span>
       <span className="text-slate-700 ml-auto">

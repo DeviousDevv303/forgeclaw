@@ -2,19 +2,21 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { memo } from 'react'
 import type { AgentLane as AgentLaneType } from '../../types/warRoom'
+import { useI18n } from '../../lib/i18n'
 
 interface AgentLaneProps {
   lane: AgentLaneType
 }
 
 const statusConfig = {
-  idle: { dot: 'bg-slate-500', label: 'Idle' },
-  working: { dot: 'bg-orange-500 animate-pulse', label: 'Working' },
-  blocked: { dot: 'bg-red-500', label: 'Blocked' },
-  reviewing: { dot: 'bg-yellow-500', label: 'Reviewing' },
-}
+  idle: { dot: 'bg-slate-500', labelKey: 'lane.idle' },
+  working: { dot: 'bg-orange-500 animate-pulse', labelKey: 'lane.working' },
+  blocked: { dot: 'bg-red-500', labelKey: 'lane.blocked' },
+  reviewing: { dot: 'bg-yellow-500', labelKey: 'lane.reviewing' },
+} as const
 
 export const AgentLane = memo(function AgentLane({ lane }: AgentLaneProps) {
+  const { t } = useI18n()
   const config = statusConfig[lane.status]
 
   return (
@@ -22,7 +24,7 @@ export const AgentLane = memo(function AgentLane({ lane }: AgentLaneProps) {
       <div className="flex items-center gap-2 mb-2">
         <span className={`w-2 h-2 rounded-full ${config.dot}`} />
         <span className="text-sm font-medium text-slate-200">{lane.agentId}</span>
-        <span className="text-xs text-slate-500 ml-auto">{config.label}</span>
+        <span className="text-xs text-slate-500 ml-auto">{t(config.labelKey)}</span>
       </div>
       
       {lane.currentTask && (

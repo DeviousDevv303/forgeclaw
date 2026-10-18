@@ -4,7 +4,10 @@
 // no dependencies. Rendered once at the app shell level, in normal
 // document flow (not a floating overlay).
 
+import { useI18n } from '../lib/i18n'
+
 export default function ColoradoFooter() {
+  const { t } = useI18n()
   return (
     <footer
       style={{
@@ -15,7 +18,7 @@ export default function ColoradoFooter() {
         background: '#0a0a0a',
         userSelect: 'none',
       }}
-      aria-label="Made In Colorado With Love"
+      aria-label={t('footer.aria')}
     >
       {/* Mountain silhouette backdrop — scales to any width */}
       <svg
@@ -78,7 +81,7 @@ export default function ColoradoFooter() {
             textShadow: '0 1px 8px rgba(0,0,0,0.9)',
           }}
         >
-          Made In Colorado With <span style={{ color: '#f97316' }}>Love</span>
+          {t('footer.madeIn')} <span style={{ color: '#f97316' }}>{t('footer.love')}</span>
         </div>
         <div
           style={{
