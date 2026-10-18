@@ -230,6 +230,18 @@ export const FORGE_TOOLS: ToolDef[] = [
     },
   },
   {
+    name: 'shell_patch',
+    description: 'Propose a code change as a unified diff by dispatching the guarded shell-repair workflow. The workflow checks the diff against the protected-path policy (symlinks are refused), build-validates it, pushes it to a branch the tool names itself (forge/repair/*), and opens a pull request for human review; nothing is merged. Requires Guardian co-sign. The result only confirms the workflow was STARTED: the change is not applied or verified until its run and pull request exist.',
+    parameters: {
+      type: 'object',
+      properties: {
+        patch: { type: 'string', description: 'Unified diff (git apply format), applied from the repository root. Up to 60,000 characters.' },
+        reason: { type: 'string', description: 'One-line reason for the change, at most 240 characters.' },
+      },
+      required: ['patch', 'reason'],
+    },
+  },
+  {
     name: 'http_fetch',
     description: 'Fetch content from a public URL. Returns response body as text. Only works for CORS-permissive endpoints.',
     parameters: {
@@ -562,6 +574,8 @@ export function formatDeepSeekResultText(
 }
 
 /** Tools whose effects leave the repository or cannot be recalled; STOP reports them instead of claiming an undo. */
+const SHELL_PATCH_MAX_CHARS = 60_000
+
 const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set(['send_whatsapp', 'gmail_send', 'calendar_create', 'github_create_issue'])
 
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
@@ -895,6 +909,47 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'self-sculpt.yml', needle: branch, since: sculptSince, label: `sculpt_self ${branch}` })
         if (!sculptBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch, label: `sculpt_self ${branch}` })
         return `✓ Self-sculpt ${invocationId} dispatched for ${filePath}; branch ${branch} will be pushed and a pull request opened for review.`
+      }
+
+      // ── Shell patch: guarded shell-repair workflow (branch + pull request proposal) ──
+      case 'shell_patch': {
+        const patch = typeof input.patch === 'string' ? input.patch : ''
+        const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
+        // The branch is generated here. Letting the model name it invites branch squatting and
+        // reuse of a branch an earlier run created, which rollback must never delete.
+        if (input.repair_branch !== undefined || input.branch !== undefined || input.invocation_id !== undefined) {
+          throw new Error('shell_patch names its own branch and invocation id; supply only patch and reason.')
+        }
+        if (!patch.trim() || !reason) throw new Error('patch and reason are required.')
+        // GitHub caps workflow_dispatch input payloads near 65,535 characters.
+        if (patch.length > SHELL_PATCH_MAX_CHARS) throw new Error(`Patch exceeds the ${SHELL_PATCH_MAX_CHARS}-character workflow-input limit.`)
+        // The workflow permits a tab but no other control character, so reject the rest before dispatch.
+        const hasControlChar = Array.from(reason).some(ch => { const code = ch.charCodeAt(0); return (code < 32 && code !== 9) || code === 127 })
+        if (reason.length > 240 || hasControlChar) throw new Error('reason must be one line of at most 240 characters.')
+        if (!/^(?:diff --git |--- )/m.test(patch)) throw new Error('patch must be a unified diff (git apply format).')
+        // The workflow refuses symlinks authoritatively; failing here saves a dispatch that cannot succeed.
+        if (/^(?:new file mode|new mode|index [0-9a-f.]+) 120000\s*$/m.test(patch)) throw new Error('A patch may not create a symbolic link.')
+        if (!token) throw new Error('No GitHub token configured.')
+        const invocationId = `repair-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const repairBranch = `forge/repair/${invocationId}`
+        const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
+        // Only a branch that does not exist yet may be deleted by rollback.
+        let repairBranchExisted = true
+        try {
+          const refRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${repairBranch}`, { headers })
+          repairBranchExisted = refRes.status !== 404
+        } catch { /* unknown: treat as existing, so rollback will not delete it */ }
+        const repairSince = Date.now()
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/shell-repair.yml/dispatches`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ ref: 'main', inputs: { repair_branch: repairBranch, patch, reason, invocation_id: invocationId } }),
+        })
+        if (!res.ok) throw new Error(describeGithubDispatchFailure(res.status, res.statusText))
+        // Run-name is "Shell repair <invocation id>", so the id finds exactly this run.
+        journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, label: `shell_patch ${repairBranch}` })
+        if (!repairBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch: repairBranch, label: `shell_patch ${repairBranch}` })
+        return `✓ Shell-patch ${invocationId} DISPATCHED, NOT VERIFIED. The workflow must still apply the diff, pass the protected-path, symlink and build checks, and only then push ${repairBranch} and open a pull request. Look for the run named "Shell repair ${invocationId}".`
       }
 
       // ── HTTP fetch ───────────────────────────────────────────────────────────
