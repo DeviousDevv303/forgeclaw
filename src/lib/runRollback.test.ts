@@ -64,6 +64,20 @@ describe('rollbackRun', () => {
     expect(calls.some(c => c.startsWith('DELETE'))).toBe(false)
   })
 
+  it('tolerates a slow GitHub cancel: a run that ends after ~60 polls is reported as cancelled, not failed', async () => {
+    let polls = 0
+    const { fetchImpl } = fakeGitHub([
+      repoInfo,
+      [/^GET \/actions\/workflows\/deepseek-16b\.yml\/runs/, () => json({ workflow_runs: [{ id: 9, status: 'in_progress', display_title: 'DeepSeek 16B deepseek-slow' }] })],
+      [/^POST \/actions\/runs\/9\/(?:force-)?cancel/, () => json({}, 202)],
+      [/^GET \/actions\/runs\/9$/, () => json({ status: (polls += 1) > 60 ? 'completed' : 'in_progress' })],
+    ])
+    const entries: JournalEntry[] = [{ kind: 'workflow_dispatch', workflow: 'deepseek-16b.yml', needle: 'deepseek-slow', since: 0, label: 'deepseek_reason' }]
+    const report = await rollbackRun(entries, { owner: 'o', repo: 'r', token: 't', fetchImpl, sleep: async () => {}, forceCancelAfterMs: 0 })
+    expect(report.failed).toEqual([])
+    expect(report.reverted).toEqual(['deepseek_reason: cancelled run 9'])
+  })
+
   it('deletes a branch this run created and closes its open PR', async () => {
     const { fetchImpl, calls } = fakeGitHub([
       repoInfo,
