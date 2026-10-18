@@ -27,6 +27,8 @@ function makeCtx() {
     lineTo: vi.fn(),
     drawImage: vi.fn(),
     roundRect: vi.fn(),
+    translate: vi.fn(),
+    rotate: vi.fn(),
     rect: vi.fn(),
     createLinearGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
     createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
@@ -131,6 +133,39 @@ describe('NeuralNetworkBackground', () => {
       for (const cb of cbs) cb(clock);
     }
   });
+
+  it('spins the cubes while executing and freezes them when blocked', () => {
+    const angles = (phase: 'executing' | 'blocked') => {
+      const rotate = mockCtx.rotate as unknown as ReturnType<typeof vi.fn>
+      rotate.mockClear()
+      rafCallbacks.length = 0
+      const { unmount } = render(React.createElement(NeuralNetworkBackground, { state: { ...IDLE_NEURAL_STATE, phase }, messageCount: 0, activeTab: 'chat' }))
+      const seen: number[] = []
+      for (let i = 0; i < 6; i++) {
+        const cbs = rafCallbacks.splice(0)
+        clock += 50
+        for (const cb of cbs) cb(clock)
+        if (rotate.mock.calls.length) seen.push(rotate.mock.calls[0][0] as number)
+        rotate.mockClear()
+      }
+      unmount()
+      return seen
+    }
+    const spinning = angles('executing')
+    expect(spinning.length).toBeGreaterThan(2)
+    expect(new Set(spinning.map(a => a.toFixed(4))).size).toBeGreaterThan(2)
+    const frozen = angles('blocked')
+    expect(frozen.length).toBeGreaterThan(2)
+    expect(new Set(frozen.slice(1).map(a => a.toFixed(4))).size).toBe(1)
+  })
+
+  it('flashes the cubes green right after a task completes', () => {
+    const GREEN = 'rgba(52, 199, 89'
+    render(React.createElement(NeuralNetworkBackground, { state: { ...IDLE_NEURAL_STATE, completedAt: Date.now() }, messageCount: 0, activeTab: 'chat' }))
+    mockCtx.styles.length = 0
+    for (let i = 0; i < 3; i++) { const cbs = rafCallbacks.splice(0); clock += 16; for (const cb of cbs) cb(clock) }
+    expect(mockCtx.styles.some(c => c.startsWith(GREEN))).toBe(true)
+  })
 
   it('draws the reduced-motion static frame in red when blocked, and not when idle', () => {
     reducedMotion = true;

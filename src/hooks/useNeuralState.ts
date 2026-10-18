@@ -28,6 +28,8 @@ export interface NeuralState {
   activeToolCount: number
   tokenVelocity: number
   errorLevel: 0 | 1 | 2
+  /** Date.now() of the last MISSION_COMPLETE (0 = none); drives the cubes' brief "solve" moment. */
+  completedAt: number
 }
 
 export const IDLE_NEURAL_STATE: NeuralState = {
@@ -36,6 +38,7 @@ export const IDLE_NEURAL_STATE: NeuralState = {
   activeToolCount: 0,
   tokenVelocity: 0,
   errorLevel: 0,
+  completedAt: 0,
 }
 
 /** Map a ForgeOps agent phase to a neural display phase. */
@@ -98,6 +101,7 @@ export function useNeuralState(
   const phaseSequenceRef = useRef<string[]>([])
   const requestStartRef = useRef<number>(0)
   const consecutiveFailuresRef = useRef(0)
+  const completedAtRef = useRef(0)
   const learningBudgetRef = useRef<LearningBudget>({})
 
   // Keep provider in sync without resetting the rest of the state
@@ -188,6 +192,7 @@ export function useNeuralState(
           requestStartRef.current = 0
           phaseSequenceRef.current = []
           consecutiveFailuresRef.current = 0
+          completedAtRef.current = now
           if (agentPhase !== 'idle') {
             agentPhase = 'idle'
             phaseChanged = true
@@ -275,6 +280,7 @@ export function useNeuralState(
         activeToolCount,
         tokenVelocity: Math.round(velocityRef.current * 10) / 10,
         errorLevel,
+        completedAt: completedAtRef.current,
       }
       // Avoid re-render if nothing meaningful changed
       if (
@@ -282,7 +288,8 @@ export function useNeuralState(
         prev.provider === next.provider &&
         prev.activeToolCount === next.activeToolCount &&
         Math.abs(prev.tokenVelocity - next.tokenVelocity) < 0.5 &&
-        prev.errorLevel === next.errorLevel
+        prev.errorLevel === next.errorLevel &&
+        prev.completedAt === next.completedAt
       ) {
         return prev
       }
