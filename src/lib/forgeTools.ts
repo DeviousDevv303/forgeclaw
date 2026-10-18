@@ -30,6 +30,7 @@ import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
 import { TasteProviderClient } from './ai/providers/tasteProvider'
 import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
+import { journalRecord, type RunJournal } from './runRollback'
 
 // These runtime envelopes are for the chat/model boundary only. They must not
 // become part of a user-facing image prompt, where Stable Diffusion may render
@@ -87,6 +88,8 @@ export interface ToolContext {
   agentId?: string
   runId?: string
   signal?: AbortSignal
+  /** Records how to undo this run's changes (STOP uses it). Defaults to the active run's journal. */
+  journal?: RunJournal
   tier1Active?: boolean
   guardianPosture?: GuardianPosture
   /** 'operator' for commands the human typed directly; otherwise writes are attributed to the agent. */
@@ -558,7 +561,18 @@ export function formatDeepSeekResultText(
   return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${runUrl}\n\n${result}`
 }
 
+/** Tools whose effects leave the repository or cannot be recalled; STOP reports them instead of claiming an undo. */
+const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set(['send_whatsapp', 'gmail_send', 'calendar_create', 'github_create_issue'])
+
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
+  const output = await executeToolCore(call, ctx)
+  if (IRREVERSIBLE_TOOLS.has(call.name) && !/^\s*\[(?:TOOL ERROR|GUARDIAN)/.test(output)) {
+    journalRecord(ctx.journal, { kind: 'irreversible', label: `${call.name} (already sent or created; cannot be recalled automatically)` })
+  }
+  return output
+}
+
+async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string> {
   const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'deepseekreason' || call.name === 'ask_deepseek' ? 'deepseek_reason' : call.name
   const input = { ...call.input }
   if (call.name === 'ask_deepseek') {
@@ -634,6 +648,14 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const existing = await toolFetch(ctx, existingUrl, { headers }).then(r => r.json()).catch(() => null) as { sha?: string } | null
         if (existing?.sha) sha = existing.sha
 
+        // Last known state for STOP/rollback: the branch head before this write.
+        let headBefore: string | undefined
+        if (branch) {
+          try {
+            const refRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers })
+            if (refRes.ok) headBefore = ((await refRes.json()) as { object?: { sha?: string } }).object?.sha
+          } catch { /* rollback info is best-effort */ }
+        }
         const body: Record<string, unknown> = { message, content: btoa(unescape(encodeURIComponent(content))) }
         if (sha) body.sha = sha
         if (branch) body.branch = branch
@@ -643,6 +665,11 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           throw new Error(err.message || `GitHub ${res.status}`)
         }
         const written = await res.json() as { commit?: { sha?: string; html_url?: string }; content?: { sha?: string } }
+        if (branch && headBefore && written.commit?.sha) {
+          journalRecord(ctx.journal, { kind: 'branch_advanced', branch, beforeSha: headBefore, afterSha: written.commit.sha, label: `github_write_file ${path}` })
+        } else {
+          journalRecord(ctx.journal, { kind: 'irreversible', label: `github_write_file ${path}${branch ? ` on ${branch}` : ' on the default branch'} (commit ${(written.commit?.sha || 'unknown').slice(0, 7)}; no automatic revert, use a revert commit)` })
+        }
         // Record the change against the persisted task so the push is traceable and resumable.
         const filesModified = state.filesModified.includes(path)
           ? state.filesModified
@@ -737,8 +764,10 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         const ref = (input.ref as string) || 'main'
         if (!token) throw new Error('No GitHub token configured.')
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
+        const runWorkflowSince = Date.now()
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, { method: 'POST', headers, body: JSON.stringify({ ref }) })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
+        journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow, since: runWorkflowSince, label: `github_run_workflow ${workflow}` })
         return `✓ Triggered ${workflow} on ${ref} in ${owner}/${repo}`
       }
 
@@ -804,6 +833,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           const explanation = describeGithubDispatchFailure(dispatch.status, dispatch.statusText)
           throw new Error(`deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: ${explanation}${detail ? ` DeepSeek dispatch response: ${detail.slice(0, 300)}` : ''}`)
         }
+        journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'deepseek-16b.yml', needle: invocationId, since: dispatchedAt, label: 'deepseek_reason' })
         const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
         if (isEmptyDeepSeekResponse(completed.result)) {
           return `[TOOL ERROR] DeepSeek-16B run ${completed.run.html_url} finished but produced an empty response, so there is no answer to show. Nothing was recorded for learning. Try again or rephrase.`
@@ -849,12 +879,21 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         if (!token) throw new Error('No GitHub token configured.')
         const invocationId = `sculpt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
+        // Only a branch that does not exist yet may be deleted by rollback.
+        let sculptBranchExisted = true
+        try {
+          const refRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${branch}`, { headers })
+          sculptBranchExisted = refRes.status !== 404
+        } catch { /* unknown: treat as existing, so rollback will not delete it */ }
+        const sculptSince = Date.now()
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/self-sculpt.yml/dispatches`, {
           method: 'POST',
           headers,
           body: JSON.stringify({ ref: 'main', inputs: { file_path: filePath, content, reason, branch } }),
         })
         if (!res.ok) throw new Error(`Self-sculpt dispatch failed: ${res.status}`)
+        journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'self-sculpt.yml', needle: branch, since: sculptSince, label: `sculpt_self ${branch}` })
+        if (!sculptBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch, label: `sculpt_self ${branch}` })
         return `✓ Self-sculpt ${invocationId} dispatched for ${filePath}; branch ${branch} will be pushed and a pull request opened for review.`
       }
 
@@ -1107,6 +1146,7 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
         if (!dispatchRes.ok) {
           throw new Error(describeGithubDispatchFailure(dispatchRes.status, dispatchRes.statusText))
         }
+        journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'shell-exec.yml', needle: invocationId, since: dispatchStartedAt, label: 'shell_exec' })
 
         // What discovery saw, so a "not found" can say why instead of guessing. Names and IDs only;
         // nothing here is secret, and GitHub-supplied text is truncated before it is shown.

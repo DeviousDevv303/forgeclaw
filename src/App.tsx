@@ -63,6 +63,7 @@ import {
   measureRequestMetrics,
 } from './lib/codingAgentRuntime'
 import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
+import { createRunJournal, formatRollbackReport, rollbackRun, setActiveRunJournal, type RunJournal } from './lib/runRollback'
 import { cleanOutput } from './lib/cleanOutput'
 import { extractThinking, type GuardianPosture } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
@@ -486,6 +487,12 @@ const CORPUS_MAX = 10_000
 type Tab = 'forgemind' | 'activity' | 'voice' | 'agents' | 'settings'
 type ActivityView = 'log' | 'failures'
 
+function startRunJournal(): RunJournal {
+  const journal = createRunJournal()
+  setActiveRunJournal(journal)
+  return journal
+}
+
 function App() {
   const { ledger, emitFailure, resolveFailure, clearResolved, unresolvedCount } = useErrorBus()
   const { admitTask, resolveTask } = useOrchestrator({ emitFailure })
@@ -569,7 +576,7 @@ function App() {
   const [input, setInput] = useState('')
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
-  const activeRunRef = useRef<{ id: string; controller: AbortController; messageId: string } | null>(null)
+  const activeRunRef = useRef<{ id: string; controller: AbortController; messageId: string; journal?: RunJournal } | null>(null)
   const [testKeyError, setTestKeyError] = useState('')
   // Active execution is deterministic; a saved provider choice is preserved, otherwise Moonshot/Kimi is selected.
   const savedProvider = safeGetItem('fm_provider') as ProviderId | null
@@ -970,7 +977,7 @@ function App() {
       const controller = new AbortController()
       const msgId = `${Date.now() + 1}`
       const callId = `direct-deepseek-${Date.now()}`
-      activeRunRef.current = { id: runId, controller, messageId: msgId }
+      activeRunRef.current = { id: runId, controller, messageId: msgId, journal: startRunJournal() }
       setMessages(prev => [...prev, userMsg, {
         id: msgId,
         role: 'assistant',
@@ -1113,7 +1120,7 @@ function App() {
 
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`
     const controller = new AbortController()
-    activeRunRef.current = { id: runId, controller, messageId: `${Date.now() + 1}` }
+    activeRunRef.current = { id: runId, controller, messageId: `${Date.now() + 1}`, journal: startRunJournal() }
     if (isCodingTaskRequest(promptText, { hasAttachment }) || resumesCodingTask) {
       setCodingAgentState(saveCodingAgentState({ sessionId, activeRunId: runId }))
     }
@@ -1710,6 +1717,7 @@ function App() {
     } finally {
       if (activeRunRef.current?.id === runId) {
         activeRunRef.current = null
+        setActiveRunJournal(null)
         setLoading(false)
       }
     }
@@ -1748,6 +1756,31 @@ function App() {
     if (!run) return
     run.controller.abort()
     activeRunRef.current = null
+    setActiveRunJournal(null)
+    // STOP also undoes what this run changed: cancel remote workflow runs and revert recorded
+    // repository changes to the last known state. A short delay lets an in-flight dispatch finish
+    // recording itself before the journal is read.
+    const journal = run.journal
+    const rollbackOwner = ghOwner || CANONICAL_IDENTITY.owner
+    const rollbackRepo = ghRepo || CANONICAL_IDENTITY.repository
+    if (journal && ghToken) {
+      void (async () => {
+        await new Promise<void>(resolve => setTimeout(resolve, 1500))
+        const entries = journal.entries()
+        if (entries.length === 0) return
+        const note = (content: string) => setMessages(prev => [...prev, {
+          id: `rollback-${Date.now()}`, role: 'assistant', content, timestamp: Date.now(),
+          source: 'cloud', provider: 'ForgeClaw', model: 'stop-and-rollback',
+        }])
+        note('⏹ STOP: cancelling remote runs and reverting this run\'s changes…')
+        try {
+          const report = await rollbackRun(entries, { owner: rollbackOwner, repo: rollbackRepo, token: ghToken })
+          note(`⏹ STOP: rollback finished.\n\n${formatRollbackReport(report)}`)
+        } catch (error) {
+          note(`⏹ STOP: rollback itself failed (${error instanceof Error ? error.message : String(error)}). Check GitHub Actions and branches manually.`)
+        }
+      })()
+    }
     for (const resolve of coSignResolvers.current.values()) resolve(false)
     coSignResolvers.current.clear()
     setPendingCoSigns([])
@@ -1758,7 +1791,7 @@ function App() {
     setRequestStatus('idle')
     setLastRequestError('Generation cancelled by user.')
     emitForge({ type: 'MISSION_BLOCKED', reason: 'Generation cancelled by user.' })
-  }, [emitForge])
+  }, [emitForge, ghToken, ghOwner, ghRepo])
 
   const handleCopy = (id: string, text: string) => {
     navigator.clipboard.writeText(text); setCopiedId(id); setTimeout(() => setCopiedId(null), 2000)
