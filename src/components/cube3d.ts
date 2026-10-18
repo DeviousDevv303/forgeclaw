@@ -122,7 +122,7 @@ export function scrambleFaces(
 }
 
 /** Minimum 3D cube size — below this the faces aren't legible. */
-export const MIN_CUBE_PX = 60;
+export const MIN_CUBE_PX = 24;
 
 /** Standard solved faces. */
 export function solvedCubeFaces(): Cube3DState['faces'] {
