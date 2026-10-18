@@ -23,6 +23,7 @@ import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
 import { resolveInitialProvider } from './lib/modelProviders'
 import type { ProviderId } from './lib/modelProviders'
+import { RESPONSE_LANGUAGE_INSTRUCTIONS, withResponseLanguage } from './lib/responseLanguage'
 import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
 import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
@@ -201,12 +202,6 @@ function getSpeechErrorMessage(error?: string): string {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const REASONING_TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
-const RESPONSE_LANGUAGE_INSTRUCTIONS: Record<string, string> = {
-  en: 'Respond in English unless the user asks for another language.',
-  es: 'Respond in Spanish (Latin American, as spoken in Mexico; use "tú" unless the user uses "usted") unless the user asks for another language.',
-  ru: 'Respond in Russian unless the user asks for another language.',
-  zh: 'Respond in Chinese unless the user asks for another language.',
-}
 const BUILD_COMMIT = typeof __APP_COMMIT__ === 'string' ? __APP_COMMIT__ : 'dev'
 const BUILD_TIME = typeof __APP_BUILD_TIME__ === 'string' ? __APP_BUILD_TIME__ : 'dev'
 
@@ -1012,7 +1007,7 @@ function App() {
       setLastRequestLatencyMs(null)
       emitForge({ type: 'OBJECTIVE_RECEIVED', objective: question })
       emitForge({ type: 'PHASE_CHANGE', phase: 'EXECUTION' })
-      const call: ToolCall = { id: callId, name: 'ask_deepseek', input: { question } }
+      const call: ToolCall = { id: callId, name: 'ask_deepseek', input: { question: withResponseLanguage(question, selectedLanguage) } }
       const activityId = `act_${callId}`
       setActivityLog(prev => [...prev.slice(-99), { id: activityId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
       emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
@@ -1447,6 +1442,7 @@ function App() {
           systemPrompt: activeSystemPrompt,
           messages: conversationMessages,
           workspaceId: activeProvider === 'anthropic' ? (anthropicWorkspaceId.trim() || undefined) : undefined,
+          responseLanguage: selectedLanguage,
           tools: noMoreTools ? undefined : runtimeTools,
           signal: controller.signal,
           onToken: noMoreTools ? (token: string) => {

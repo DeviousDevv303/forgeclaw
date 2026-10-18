@@ -15,6 +15,19 @@ describe('provider router', () => {
     await expect(detectBestProvider('')).resolves.toMatchObject({ providerId: 'local', level: 2 })
   })
 
+  it('carries the selected UI language into the DeepSeek task, which never sees the system prompt', async () => {
+    const base: AIRequest = { model: 'deepseek-16b', systemPrompt: 'Respond in Spanish', messages: [{ role: 'user', content: 'Explain the architecture of the repository.' }], tools: [{ name: 'deepseek_reason', description: 'reason', parameters: {} }] }
+    const taskFor = async (responseLanguage?: string) => {
+      const result = await sendViaRouter({ ...base, responseLanguage }, '', 'corpus')
+      if (!result.success) throw new Error('router failed')
+      return String(result.response.toolCalls?.[0]?.input.task)
+    }
+    expect(await taskFor('es')).toMatch(/\n\nReply language: Respond in Spanish \(Latin American/)
+    expect(await taskFor('zh')).toMatch(/Reply language: Respond in Chinese/)
+    expect(await taskFor('en')).toBe('Explain the architecture of the repository.')
+    expect(await taskFor(undefined)).toBe('Explain the architecture of the repository.')
+  })
+
   it('bootstraps the DeepSeek workflow before prose for a complex request', async () => {
     const request: AIRequest = { model: 'deepseek-16b', systemPrompt: '', messages: [{ role: 'user', content: 'Investigate the repository and explain the architecture.' }], tools: [{ name: 'deepseek_reason', description: 'reason', parameters: {} }] }
     const result = await sendViaRouter(request, '', 'corpus')
