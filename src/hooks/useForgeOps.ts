@@ -11,7 +11,10 @@ type AgentEventInput = {
   [K in AgentEvent['type']]: Omit<Extract<AgentEvent, { type: K }>, 'timestamp'>
 }[AgentEvent['type']]
 
-const MAX_EVENTS = 60
+// Session event history. Consumers must find new events with takeNewEvents()
+// (src/lib/forgeEventCursor.ts), never by array length: once the window is full
+// its length stops changing.
+export const MAX_EVENTS = 500
 
 function calcRisk(state: ForgeOpsState): ForgeOpsState['riskLevel'] {
   if (state.retryCount >= 3 || state.confidence < 0.55) return 'HIGH'

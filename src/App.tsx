@@ -83,6 +83,7 @@ import { TasteProviderClient, type TasteSignal } from './lib/ai/providers/tasteP
 import { TasteStatusPanel } from './components/TasteStatusPanel'
 import { useForgeOps } from './hooks/useForgeOps'
 import { useNeuralState } from './hooks/useNeuralState'
+import { useForgeCore } from './hooks/useForgeCore'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
 import type { AgentPhase } from './types/forgeOps'
@@ -584,6 +585,8 @@ function App() {
   const neuralState = useNeuralState(forgeOpsState, activeProvider, {
     contentLength: messages.reduce((n, m) => n + (m.content ? m.content.length : 0), 0),
   })
+  // Reactive core: broadcasts `forgeclaw:state` on window for the cube visual layer (docs/INTEGRATION.md).
+  useForgeCore(forgeOpsState)
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>(() => readAnthropicKey())
   const [anthropicApiKeyStatus, setAnthropicApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
   const [anthropicModel, setAnthropicModel] = useState<string>(() => readAnthropicModel())
