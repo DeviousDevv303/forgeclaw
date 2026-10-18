@@ -600,6 +600,13 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           if (node.x > width - 50) { node.x = width - 50; node.vx *= -0.8; }
           if (node.y < 50) { node.y = 50; node.vy *= -0.8; }
           if (node.y > height - 50) { node.y = height - 50; node.vy *= -0.8; }
+          // Keep cubes in the middle band, away from header/input UI
+          if (node.layer === 2) {
+            const safeTop = height * 0.25;
+            const safeBottom = height * 0.75;
+            if (node.y < safeTop) { node.y = safeTop; node.vy = Math.abs(node.vy); }
+            if (node.y > safeBottom) { node.y = safeBottom; node.vy = -Math.abs(node.vy); }
+          }
 
           // Mouse interaction — guard against exact-zero only
           const dx = mouseRef.current.x - node.x;
@@ -755,7 +762,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
   }, [activeTab, primaryColor, accentColor]);
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity: 0.55 }}>
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity: 0.25 }}>
       <canvas
         ref={canvasRef}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0.6 }}
