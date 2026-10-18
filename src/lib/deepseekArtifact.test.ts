@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeTool, type ToolContext } from './forgeTools'
 import { describeGithubTransportFailure, isBrowserNetworkFailure } from './githubFetch'
-import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, DEEPSEEK_MAX_WAIT_MS, normalizeDeepSeekOutput, waitForDeepSeekRun } from './deepseekArtifact'
+import { DEEPSEEK_EMPTY_RESPONSE_PLACEHOLDER, DEEPSEEK_GITHUB_READ_TIMEOUT_MS, DEEPSEEK_MAX_WAIT_MS, isEmptyDeepSeekResponse, normalizeDeepSeekOutput, waitForDeepSeekRun } from './deepseekArtifact'
 
 function ctx(): ToolContext {
   return { ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' }
@@ -184,7 +184,7 @@ describe('DeepSeek stage-specific failures', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', invocationId, Date.now())
-    const assertion = expect(pending).rejects.toThrow('deepseek-run-poll: DeepSeek timed out after 35m')
+    const assertion = expect(pending).rejects.toThrow('deepseek-run-poll: DeepSeek timed out after 31m')
     // Advance past the max wait time; transient failures should not abort early
     await vi.advanceTimersByTimeAsync(DEEPSEEK_MAX_WAIT_MS + 60000)
     await assertion
@@ -288,5 +288,19 @@ describe('github transport classification', () => {
   it('preserves an abort as an abort', () => {
     const message = describeGithubTransportFailure('deepseek-run-poll', new DOMException('x', 'AbortError'))
     expect(message).toContain('aborted')
+  })
+})
+
+describe('DeepSeek empty response and wait budget', () => {
+  it('treats the workflow placeholder and blank text as failures, not answers', () => {
+    expect(isEmptyDeepSeekResponse(DEEPSEEK_EMPTY_RESPONSE_PLACEHOLDER)).toBe(true)
+    expect(isEmptyDeepSeekResponse(`  ${DEEPSEEK_EMPTY_RESPONSE_PLACEHOLDER}\n`)).toBe(true)
+    expect(isEmptyDeepSeekResponse('   ')).toBe(true)
+    expect(isEmptyDeepSeekResponse('A real answer that mentions an empty response.')).toBe(false)
+  })
+
+  it('waits only slightly longer than the workflow job timeout (30 min)', () => {
+    expect(DEEPSEEK_MAX_WAIT_MS).toBeGreaterThan(30 * 60 * 1000)
+    expect(DEEPSEEK_MAX_WAIT_MS).toBeLessThanOrEqual(32 * 60 * 1000)
   })
 })

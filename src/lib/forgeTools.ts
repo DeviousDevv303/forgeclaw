@@ -29,7 +29,7 @@ import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellL
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
 import { TasteProviderClient } from './ai/providers/tasteProvider'
-import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, waitForDeepSeekResult } from './deepseekArtifact'
+import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
 
 // These runtime envelopes are for the chat/model boundary only. They must not
 // become part of a user-facing image prompt, where Stable Diffusion may render
@@ -805,6 +805,9 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
           throw new Error(`deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: ${explanation}${detail ? ` DeepSeek dispatch response: ${detail.slice(0, 300)}` : ''}`)
         }
         const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
+        if (isEmptyDeepSeekResponse(completed.result)) {
+          return `[TOOL ERROR] DeepSeek-16B run ${completed.run.html_url} finished but produced an empty response, so there is no answer to show. Nothing was recorded for learning. Try again or rephrase.`
+        }
         let learningStatus = 'not requested'
         if (nexusLearn) {
           // Learning persistence is independent of reasoning success. Its status
