@@ -84,7 +84,9 @@ export async function rollbackRun(entries: readonly JournalEntry[], deps: Rollba
   const doFetch = deps.fetchImpl ?? fetch
   const sleep = deps.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)))
   const forceAfter = deps.forceCancelAfterMs ?? 10_000
-  const settleTimeout = deps.settleTimeoutMs ?? 40_000
+  // GitHub can take a minute or more to finish cancelling a run that is in the middle of a long step
+  // (observed live: ~90s for a DeepSeek run). Waiting too briefly reports a false failure.
+  const settleTimeout = deps.settleTimeoutMs ?? 150_000
   const base = `https://api.github.com/repos/${deps.owner}/${deps.repo}`
   const headers = { Authorization: `token ${deps.token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
   const api = (path: string, init?: RequestInit) => doFetch(`${base}${path}`, { ...init, headers: { ...headers, ...(init?.headers as Record<string, string> | undefined) } })
@@ -131,7 +133,7 @@ export async function rollbackRun(entries: readonly JournalEntry[], deps: Rollba
       if (pending.length) await sleep(2_000)
     }
     for (const item of cancelledIds) {
-      if (pending.some(p => p.id === item.id)) { stillActive.add(item.id); report.failed.push(`${item.label}: run ${item.id} is still active after force-cancel`) }
+      if (pending.some(p => p.id === item.id)) { stillActive.add(item.id); report.failed.push(`${item.label}: run ${item.id} is still active after force-cancel and ${Math.round(settleTimeout / 1000)}s of waiting; GitHub has been asked to stop it, check Actions`) }
       else report.reverted.push(`${item.label}: cancelled run ${item.id}`)
     }
   }
