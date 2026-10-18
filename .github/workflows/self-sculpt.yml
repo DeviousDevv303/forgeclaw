@@ -47,6 +47,16 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          # Hardening: do not leave a write-capable token in .git/config while `npm run build`
+          # runs. The push step authenticates explicitly instead.
+          persist-credentials: false
+
+      - name: Load protected-path policy from main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git show origin/main:.github/scripts/check-protected.py > "$RUNNER_TEMP/check-protected.py"
+          git show origin/main:.github/protected-paths.txt > "$RUNNER_TEMP/protected-paths.txt"
 
       - name: Validate proposal inputs
         env:
@@ -71,16 +81,7 @@ jobs:
               raise SystemExit('Refusing an empty, absolute, or traversal path.')
           if any(part in {'.git', ''} for part in path.parts):
               raise SystemExit('Refusing a hidden or Git-internal path.')
-          protected = {
-              '.github/workflows',
-              'package.json',
-              'package-lock.json',
-              'src/lib/guardianGate.ts',
-              'src/lib/forgeTools.ts',
-          }
           normalized = path.as_posix()
-          if normalized in protected or normalized.startswith('.github/workflows/'):
-              raise SystemExit('Refusing a protected Guardian, workflow, or package-control path.')
           if not re.fullmatch(r'sculpt/[a-z0-9][a-z0-9._/-]{0,60}', branch) or '..' in branch or branch.endswith('/'):
               raise SystemExit('Branch must match sculpt/<lowercase-safe-name>.')
           if not content or len(content) > 60000:
@@ -89,6 +90,9 @@ jobs:
               raise SystemExit('Reason must be a one-line message of at most 240 characters.')
           print(f'Validated {normalized} -> {branch}')
           PY
+          # Shared policy (.github/protected-paths.txt, read from main): workflows, hooks, manifests,
+          # build/lint/test configs, Guardian and tool-dispatch code.
+          printf '%s\0' "$SCULPT_PATH" | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
 
       - name: Create isolated sculpt branch
         env:
@@ -117,6 +121,8 @@ jobs:
           path.write_text(os.environ['SCULPT_CONTENT'], encoding='utf-8')
           PY
           git add -- "$SCULPT_PATH"
+          # Re-check what Git actually staged (covers symlinks and path tricks) BEFORE any build runs.
+          git diff --cached --no-renames --name-only -z | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
           if git diff --cached --quiet; then
             echo 'changed=false' >> "$GITHUB_OUTPUT"
             echo 'No file changes detected.'
@@ -129,6 +135,7 @@ jobs:
       - name: Commit and push proposal branch
         if: steps.proposal.outputs.changed == 'true'
         env:
+          GH_TOKEN: ${{ github.token }}
           SCULPT_REASON: ${{ inputs.reason }}
           SCULPT_BRANCH: ${{ inputs.branch }}
         run: |
@@ -137,7 +144,9 @@ jobs:
           git config user.name 'ForgeClaw'
           git config user.email 'forgeclaw@local'
           git commit -m "sculpt: $reason"
-          git push --set-upstream origin "$SCULPT_BRANCH"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push --set-upstream origin "$SCULPT_BRANCH"
 
       - name: Open pull request for review
         if: steps.proposal.outputs.changed == 'true'

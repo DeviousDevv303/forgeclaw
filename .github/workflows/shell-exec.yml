@@ -29,6 +29,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Hardening: the arbitrary command below should find no credential in .git/config.
+          persist-credentials: false
 
       - name: Execute command
         env:
