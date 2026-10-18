@@ -1,7 +1,7 @@
 // Guards the shared protected-path policy (.github/protected-paths.txt) and the workflow hardening
 // that depends on it. Drift between workflows was the root cause of the Project D findings.
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -167,5 +167,25 @@ describe('shell-repair input handling', () => {
       && !/^\s*(run-name|group|name):/.test(line)
       && !/^\s+[A-Z_]+: \$\{\{ inputs\./.test(line))
     expect(offenders).toEqual([])
+  })
+})
+
+describe('runner pinning', () => {
+  // ubuntu-latest becomes Ubuntu 26 on 2026-10-19; an unpinned runner changes under every workflow.
+  // generate-image.yml is pinned (and tested) in the image-adapter change. shell-exec.yml is a Tier 2
+  // path that needs its own named authorization, so it is deliberately exempt here until then.
+  const exempt = new Set(['generate-image.yml', 'shell-exec.yml'])
+  const files = readdirSync('.github/workflows').filter(f => f.endsWith('.yml') && !exempt.has(f))
+
+  it('has workflows to check', () => {
+    expect(files.length).toBeGreaterThanOrEqual(10)
+  })
+
+  it('pins every other workflow to ubuntu-24.04', () => {
+    for (const file of files) {
+      const runners = read(`.github/workflows/${file}`).match(/^\s*runs-on:.*$/gm) ?? []
+      expect(runners.length, file).toBeGreaterThan(0)
+      for (const line of runners) expect(line.trim(), file).toBe('runs-on: ubuntu-24.04')
+    }
   })
 })
