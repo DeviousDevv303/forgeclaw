@@ -98,7 +98,7 @@ results.push(patch({
   marker: 'TEST GITHUB READ (read-only)',
   anchor: `                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <div>
-                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Default Owner / Org</label>`,
+                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.defaultOwner')}</label>`,
   replacement: `                <button
                   type="button"
                   disabled={testingGithubRead || !ghToken.trim()}
@@ -112,7 +112,7 @@ results.push(patch({
                 )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <div>
-                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Default Owner / Org</label>`,
+                    <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.defaultOwner')}</label>`,
 }))
 
 // ── Result integrity ─────────────────────────────────────────────────────────
