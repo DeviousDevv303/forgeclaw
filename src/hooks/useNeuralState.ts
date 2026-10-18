@@ -92,13 +92,14 @@ export function useNeuralState(
   const [neuralState, setNeuralState] = useState<NeuralState>({ ...IDLE_NEURAL_STATE, provider })
 
   // Refs for values that shouldn't trigger re-renders
-  const lastEventCountRef = useRef(0)
+  const lastEventRef = useRef<object | null>(null)
   const lastContentLengthRef = useRef(options.contentLength)
   const lastContentTimeRef = useRef(Date.now())
   const lastTokenTimeRef = useRef(0)
   const velocityRef = useRef(0)
   const agentPhaseRef = useRef<NeuralPhase>('idle')
   const phaseSequenceRef = useRef<string[]>([])
+  const completedAtRef = useRef(0)
   const requestStartRef = useRef<number>(0)
   const consecutiveFailuresRef = useRef(0)
   const learningBudgetRef = useRef<LearningBudget>({})
@@ -126,18 +127,27 @@ export function useNeuralState(
     lastContentTimeRef.current = now
   })
 
-  // Process new ForgeOps events
+  // Process new ForgeOps events. Track by identity, not count — the
+  // ForgeOps window slides (capped at 60), so count-based tracking goes
+  // blind once the window is full.
   useEffect(() => {
     const events = forgeOpsState.events
-    const newEvents = events.slice(lastEventCountRef.current)
+    let newEvents: typeof events
+    if (events.length === 0) {
+      newEvents = []
+    } else if (lastEventRef.current === null) {
+      newEvents = events.slice()
+    } else {
+      const idx = events.lastIndexOf(lastEventRef.current as never)
+      newEvents = idx >= 0 ? events.slice(idx + 1) : events.slice()
+    }
     if (newEvents.length === 0) return
-    lastEventCountRef.current = events.length
+    lastEventRef.current = events[events.length - 1]
 
     let agentPhase = agentPhaseRef.current
     let activeToolCount = 0
     let errorLevel = neuralState.errorLevel
     let phaseChanged = false
-    let prevPhase = agentPhase
 
     // Recompute active tools from current toolBus (source of truth)
     const toolBus = forgeOpsState.toolBus || {}
@@ -150,27 +160,10 @@ export function useNeuralState(
         case 'PHASE_CHANGE': {
           const mapped = mapAgentPhase(event.phase)
           if (mapped !== agentPhase) {
-            prevPhase = agentPhase
             agentPhase = mapped
             phaseChanged = true
             phaseSequenceRef.current.push(mapped)
 
-            // Addendum §1: record phase transitions as learning events.
-            // Budget key is 'tool:phase' (not bare 'tool') so a burst of
-            // phase changes can never starve failure records, which share
-            // the 'tool' event channel but are more valuable.
-            if (budgetAllows(learningBudgetRef.current, 'tool:phase', now)) {
-              void recordLearningEvent({
-                channel: 'tool',
-                input: `[SYSTEM_PHASE] ${prevPhase} -> ${mapped}`,
-                result: `provider=${provider}; activeTools=${activeToolCount}; tokenVelocity=${velocityRef.current.toFixed(1)}`,
-                outcome: mapped === 'blocked' ? 'blocked' : 'completed',
-                runtime: 'forgeclaw-ui',
-                model: provider,
-                toolName: 'system_monitor',
-                actor: 'agent',
-              })
-            }
           }
           // Blocked clears on next non-blocked phase change
           if (mapped !== 'blocked' && errorLevel > 0 && event.phase !== 'BLOCKED') {
@@ -181,22 +174,9 @@ export function useNeuralState(
 
         case 'MISSION_BLOCKED': {
           if (agentPhase !== 'blocked') {
-            prevPhase = agentPhase
             agentPhase = 'blocked'
             phaseChanged = true
             phaseSequenceRef.current.push('blocked')
-            if (budgetAllows(learningBudgetRef.current, 'tool:phase', now)) {
-              void recordLearningEvent({
-                channel: 'tool',
-                input: `[SYSTEM_PHASE] ${prevPhase} -> blocked`,
-                result: `provider=${provider}; reason=${event.reason.slice(0, 200)}`,
-                outcome: 'blocked',
-                runtime: 'forgeclaw-ui',
-                model: provider,
-                toolName: 'system_monitor',
-                actor: 'agent',
-              })
-            }
           }
           break
         }
@@ -218,6 +198,7 @@ export function useNeuralState(
           requestStartRef.current = 0
           phaseSequenceRef.current = []
           consecutiveFailuresRef.current = 0
+          completedAtRef.current = now
           if (agentPhase !== 'idle') {
             agentPhase = 'idle'
             phaseChanged = true
@@ -232,7 +213,6 @@ export function useNeuralState(
           // New work clears idle AND blocked (e.g. after user hits STOP,
           // which emits MISSION_BLOCKED). A following PHASE_CHANGE refines it.
           if (agentPhase === 'idle' || agentPhase === 'blocked') {
-            prevPhase = agentPhase
             agentPhase = 'planning'
             phaseChanged = true
           }
@@ -306,7 +286,7 @@ export function useNeuralState(
         activeToolCount,
         tokenVelocity: Math.round(velocityRef.current * 10) / 10,
         errorLevel,
-        completedAt: prev.completedAt,
+        completedAt: completedAtRef.current,
       }
       // Avoid re-render if nothing meaningful changed
       if (
@@ -314,7 +294,8 @@ export function useNeuralState(
         prev.provider === next.provider &&
         prev.activeToolCount === next.activeToolCount &&
         Math.abs(prev.tokenVelocity - next.tokenVelocity) < 0.5 &&
-        prev.errorLevel === next.errorLevel
+        prev.errorLevel === next.errorLevel &&
+        prev.completedAt === next.completedAt
       ) {
         return prev
       }
