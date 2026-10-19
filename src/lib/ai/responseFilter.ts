@@ -21,6 +21,11 @@ const TOOL_HEADER_RE = /^✓ DeepSeek-16B completed as [^\n]*\n\n/;
 // Application identity blocks that leak from the prompt into model output
 const APP_IDENTITY_RE = /\[APPLICATION_IDENTITY[\s\S]*?\[\/APPLICATION_IDENTITY\]/gi;
 const APP_IDENTITY_FRAGMENT_RE = /^What's the state of the POLYMARKET\s*\[APPLICATION_IDENTITY[^\]]*\]?/gim;
+// A lone envelope tag with no matching close. The model echoes it with its spaces removed
+// ([APPLICATION_IDENTITYapplication="ForgeClaw"...]), sometimes opened with "(" or as [END RUNTIME_STATE],
+// at the start or end of an answer. Strip only the tag so real answer text around it survives.
+// Seen in 29 of the stored DeepSeek results.
+const ENVELOPE_TAG_RE = /[[(](?:\/|END\s+)?(?:APPLICATION_?IDENTITY|RUNTIME_?STATE)[^\])\n]*[\])]?/gi;
 
 export function stripReasoningArtifacts(response: string): string {
   let cleaned = response;
@@ -37,6 +42,7 @@ export function stripReasoningArtifacts(response: string): string {
   // 4. Remove leaked application identity blocks
   cleaned = cleaned.replace(APP_IDENTITY_RE, '');
   cleaned = cleaned.replace(APP_IDENTITY_FRAGMENT_RE, '');
+  cleaned = cleaned.replace(ENVELOPE_TAG_RE, '');
 
   // Collapse excessive blank lines left behind, trim
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();

@@ -932,6 +932,10 @@ function App() {
 
   const sendPrompt = useCallback(async (promptText: string, imageUrl?: string, options: { attachmentName?: string; resumeTask?: boolean } = {}) => {
     if (!promptText.trim()) return
+    // One request at a time. A second send used to take over activeRunRef without aborting the first,
+    // so the first answer was discarded when it arrived and a duplicate workflow run was dispatched.
+    // STOP is the way to abandon a running request.
+    if (activeRunRef.current) return
 
     // DeepSeek-primary providers require a GitHub token. Fail fast with a clear
     // message instead of dispatching DeepSeek (which will fail) and falling back
@@ -1129,7 +1133,6 @@ function App() {
 
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2)}`
     const controller = new AbortController()
-    activeRunRef.current = { id: runId, controller, messageId: `${Date.now() + 1}`, journal: startRunJournal() }
     if (isCodingTaskRequest(promptText, { hasAttachment }) || resumesCodingTask) {
       setCodingAgentState(saveCodingAgentState({ sessionId, activeRunId: runId }))
     }
@@ -1235,6 +1238,9 @@ function App() {
       }))
     }
 
+    // Claimed only here, immediately before the try whose finally releases it, so nothing that throws
+    // during request setup can leave a run claimed with no STOP button and lock out every later send.
+    activeRunRef.current = { id: runId, controller, messageId: `${Date.now() + 1}`, journal: startRunJournal() }
     try {
       const requestStartedAt = performance.now()
       setLoading(true)
@@ -1735,6 +1741,8 @@ function App() {
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
+    // Keep the typed text while a request is still running; sendPrompt would ignore it anyway.
+    if (activeRunRef.current) return
     if (chatListening) {
       stopChatVoiceRecognition()
     }
