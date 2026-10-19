@@ -51,6 +51,9 @@ const statusDelays = [1000, 2000, 3000, 5000, 8000] as const
 // The dispatched run is the newest one. 100 rows is ~1.6 MB per poll; 20 is enough
 // and far kinder to phone links (same fix as deepseekArtifact.ts #131).
 export const IMAGE_DISCOVERY_PAGE_SIZE = 20
+const IMAGE_MIRROR_TIMEOUT_MS = 20_000
+const IMAGE_ARTIFACT_LIST_TIMEOUT_MS = 30_000
+const IMAGE_ARTIFACT_DOWNLOAD_TIMEOUT_MS = 60_000
 // Statuses that will not change by asking again: bad credential, missing permission, wrong repo/workflow.
 // Matches the describeGithubHttpFailure() text both stages throw.
 const PERSISTENT_DISCOVERY_STATUS = /GitHub HTTP (?:401|403|404)\b/
@@ -224,9 +227,8 @@ export async function downloadImagePng(
   // The redirected response is not CORS-readable from GitHub Pages. New runs
   // publish the same PNG to raw.githubusercontent.com, which is browser-safe.
   try {
-    const mirrorRes = await fetch(imageMirrorUrl(owner, repo, invocationId), {
+    const mirrorRes = await toolFetch({ ...ctx, timeoutMs: IMAGE_MIRROR_TIMEOUT_MS }, imageMirrorUrl(owner, repo, invocationId), {
       cache: 'no-store',
-      signal: ctx.signal,
     })
     if (mirrorRes.ok) {
       const pngBlob = await imageStage('image-mirror-bytes', () => mirrorRes.blob())
@@ -242,13 +244,14 @@ export async function downloadImagePng(
     // Older runs do not have a mirror; use the artifact bridge below.
   }
 
-  const artifactsRes = await imageStage("artifact-list", () => fetch(
+  const artifactsRes = await githubStage('image-artifact-list GET /actions/runs/{run_id}/artifacts', () => toolFetch(
+    { ...ctx, timeoutMs: IMAGE_ARTIFACT_LIST_TIMEOUT_MS },
     `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/artifacts?per_page=100`,
-    { headers: ghHeaders(ctx), signal: ctx.signal },
+    { headers: ghHeaders(ctx), cache: 'no-store' },
   ))
 
   if (!artifactsRes.ok) {
-    throw new Error(`GitHub artifact list ${artifactsRes.status}`)
+    throw new Error(describeGithubHttpFailure('image-artifact-list GET /actions/runs/{run_id}/artifacts', artifactsRes.status, artifactsRes.statusText))
   }
 
   const artifactsData = await artifactsRes.json() as { artifacts?: ArtifactInfo[] }
@@ -263,11 +266,11 @@ export async function downloadImagePng(
     )
   }
 
-  const zipRes = await imageStage("artifact-download", () => fetch(artifact.archive_download_url, {
-    headers: ghHeaders(ctx),
-    signal: ctx.signal,
-    redirect: 'follow',
-  }))
+  const zipRes = await githubStage('image-artifact-download', () => toolFetch(
+    { ...ctx, timeoutMs: IMAGE_ARTIFACT_DOWNLOAD_TIMEOUT_MS },
+    artifact.archive_download_url,
+    { headers: ghHeaders(ctx), redirect: 'follow' },
+  ))
 
   if (!zipRes.ok) {
     throw new Error(
