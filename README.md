@@ -90,7 +90,6 @@ src/
   components/
     FailureDashboard.tsx       Failure view rendered from Activity
     AgentsPanel.tsx             Custom-agent interface
-    ProviderStatusBadge.tsx    Provider state and test status
 
 engine/
   server.ts                    Optional server-side runtime
