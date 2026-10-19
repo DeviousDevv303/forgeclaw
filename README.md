@@ -90,7 +90,6 @@ src/
   components/
     FailureDashboard.tsx       Failure view rendered from Activity
     AgentsPanel.tsx             Custom-agent interface
-    ProviderStatusBadge.tsx    Provider state and test status
 
 engine/
   server.ts                    Optional server-side runtime
@@ -171,7 +170,7 @@ ForgeClaw’s foundational governance distinguishes evolving capability from imm
 
 ## License
 
-ForgeClaw is released under the MIT License. See [LICENSE](LICENSE).
+ForgeClaw is source-available, not open source. It is released under the **ForgeClaw Proprietary Source-Available License**: you may view and study the code, self-host one private non-commercial instance, keep a private fork for experimentation, and submit pull requests. Commercial use, hosted deployment for others, redistribution, and rebranding are not permitted without a separate written agreement. [LICENSE](LICENSE) is the authoritative text.
 
 ## Disclaimer
 

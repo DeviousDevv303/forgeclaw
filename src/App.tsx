@@ -189,6 +189,7 @@ import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
 import { baselineToolNames, NO_TOOLS_NOTICE, SHELL_EXEC_GUIDANCE } from './lib/toolExposure'
+import { withForgeClawSignature } from './lib/signature'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -1817,7 +1818,7 @@ function App() {
       const visibleText = directImageCompleted
         ? ''
         : authoritativeRepositoryAnswer || cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)'
-      const messageContent = [visibleText, completionSafetyNotice, secondarySynthesisNotice].filter(Boolean).join('\n\n')
+      const messageContent = withForgeClawSignature([visibleText, completionSafetyNotice, secondarySynthesisNotice].filter(Boolean).join('\n\n'))
       const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${resolvedProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace
