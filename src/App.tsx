@@ -1188,13 +1188,16 @@ function App() {
     // can emit code-token soup when a large tool protocol is injected for a
     // request that does not need tools.
     const deepSeekDuoDefault = isDeepSeekProvider(activeProvider)
-    const complexReasoningTask = !imageUrl && shouldDispatchComplexTaskToDeepSeek(promptText)
     // Anthropic explicitly chosen: don't route to DeepSeek, but still offer general tools.
-    // The old `activeProvider !== 'anthropic'` check stripped ALL tools from Anthropic chat.
+    // Excluding Anthropic here only stops the DeepSeek hand-off ("Use deepseek_reason for this complex
+    // task"); its tools now come from the block below and baselineToolNames().
     const isAnthropicOnly = activeProvider === 'anthropic' && !deepSeekDuoDefault
-    const coreToolNames = codingTask
+    const complexReasoningTask = !imageUrl && !isAnthropicOnly && shouldDispatchComplexTaskToDeepSeek(promptText)
+    const coreToolNames = (codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
-      : deepSeekDuoDefault || complexReasoningTask ? ['deepseek_reason'] : []
+      : deepSeekDuoDefault || complexReasoningTask ? ['deepseek_reason'] : [])
+      // Claude never delegates to the slow DeepSeek workflow, coding task or not.
+      .filter(name => !(isAnthropicOnly && (name === 'deepseek_reason' || name === 'ask_deepseek')))
     // Anthropic gets general tools (shell, repo state) but never deepseek_reason.
     if (isAnthropicOnly && !codingTask) {
       coreToolNames.push('github_repo_state', 'shell_exec', 'github_read_file', 'github_search_code')
@@ -1213,6 +1216,8 @@ function App() {
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
+      : isAnthropicOnly
+        ? '\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.'
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'

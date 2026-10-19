@@ -52,7 +52,21 @@ describe('hosted tool-calling providers get read-only repo tools', () => {
     }
     // Writes stay gated: nothing in this message asks to change the repo.
     expect(names).not.toContain('github_write_file')
+    // #139: Claude can run ForgeClaw shell commands (through executeTool + Guardian).
+    expect(names).toContain('shell_exec')
   }, 15_000)
+
+  it('never hands Claude the slow DeepSeek workflow, even for "review"/"analyze" wording or a coding task', async () => {
+    for (const prompt of ['review and analyze the efficiency of my GitHub workflows', 'check the repo and fix the failing build-gate test']) {
+      cleanup(); vi.resetModules(); fetchMock.mockClear()
+      const body = await firstAnthropicBody('anthropic', prompt)
+      const names = (body.tools ?? []).map(tool => tool.name)
+      expect(names, prompt).not.toContain('deepseek_reason')
+      expect(names, prompt).not.toContain('ask_deepseek')
+      expect(body.system ?? '', prompt).not.toMatch(/Use deepseek_reason/)
+      expect(names, prompt).toContain('github_read_file')
+    }
+  }, 30_000)
 
   it('tells a tool-less turn it has no tools, so it cannot claim it read or committed anything', async () => {
     // The local llama.cpp provider keeps the keyword gate; a plain question gets no tools.
