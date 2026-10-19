@@ -57,15 +57,18 @@ Verified 2026-10-19 against the code and each workflow's last 30 GitHub runs. "W
 | Capability | Tool / workflow | Status |
 | --- | --- | --- |
 | Reasoning (default chat) | `deepseek_reason` / `deepseek-16b.yml` | Works (24 of last 30 succeeded; the rest were cancelled by STOP). Slow: 10–17 min per answer. |
+| Anthropic (Claude) | `anthropic` provider / direct API | Works with API key. Offers `shell_exec`, `github_repo_state`, `github_read_file`, `github_search_code` in chat (added 2026-10-19). Never routes to DeepSeek. |
 | Web search | `web_search` / `ddg_search.yml` (or Brave with a key) | Works (15 of 15). |
 | Image generation | `generate_image` / `generate-image.yml` | Works (28 of 30). |
 | Shell commands | `shell_exec` / `shell-exec.yml` | Works. Runs report the command's own exit code, so a failing command shows as a failed run. |
 | GitHub repo read/write, issues, runs, logs | `github_*` tools | Works with a GitHub token. |
+| STOP button | chat UI | Works. Cancels the active DeepSeek run on GitHub (added 2026-10-19). |
 | Image analysis | `analyze_image` / `image-analyze.yml` | **Broken.** Workflow fails at import (`AutoModelForVision2Seq` was removed from `transformers`), and the tool never returns the result to the chat. |
 | Code review | `review_code` / `code-review.yml` | **Broken.** Loads CodeLlama-7B in float32 (~28 GB) on a 16 GB runner and is killed; the tool never returns the result to the chat. |
 | Browser automation | `browser-automation.yml` | **Broken.** `scripts/browser-automation.js` uses `require` in an ES-module package, and Playwright is not a dependency. Not exposed as a chat tool. |
 | Self-sculpt / shell repair | `sculpt_self`, `shell_patch` | Mixed: recent runs mostly fail at their validation steps; under review. |
-| Gmail, Calendar, WhatsApp | `gmail_*`, `calendar_*`, `send_whatsapp` | Need your own OAuth/API credentials in Settings; not verified here. |
+| Gmail, Calendar | `gmail_*`, `calendar_*` | Need your own OAuth credentials in Settings; not verified here. |
+| WhatsApp | `send_whatsapp` | Needs Meta API credentials; not verified here. |
 | `http_fetch`, `run_js` | browser-side | Work within browser limits (`http_fetch` is subject to the target site's CORS policy). |
 
 ## Architecture
