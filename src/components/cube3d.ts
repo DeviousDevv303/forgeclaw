@@ -4,261 +4,213 @@
 
 /**
  * cube3d — 3D Rubik's cube renderer for the neural network background.
- * Perspective-projected cubes with painter's algorithm, backface culling,
- * per-face 3x3 stickers, emotion-driven look, and deterministic scrambling.
+ * Perspective projection, painter's algorithm, back-face culling, 3x3
+ * stickers drawn as perspective quads on each visible face (they skew and
+ * foreshorten with the face, like the big cube), cross-face scrambles, and an
+ * explode effect that sends every sticker outward along its face normal.
+ *
+ * Emotion (spin, wobble, glow, flash, jitter, explode) comes from cubeLook()
+ * in cubeMotion.ts, driven by the reactive core — this file only draws.
+ * Pure canvas paths: no roundRect (missing on Chrome/WebView < 99, Safari < 16).
  */
+
+export type FaceKey = 'U' | 'D' | 'F' | 'B' | 'L' | 'R'
+export type CubeFaces = Record<FaceKey, string[]>
 
 export interface Cube3DState {
-  faces: {
-    U: string[]; D: string[]; F: string[];
-    B: string[]; L: string[]; R: string[];
-  };
-  rotation: { x: number; y: number; z: number };
-  scramble: number;
-  explode: number;
+  faces: CubeFaces
+  /** Radians. */
+  rotation: { x: number; y: number; z: number }
+  /** 0..1 how far stickers have flown outward. */
+  explode: number
 }
 
-export interface CubeLook {
-  angleOffset: number;
-  glow: number;
-  glowColor: { r: number; g: number; b: number };
-  jitter: number;
-  flash: number;
+export interface CubeAppearance {
+  /** 0..1 */
+  glow: number
+  glowColor: { r: number; g: number; b: number }
+  /** Colored flash over the cube, or null. */
+  flash: { color: { r: number; g: number; b: number }; alpha: number } | null
 }
 
-/**
- * Map app phase to cube emotional state.
- * scramble: 0=solved, 1=fully mixed (executing/streaming scrambles)
- * glow: 0-1 intensity; glowColor shifts by phase
- * jitter: 0-1 shake amount (blocked shakes hard)
- * flash: 0-1 white flash overlay (verifying flashes)
- */
-export function cubeLook(
-  phase: string,
-  t: number,
-  seed: number,
-): { look: CubeLook; scramble: number; explode: number } {
-  const wobble = Math.sin(t * 2 + seed) * 0.1;
-  switch (phase) {
-    case 'blocked':
-      return {
-        look: {
-          angleOffset: wobble * 3,
-          glow: 0.8,
-          glowColor: { r: 255, g: 59, b: 48 },
-          jitter: 0.7,
-          flash: 0,
-        },
-        scramble: 0.3, explode: 0,
-      };
-    case 'executing':
-    case 'streaming':
-      return {
-        look: {
-          angleOffset: wobble,
-          glow: 0.6,
-          glowColor: { r: 255, g: 149, b: 0 },
-          jitter: 0.3,
-          flash: 0,
-        },
-        scramble: 0.8, explode: 0,
-      };
-    case 'verifying':
-      return {
-        look: {
-          angleOffset: wobble * 0.5,
-          glow: 0.5,
-          glowColor: { r: 10, g: 132, b: 255 },
-          jitter: 0.1,
-          flash: 0.5 + 0.5 * Math.sin(t * 8),
-        },
-        scramble: 0.2, explode: 0,
-      };
-    case 'idle':
-    default:
-      return {
-        look: {
-          angleOffset: wobble * 0.3,
-          glow: 0.3,
-          glowColor: { r: 255, g: 149, b: 0 },
-          jitter: 0,
-          flash: 0,
-        },
-        scramble: 0, explode: 0,
-      };
-  }
+/** Minimum drawn cube size in px (Muse #123 set 24; directive asked 60 — pending Cristian). */
+export const MIN_CUBE_PX = 24
+
+const FACE_ORDER: readonly FaceKey[] = ['U', 'D', 'F', 'B', 'L', 'R']
+const FACE_COLORS: Record<FaceKey, string> = {
+  U: '#ffffff', D: '#ffcf00', F: '#34c759', B: '#0a84ff', L: '#ff9500', R: '#ff3b30',
+}
+
+export function solvedCubeFaces(): CubeFaces {
+  const f = {} as CubeFaces
+  for (const k of FACE_ORDER) f[k] = Array(9).fill(FACE_COLORS[k])
+  return f
 }
 
 /**
- * Scramble faces with cross-face swaps (realistic mixing).
- * Swaps stickers between different faces, not within one face.
+ * Scramble with cross-face swaps (realistic mixing; within-face swaps are a
+ * no-op on a solved cube). Deterministic for a given seed.
  */
-export function scrambleFaces(
-  faces: Cube3DState['faces'],
-  amount: number,
-  seed: number,
-): Cube3DState['faces'] {
-  const result: Cube3DState['faces'] = {
-    U: [...faces.U], D: [...faces.D], F: [...faces.F],
-    B: [...faces.B], L: [...faces.L], R: [...faces.R],
-  };
-  const faceKeys = ['U', 'D', 'F', 'B', 'L', 'R'] as const;
-  const swaps = Math.floor(amount * 18);
-  const rand = (s: number) => {
-    const x = Math.sin(s * 137.5) * 10000;
-    return x - Math.floor(x);
-  };
+export function scrambleFaces(faces: CubeFaces, amount: number, seed: number): CubeFaces {
+  const flat = FACE_ORDER.flatMap(k => faces[k])
+  const rand = (s: number) => { const x = Math.sin(s * 137.5 + 0.5) * 10000; return x - Math.floor(x) }
+  const swaps = Math.round(Math.min(1, Math.max(0, amount)) * flat.length)
   for (let i = 0; i < swaps; i++) {
-    const f1 = faceKeys[Math.floor(rand(seed + i * 2) * 6)];
-    let f2 = faceKeys[Math.floor(rand(seed + i * 2 + 1) * 6)];
-    if (f1 === f2) f2 = faceKeys[(faceKeys.indexOf(f1) + 1) % 6];
-    const s1 = Math.floor(rand(seed + i * 3) * 9);
-    const s2 = Math.floor(rand(seed + i * 3 + 1) * 9);
-    const tmp = result[f1][s1];
-    result[f1][s1] = result[f2][s2];
-    result[f2][s2] = tmp;
+    const a = Math.floor(rand(seed * 101 + i) * flat.length)
+    const b = Math.floor(rand(seed * 101 + i + 1000) * flat.length)
+    ;[flat[a], flat[b]] = [flat[b], flat[a]]
   }
-  return result;
+  const out = {} as CubeFaces
+  FACE_ORDER.forEach((k, i) => { out[k] = flat.slice(i * 9, i * 9 + 9) })
+  return out
 }
 
-/** Minimum 3D cube size — below this the faces aren't legible. */
-export const MIN_CUBE_PX = 24;
-
-/** Standard solved faces. */
-export function solvedCubeFaces(): Cube3DState['faces'] {
-  return {
-    U: Array(9).fill('#ffffff'),
-    D: Array(9).fill('#ffcf00'),
-    F: Array(9).fill('#34c759'),
-    B: Array(9).fill('#0a84ff'),
-    L: Array(9).fill('#ff9500'),
-    R: Array(9).fill('#ff3b30'),
-  };
+/** True when every one of the given faces is a single color. */
+export function looksSolved(faces: CubeFaces, keys: readonly FaceKey[] = FACE_ORDER): boolean {
+  return keys.every(k => faces[k].every(c => c === faces[k][0]))
 }
 
-// Sticker sprite cache: pre-render each color once, drawImage per frame.
-const stickerCache = new Map<string, HTMLCanvasElement>();
-function getStickerSprite(color: string): HTMLCanvasElement {
-  const hit = stickerCache.get(color);
-  if (hit) return hit;
-  const c = document.createElement('canvas');
-  c.width = 32; c.height = 32;
-  const ctx = c.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.roundRect(2, 2, 28, 28, 4);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.beginPath();
-    ctx.roundRect(2, 2, 28, 14, 4);
-    ctx.fill();
+const facesCache = new Map<number, CubeFaces>()
+/** Cached faces: variant 0 = solved, 1..n = scrambles. No per-frame allocation. */
+export function cubeFacesVariant(variant: number): CubeFaces {
+  let f = facesCache.get(variant)
+  if (!f) {
+    f = variant === 0 ? solvedCubeFaces() : scrambleFaces(solvedCubeFaces(), 0.6, variant)
+    facesCache.set(variant, f)
   }
-  stickerCache.set(color, c);
-  return c;
+  return f
 }
 
-function lerpPt(a: { x: number; y: number; scale: number },
-                b: { x: number; y: number; scale: number }, t: number) {
-  return {
-    x: a.x + (b.x - a.x) * t,
-    y: a.y + (b.y - a.y) * t,
-    scale: a.scale + (b.scale - a.scale) * t,
-  };
+type V3 = [number, number, number]
+type P2 = { x: number; y: number }
+
+function rotate([x, y, z]: V3, rx: number, ry: number, rz: number): V3 {
+  const x1 = x * Math.cos(ry) - z * Math.sin(ry)
+  const z1 = x * Math.sin(ry) + z * Math.cos(ry)
+  const y1 = y * Math.cos(rx) - z1 * Math.sin(rx)
+  const z2 = y * Math.sin(rx) + z1 * Math.cos(rx)
+  return [x1 * Math.cos(rz) - y1 * Math.sin(rz), x1 * Math.sin(rz) + y1 * Math.cos(rz), z2]
+}
+
+// Faces as [origin corner, +u corner, +v corner] in cube space (-1..1), plus normal.
+// Orientation chosen so u runs left→right and v top→bottom as seen from outside.
+const FACE_GEOMETRY: Array<{ key: FaceKey; o: V3; u: V3; v: V3; n: V3 }> = [
+  { key: 'F', o: [-1, -1, 1], u: [1, -1, 1], v: [-1, 1, 1], n: [0, 0, 1] },
+  { key: 'B', o: [1, -1, -1], u: [-1, -1, -1], v: [1, 1, -1], n: [0, 0, -1] },
+  { key: 'U', o: [-1, -1, -1], u: [1, -1, -1], v: [-1, -1, 1], n: [0, -1, 0] },
+  { key: 'D', o: [-1, 1, 1], u: [1, 1, 1], v: [-1, 1, -1], n: [0, 1, 0] },
+  { key: 'L', o: [-1, -1, -1], u: [-1, -1, 1], v: [-1, 1, -1], n: [-1, 0, 0] },
+  { key: 'R', o: [1, -1, 1], u: [1, -1, -1], v: [1, 1, 1], n: [1, 0, 0] },
+]
+
+export interface ProjectedFace {
+  key: FaceKey
+  /** Average depth (larger = nearer the viewer). */
+  depth: number
+  /** Light factor 0.45..1 from the face's angle to the viewer. */
+  light: number
+  /** 9 sticker quads (row-major), each 4 projected points. */
+  stickers: P2[][]
+  /** Face outline (4 projected points). */
+  outline: P2[]
 }
 
 /**
- * Draw a 3D Rubik's cube on 2D canvas. Glow renders BEHIND the cube
- * (alpha 0.3) so celebrate/explode moments don't wash out stickers.
+ * Project a cube: returns only the faces that point toward the viewer, sorted
+ * back-to-front (painter's algorithm). Pure — no canvas.
  */
+export function projectCube(cx: number, cy: number, size: number, rotation: Cube3DState['rotation'], explode = 0): ProjectedFace[] {
+  const s = size / 2
+  const persp = 4 // camera distance in cube units: mild perspective
+  const project = ([x, y, z]: V3): P2 => {
+    const k = persp / (persp - z)
+    return { x: cx + x * s * k, y: cy + y * s * k }
+  }
+  const out: ProjectedFace[] = []
+  for (const f of FACE_GEOMETRY) {
+    const n = rotate(f.n, rotation.x, rotation.y, rotation.z)
+    if (n[2] <= 0.02) continue // back-facing
+    const o = rotate(f.o, rotation.x, rotation.y, rotation.z)
+    const u = rotate(f.u, rotation.x, rotation.y, rotation.z)
+    const v = rotate(f.v, rotation.x, rotation.y, rotation.z)
+    const du: V3 = [u[0] - o[0], u[1] - o[1], u[2] - o[2]]
+    const dv: V3 = [v[0] - o[0], v[1] - o[1], v[2] - o[2]]
+    const at = (a: number, b: number, push: number): V3 => [
+      o[0] + du[0] * a + dv[0] * b + n[0] * push,
+      o[1] + du[1] * a + dv[1] * b + n[1] * push,
+      o[2] + du[2] * a + dv[2] * b + n[2] * push,
+    ]
+    const stickers: P2[][] = []
+    const gap = 0.06
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 3; col++) {
+        // Explode: stickers fly out along the normal and away from the face center.
+        const push = explode * 1.2
+        const spreadA = (col - 1) * explode * 0.25
+        const spreadB = (row - 1) * explode * 0.25
+        const a0 = col / 3 + gap / 3 + spreadA, a1 = (col + 1) / 3 - gap / 3 + spreadA
+        const b0 = row / 3 + gap / 3 + spreadB, b1 = (row + 1) / 3 - gap / 3 + spreadB
+        stickers.push([at(a0, b0, push), at(a1, b0, push), at(a1, b1, push), at(a0, b1, push)].map(project))
+      }
+    }
+    const corners = [at(0, 0, 0), at(1, 0, 0), at(1, 1, 0), at(0, 1, 0)]
+    out.push({
+      key: f.key,
+      depth: corners.reduce((sum, c) => sum + c[2], 0) / 4,
+      light: 0.45 + 0.55 * Math.min(1, n[2]),
+      stickers,
+      outline: corners.map(project),
+    })
+  }
+  return out.sort((a, b) => a.depth - b.depth)
+}
+
+function quad(ctx: CanvasRenderingContext2D, p: P2[]) {
+  ctx.beginPath()
+  ctx.moveTo(p[0].x, p[0].y)
+  for (let i = 1; i < p.length; i++) ctx.lineTo(p[i].x, p[i].y)
+  ctx.closePath()
+}
+
+/** Draw one cube. Glow goes behind; stickers follow face perspective; flash on top. */
 export function drawCube3D(
   ctx: CanvasRenderingContext2D,
   cx: number, cy: number, size: number,
-  state: Cube3DState, look: CubeLook,
-) {
-  const s = size / 2;
-  const rotX = state.rotation.x + look.angleOffset;
-  const rotY = state.rotation.y + look.angleOffset * 0.7;
-  const rotZ = state.rotation.z;
-
-  // 1. Glow FIRST (behind). Guarded: jsdom and older engines may lack
-  // createRadialGradient; optional chaining keeps tests and edge runtimes alive.
-  if (look.glow > 0 && typeof ctx.createRadialGradient === 'function') {
-    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 1.5);
-    const gc = look.glowColor;
-    g.addColorStop(0, `rgba(${gc.r},${gc.g},${gc.b},${look.glow * 0.3})`);
-    g.addColorStop(1, `rgba(${gc.r},${gc.g},${gc.b},0)`);
-    ctx.beginPath?.();
-    ctx.arc?.(cx, cy, size * 1.5, 0, Math.PI * 2);
-    ctx.fillStyle = g;
-    ctx.fill?.();
+  state: Cube3DState, look: CubeAppearance,
+): void {
+  if (look.glow > 0.02 && typeof ctx.createRadialGradient === 'function') {
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 1.4)
+    const c = look.glowColor
+    g.addColorStop(0, `rgba(${c.r}, ${c.g}, ${c.b}, ${(look.glow * 0.45).toFixed(3)})`)
+    g.addColorStop(1, `rgba(${c.r}, ${c.g}, ${c.b}, 0)`)
+    ctx.beginPath()
+    ctx.arc(cx, cy, size * 1.4, 0, Math.PI * 2)
+    ctx.fillStyle = g
+    ctx.fill()
   }
-
-  const project = (x: number, y: number, z: number) => {
-    const scale = 250 / (250 + z * s);
-    return { x: cx + x * s * scale, y: cy + y * s * scale, scale };
-  };
-
-  const v = [
-    [-1,-1,-1], [1,-1,-1], [1,1,-1], [-1,1,-1],
-    [-1,-1,1],  [1,-1,1],  [1,1,1],  [-1,1,1],
-  ];
-  const rotated = v.map(([x, y, z]) => {
-    const x1 = x * Math.cos(rotY) - z * Math.sin(rotY);
-    const z1 = x * Math.sin(rotY) + z * Math.cos(rotY);
-    const y1 = y * Math.cos(rotX) - z1 * Math.sin(rotX);
-    const z2 = y * Math.sin(rotX) + z1 * Math.cos(rotX);
-    const x2 = x1 * Math.cos(rotZ) - y1 * Math.sin(rotZ);
-    const y2 = x1 * Math.sin(rotZ) + y1 * Math.cos(rotZ);
-    return [x2, y2, z2];
-  });
-
-  const faces = [
-    { idx: [4,5,6,7], normal: [0,0,1],  color: state.faces.F },
-    { idx: [0,3,2,1], normal: [0,0,-1], color: state.faces.B },
-    { idx: [0,1,5,4], normal: [0,-1,0], color: state.faces.D },
-    { idx: [2,3,7,6], normal: [0,1,0],  color: state.faces.U },
-    { idx: [0,4,7,3], normal: [-1,0,0], color: state.faces.L },
-    { idx: [1,2,6,5], normal: [1,0,0],  color: state.faces.R },
-  ];
-  faces.sort((a, b) => {
-    const za = a.idx.reduce((sum, i) => sum + rotated[i][2], 0) / 4;
-    const zb = b.idx.reduce((sum, i) => sum + rotated[i][2], 0) / 4;
-    return za - zb;
-  });
-
-  for (const face of faces) {
-    const pts = face.idx.map(i => {
-      const [x, y, z] = rotated[i];
-      return project(x, y, z);
-    });
-    const [nx, ny, nz] = face.normal;
-    const nz1 = nx * Math.sin(rotY) + nz * Math.cos(rotY);
-    const nz2 = ny * Math.sin(rotX) + nz1 * Math.cos(rotX);
-    if (nz2 < -0.1) continue;
-
-    ctx.beginPath?.();
-    ctx.moveTo?.(pts[0].x, pts[0].y);
-    for (const p of pts) ctx.lineTo?.(p.x, p.y);
-    ctx.closePath?.();
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fill?.();
-
-    for (let row = 0; row < 3; row++) {
-      for (let col = 0; col < 3; col++) {
-        const color = face.color[row * 3 + col];
-        const u = (col - 1) / 3 + 0.5;
-        const vv = (row - 1) / 3 + 0.5;
-        const top = lerpPt(pts[0], pts[1], u);
-        const bottom = lerpPt(pts[3], pts[2], u);
-        const p = lerpPt(top, bottom, vv);
-        const stickerSize = size * 0.28 * p.scale;
-        ctx.drawImage?.(
-          getStickerSprite(color),
-          p.x - stickerSize / 2, p.y - stickerSize / 2,
-          stickerSize, stickerSize,
-        );
-      }
+  for (const face of projectCube(cx, cy, size, state.rotation, state.explode)) {
+    if (state.explode < 0.05) {
+      // Black plastic body behind the stickers (hidden while exploding so pieces read as flying apart).
+      quad(ctx, face.outline)
+      ctx.fillStyle = '#111111'
+      ctx.fill()
     }
+    const colors = state.faces[face.key]
+    face.stickers.forEach((pts, i) => {
+      quad(ctx, pts)
+      ctx.fillStyle = colors[i]
+      ctx.fill()
+      if (face.light < 0.999) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${(1 - face.light).toFixed(3)})`
+        ctx.fill()
+      }
+    })
+  }
+  if (look.flash && look.flash.alpha > 0.01) {
+    const c = look.flash.color
+    ctx.beginPath()
+    ctx.arc(cx, cy, size * 0.75, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(${c.r}, ${c.g}, ${c.b}, ${look.flash.alpha.toFixed(3)})`
+    ctx.fill()
   }
 }

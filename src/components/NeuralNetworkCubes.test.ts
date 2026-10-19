@@ -3,90 +3,96 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 
 /**
- * NeuralNetworkBackground cube-sprite tests.
- * - Center-layer (layer 2) nodes render as Rubik's cube sprites via drawImage.
- * - Cubes respect the 28px minimum legibility floor.
- * - Other layers keep the arc core.
+ * 3D Rubik's cube renderer (cube3d.ts): real geometry, not sprites.
+ * Originally Muse's drawImage sprite test; rewritten for the perspective-quad renderer.
  */
-import React from 'react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render } from '@testing-library/react';
-import { NeuralNetworkBackground } from './NeuralNetworkBackground';
-import { IDLE_NEURAL_STATE } from '../hooks/useNeuralState';
+import { describe, it, expect, vi } from 'vitest';
+import { cubeFacesVariant, drawCube3D, looksSolved, projectCube, scrambleFaces, solvedCubeFaces } from './cube3d';
 
-function makeCtx() {
-  const calls: { name: string; args: unknown[] }[] = [];
-  const gradient = { addColorStop: vi.fn() };
-  const handler = {
-    get(_t: unknown, prop: string) {
-      if (prop === 'canvas') return { width: 800, height: 600 };
-      if (prop === 'createRadialGradient' || prop === 'createLinearGradient') {
-        return (...args: unknown[]) => { calls.push({ name: prop, args }); return gradient; };
-      }
-      return (...args: unknown[]) => { calls.push({ name: prop, args }); };
-    },
-    set() { return true; },
-  };
-  return { ctx: new Proxy({}, handler) as unknown as CanvasRenderingContext2D, calls };
-}
+// Same camera as the renderer (CUBE_TILT = -0.55): above the cube.
+const TILT = { x: -0.55, y: 0.7, z: 0 };
+const bbox = (pts: { x: number; y: number }[]) => {
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+};
 
-describe('NeuralNetworkBackground cubes', () => {
-  let rafCallbacks: FrameRequestCallback[];
-  let rafId = 0;
-
-  beforeEach(() => {
-    rafCallbacks = [];
-    rafId = 0;
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
-      rafCallbacks.push(cb);
-      return ++rafId;
-    });
-    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      value: vi.fn().mockImplementation(() => ({
-        matches: false, media: '', onchange: null,
-        addListener: vi.fn(), removeListener: vi.fn(),
-        addEventListener: vi.fn(), removeEventListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      })),
-    });
+describe('3D cube geometry', () => {
+  it('shows exactly three faces (top + two sides) at the standard tilt, back faces culled', () => {
+    const faces = projectCube(100, 100, 60, TILT);
+    expect(faces.map(f => f.key).sort()).toEqual(['F', 'R', 'U'].sort());
+    for (const f of faces) expect(f.stickers).toHaveLength(9);
   });
 
-  afterEach(() => { vi.restoreAllMocks(); });
+  it('sorts faces back to front (painter\'s algorithm)', () => {
+    const faces = projectCube(0, 0, 60, { x: 0.3, y: 2.1, z: 0.2 });
+    for (let i = 1; i < faces.length; i++) expect(faces[i].depth).toBeGreaterThanOrEqual(faces[i - 1].depth);
+  });
 
-  it('draws center-layer nodes as cube sprites via drawImage', () => {
-    const { ctx, calls } = makeCtx();
-    HTMLCanvasElement.prototype.getContext = vi.fn(() => ctx) as unknown as typeof HTMLCanvasElement.prototype.getContext;
-    HTMLCanvasElement.prototype.getBoundingClientRect = vi.fn(() => ({
-      width: 800, height: 600, top: 0, left: 0, right: 800, bottom: 600, x: 0, y: 0, toJSON: () => ({}),
-    }));
+  it('draws stickers as perspective quads that follow the face, not upright squares', () => {
+    const top = projectCube(0, 0, 60, TILT).find(f => f.key === 'U')!;
+    const s = top.stickers[4];
+    // An upright square would have two horizontal edges; a foreshortened face sticker does not.
+    const edgeSlope = Math.abs((s[1].y - s[0].y) / (s[1].x - s[0].x));
+    expect(edgeSlope).toBeGreaterThan(0.1);
+  });
 
-    render(React.createElement(NeuralNetworkBackground, {
-      state: IDLE_NEURAL_STATE, messageCount: 0, activeTab: 'chat',
-    }));
+  it('keeps the cube about the requested size', () => {
+    const all = projectCube(200, 200, 60, TILT).flatMap(f => f.outline);
+    const { w, h } = bbox(all);
+    expect(w).toBeGreaterThan(55);
+    expect(w).toBeLessThan(110);
+    expect(h).toBeGreaterThan(55);
+  });
 
-    // Run a few frames
-    let now = 1000;
-    for (let i = 0; i < 5; i++) {
-      const cbs = rafCallbacks.splice(0);
-      now += 16;
-      for (const cb of cbs) cb(now);
-    }
+  it('explode sends the stickers outward, then they come back with explode = 0', () => {
+    const spread = (e: number) => bbox(projectCube(0, 0, 60, TILT, e).flatMap(f => f.stickers.flat())).w;
+    expect(spread(1)).toBeGreaterThan(spread(0) * 1.3);
+    // The center sticker has no sideways spread: it must still move, along the face normal.
+    const center = (e: number) => { const st = projectCube(0, 0, 60, TILT, e).find(f => f.key === 'U')!.stickers[4]; return { x: st.reduce((a, p) => a + p.x, 0) / 4, y: st.reduce((a, p) => a + p.y, 0) / 4 } };
+    const c0 = center(0), c1 = center(1);
+    expect(Math.hypot(c1.x - c0.x, c1.y - c0.y)).toBeGreaterThan(10);
+  });
+});
 
-    const drawImageCalls = calls.filter(c => c.name === 'drawImage');
-    // Layer 2 has 10 nodes at low density; each 3D cube draws 54 stickers
-    // (6 faces x 9) via drawImage. Expect substantial sticker draws.
-    expect(drawImageCalls.length).toBeGreaterThan(0);
-    // Stickers scale with cube size (60px min -> ~16.8px stickers at scale 1).
-    // Verify they're in a sane range, not zero or absurd.
-    for (const call of drawImageCalls) {
-      const w = call.args[3] as number;
-      const h = call.args[4] as number;
-      expect(w).toBeGreaterThan(0);
-      expect(h).toBeGreaterThan(0);
-      expect(w).toBeLessThan(200);
-      expect(h).toBeLessThan(200);
-    }
+describe('cube faces', () => {
+  it('scrambles across faces (within-face swaps would be invisible on a solved cube)', () => {
+    expect(looksSolved(solvedCubeFaces())).toBe(true);
+    const mixed = scrambleFaces(solvedCubeFaces(), 0.6, 3);
+    expect(looksSolved(mixed, ['U', 'F', 'R'])).toBe(false);
+    const all = Object.values(mixed).flat();
+    for (const c of ['#ffffff', '#ffcf00', '#34c759', '#0a84ff', '#ff9500', '#ff3b30']) expect(all.filter(x => x === c)).toHaveLength(9);
+  });
+
+  it('caches face variants (no per-frame allocation)', () => {
+    expect(cubeFacesVariant(2)).toBe(cubeFacesVariant(2));
+    expect(looksSolved(cubeFacesVariant(0))).toBe(true);
+  });
+});
+
+describe('drawCube3D', () => {
+  const ctx = () => {
+    const fills: string[] = [];
+    let style = '';
+    const c = {
+      beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), arc: vi.fn(),
+      fill: vi.fn(() => { fills.push(style) }),
+      createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
+      set fillStyle(v: string) { style = String(v) }, get fillStyle() { return style },
+    };
+    return { c: c as unknown as CanvasRenderingContext2D, fills };
+  };
+
+  it('fills 27 colored stickers for the 3 visible faces, with no roundRect needed', () => {
+    const { c, fills } = ctx();
+    drawCube3D(c, 50, 50, 60, { faces: solvedCubeFaces(), rotation: TILT, explode: 0 }, { glow: 0, glowColor: { r: 0, g: 0, b: 0 }, flash: null });
+    const stickers = fills.filter(f => /^#[0-9a-f]{6}$/i.test(f) && f !== '#111111');
+    expect(stickers).toHaveLength(27);
+    expect(new Set(stickers)).toEqual(new Set(['#ffffff', '#34c759', '#ff3b30']));
+  });
+
+  it('draws glow behind and flash on top', () => {
+    const { c, fills } = ctx();
+    drawCube3D(c, 50, 50, 60, { faces: solvedCubeFaces(), rotation: TILT, explode: 0 }, { glow: 1, glowColor: { r: 255, g: 0, b: 68 }, flash: { color: { r: 0, g: 255, b: 136 }, alpha: 0.4 } });
+    expect(fills[fills.length - 1]).toMatch(/^rgba\(0, 255, 136/);
   });
 });
