@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { detectBestProvider, getBestProvider, providers, sendViaRouter } from './providerRouter'
 import type { AIRequest } from './types'
+import { buildRuntimeRequestContext } from '../codingAgentRuntime'
 
 describe('provider router', () => {
   it('uses DeepSeek 16B as the default without probing localhost', async () => {
@@ -89,5 +90,29 @@ describe('provider router', () => {
     if (result.success) return
     expect(result.error.message).toMatch(/^deepseek-not-dispatched:/)
     expect(result.error.message).not.toMatch(/unreachable|temporarily unavailable/i)
+  })
+
+  // App.tsx appends this envelope to every user message before routing (effectivePrompt).
+  const asSentByApp = (text: string) => `${text}\n\n${buildRuntimeRequestContext({ owner: 'DeviousDevv303', repo: 'forgeclaw', taskStatus: 'idle' })}`
+
+  it('answers a greeting directly even with the app runtime envelope attached', async () => {
+    for (const text of ['hi', 'hola', 'gracias']) {
+      const result = await sendViaRouter({
+        model: 'deepseek-16b', systemPrompt: '',
+        messages: [{ role: 'user', content: asSentByApp(text) }],
+        tools: [{ name: 'deepseek_reason', description: 'reason', parameters: {} }],
+      }, '', 'deepseek')
+      expect(result, text).toMatchObject({ success: true, response: { stopReason: 'simple-greeting' } })
+      if (result.success) expect(result.response.toolCalls ?? [], text).toHaveLength(0)
+    }
+  })
+
+  it('still dispatches DeepSeek for a real question carrying the same envelope', async () => {
+    const result = await sendViaRouter({
+      model: 'deepseek-16b', systemPrompt: '',
+      messages: [{ role: 'user', content: asSentByApp('What causes rainbows to form after rain?') }],
+      tools: [{ name: 'deepseek_reason', description: 'reason', parameters: {} }],
+    }, '', 'deepseek')
+    expect(result).toMatchObject({ success: true, response: { stopReason: 'deterministic-deepseek-reasoning' } })
   })
 })
