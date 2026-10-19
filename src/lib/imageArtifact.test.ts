@@ -161,3 +161,83 @@ describe('image run discovery and status polling', () => {
     expect(out.value).toMatchObject({ status: 'completed' })
   })
 })
+
+describe('image result download', () => {
+  const ctx = { ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' } as unknown as import('./forgeTools').ToolContext
+  const invocationId = 'test-invocation-123'
+  const runId = 7
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
+
+  /** Settle a promise under fake timers, advancing in 1s steps up to maxMs. */
+  async function settle<T>(pending: Promise<T>, maxMs: number): Promise<{ value?: T; error?: string; pending?: true }> {
+    let out: { value?: T; error?: string; pending?: true } = { pending: true }
+    pending.then(value => { out = { value } }, error => { out = { error: String(error instanceof Error ? error.message : error) } })
+    for (let t = 0; t < maxMs && out.pending; t += 1000) await vi.advanceTimersByTimeAsync(1000)
+    return out
+  }
+
+  const hungFetch = () => vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_r, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+  }))
+
+  const isMirror = (input: RequestInfo | URL) => String(input).includes('raw.githubusercontent.com')
+  const isArtifactList = (input: RequestInfo | URL) => String(input).includes('/artifacts?')
+
+  it('(a) mirror hangs → falls back to artifact path', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (isMirror(input)) return hungFetch()(input, init)
+      if (isArtifactList(input)) return Promise.resolve(Response.json({ artifacts: [] }))
+      return Promise.reject(new Error('Unexpected fetch: ' + String(input)))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { downloadImagePng } = await import('./imageArtifact')
+    const out = await settle(downloadImagePng(ctx, 'DeviousDevv303', 'forgeclaw', runId, invocationId), 30_000)
+    expect(out.error).toContain(`Artifact "generated-image-${invocationId}" was not found on run ${runId}`)
+  })
+
+  it('(b) artifact list hangs → bounded failure with stage label', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (isMirror(input)) return Promise.resolve(new Response(null, { status: 404 }))
+      if (isArtifactList(input)) return hungFetch()(input, init)
+      return Promise.reject(new Error('Unexpected fetch: ' + String(input)))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { downloadImagePng } = await import('./imageArtifact')
+    const out = await settle(downloadImagePng(ctx, 'DeviousDevv303', 'forgeclaw', runId, invocationId), 120_000)
+    expect(out.error).toContain('image-artifact-list')
+    expect(out.error).toMatch(/timed out|timeout/i)
+  })
+
+  it('(c) ZIP download hangs → bounded failure with stage label', async () => {
+    vi.useFakeTimers()
+    const artifact = { id: 1, name: `generated-image-${invocationId}`, size_in_bytes: 100, archive_download_url: 'https://api.github.com/zip', expired: false }
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (isMirror(input)) return Promise.resolve(new Response(null, { status: 404 }))
+      if (isArtifactList(input)) return Promise.resolve(Response.json({ artifacts: [artifact] }))
+      return hungFetch()(input, init) // ZIP download hangs
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { downloadImagePng } = await import('./imageArtifact')
+    const out = await settle(downloadImagePng(ctx, 'DeviousDevv303', 'forgeclaw', runId, invocationId), 200_000)
+    expect(out.error).toContain('image-artifact-download')
+    expect(out.error).toMatch(/timed out|timeout/i)
+  })
+
+  it('(d) happy path: mirror PNG returns data URL, no api.github.com fetch', async () => {
+    vi.useFakeTimers()
+    // Minimal 1x1 PNG (valid header for dimension parsing)
+    const pngBytes = new Uint8Array([137,80,78,71,13,10,26,10, 0,0,0,13,73,72,68,82, 0,0,0,1,0,0,0,1,8,2,0,0,0, 144,119,83,222])
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (isMirror(input)) return Promise.resolve(new Response(pngBytes, { headers: { 'Content-Type': 'image/png' } }))
+      return Promise.reject(new Error('Unexpected fetch: ' + String(input)))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { downloadImagePng } = await import('./imageArtifact')
+    const out = await settle(downloadImagePng(ctx, 'DeviousDevv303', 'forgeclaw', runId, invocationId), 10_000)
+    expect(out.value?.dataUrl.startsWith('data:image/png;base64,')).toBe(true)
+    const apiCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('api.github.com'))
+    expect(apiCalls.length).toBe(0)
+  })
+})
