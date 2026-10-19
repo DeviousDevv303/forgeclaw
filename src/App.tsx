@@ -763,12 +763,12 @@ function App() {
   const [errorLogEmail, setErrorLogEmail] = useState(() => safeGetItem('forgeclaw_error_log_email') || 'towerslutz@gmail.com')
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
 
-  const sendErrorLogs = async () => {
+  const sendErrorLogs = async (silent = false) => {
     const logText = formatErrorLogForEmail()
     const count = getErrorLog().length
     if (count === 0) {
-      alert('No errors logged yet.')
-      return
+      if (!silent) alert('No errors logged yet.')
+      return false
     }
     try {
       const output = await executeTool(
@@ -779,13 +779,36 @@ function App() {
         } },
         { ...loadToolContext(), ghToken, ghOwner: ghOwner || CANONICAL_IDENTITY.owner, ghRepo: ghRepo || CANONICAL_IDENTITY.repository },
       )
-      alert(output.startsWith('✓') ? `Sent ${count} log entries to ${errorLogEmail}` : output)
+      if (!silent) alert(output.startsWith('✓') ? `Sent ${count} log entries to ${errorLogEmail}` : output)
+      return output.startsWith('✓')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       logError('sendErrorLogs', msg)
-      alert(`Failed to send: ${msg}`)
+      if (!silent) alert(`Failed to send: ${msg}`)
+      return false
     }
   }
+
+  // Auto-send error logs every 30 minutes if enabled and there are new errors
+  const [autoSendErrorLogs, setAutoSendErrorLogs] = useState(() => safeGetItem('forgeclaw_auto_send_error_logs') === 'true')
+  useEffect(() => { safeSetItem('forgeclaw_auto_send_error_logs', autoSendErrorLogs ? 'true' : 'false') }, [autoSendErrorLogs])
+  useEffect(() => {
+    if (!autoSendErrorLogs) return
+    const interval = setInterval(async () => {
+      const lastSent = parseInt(safeGetItem('forgeclaw_error_log_last_sent') || '0', 10)
+      const entries = getErrorLog()
+      // Only send if there are errors newer than the last send
+      const hasNew = entries.some(e => e.timestamp > lastSent)
+      if (hasNew && entries.length > 0) {
+        const sent = await sendErrorLogs(true)
+        if (sent) {
+          safeSetItem('forgeclaw_error_log_last_sent', String(Date.now()))
+          clearErrorLog()
+        }
+      }
+    }, 30 * 60 * 1000) // 30 minutes
+    return () => clearInterval(interval)
+  }, [autoSendErrorLogs])
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
     return safeJsonParse(saved, [])
@@ -2482,7 +2505,7 @@ function App() {
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <button
-                    onClick={sendErrorLogs}
+                    onClick={() => sendErrorLogs()}
                     style={{ background: '#f97316', border: 'none', borderRadius: '4px', color: '#fff', padding: '8px 16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' }}
                   >
                     Send Error Logs ({getErrorLog().length})
@@ -2494,6 +2517,15 @@ function App() {
                     Clear
                   </button>
                 </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', color: '#999', fontSize: '11px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoSendErrorLogs}
+                    onChange={(e) => setAutoSendErrorLogs(e.target.checked)}
+                    style={{ accentColor: '#f97316' }}
+                  />
+                  Auto-send error logs every 30 minutes
+                </label>
               </section>
 
               {/* ── Foundational governance: read-only canonical projection ── */}
