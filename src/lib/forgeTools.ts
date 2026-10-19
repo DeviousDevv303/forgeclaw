@@ -90,6 +90,8 @@ export interface ToolContext {
   signal?: AbortSignal
   /** Records how to undo this run's changes (STOP uses it). Defaults to the active run's journal. */
   journal?: RunJournal
+  /** Called when a DeepSeek workflow is dispatched, with the invocation ID for resume. */
+  onDeepSeekDispatch?: (invocationId: string, dispatchedAt: number) => void
   tier1Active?: boolean
   guardianPosture?: GuardianPosture
   /** 'operator' for commands the human typed directly; otherwise writes are attributed to the agent. */
@@ -795,6 +797,21 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         let context = typeof input.context === 'string' ? input.context : ''
         const ref = typeof input.ref === 'string' && input.ref.trim() ? input.ref.trim() : 'main'
         const nexusLearn = input.nexus_learn !== false
+        const resumeInvocationId = typeof input.resume_invocation_id === 'string' && input.resume_invocation_id.trim()
+          ? input.resume_invocation_id.trim()
+          : null
+        // Resume path: skip dispatch, go straight to waiting for the existing run.
+        // Used when the app was backgrounded/killed mid-run and the user returns.
+        if (resumeInvocationId) {
+          const resumeDispatchedAt = typeof input.resume_dispatched_at === 'number'
+            ? input.resume_dispatched_at
+            : Date.now() - 5 * 60_000 // conservative: assume dispatched 5 min ago
+          const completed = await waitForDeepSeekResult(ctx, owner, repo, resumeInvocationId, resumeDispatchedAt)
+          if (isEmptyDeepSeekResponse(completed.result)) {
+            return `[TOOL ERROR] DeepSeek-16B run ${completed.run.html_url} finished but produced an empty response.`
+          }
+          return formatDeepSeekResultText(resumeInvocationId, owner, repo, ref, 'Resumed after app background', completed.run.html_url, completed.result)
+        }
         if (!task) throw new Error('DeepSeek task is required.')
         if (!token) throw new Error('No GitHub token configured.')
         // GitHub workflow_dispatch inputs have size limits (~64KB total).
@@ -852,6 +869,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           throw new Error(`deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: ${explanation}${detail ? ` DeepSeek dispatch response: ${detail.slice(0, 300)}` : ''}`)
         }
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'deepseek-16b.yml', needle: invocationId, since: dispatchedAt, label: 'deepseek_reason' })
+        try { ctx.onDeepSeekDispatch?.(invocationId, dispatchedAt) } catch { /* persistence is best-effort */ }
         const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
         if (isEmptyDeepSeekResponse(completed.result)) {
           return `[TOOL ERROR] DeepSeek-16B run ${completed.run.html_url} finished but produced an empty response, so there is no answer to show. Nothing was recorded for learning. Try again or rephrase.`

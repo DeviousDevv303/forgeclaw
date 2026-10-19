@@ -7,6 +7,100 @@ import { ThroneBackdrop } from './components/ThroneBackdrop'
 // import { SupabaseProvider } from './components/SupabaseProvider'
 import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
+
+/** Persisted DeepSeek run for resume after app background/kill. */
+interface PersistedDeepSeekRun {
+  invocationId: string
+  dispatchedAt: number
+  messageId: string
+  question: string
+}
+const DEEPSEEK_RUN_KEY = 'forgeclaw_active_deepseek_run'
+function saveActiveDeepSeekRun(run: PersistedDeepSeekRun) {
+  safeSetItem(DEEPSEEK_RUN_KEY, JSON.stringify(run))
+}
+function loadActiveDeepSeekRun(): PersistedDeepSeekRun | null {
+  return safeJsonParse<PersistedDeepSeekRun | null>(safeGetItem(DEEPSEEK_RUN_KEY), null)
+}
+function clearActiveDeepSeekRun() {
+  safeRemoveItem(DEEPSEEK_RUN_KEY)
+}
+
+/**
+ * Resume a DeepSeek run that was orphaned when the app was backgrounded or killed.
+ * Called on mount and when the tab becomes visible. If there's a persisted run
+ * but no active run in memory, re-attach to the GitHub workflow and wait for the result.
+ * Returns true if a resume was started.
+ */
+async function resumeOrphanedDeepSeekRun(
+  activeRunRef: React.MutableRefObject<{ id: string; controller: AbortController; messageId: string } | null>,
+  deps: {
+    executeTool: typeof import('./lib/forgeTools').executeTool
+    loadToolContext: typeof import('./lib/forgeTools').loadToolContext
+    ghToken: string
+    ghOwner: string
+    ghRepo: string
+    setMessages: React.Dispatch<React.SetStateAction<any[]>>
+    setLoading: (v: boolean) => void
+  },
+): Promise<boolean> {
+  const persisted = loadActiveDeepSeekRun()
+  if (!persisted) return false
+  if (activeRunRef.current) return false // already running, don't double-dispatch
+
+  // Don't resume runs older than 30 minutes (workflow timeout)
+  if (Date.now() - persisted.dispatchedAt > 30 * 60_000) {
+    clearActiveDeepSeekRun()
+    return false
+  }
+
+  const controller = new AbortController()
+  const runId = `resume-${Date.now()}`
+  activeRunRef.current = { id: runId, controller, messageId: persisted.messageId }
+
+  deps.setLoading(true)
+  deps.setMessages(prev => prev.map(m =>
+    m.id === persisted.messageId
+      ? { ...m, content: 'Resuming — reconnecting to the running DeepSeek workflow…', streaming: true }
+      : m,
+  ))
+
+  try {
+    const output = await deps.executeTool(
+      { id: `resume-${persisted.invocationId}`, name: 'deepseek_reason', input: {
+        task: 'resume', // placeholder, not used in resume path
+        resume_invocation_id: persisted.invocationId,
+        resume_dispatched_at: persisted.dispatchedAt,
+      } },
+      {
+        ...deps.loadToolContext(),
+        ghToken: deps.ghToken,
+        ghOwner: deps.ghOwner,
+        ghRepo: deps.ghRepo,
+        signal: controller.signal,
+      },
+    )
+    if (controller.signal.aborted) return true
+    const isError = output.startsWith('[TOOL ERROR]')
+    deps.setMessages(prev => prev.map(m =>
+      m.id === persisted.messageId
+        ? { ...m, content: output, streaming: false, agentPhase: isError ? 'BLOCKED' : 'COMPLETE' }
+        : m,
+    ))
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    deps.setMessages(prev => prev.map(m =>
+      m.id === persisted.messageId
+        ? { ...m, content: `[ERROR] Resume failed: ${msg}`, streaming: false }
+        : m,
+    ))
+  } finally {
+    deps.setLoading(false)
+    if (activeRunRef.current?.id === runId) activeRunRef.current = null
+    clearActiveDeepSeekRun()
+  }
+  return true
+}
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { WhatsAppConnector } from './components/WhatsAppConnector'
@@ -95,7 +189,6 @@ import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
 import { baselineToolNames, NO_TOOLS_NOTICE, SHELL_EXEC_GUIDANCE } from './lib/toolExposure'
-import { withForgeClawSignature } from './lib/signature'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -722,8 +815,25 @@ function App() {
         setNewerBuild(deployed)
       }
     }
-    const onVisible = () => { if (document.visibilityState === 'visible') void check() }
+    const doResume = () => {
+      void resumeOrphanedDeepSeekRun(activeRunRef, {
+        executeTool,
+        loadToolContext,
+        ghToken: ghToken || '',
+        ghOwner: ghOwner || CANONICAL_IDENTITY.owner,
+        ghRepo: ghRepo || CANONICAL_IDENTITY.repository,
+        setMessages,
+        setLoading,
+      })
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void check()
+        doResume()
+      }
+    }
     void check()
+    doResume()
     document.addEventListener('visibilitychange', onVisible)
     const interval = setInterval(() => void check(), 5 * 60_000)
     return () => { cancelled = true; document.removeEventListener('visibilitychange', onVisible); clearInterval(interval) }
@@ -788,17 +898,8 @@ function App() {
   }
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  const scrollToBottomInstant = () => messagesEndRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior })
 
   useEffect(() => { scrollToBottom() }, [messages])
-  // On initial load, jump straight to the latest message instead of landing mid-chat.
-  // Uses instant (not smooth) so it completes before paint; a second pass catches
-  // late layout shifts from images or content loading after first render.
-  useEffect(() => {
-    scrollToBottomInstant()
-    const t = window.setTimeout(scrollToBottomInstant, 300)
-    return () => window.clearTimeout(t)
-  }, [])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
@@ -1041,6 +1142,9 @@ function App() {
           ghOwner: ghOwner || CANONICAL_IDENTITY.owner,
           ghRepo: ghRepo || CANONICAL_IDENTITY.repository,
           signal: controller.signal,
+          onDeepSeekDispatch: (invocationId, dispatchedAt) => {
+            saveActiveDeepSeekRun({ invocationId, dispatchedAt, messageId: msgId, question })
+          },
         })
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         const isError = output.startsWith('[TOOL ERROR]')
@@ -1062,11 +1166,13 @@ function App() {
         setRequestStatus(isError ? 'blocked' : 'success')
         setLastRequestError(isError ? output : '')
         setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
+        clearActiveDeepSeekRun()
       } catch (error) {
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         const message = error instanceof Error ? error.message : String(error)
         setMessages(prev => prev.map(item => item.id === msgId ? { ...item, content: `[ERROR] ${message}`, streaming: false } : item))
         setRequestStatus('error')
+        clearActiveDeepSeekRun()
         setLastRequestError(message)
         setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
       } finally {
@@ -1700,7 +1806,7 @@ function App() {
       const visibleText = directImageCompleted
         ? ''
         : authoritativeRepositoryAnswer || cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)'
-      const messageContent = withForgeClawSignature([visibleText, completionSafetyNotice, secondarySynthesisNotice].filter(Boolean).join('\n\n'))
+      const messageContent = [visibleText, completionSafetyNotice, secondarySynthesisNotice].filter(Boolean).join('\n\n')
       const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${resolvedProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace
