@@ -1188,10 +1188,17 @@ function App() {
     // can emit code-token soup when a large tool protocol is injected for a
     // request that does not need tools.
     const deepSeekDuoDefault = isDeepSeekProvider(activeProvider)
-    const complexReasoningTask = !imageUrl && activeProvider !== 'anthropic' && shouldDispatchComplexTaskToDeepSeek(promptText)
+    const complexReasoningTask = !imageUrl && shouldDispatchComplexTaskToDeepSeek(promptText)
+    // Anthropic explicitly chosen: don't route to DeepSeek, but still offer general tools.
+    // The old `activeProvider !== 'anthropic'` check stripped ALL tools from Anthropic chat.
+    const isAnthropicOnly = activeProvider === 'anthropic' && !deepSeekDuoDefault
     const coreToolNames = codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
       : deepSeekDuoDefault || complexReasoningTask ? ['deepseek_reason'] : []
+    // Anthropic gets general tools (shell, repo state) but never deepseek_reason.
+    if (isAnthropicOnly && !codingTask) {
+      coreToolNames.push('github_repo_state', 'shell_exec', 'github_read_file', 'github_search_code')
+    }
     if (imageUrl) coreToolNames.push('analyze_image')
     coreToolNames.push(...baselineToolNames(activeProvider))
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
