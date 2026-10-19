@@ -118,6 +118,7 @@ export type AgentPhase =
 export type ToolFailureClass =
   | 'TOOL_FAILURE'
   | 'AUTH_FAILURE'
+  | 'RATE_LIMIT'
   | 'NETWORK_FAILURE'
   | 'DEPENDENCY_FAILURE'
   | 'INVALID_ASSUMPTION'
@@ -126,6 +127,7 @@ export type ToolFailureClass =
 
 export function classifyFailure(error: string): ToolFailureClass {
   const e = error.toLowerCase()
+  if (e.includes('rate limit') || e.includes('rate-limit') || e.includes('too many requests') || e.includes('api rate limit')) return 'RATE_LIMIT'
   if (e.includes('401') || e.includes('403') || e.includes('auth') || e.includes('unauthorized') || e.includes('key') || e.includes('token')) return 'AUTH_FAILURE'
   if (e.includes('404') || e.includes('not found') || e.includes('enoent') || e.includes('module')) return 'DEPENDENCY_FAILURE'
   if (e.includes('network') || e.includes('fetch') || e.includes('timeout') || e.includes('econnrefused') || e.includes('etimedout')) return 'NETWORK_FAILURE'
@@ -137,6 +139,7 @@ export function classifyFailure(error: string): ToolFailureClass {
 
 // KimiClaw regex-based alternative (used by telemetry for richer classification)
 export function classifyToolFailure(errorMsg: string): ToolFailureClass {
+  if (/rate.?limit|too many requests|api rate limit/i.test(errorMsg)) return 'RATE_LIMIT'
   if (/401|403|unauthorized|forbidden|api.?key|invalid.{0,20}key/i.test(errorMsg)) return 'AUTH_FAILURE'
   if (/failed to fetch|network|timeout|econnrefused|enotfound|net::err/i.test(errorMsg)) return 'NETWORK_FAILURE'
   if (/not found|missing|no such|dependency|module|package/i.test(errorMsg)) return 'DEPENDENCY_FAILURE'
@@ -204,6 +207,12 @@ export function getDiscardedPaths(
 ): DiscardedPath[] {
   const t = toolName.replace(/_/g, '-')
   switch (failureClass) {
+    case 'RATE_LIMIT':
+      return [
+        { label: `${t}/exponential-backoff`, probability: 13.8 },
+        { label: `${t}/alternate-endpoint`, probability: 8.6 },
+        { label: 'wait/rate-window-reset', probability: 4.2 },
+      ]
     case 'NETWORK_FAILURE':
       return [
         { label: `${t}/static-fallback`, probability: 12.7 },
@@ -285,6 +294,13 @@ export function decideRetry(
   }
 
   switch (failureClass) {
+    case 'RATE_LIMIT':
+      return {
+        shouldRetry: true,
+        reason: `Rate limit encountered (attempt ${attemptCount}/3).`,
+        alternativeStrategy: 'Back off before retrying and prefer a non-search or cached API path when available.',
+      }
+
     case 'NETWORK_FAILURE':
       return {
         shouldRetry: true,
