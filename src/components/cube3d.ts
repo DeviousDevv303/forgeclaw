@@ -70,7 +70,6 @@ export function looksSolved(faces: CubeFaces, keys: readonly FaceKey[] = FACE_OR
   return keys.every(k => faces[k].every(c => c === faces[k][0]))
 }
 
-<<<<<<< HEAD
 const facesCache = new Map<number, CubeFaces>()
 /** Cached faces: variant 0 = solved, 1..n = scrambles. No per-frame allocation. */
 export function cubeFacesVariant(variant: number): CubeFaces {
@@ -78,32 +77,6 @@ export function cubeFacesVariant(variant: number): CubeFaces {
   if (!f) {
     f = variant === 0 ? solvedCubeFaces() : scrambleFaces(solvedCubeFaces(), 0.6, variant)
     facesCache.set(variant, f)
-=======
-/** Faces with variant-based scrambling — variant 0 is solved, higher variants more scrambled. */
-export function cubeFacesVariant(variant: number): Cube3DState['faces'] {
-  const solved = solvedCubeFaces();
-  if (variant <= 0) return solved;
-  return scrambleFaces(solved, Math.min(1, variant * 0.2), variant * 1000);
-}
-
-// Sticker sprite cache: pre-render each color once, drawImage per frame.
-const stickerCache = new Map<string, HTMLCanvasElement>();
-function getStickerSprite(color: string): HTMLCanvasElement {
-  const hit = stickerCache.get(color);
-  if (hit) return hit;
-  const c = document.createElement('canvas');
-  c.width = 32; c.height = 32;
-  const ctx = c.getContext('2d');
-  if (ctx) {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.roundRect(2, 2, 28, 28, 4);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.beginPath();
-    ctx.roundRect(2, 2, 28, 14, 4);
-    ctx.fill();
->>>>>>> 1629aa2 (fix(build): resolve #127 type errors + deepseek discovery diagnostics)
   }
   return f
 }
