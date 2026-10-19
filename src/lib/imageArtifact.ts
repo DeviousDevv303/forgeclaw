@@ -47,6 +47,11 @@ const IMAGE_DISCOVERY_TIMEOUT_MS = 120_000
 
 const discoveryDelays = [100, 250, 500, 1000, 2000] as const
 const statusDelays = [1000, 2000, 3000, 5000, 8000] as const
+// The dispatched run is the newest one. 100 rows is ~1.6 MB per poll; 20 is enough
+// and far kinder to phone links (same fix as deepseekArtifact.ts #131).
+export const IMAGE_DISCOVERY_PAGE_SIZE = 20
+// Statuses that will not change by asking again: bad credential, missing permission, wrong repo/workflow.
+const PERSISTENT_DISCOVERY_STATUS = /GitHub HTTP (?:401|403|404)\b/
 
 function ghHeaders(ctx: ToolContext): Record<string, string> {
   return {
@@ -63,7 +68,7 @@ async function findCorrelatedImageRun(
   dispatchedAt: number,
 ): Promise<ImageWorkflowRun | undefined> {
   const runsRes = await fetch(
-    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${IMAGE_WORKFLOW_ID}/runs?event=workflow_dispatch&per_page=100`,
+    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${IMAGE_WORKFLOW_ID}/runs?event=workflow_dispatch&per_page=${IMAGE_DISCOVERY_PAGE_SIZE}`,
     { headers: ghHeaders(ctx), cache: 'no-store', signal: ctx.signal },
   )
   if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
@@ -83,10 +88,22 @@ export async function waitForImageRun(
   const discoveryDeadline = Date.now() + IMAGE_DISCOVERY_TIMEOUT_MS
   let run: ImageWorkflowRun | undefined
   let attempt = 0
+  let lastReadError: string | undefined
 
   while (!run && Date.now() < discoveryDeadline) {
     if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
-    run = await findCorrelatedImageRun(ctx, owner, repo, invocationId, dispatchedAt)
+    // The dispatch already succeeded, so one slow or failed list read must not abandon a run that is
+    // executing on GitHub. Keep polling until the deadline; only persistent HTTP statuses stop early.
+    try {
+      run = await findCorrelatedImageRun(ctx, owner, repo, invocationId, dispatchedAt)
+      lastReadError = undefined
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      const message = error instanceof Error ? error.message : String(error)
+      if (PERSISTENT_DISCOVERY_STATUS.test(message)) throw error
+      lastReadError = message
+      console.warn(`[image-discovery] read failed for ${invocationId}, retrying: ${message}`)
+    }
     if (run) break
 
     const remaining = discoveryDeadline - Date.now()
@@ -100,6 +117,9 @@ export async function waitForImageRun(
     await new Promise<void>(resolve => setTimeout(resolve, delay))
   }
 
+  if (!run && lastReadError) {
+    throw new Error(`Image generation dispatched, but GitHub could not be read to find run "${invocationId}" within ${IMAGE_DISCOVERY_TIMEOUT_MS / 1000}s. Last read error: ${lastReadError}`)
+  }
   if (!run) {
     throw new Error(`Image generation dispatched but correlated run "${invocationId}" was not found.`)
   }
@@ -111,14 +131,27 @@ export async function waitForImageRun(
   while (Date.now() - startTime < IMAGE_MAX_WAIT_MS) {
     if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
 
-    const statusRes = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
-      { headers: ghHeaders(ctx), signal: ctx.signal },
-    )
+    // A single failed status read must not kill a 46-minute image job.
+    // Treat transient failures as "still running" and keep polling.
+    try {
+      const statusRes = await fetch(
+        `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
+        { headers: ghHeaders(ctx), signal: ctx.signal },
+      )
 
-    if (!statusRes.ok) throw new Error(`GitHub run status ${statusRes.status}`)
-
-    finalRun = await statusRes.json() as ImageWorkflowRun
+      if (!statusRes.ok) {
+        const msg = `GitHub run status ${statusRes.status}`
+        if (PERSISTENT_DISCOVERY_STATUS.test(msg)) throw new Error(msg)
+        console.warn(`[image-status] read failed for run ${run.id}, retrying: ${msg}`)
+      } else {
+        finalRun = await statusRes.json() as ImageWorkflowRun
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      const message = error instanceof Error ? error.message : String(error)
+      if (PERSISTENT_DISCOVERY_STATUS.test(message)) throw error
+      console.warn(`[image-status] read failed for run ${run.id}, retrying: ${message}`)
+    }
 
     if (finalRun.status === 'completed') break
 
