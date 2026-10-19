@@ -94,7 +94,7 @@ import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
-import { baselineToolNames, NO_TOOLS_NOTICE } from './lib/toolExposure'
+import { baselineToolNames, NO_TOOLS_NOTICE, SHELL_EXEC_GUIDANCE } from './lib/toolExposure'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -1217,7 +1217,7 @@ function App() {
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isAnthropicOnly
-        ? '\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.'
+        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}`
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
