@@ -46,4 +46,24 @@ describe('stripReasoningArtifacts', () => {
     const input = '<think>reasoning</think>\n\n\n\nAnswer.';
     expect(stripReasoningArtifacts(input)).toBe('Answer.');
   });
+
+  it('strips lone envelope tags the model echoes without spaces, keeping the answer around them', () => {
+    // Real tails/heads from stored DeepSeek results (runs 157 and 148, and earlier variants).
+    const tail = 'Remember to take breaks as needed.\n\n[APPLICATION_IDENTITYapplication="ForgeClaw"repository="DeviousDevv303/forgeclaw"]'
+    const head = '[APPLICATION_IDENTITYapplication="ForgeClaw"repository="DeviousDevv303/forgeclaw"taskStatus="idle"]\n\nHello! I can help with that.'
+    const paren = 'What\'s the weather like in OKC tomorrow? (APPLICATION_IDENTITYapplication="ForgeClaw"repository="DeviousDevv303/forgeclaw"'
+    const endTag = 'Here is the plan.\n[END RUNTIME_STATE]'
+    const runtime = '[RUNTIME_STATErepository="DeviousDevv303/forgeclaw"taskStatus="idle"]\nThe answer is 42.'
+
+    expect(stripReasoningArtifacts(tail)).toBe('Remember to take breaks as needed.')
+    expect(stripReasoningArtifacts(head)).toBe('Hello! I can help with that.')
+    expect(stripReasoningArtifacts(paren)).toBe('What\'s the weather like in OKC tomorrow?')
+    expect(stripReasoningArtifacts(endTag)).toBe('Here is the plan.')
+    expect(stripReasoningArtifacts(runtime)).toBe('The answer is 42.')
+  })
+
+  it('leaves ordinary brackets and parentheses alone', () => {
+    const text = 'Use arr[0] (the first item) and see [docs](https://example.com).'
+    expect(stripReasoningArtifacts(text)).toBe(text)
+  })
 });
