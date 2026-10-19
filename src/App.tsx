@@ -1239,6 +1239,7 @@ function App() {
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         const isError = output.startsWith('[TOOL ERROR]')
         void recordLearning({ channel: 'tool', input: `ask_deepseek ${JSON.stringify(call.input)}`, result: output, outcome: outcomeFromToolOutput(output), toolName: call.name, actor: 'operator' })
+        if (isError) logError(`tool:${call.name}`, output.slice(0, 300), JSON.stringify(call.input).slice(0, 200))
         setActivityLog(prev => prev.map(entry => entry.id === activityId
           ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' }
           : entry,
@@ -1742,6 +1743,7 @@ function App() {
   const repeats = globalRecentToolCalls.filter(k => k === callKey).length
   if (repeats >= MAX_REPEATED_CALLS) {
     console.warn('[GUARDIAN] Detected tool call loop:', callKey)
+    logError('guardian:loop', `Detected repeated tool call loop: ${callKey}`, 'Task paused to prevent infinite loop')
     iterResults.push({
       toolCallId: call.id,
       name: call.name,
