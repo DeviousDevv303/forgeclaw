@@ -159,24 +159,7 @@ async function findRun(ctx: ToolContext, owner: string, repo: string, invocation
   const matched = runs.find(run => isCorrelatedShellRun(run, invocationId, dispatchedAt))
   if (matched) return matched as DeepSeekWorkflowRun | undefined
 
-  // Fallback: if exact ID match fails, use the most recent workflow_dispatch run
-  // on main from the last 10 minutes. This handles cases where the invocationId
-  // doesn't propagate correctly to the run name.
   if (runs.length > 0) {
-    const now = Date.now()
-    const recent = runs
-      .filter(run => run.event === 'workflow_dispatch' && run.head_branch === 'main')
-      .filter(run => {
-        const created = Date.parse(run.created_at ?? '')
-        return !Number.isNaN(created) && (now - created) < 10 * 60_000 && created <= now + 60_000
-      })
-      .sort((a, b) => Date.parse(b.created_at ?? '') - Date.parse(a.created_at ?? ''))[0]
-
-    if (recent) {
-      console.warn(`[deepseek-discovery] Exact match for ${invocationId} not found, using most recent run ${recent.id} (${recent.name}) as fallback`)
-      return recent as DeepSeekWorkflowRun
-    }
-
     // Log why runs were rejected — critical for diagnosing discovery failures
     const reasons = runs.slice(0, 5).map(run => {
       const label = `${run.name ?? ''} ${run.display_title ?? ''}`.trim().slice(0, 60)
