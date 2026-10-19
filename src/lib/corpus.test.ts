@@ -88,9 +88,15 @@ describe('NEXUS / Corpus Local Mode', () => {
     const result = await appendDeepSeekLearning('Explain routing', 'pending artifact', 'deepseek-test-1', 'private context')
     expect(result.candidate.admissionStatus).toBe('candidate')
     expect(result.candidate.runtime).toBe('github-actions')
-    expect(result.candidate.model).toBe('deepseek-ai/deepseek-coder-6.7b-instruct')
+    // Defaults to the checkpoint the workflow actually runs (deepseekCheckpoints.ts, tied to the workflow by a test).
+    expect(result.candidate.model).toBe('deepseek-ai/deepseek-llm-7b-chat')
     expect(result.candidate.input).toContain('[DEEPSEEK_TASK] Explain routing')
     expect(result.candidate.generatedResult).toContain('[DEEPSEEK_RESULT]')
+  })
+
+  it('records the checkpoint that actually answered when the caller knows it (e.g. the fallback)', async () => {
+    const result = await appendDeepSeekLearning('Explain routing', 'answer', 'deepseek-test-2', '', 'deepseek-ai/deepseek-coder-1.3b-instruct')
+    expect(result.candidate.model).toBe('deepseek-ai/deepseek-coder-1.3b-instruct')
   })
 
   it('extracts image patterns and suggests improvements only from approved learning', async () => {

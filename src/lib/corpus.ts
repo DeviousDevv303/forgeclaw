@@ -5,6 +5,7 @@
 // to initialize or use this module; synchronization is an explicit optional path.
 
 import { safeGetItem, safeSetItem, strictGetItem, strictSetItem, type StorageResult } from './storage'
+import { DEEPSEEK_PRIMARY_CHECKPOINT } from './deepseekCheckpoints'
 import { type AdmissionTrustConfig, type CandidateAuthorization, type AuthorizationValidation, verifyCandidateAuthorization } from './corpusAdmissionAuth'
 
 export type CorpusAdmissionStatus = 'raw' | 'candidate' | 'approved' | 'rejected'
@@ -73,6 +74,8 @@ export interface DeepSeekLearningInput {
   result: string
   invocationId: string
   context?: string
+  /** Checkpoint that actually produced the result (result_meta.txt `model=`). Defaults to the primary. */
+  model?: string
 }
 
 export interface ImageGenerationLearningInput {
@@ -330,7 +333,7 @@ export class CorpusRepository {
       context: input.context || `invocation_id=${input.invocationId}`,
       result: `[DEEPSEEK_RESULT]\n${input.result}`,
       runtime: 'github-actions',
-      model: 'deepseek-ai/deepseek-coder-6.7b-instruct',
+      model: input.model || DEEPSEEK_PRIMARY_CHECKPOINT,
       source: 'deepseek:github-actions',
       metadata: deepSeekMetadata(input.task, input.context || ''),
     })
@@ -553,8 +556,9 @@ export function appendDeepSeekLearning(
   deepseekResult: string,
   invocationId: string,
   context = '',
+  model?: string,
 ): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
-  return corpusRepository.appendDeepSeekLearning({ task, result: deepseekResult, invocationId, context })
+  return corpusRepository.appendDeepSeekLearning({ task, result: deepseekResult, invocationId, context, model })
 }
 
 /** Return an approved local answer when NEXUS has a matching learned record. */

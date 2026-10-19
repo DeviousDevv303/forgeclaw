@@ -22,9 +22,9 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 ## Current runtime
 
-The default is a combined runtime: CORPUS provides memory/context, NEXUS is the user-facing browser/WebGPU layer, and the existing DeepSeek GitHub Actions workflow is the primary reasoner for ordinary and complex requests. Qwen2.5 WebGPU is secondary local synthesis/fallback, not the primary reasoner. Local llama.cpp and Anthropic remain explicit provider choices.
+The default provider is **DeepSeek on GitHub Actions** (`DEFAULT_PROVIDER = 'deepseek'`, no API key needed; a GitHub token is). The repository's `deepseek-16b.yml` workflow runs `deepseek-ai/deepseek-llm-7b-chat` on a CPU-only runner, falling back to `deepseek-ai/deepseek-coder-1.3b-instruct` only if the primary cannot run. The "16B" in the name is legacy: no 16B model runs. An answer typically takes **10–17 minutes**; the chat shows elapsed time while it runs. Moonshot/Kimi, Anthropic and local llama.cpp are explicit provider choices.
 
-**Default flow:** `User → CORPUS context → DeepSeek workflow → (optional ForgeTools execution → real results → DeepSeek continuation) → Qwen/NEXUS synthesis → response`. Side effects stay in ForgeTools and its existing Guardian checks; NEXUS WebGPU does not receive tool authority. The workflow retains the DeepSeek-16B route/API contract but currently loads `deepseek-ai/deepseek-llm-7b-chat` as primary with `deepseek-ai/deepseek-coder-1.3b-instruct` as fallback. No actual 16B browser/WebGPU runtime is present.
+**Default flow (as implemented):** `User → (greetings answered instantly) → CORPUS context → DeepSeek workflow → (optional ForgeTools execution → real results → DeepSeek continuation) → response`. Side effects stay in ForgeTools behind its Guardian checks. A NEXUS/Qwen WebGPU provider exists in `src/lib/ai/providers/` but is **not wired into any route**, so there is no browser-local synthesis or fallback step today.
 
 The operator supplies provider credentials through the application's settings flow. Credentials are not intended to be committed to the repository.
 
@@ -49,6 +49,24 @@ The application includes project-local checks for scope, action impact, identity
 ### Failure visibility
 
 Failures are classified and surfaced in the Activity area. The current code distinguishes categories such as tool, authentication, network, dependency, invalid-assumption, user-constraint, and unknown failures.
+
+## Capability status
+
+Verified 2026-10-19 against the code and each workflow's last 30 GitHub runs. "Works" means it ran successfully end to end recently, not just that code exists.
+
+| Capability | Tool / workflow | Status |
+| --- | --- | --- |
+| Reasoning (default chat) | `deepseek_reason` / `deepseek-16b.yml` | Works (24 of last 30 succeeded; the rest were cancelled by STOP). Slow: 10–17 min per answer. |
+| Web search | `web_search` / `ddg_search.yml` (or Brave with a key) | Works (15 of 15). |
+| Image generation | `generate_image` / `generate-image.yml` | Works (28 of 30). |
+| Shell commands | `shell_exec` / `shell-exec.yml` | Works. Runs report the command's own exit code, so a failing command shows as a failed run. |
+| GitHub repo read/write, issues, runs, logs | `github_*` tools | Works with a GitHub token. |
+| Image analysis | `analyze_image` / `image-analyze.yml` | **Broken.** Workflow fails at import (`AutoModelForVision2Seq` was removed from `transformers`), and the tool never returns the result to the chat. |
+| Code review | `review_code` / `code-review.yml` | **Broken.** Loads CodeLlama-7B in float32 (~28 GB) on a 16 GB runner and is killed; the tool never returns the result to the chat. |
+| Browser automation | `browser-automation.yml` | **Broken.** `scripts/browser-automation.js` uses `require` in an ES-module package, and Playwright is not a dependency. Not exposed as a chat tool. |
+| Self-sculpt / shell repair | `sculpt_self`, `shell_patch` | Mixed: recent runs mostly fail at their validation steps; under review. |
+| Gmail, Calendar, WhatsApp | `gmail_*`, `calendar_*`, `send_whatsapp` | Need your own OAuth/API credentials in Settings; not verified here. |
+| `http_fetch`, `run_js` | browser-side | Work within browser limits (`http_fetch` is subject to the target site's CORS policy). |
 
 ## Architecture
 
