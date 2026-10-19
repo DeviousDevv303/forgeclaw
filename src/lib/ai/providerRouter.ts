@@ -132,7 +132,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
       }
       if (answer) return success({ text: answer, provider: 'deepseek', model: `DeepSeek 16B Actions (${deepSeekCheckpointLabel(latest.content)})`, stopReason: 'deepseek-synthesis-complete' })
     }
-    if (isDeepSeekProvider(selected)) return { success: false, error: classifyError(new Error('DeepSeek 16B is temporarily unavailable (GitHub Actions unreachable). Please try again in a moment.'), selected) }
+    if (isDeepSeekProvider(selected)) return { success: false, error: classifyError(new Error('deepseek-not-dispatched: the request reached the DeepSeek provider without the deepseek_reason tool, so no workflow was dispatched and GitHub Actions was never contacted.'), selected) }
     return success(selected === 'local' ? await sendLocalWithTimeout(request, apiKey) : await provider.send(request, apiKey))
   } catch (error) { return { success: false, error: classifyError(error, selected) } }
 }
