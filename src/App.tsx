@@ -94,6 +94,7 @@ import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
+import { baselineToolNames, NO_TOOLS_NOTICE } from './lib/toolExposure'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -1187,18 +1188,22 @@ function App() {
     // can emit code-token soup when a large tool protocol is injected for a
     // request that does not need tools.
     const deepSeekDuoDefault = isDeepSeekProvider(activeProvider)
-    const complexReasoningTask = !imageUrl && shouldDispatchComplexTaskToDeepSeek(promptText)
     // Anthropic explicitly chosen: don't route to DeepSeek, but still offer general tools.
-    // The old `activeProvider !== 'anthropic'` check stripped ALL tools from Anthropic chat.
+    // Excluding Anthropic here only stops the DeepSeek hand-off ("Use deepseek_reason for this complex
+    // task"); its tools now come from the block below and baselineToolNames().
     const isAnthropicOnly = activeProvider === 'anthropic' && !deepSeekDuoDefault
-    const coreToolNames = codingTask
+    const complexReasoningTask = !imageUrl && !isAnthropicOnly && shouldDispatchComplexTaskToDeepSeek(promptText)
+    const coreToolNames = (codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
-      : deepSeekDuoDefault || complexReasoningTask ? ['deepseek_reason'] : []
+      : deepSeekDuoDefault || complexReasoningTask ? ['deepseek_reason'] : [])
+      // Claude never delegates to the slow DeepSeek workflow, coding task or not.
+      .filter(name => !(isAnthropicOnly && (name === 'deepseek_reason' || name === 'ask_deepseek')))
     // Anthropic gets general tools (shell, repo state) but never deepseek_reason.
     if (isAnthropicOnly && !codingTask) {
       coreToolNames.push('github_repo_state', 'shell_exec', 'github_read_file', 'github_search_code')
     }
     if (imageUrl) coreToolNames.push('analyze_image')
+    coreToolNames.push(...baselineToolNames(activeProvider))
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
 
@@ -1211,6 +1216,8 @@ function App() {
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
+      : isAnthropicOnly
+        ? '\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.'
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
@@ -1225,7 +1232,7 @@ function App() {
     
     // Native function calling is not required: the router injects a compact
     // manual protocol when runtimeTools are present and the App loop parses it.
-    const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.`
+    const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.\n${NO_TOOLS_NOTICE}`
     const activeSystemPrompt = runtimeTools.length === 0
       ? conversationalSystemPrompt
       : finalSystemPrompt
