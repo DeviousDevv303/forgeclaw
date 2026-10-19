@@ -29,3 +29,17 @@ export function baselineToolNames(providerId: string): string[] {
 export const NO_TOOLS_NOTICE =
   'No tools are available in this message. You cannot read the repository, run commands, check workflow runs, or make commits right now. ' +
   'Never claim or imply that you did; never invent commit IDs, file contents, or run results. If the request needs them, say so plainly.'
+
+/**
+ * Where shell_exec really runs (.github/workflows/shell-exec.yml), so a hosted model stops guessing.
+ * 2026-10-19: Claude's first shell_exec was `git clone .../forgeclaw.git`, which failed (exit 128,
+ * "destination path 'forgeclaw' already exists") because the repo is already checked out there; it
+ * also used shell_exec (a 1-2 minute runner job) for a grep that github_search_code answers in seconds.
+ */
+export const SHELL_EXEC_GUIDANCE =
+  'Tool choice: read and search with github_read_file, github_list_files and github_search_code (seconds). ' +
+  'Use shell_exec only to RUN something (tests, builds, scripts, git history); each call is a separate 1-2 minute GitHub Actions job. ' +
+  'shell_exec facts: it starts in a fresh shallow checkout of the repository at main (working directory = repo root), so never git clone it; ' +
+  'node_modules is not installed (run `npm ci` first in the same command, e.g. `npm ci && npx vitest run src/lib`); ' +
+  'git history is one commit deep (run `git fetch --unshallow` first if you need it); there are no git credentials, so it cannot push; ' +
+  'nothing persists between calls; each job is limited to 10 minutes. Chain related steps into one command with &&.'
