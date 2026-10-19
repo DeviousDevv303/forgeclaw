@@ -56,6 +56,8 @@ class Llama:
     def create_completion(self, prompt, **kw):
         if os.environ.get('STUB_FAST_BOOM'):
             raise RuntimeError('boom mid-generation')
+        if os.environ.get('STUB_EMPTY_PRIMARY'):
+            return
         for word in ['FAST', ' ANSWER']:
             yield {'choices': [{'text': word}]}
 """,
@@ -125,13 +127,24 @@ class EngineSelection(unittest.TestCase):
         self.assertIn("slow fallback", meta)
         self.assertIn("boom mid-generation", meta)
 
+    def test_empty_primary_falls_back_to_transformers(self):
+        proc, result, meta = run({"STUB_EMPTY_PRIMARY": "1"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("SLOW ANSWER", result)
+        self.assertIn("DEGRADED ANSWER", result)
+        self.assertIn("empty response", meta)
+        self.assertIn("model=deepseek-ai/deepseek-coder-1.3b-instruct", meta)
+
     def test_forced_slow_engine_is_not_reported_as_a_failure(self):
         proc, result, meta = run({"DEEPSEEK_ENGINE": "hf"})
         self.assertEqual(result, "SLOW ANSWER")
         self.assertIn("fast_engine_error=not attempted", meta)
 
     def test_the_slow_engine_is_time_bounded(self):
-        self.assertIn("max_time=600", WORKFLOW.read_text(encoding="utf-8"))
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("max_time=600", workflow)
+        self.assertIn("temperature=0.6", workflow)
+        self.assertIn("top_p=0.9", workflow)
 
 
 if __name__ == "__main__":

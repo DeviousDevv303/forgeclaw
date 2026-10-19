@@ -258,7 +258,7 @@ jobs:
               budget = deepseek_gguf.N_CTX - max_new_tokens - 16
               prompt, trimmed = deepseek_gguf.fit_text(
                   prompt, lambda text: len(llm.tokenize(text.encode('utf-8'), add_bos=False)), budget)
-              stream = llm.create_completion(prompt, max_tokens=max_new_tokens, temperature=0.0,
+              stream = llm.create_completion(prompt, max_tokens=max_new_tokens, temperature=0.6, top_p=0.9,
                                              stop=deepseek_gguf.STOP, stream=True)
               text, tokens, seconds, timed_out = deepseek_gguf.generate(stream, max_new_tokens, FAST_TIME_BUDGET_S)
               fast['tokens'] += tokens
@@ -324,7 +324,9 @@ jobs:
                       **encoded,
                       max_new_tokens=max_new_tokens,
                       max_time=600,
-                      do_sample=False,
+                      do_sample=True,
+                      temperature=0.6,
+                      top_p=0.9,
                       pad_token_id=tokenizer.eos_token_id,
                   )
               generated = output[0][encoded['input_ids'].shape[1]:]
@@ -340,6 +342,11 @@ jobs:
                     f'falling back to {FALLBACK_MODEL}')
               model_used = FALLBACK_MODEL
               note = f'fallback checkpoint after primary failure: {type(primary_error).__name__}'
+              result = run_inference(FALLBACK_MODEL)
+          if not result.strip() and model_used == PRIMARY_MODEL:
+              print(f'Primary checkpoint returned an empty response; falling back to {FALLBACK_MODEL}')
+              model_used = FALLBACK_MODEL
+              note = 'fallback checkpoint after primary empty response'
               result = run_inference(FALLBACK_MODEL)
 
           result, output_cleanup_applied = clean_model_output(result)

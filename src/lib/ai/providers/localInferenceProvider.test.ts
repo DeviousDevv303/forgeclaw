@@ -9,7 +9,7 @@ import { callProvider } from '../../modelProviders'
 import { runSubAgent } from '../../managedAgent'
 import { FORGE_TOOLS, executeTool } from '../../forgeTools'
 import { parseManualToolCalls } from '../manualToolMode'
-import { classifyFailure, extractStatus, decideRetry } from '../../agentCore'
+import { classifyFailure, classifyToolFailure, extractStatus, decideRetry } from '../../agentCore'
 
 const endpoint = process.env.FORGECLAW_LOCAL_ENDPOINT || 'http://127.0.0.1:8080/v1'
 
@@ -161,8 +161,11 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
 
   it('exercises the agent-core classification, verification fields, and retry policy', () => {
     expect(classifyFailure('local tool execution failed')).toBe('TOOL_FAILURE')
+    expect(classifyFailure('GitHub API rate limit exceeded')).toBe('RATE_LIMIT')
+    expect(classifyToolFailure('GitHub HTTP 403: API rate limit exceeded')).toBe('RATE_LIMIT')
     expect(extractStatus('STATUS: COMPLETE\nNEXT_ACTION: none')).toBe('COMPLETE')
     expect(decideRetry('NETWORK_FAILURE', 1, false).shouldRetry).toBe(true)
+    expect(decideRetry('RATE_LIMIT', 1, false).alternativeStrategy).toContain('Back off')
     expect(decideRetry('TOOL_FAILURE', 1, true).requiresUserApproval).toBe(true)
   })
 
