@@ -7,6 +7,7 @@ import { ThroneBackdrop } from './components/ThroneBackdrop'
 // import { SupabaseProvider } from './components/SupabaseProvider'
 import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
+import { installErrorHandlers, logError, getErrorLog, clearErrorLog, formatErrorLogForEmail } from './lib/errorLog'
 
 /** Dynamic activity suffix for the ForgeClaw signature. */
 function forgeClawActivity(message?: { agentPhase?: string; toolResults?: Array<{ name: string }> }): string {
@@ -759,7 +760,32 @@ function App() {
   const tasteAbortRef = useRef<AbortController | null>(null)
   useEffect(() => () => { tasteAbortRef.current?.abort() }, [])
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
+  const [errorLogEmail, setErrorLogEmail] = useState(() => safeGetItem('forgeclaw_error_log_email') || 'towerslutz@gmail.com')
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
+
+  const sendErrorLogs = async () => {
+    const logText = formatErrorLogForEmail()
+    const count = getErrorLog().length
+    if (count === 0) {
+      alert('No errors logged yet.')
+      return
+    }
+    try {
+      const output = await executeTool(
+        { id: `error-log-${Date.now()}`, name: 'gmail_send', input: {
+          to: errorLogEmail,
+          subject: `ForgeClaw Error Log - ${new Date().toISOString().slice(0, 10)} (${count} entries)`,
+          body: logText,
+        } },
+        { ...loadToolContext(), ghToken, ghOwner: ghOwner || CANONICAL_IDENTITY.owner, ghRepo: ghRepo || CANONICAL_IDENTITY.repository },
+      )
+      alert(output.startsWith('✓') ? `Sent ${count} log entries to ${errorLogEmail}` : output)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      logError('sendErrorLogs', msg)
+      alert(`Failed to send: ${msg}`)
+    }
+  }
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
     return safeJsonParse(saved, [])
@@ -940,6 +966,8 @@ function App() {
     }
   }, [activeTab])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
+  useEffect(() => { safeSetItem('forgeclaw_error_log_email', errorLogEmail) }, [errorLogEmail])
+  useEffect(() => { installErrorHandlers() }, [])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
   useEffect(() => { safeSetItem('fm_anthropic_model', anthropicModel) }, [anthropicModel])
@@ -2436,6 +2464,37 @@ function App() {
         {activeTab === 'settings' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
+
+              {/* ── Error Log Email ── */}
+              <section aria-labelledby="error-log-heading" style={{ marginBottom: '18px', background: '#101010', border: '1px solid #3b2415', borderRadius: '6px', padding: '14px' }}>
+                <h2 id="error-log-heading" style={{ margin: '0 0 6px 0', color: '#f97316', fontSize: '13px', letterSpacing: '1px', textTransform: 'uppercase' }}>Error Log Email</h2>
+                <div style={{ color: '#999', fontSize: '10px', lineHeight: 1.5, marginBottom: '10px' }}>
+                  ForgeClaw captures errors automatically. Email the log for remote troubleshooting.
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  <input
+                    type="email"
+                    value={errorLogEmail}
+                    onChange={(e) => setErrorLogEmail(e.target.value)}
+                    placeholder="Email for error logs"
+                    style={{ flex: 1, background: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#ddd', padding: '8px', fontSize: '12px' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={sendErrorLogs}
+                    style={{ background: '#f97316', border: 'none', borderRadius: '4px', color: '#fff', padding: '8px 16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' }}
+                  >
+                    Send Error Logs ({getErrorLog().length})
+                  </button>
+                  <button
+                    onClick={() => { clearErrorLog(); alert('Error log cleared.') }}
+                    style={{ background: '#333', border: 'none', borderRadius: '4px', color: '#ddd', padding: '8px 16px', fontSize: '12px', cursor: 'pointer' }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </section>
 
               {/* ── Foundational governance: read-only canonical projection ── */}
               <section aria-labelledby="founder-principles-heading" style={{ marginBottom: '18px', background: '#101010', border: '1px solid #3b2415', borderRadius: '6px', padding: '14px' }}>
