@@ -713,7 +713,11 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           const look = cubeLook(soul, nowTs, cubeOrder.get(node.id) ?? 0, node.id);
           const exploding = look.explode > 0;
           const phaseRate = cubeSpinRate(st.phase, st.tokenVelocity, lit);
-          const rate = st.phase === 'blocked' && !exploding ? 0 : Math.max(phaseRate, look.spin * (lit ? 2 : 1));
+          // Blocked freezes the cube completely: no spin and no emotion wobble. The calm idle quarter turn is
+          // timed off the wall clock, so leaving it on made a "frozen" cube turn whenever a block landed in
+          // its window (and made the freeze test fail about 1 run in 11).
+          const frozenCube = st.phase === 'blocked' && !exploding;
+          const rate = frozenCube ? 0 : Math.max(phaseRate, look.spin * (lit ? 2 : 1));
           node.cubeAngle = nextCubeAngle(node.cubeAngle ?? node.id * 0.37, rate, cubeDt, solve !== null);
           const shake = cubeShake(st.errorLevel, nowTs, node.id);
           const jit = cubeJitter(look.jitterPx, nowTs, node.id);
@@ -722,7 +726,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           const blockedTint = st.phase === 'blocked' ? { r: 239, g: 68, b: 68 } : null;
           drawCube3D(ctx, node.x + shake.dx + jit.dx, node.y + shake.dy + jit.dy, size, {
             faces: cubeFacesVariant(variant),
-            rotation: { x: CUBE_TILT + Math.sin(time * 0.5 + node.id) * 0.08, y: node.cubeAngle + look.angleOffset, z: 0 },
+            rotation: { x: CUBE_TILT + Math.sin(time * 0.5 + node.id) * 0.08, y: node.cubeAngle + (frozenCube ? 0 : look.angleOffset), z: 0 },
             explode: look.explode,
           }, {
             glow: blockedTint ? Math.max(0.8, look.glow) : look.glow,

@@ -167,6 +167,32 @@ describe('NeuralNetworkBackground', () => {
     expect(new Set(frozen.slice(1).map(a => a.toFixed(4))).size).toBe(1)
   })
 
+  it('keeps a blocked cube frozen even while the wall clock is inside its calm idle turn', () => {
+    // The calm idle quarter turn is timed off Date.now(). Pin the clock at 7.7 s, where one of the ten
+    // cubes is mid-turn, and let it move 5 ms per read, as it does on a loaded CI runner.
+    let wall = 7_700
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => (wall += 5))
+    try {
+      rafCallbacks.length = 0
+      const { unmount } = render(React.createElement(NeuralNetworkBackground, { state: { ...IDLE_NEURAL_STATE, phase: 'blocked' }, messageCount: 0, activeTab: 'chat' }))
+      // Every cube's angle per frame. Which cube is mid-turn depends on its node id, so check them all.
+      const frames: string[][] = []
+      for (let i = 0; i < 6; i++) {
+        vi.mocked(drawCube3D).mockClear()
+        const cbs = rafCallbacks.splice(0)
+        clock += 50
+        for (const cb of cbs) cb(clock)
+        frames.push(cubeCalls().map(call => call[4].rotation.y.toFixed(4)))
+      }
+      unmount()
+      expect(frames.length).toBe(6)
+      expect(frames[1].length).toBeGreaterThan(0)
+      for (const frame of frames.slice(2)) expect(frame).toEqual(frames[1])
+    } finally {
+      nowSpy.mockRestore()
+    }
+  })
+
   it('flashes the cubes green when the core reports success', () => {
     render(React.createElement(NeuralNetworkBackground, { state: IDLE_NEURAL_STATE, messageCount: 0, activeTab: 'chat' }))
     window.dispatchEvent(new CustomEvent('forgeclaw:state', { detail: { state: 'success', activity: 0.3, intensity: 6, source: 'agent', timestamp: Date.now(), emotion: 'satisfied', energy: 20 } }))
