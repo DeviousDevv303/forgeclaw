@@ -67,7 +67,7 @@ async function resumeOrphanedDeepSeekRun(
     ghToken: string
     ghOwner: string
     ghRepo: string
-    setMessages: React.Dispatch<React.SetStateAction<any[]>>
+    setMessages: React.Dispatch<React.SetStateAction<Message[]>>
     setLoading: (v: boolean) => void
   },
 ): Promise<boolean> {
