@@ -33,6 +33,7 @@ describe('deepseek-16b.yml wiring', () => {
 
   it('installs the prebuilt llama.cpp wheel without compiling, and survives its absence', () => {
     expect(workflow).toContain('--only-binary=llama-cpp-python')
+    expect(workflow).toMatch(/pip install llama-cpp-python==\d+\.\d+\.\d+ --only-binary/)
     expect(workflow).toContain('abetlen.github.io/llama-cpp-python/whl/cpu')
     expect(workflow).toMatch(/\|\| echo "::warning::llama-cpp-python wheel unavailable/)
   })

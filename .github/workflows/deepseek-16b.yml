@@ -75,7 +75,7 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install transformers accelerate
           # Prebuilt CPU wheel (no compiling). If it is unavailable the run continues on the slow engine.
-          pip install llama-cpp-python --only-binary=llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+          pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
             || echo "::warning::llama-cpp-python wheel unavailable; DeepSeek will use the slow transformers engine"
 
       - name: Run DeepSeek
