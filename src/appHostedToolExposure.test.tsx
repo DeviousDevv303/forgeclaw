@@ -68,6 +68,9 @@ describe('hosted tool-calling providers get read-only repo tools', () => {
       expect(names, prompt).not.toContain('ask_deepseek')
       expect(body.system ?? '', prompt).not.toMatch(/Use deepseek_reason/)
       expect(names, prompt).toContain('github_read_file')
+      // Claude is told to use shell_exec; a coding task used to drop it (and web_search) entirely.
+      expect(names, prompt).toContain('shell_exec')
+      expect(names, prompt).toContain('web_search')
     }
   }, 30_000)
 

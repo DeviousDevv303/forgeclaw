@@ -448,3 +448,14 @@ describe('repository completion safety', () => {
     expect(hasSuccessfulRepositoryEvidence([{ name: 'run_js' }])).toBe(false)
   })
 })
+
+describe('coding capability tool lists', () => {
+  it('coding can run shell commands and search; coding-readonly can search but never execute', () => {
+    const coding = toolsForCapability('coding', FORGE_TOOLS).map(t => t.name)
+    const readonly = toolsForCapability('coding-readonly', FORGE_TOOLS).map(t => t.name)
+    expect(coding).toEqual(expect.arrayContaining(['shell_exec', 'web_search']))
+    expect(readonly).toContain('web_search')
+    expect(readonly).not.toContain('shell_exec')
+    expect(readonly).not.toContain('github_write_file')
+  })
+})
