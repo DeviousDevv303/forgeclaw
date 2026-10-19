@@ -38,7 +38,8 @@ The four recent shell failures were not sufficient, by run-list metadata alone, 
 - `package.json` was not modified.
 - No direct push to `main` was performed.
 - No NEXUS learning, CORPUS admission, Guardian, or observability code was deleted or bypassed.
-- No tree-search fallback was adopted: the existing proposal only matches file names, not code contents, and would therefore misrepresent `github_search_code` semantics. A server-side search proxy remains the correct follow-up if browser transport failures persist.
+- The tree-search fallback from merged PR #156 is present on `main`; it matches file names rather than code contents, so a server-side search proxy remains the correct follow-up if browser transport failures persist.
+- The five Qwen WebGPU files were already removed on `main` by merged PR #155 (`c7664ef`). The follow-up also removes the unused catch binding from the merged tree-search fallback and preserves safe GitHub transport/403 diagnostics when both search paths fail.
 
 ## Verification plan
 
