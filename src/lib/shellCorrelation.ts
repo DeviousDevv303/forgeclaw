@@ -1,5 +1,5 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
-// Proprietary source-available license. Commercial use requires written permission.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 
 export const MAX_SHELL_OUTPUT_CHARS = 6_000
 export const SHELL_STALE_RUN_WINDOW_MS = 60 * 60_000

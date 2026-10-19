@@ -1,5 +1,5 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
-// Proprietary source-available license. Commercial use requires written permission.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 
 import { isCorrelatedShellRun, type ShellWorkflowRun } from './shellCorrelation'
 
