@@ -22,7 +22,7 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 ## Current runtime
 
-The default provider is **DeepSeek on GitHub Actions** (`DEFAULT_PROVIDER = 'deepseek'`, no API key needed; a GitHub token is). The repository's `deepseek-16b.yml` workflow runs `deepseek-ai/deepseek-llm-7b-chat` on a CPU-only runner, falling back to `deepseek-ai/deepseek-coder-1.3b-instruct` only if the primary cannot run. The "16B" in the name is legacy: no 16B model runs. An answer typically takes **10–17 minutes**; the chat shows elapsed time while it runs. Moonshot/Kimi, Anthropic and local llama.cpp are explicit provider choices.
+The default provider is **DeepSeek on GitHub Actions** (`DEFAULT_PROVIDER = 'deepseek'`, no API key needed; a GitHub token is). The repository's `deepseek-16b.yml` workflow runs `deepseek-ai/deepseek-llm-7b-chat` on a CPU-only runner: normally a 4-bit GGUF (`TheBloke/deepseek-llm-7B-chat-GGUF`, Q4_K_M) through llama.cpp, with the full float16 model through transformers as a slow fallback, and `deepseek-ai/deepseek-coder-1.3b-instruct` only if the primary cannot run. The "16B" in the name is legacy: no 16B model runs. With the GGUF engine a short answer took about 2 minutes on 3 runs (before it, 10–17 minutes); long answers take longer at roughly 2 tokens/s. The chat shows elapsed time while it runs. Moonshot/Kimi, Anthropic and local llama.cpp are explicit provider choices.
 
 **Default flow (as implemented):** `User → (greetings answered instantly) → CORPUS context → DeepSeek workflow → (optional ForgeTools execution → real results → DeepSeek continuation) → response`. Side effects stay in ForgeTools behind its Guardian checks. A NEXUS/Qwen WebGPU provider exists in `src/lib/ai/providers/` but is **not wired into any route**, so there is no browser-local synthesis or fallback step today.
 
@@ -56,14 +56,14 @@ Verified 2026-10-19 against the code and each workflow's last 30 GitHub runs. "W
 
 | Capability | Tool / workflow | Status |
 | --- | --- | --- |
-| Reasoning (default chat) | `deepseek_reason` / `deepseek-16b.yml` | Works (24 of last 30 succeeded; the rest were cancelled by STOP). Slow: 10–17 min per answer. |
+| Reasoning (default chat) | `deepseek_reason` / `deepseek-16b.yml` | Works (24 of last 30 succeeded; the rest were cancelled by STOP). 10–17 min per answer on the old engine; about 2 min for a short answer on the GGUF engine (3 runs, not yet verified from `main`). |
 | Web search | `web_search` / `ddg_search.yml` (or Brave with a key) | Works (15 of 15). |
 | Image generation | `generate_image` / `generate-image.yml` | Works (28 of 30). |
 | Shell commands | `shell_exec` / `shell-exec.yml` | Works. Runs report the command's own exit code, so a failing command shows as a failed run. |
 | GitHub repo read/write, issues, runs, logs | `github_*` tools | Works with a GitHub token. |
-| Image analysis | `analyze_image` / `image-analyze.yml` | **Broken.** Workflow fails at import (`AutoModelForVision2Seq` was removed from `transformers`), and the tool never returns the result to the chat. |
-| Code review | `review_code` / `code-review.yml` | **Broken.** Loads CodeLlama-7B in float32 (~28 GB) on a 16 GB runner and is killed; the tool never returns the result to the chat. |
-| Browser automation | `browser-automation.yml` | **Broken.** `scripts/browser-automation.js` uses `require` in an ES-module package, and Playwright is not a dependency. Not exposed as a chat tool. |
+| Image analysis | `analyze_image` / `image-analyze.yml` | **Was broken 2026-10-19:** the workflow failed at import (`AutoModelForVision2Seq` was removed from `transformers`). Workflow fixed (Qwen2-VL via `.github/scripts/analyze_image.py`); not yet run live from `main`. The tool still only dispatches; showing the result in the chat needs `executeTool()` work. |
+| Code review | `review_code` / `code-review.yml` | **Was broken 2026-10-19:** loaded CodeLlama-7B in float32 (~28 GB) on a 16 GB runner and was killed. Workflow fixed (DeepSeek-Coder-6.7B Q4_K_M GGUF via `.github/scripts/review_code.py`); not yet run live from `main`. The tool still only dispatches; showing the result in the chat needs `executeTool()` work. |
+| Browser automation | `browser-automation.yml` | **Was broken 2026-10-19:** `scripts/browser-automation.js` used `require` in an ES-module package, and Playwright was not a dependency. Fixed (`scripts/browser-automation.cjs` + pinned Playwright); not yet run live from `main`. Not exposed as a chat tool. |
 | Self-sculpt / shell repair | `sculpt_self`, `shell_patch` | Mixed: recent runs mostly fail at their validation steps; under review. |
 | Gmail, Calendar, WhatsApp | `gmail_*`, `calendar_*`, `send_whatsapp` | Need your own OAuth/API credentials in Settings; not verified here. |
 | `http_fetch`, `run_js` | browser-side | Work within browser limits (`http_fetch` is subject to the target site's CORS policy). |
@@ -96,7 +96,7 @@ engine/
   server.ts                    Optional server-side runtime
 
 scripts/
-  browser-automation.js        Playwright automation entry point
+  browser-automation.cjs       Playwright automation entry point
   setupGitHooks.mjs            Local commit-hook setup
 ```
 

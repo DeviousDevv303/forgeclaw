@@ -94,6 +94,7 @@ import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
+import { baselineToolNames, NO_TOOLS_NOTICE } from './lib/toolExposure'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -1192,6 +1193,7 @@ function App() {
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
       : deepSeekDuoDefault || complexReasoningTask ? ['deepseek_reason'] : []
     if (imageUrl) coreToolNames.push('analyze_image')
+    coreToolNames.push(...baselineToolNames(activeProvider))
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
 
@@ -1218,7 +1220,7 @@ function App() {
     
     // Native function calling is not required: the router injects a compact
     // manual protocol when runtimeTools are present and the App loop parses it.
-    const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.`
+    const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.\n${NO_TOOLS_NOTICE}`
     const activeSystemPrompt = runtimeTools.length === 0
       ? conversationalSystemPrompt
       : finalSystemPrompt

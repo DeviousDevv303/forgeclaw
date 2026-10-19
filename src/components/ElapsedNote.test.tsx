@@ -20,7 +20,7 @@ describe('ElapsedNote', () => {
     expect(screen.queryByRole('status')).toBeNull()
 
     act(() => { vi.advanceTimersByTime(ELAPSED_NOTE_DELAY_MS + 1_000) })
-    expect(screen.getByRole('status').textContent).toBe('Still working · 0:06 · DeepSeek usually takes 10–17 min')
+    expect(screen.getByRole('status').textContent).toBe('Still working · 0:06 · DeepSeek usually takes 2–6 min (longer answers take longer). Press STOP to cancel.')
 
     act(() => { vi.advanceTimersByTime(4 * 60_000) })
     expect(screen.getByRole('status').textContent).toContain('Still working · 4:06')
