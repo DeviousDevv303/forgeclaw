@@ -5,7 +5,7 @@
 > ForgeClaw combines structured agent workflows, a provider-backed AI runtime, GitHub operations, browser-automation runners, safety checks, and failure visibility in one browser-based workspace.
 
 **Status:** Active development
-**License:** ForgeClaw Proprietary Source-Available License (see [LICENSE](LICENSE))
+**License:** Proprietary source-available (see LICENSE)
 
 ## What ForgeClaw does
 
