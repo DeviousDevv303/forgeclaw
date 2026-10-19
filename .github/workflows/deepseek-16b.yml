@@ -83,6 +83,10 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          # Run below the runner agent's priority, before torch starts its worker threads (they inherit it).
+          # The model uses every core; at equal priority the agent was starved and cancel requests sat
+          # unhandled for 25+ minutes (runs 161/162, 2026-10-19). Speed is unchanged when nothing competes.
+          os.nice(10)
           import re
           import sys
           import time
@@ -380,7 +384,18 @@ jobs:
           cp result_meta.txt "/tmp/deepseek-results-worktree/deepseek-results/${INVOCATION_ID}.meta.txt"
           git -C /tmp/deepseek-results-worktree add "deepseek-results/${INVOCATION_ID}.txt" "deepseek-results/${INVOCATION_ID}.meta.txt"
           git -C /tmp/deepseek-results-worktree commit -m "deepseek: publish ${INVOCATION_ID}"
-          git -C /tmp/deepseek-results-worktree push origin HEAD:deepseek-results
+          # Runs that finish seconds apart race on this branch (run 39188909218 was rejected "fetch first").
+          # Each run adds only its own uniquely named files, so rebasing onto the newer tip cannot conflict.
+          for attempt in 1 2 3 4 5; do
+            if git -C /tmp/deepseek-results-worktree push origin HEAD:deepseek-results; then
+              exit 0
+            fi
+            echo "mirror push rejected (attempt ${attempt}); rebasing onto the latest deepseek-results"
+            git -C /tmp/deepseek-results-worktree pull --rebase origin deepseek-results
+            sleep $((attempt * 2))
+          done
+          echo "mirror push failed after 5 attempts"
+          exit 1
 
       - name: Upload result artifact
         uses: actions/upload-artifact@v4

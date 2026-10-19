@@ -93,6 +93,7 @@ import { FOUNDER_PRINCIPLES, WHY_FORGECLAW_EXISTS } from './lib/founderPrinciple
 import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
+import { ElapsedNote } from './components/ElapsedNote'
 
 // Global loop detection tracking
 let globalRecentToolCalls: string[] = []
@@ -573,6 +574,9 @@ function App() {
     return safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage)
   })
   const [input, setInput] = useState('')
+  // Shown briefly when Enter is pressed while a request is still running (the send is ignored).
+  const [busyNotice, setBusyNotice] = useState(false)
+  const busyNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const activeRunRef = useRef<{ id: string; controller: AbortController; messageId: string; journal?: RunJournal } | null>(null)
@@ -1742,7 +1746,13 @@ function App() {
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
     // Keep the typed text while a request is still running; sendPrompt would ignore it anyway.
-    if (activeRunRef.current) return
+    // Say so, otherwise an ignored Enter looks like the app froze.
+    if (activeRunRef.current) {
+      setBusyNotice(true)
+      if (busyNoticeTimerRef.current) clearTimeout(busyNoticeTimerRef.current)
+      busyNoticeTimerRef.current = setTimeout(() => setBusyNotice(false), 4000)
+      return
+    }
     if (chatListening) {
       stopChatVoiceRecognition()
     }
@@ -2729,7 +2739,10 @@ function App() {
                           <img src={msg.imageUrl} alt={t('chat.uploadedAlt')} style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
                         )}
                         {msg.streaming ? (
-                          <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
+                          <>
+                            <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
+                            {msg.role === 'assistant' && <ElapsedNote since={msg.timestamp} deepSeek={isDeepSeekProvider(activeProvider)} />}
+                          </>
                         ) : msg.role === 'assistant' ? (
                           <div>{renderMessageContent(msg.content, (code) => { setCopiedCode(code); setTimeout(() => setCopiedCode(null), 2000) }, copiedCode)}</div>
                         ) : (
@@ -2941,6 +2954,9 @@ function App() {
                     <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage}>{t('chat.send')}</button>
                   )}
                 </div>
+                {busyNotice && (
+                  <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.busyNotice')}</div>
+                )}
                 {/* Connectors panel — quick-toggle sheet */}
                 {showConnectors && (
                   <div style={{

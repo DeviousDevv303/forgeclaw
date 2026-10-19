@@ -1,4 +1,6 @@
 import { corpusRepository, formatCorpusContext } from '../corpus'
+import { DEFAULT_PROVIDER } from '../providerDefaults'
+import { DEEPSEEK_FALLBACK_CHECKPOINT, DEEPSEEK_PRIMARY_CHECKPOINT } from '../deepseekCheckpoints'
 
 export interface DeepSeekTaskPayload {
   task: string
@@ -16,9 +18,9 @@ const MAX_VERIFIED_TOOL_CHARS = 8_000
  */
 export const FORGECLAW_ARCHITECTURE_CONTEXT = [
   'ForgeClaw architecture facts (checked-in runtime configuration; static design facts, not live repository-state evidence):',
-  '- DEFAULT_PROVIDER is `moonshot`; Moonshot/Kimi K2.6 is the primary reasoning runtime. DeepSeek remains an explicit selectable alternate provider backed by the repository-owned GitHub Actions workflow.',
+  `- DEFAULT_PROVIDER is \`${DEFAULT_PROVIDER}\`: the DeepSeek GitHub Actions workflow is the default reasoning runtime and needs no API key. Moonshot/Kimi, Anthropic and local llama.cpp are explicit selectable alternatives.`,
   '- When the user selects the DeepSeek provider, the provider router deterministically dispatches `deepseek_reason`. A repository-state request can first dispatch `github_repo_state` when that tool is available.',
-  '- The GitHub Actions workflow named `DeepSeek 16B` currently runs the public `deepseek-ai/deepseek-coder-6.7b-instruct` checkpoint; it falls back to the public 1.3B checkpoint only if the primary cannot load or run. The workflow name is legacy; neither checkpoint is a 16B model.',
+  `- The GitHub Actions workflow named \`DeepSeek 16B\` runs the public \`${DEEPSEEK_PRIMARY_CHECKPOINT}\` checkpoint; it falls back to \`${DEEPSEEK_FALLBACK_CHECKPOINT}\` only if the primary cannot load or run. It runs on a CPU-only runner, so an answer typically takes 10-17 minutes. The workflow name is legacy; neither checkpoint is a 16B model.`,
   '- The App executes actual tool calls through the ForgeTools dispatcher and appends returned tool output to the next turn. DeepSeek text is not proof that an action happened; only a real dispatcher result is. A result marked [TOOL ERROR], [GUARDIAN BLOCK], or [GUARDIAN REJECTED] is not evidence of successful execution.',
   '- There is no browser-local model fallback. If the DeepSeek workflow fails, surface the verified failure and do not invent a replacement answer.',
   '- Current repository contents, branch, commit, workflow status, and other live facts must come from an actual successful GitHub tool result; do not infer them from these static architecture notes.',

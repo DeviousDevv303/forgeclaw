@@ -43,7 +43,11 @@ describe('sending while a request is still running', () => {
 
     expect(dispatches()).toHaveLength(1)
     expect(box.value).toBe('Good morning, give me a calisthenics workout for today')
-  }, 15_000)
+    // The ignored Enter is explained, not silent.
+    expect(screen.getByText('Still working on your last request. Press STOP to cancel it.')).toBeTruthy()
+    // The running bubble shows a sign of life with the DeepSeek wait.
+    await waitFor(() => expect(screen.getByText(/Still working · \d+:\d\d · DeepSeek usually takes 10–17 min/)).toBeTruthy(), { timeout: 8000 })
+  }, 20_000)
 
   it('accepts a new send after STOP, so the guard can never lock the chat', async () => {
     const { default: App } = await import('./App')

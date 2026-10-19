@@ -2,7 +2,10 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CorpusRepository } from '../corpus'
 import { authorizationPayload, RFC8032_TEST_KEY_ID } from '../corpusAdmissionAuth'
-import { buildDeepSeekTaskPayload } from './deepseekContext'
+import { buildDeepSeekTaskPayload, FORGECLAW_ARCHITECTURE_CONTEXT } from './deepseekContext'
+import { DEEPSEEK_FALLBACK_CHECKPOINT, DEEPSEEK_PRIMARY_CHECKPOINT } from '../deepseekCheckpoints'
+import { DEFAULT_PROVIDER } from '../providerDefaults'
+import { readFileSync } from 'node:fs'
 import { buildRuntimeRequestContext } from '../codingAgentRuntime'
 
 class MemoryStorage implements Storage {
@@ -32,8 +35,8 @@ describe('DeepSeek task/context boundary', () => {
 
     expect(payload.task).toBe(task)
     expect(payload.context).toContain('ForgeClaw architecture facts')
-    expect(payload.context).toContain('Moonshot/Kimi K2.6 is the primary reasoning runtime')
-    expect(payload.context).toContain('DeepSeek remains an explicit selectable alternate provider')
+    expect(payload.context).toContain('the DeepSeek GitHub Actions workflow is the default reasoning runtime')
+    expect(payload.context).toContain('Moonshot/Kimi, Anthropic and local llama.cpp are explicit selectable alternatives')
     expect(payload.context).toContain('There is no browser-local model fallback')
     expect(payload.context).toContain('not repository evidence')
     expect(payload.context).not.toContain('[/RUNTIME_STATE]\n\n[RUNTIME_STATE')
@@ -89,5 +92,16 @@ describe('DeepSeek task/context boundary', () => {
     const envelope = buildRuntimeRequestContext({ owner: 'DeviousDevv303', repo: 'forgeclaw', taskStatus: 'idle' })
     const typed = 'Explain this tag: [APPLICATION_IDENTITY application="X"] then more words [/APPLICATION_IDENTITY] and why it matters'
     expect(buildDeepSeekTaskPayload(`${typed}\n\n${envelope}`).task).toBe(typed)
+  })
+
+  it('tells the model the real default provider and the checkpoints the workflow actually runs', () => {
+    // The model answers "what is ForgeClaw running?" from these facts, so they must match the source.
+    // They had drifted: they claimed DEFAULT_PROVIDER `moonshot` and a 6.7B coder checkpoint.
+    const workflow = readFileSync(new URL('../../../.github/workflows/deepseek-16b.yml', import.meta.url), 'utf8')
+    expect(workflow).toContain(`PRIMARY_MODEL = '${DEEPSEEK_PRIMARY_CHECKPOINT}'`)
+    expect(workflow).toContain(`FALLBACK_MODEL = '${DEEPSEEK_FALLBACK_CHECKPOINT}'`)
+    expect(FORGECLAW_ARCHITECTURE_CONTEXT).toContain(`DEFAULT_PROVIDER is \`${DEFAULT_PROVIDER}\``)
+    expect(FORGECLAW_ARCHITECTURE_CONTEXT).toContain(DEEPSEEK_PRIMARY_CHECKPOINT)
+    expect(FORGECLAW_ARCHITECTURE_CONTEXT).not.toMatch(/moonshot`; Moonshot\/Kimi K2\.6 is the primary|deepseek-coder-6\.7b/)
   })
 })

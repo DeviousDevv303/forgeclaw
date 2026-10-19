@@ -41,6 +41,9 @@ export const EN = {
 
   'chat.empty': 'System initialized. Awaiting input...',
   'chat.placeholder': 'Ask anything… or /deepseek <question>',
+  'chat.stillWorking': 'Still working · {time}',
+  'chat.deepSeekTypical': 'DeepSeek usually takes 10–17 min',
+  'chat.busyNotice': 'Still working on your last request. Press STOP to cancel it.',
   'chat.send': 'SEND',
   'chat.stop': 'STOP',
   'chat.stopAria': 'Stop generation',
@@ -450,6 +453,9 @@ const ES: Record<Key, string> = {
 
   'chat.empty': 'Sistema iniciado. Esperando instrucciones...',
   'chat.placeholder': 'Pregunta lo que quieras… o /deepseek <pregunta>',
+  'chat.stillWorking': 'Sigo trabajando · {time}',
+  'chat.deepSeekTypical': 'DeepSeek suele tardar 10–17 min',
+  'chat.busyNotice': 'Todavía estoy trabajando en tu última solicitud. Pulsa DETENER para cancelarla.',
   'chat.send': 'ENVIAR',
   'chat.stop': 'DETENER',
   'chat.stopAria': 'Detener la respuesta',
