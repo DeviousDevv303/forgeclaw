@@ -1,0 +1,13 @@
+What's the next UFC event? [APPLICATION_IDENTITY application="ForgeClaw" repository="DeviousDevv303/forgeclaw"]
+
+---
+
+To find the next UFC event, I will perform the following steps:
+
+1. Call the GitHub_search_code tool with the query "UFC upcoming events".
+2. Parse the JSON response to extract the relevant information, such as the event name, date, and location.
+3. Return the extracted information as a concrete response.
+
+```tool_call
+{"name": "github_search_code", "arguments": {"query": "UFC upcoming events", "count": 1}}
+```
