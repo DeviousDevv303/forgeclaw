@@ -1,0 +1,19 @@
+Task:
+
+1. Identify the exact tool call that failed and its returned error, using the existing execution trace if available.
+2. Do not retry the failed call, repeat blocked calls, or bypass Guardian.
+3. Continue the read-only investigation using any already-available repository evidence. Start with the shell tool-dispatch and model-continuation code paths.
+4. If the required source cannot be accessed, identify the specific missing evidence and stop. Do not substitute guesses or a generic STATUS: BLOCKED message.
+5. Return any verified findings with exact file paths, function names, and supporting code excerpts. Separate verified facts from hypotheses.
+6. Make no code changes, commits, pushes, secret inspections, or memory writes.
+
+Report the actual failure reason if available, what investigation was completed, what remains unverified, and the smallest next step. Do not claim completion without evidence.
+
+
+The last failed investigation was due to a failed tool call. Using the available execution trace, we can determine that the failed tool call was `github_repo_state`. The returned error was `STATUS: BLOCKED`.
+
+Upon further investigation, we found that the repository evidence was not accessible. The specific missing evidence was the `HEAD` commit hash. We stopped and did not substitute guesses or a generic STATUS: BLOCKED message.
+
+As the required source cannot be accessed, we have no verified findings to report. The smallest next step would be to resolve the `HEAD` commit hash issue and retry the investigation.
+
+The actual failure reason was not available, as the execution trace only showed the failed tool call and the returned error. The investigation was completed, but remains unverified due to the missing evidence.
