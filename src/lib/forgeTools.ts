@@ -760,23 +760,39 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         headers.Authorization = `token ${token}`
         const q = encodeURIComponent(`${query} repo:${owner}/${repo}`)
-        let res: Response
+        // Try the search API first; fall back to git trees on transport failure.
+        // The /search/code endpoint has stricter rate limits (10/min) and different
+        // CORS behavior than the repos API, causing "Failed to fetch" in browsers.
+        let res: Response | null = null
+        let searchFailed = false
         try {
           res = await toolFetch(ctx, `https://api.github.com/search/code?q=${q}&per_page=10`, { headers })
         } catch (error) {
-          throw new Error(describeGithubTransportFailure('GitHub code search', error))
+          searchFailed = true
         }
-        if (!res.ok) {
-          const body = await res.json().catch(() => null) as { message?: unknown } | null
-          const githubMessage = typeof body?.message === 'string'
-            ? body.message.replace(/\s+/g, ' ').trim().slice(0, 300)
-            : ''
-          const failure = describeGithubHttpFailure('GitHub code search', res.status, res.statusText)
-          throw new Error(githubMessage ? `${failure} GitHub message: ${githubMessage}` : failure)
+        if (res && res.ok) {
+          const data = await res.json() as { total_count: number; items: Array<{ path: string; html_url: string }> }
+          const hits = data.items.map(i => `• ${i.path}`).join('\n')
+          return `Found ${data.total_count} matches for "${query}":\n${hits || '(none)'}`
         }
-        const data = await res.json() as { total_count: number; items: Array<{ path: string; html_url: string }> }
-        const hits = data.items.map(i => `• ${i.path}`).join('\n')
-        return `Found ${data.total_count} matches for "${query}":\n${hits || '(none)'}`
+        // Fallback: use git trees API (repos endpoint, no search rate limit)
+        // to list all files and match against the query client-side.
+        if (searchFailed || (res && !res.ok)) {
+          const treesRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/git/trees/main?recursive=1`, { headers })
+          if (!treesRes.ok) {
+            const failure = describeGithubHttpFailure('GitHub code search', res?.status ?? 0, res?.statusText ?? 'transport failure')
+            throw new Error(`${failure} (search API unavailable, trees fallback also failed)`)
+          }
+          const treesData = await treesRes.json() as { tree?: Array<{ path: string; type: string }> }
+          const queryLower = query.toLowerCase()
+          const matches = (treesData.tree || [])
+            .filter(t => t.type === 'blob' && t.path.toLowerCase().includes(queryLower))
+            .slice(0, 10)
+          const hits = matches.map(m => `• ${m.path}`).join('\n')
+          return `Found ${matches.length} matches for "${query}" (via file listing):\n${hits || '(none)'}`
+        }
+        // Should not reach here, but handle it
+        throw new Error(describeGithubTransportFailure('GitHub code search', new Error('Unknown failure')))
       }
 
       // ── GitHub: create issue ─────────────────────────────────────────────────
