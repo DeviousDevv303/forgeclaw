@@ -32,6 +32,7 @@ import { isToolFailureOutput } from './lib/toolOutcome'
 import { createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
 import { outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
+import { WaitingNote } from './components/WaitingNote'
 import { DEFAULT_MOONSHOT_MODEL } from './lib/ai/providers/moonshotProvider'
 import { corpusRepository } from './lib/corpus'
 import { parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
@@ -2729,7 +2730,10 @@ function App() {
                           <img src={msg.imageUrl} alt={t('chat.uploadedAlt')} style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
                         )}
                         {msg.streaming ? (
-                          <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
+                          <>
+                            <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
+                            {msg.role === 'assistant' && <WaitingNote startedAt={msg.timestamp} deepseek={isDeepSeekProvider(activeProvider)} />}
+                          </>
                         ) : msg.role === 'assistant' ? (
                           <div>{renderMessageContent(msg.content, (code) => { setCopiedCode(code); setTimeout(() => setCopiedCode(null), 2000) }, copiedCode)}</div>
                         ) : (
