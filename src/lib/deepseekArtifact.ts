@@ -19,7 +19,7 @@
 
 import JSZip from 'jszip'
 import type { ToolContext } from './forgeTools'
-import { isCorrelatedShellRun, type ShellWorkflowRun } from './shellCorrelation'
+import { isCorrelatedShellRun, explainShellRunMismatch, type ShellWorkflowRun } from './shellCorrelation'
 import {
   describeGithubHttpFailure,
   githubStage,
@@ -150,7 +150,18 @@ async function findRun(ctx: ToolContext, owner: string, repo: string, invocation
   ))
   if (!response.ok) throw new Error(describeGithubHttpFailure('deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs', response.status, response.statusText))
   const data = await githubStage('deepseek-run-discovery response JSON', () => response.json()) as { workflow_runs?: Array<Partial<ShellWorkflowRun>> }
-  return data.workflow_runs?.find(run => isCorrelatedShellRun(run, invocationId, dispatchedAt)) as DeepSeekWorkflowRun | undefined
+  const runs = data.workflow_runs ?? []
+  const matched = runs.find(run => isCorrelatedShellRun(run, invocationId, dispatchedAt))
+  if (!matched && runs.length > 0) {
+    // Log why the most recent runs were rejected — critical for diagnosing discovery failures
+    const reasons = runs.slice(0, 5).map(run => {
+      const label = `${run.name ?? ''} ${run.display_title ?? ''}`.trim().slice(0, 60)
+      const reason = explainShellRunMismatch(run, invocationId, dispatchedAt)
+      return `${label}: ${reason ?? 'MATCHED (but not selected?)'}`
+    })
+    console.warn(`[deepseek-discovery] No match for ${invocationId} among ${runs.length} runs. Recent:`, reasons)
+  }
+  return matched as DeepSeekWorkflowRun | undefined
 }
 
 export async function waitForDeepSeekRun(ctx: ToolContext, owner: string, repo: string, invocationId: string, dispatchedAt: number): Promise<DeepSeekWorkflowRun> {

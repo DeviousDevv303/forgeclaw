@@ -562,7 +562,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
       const cubeDt = lastCubeFrameRef.current > 0 ? Math.min(0.1, Math.max(0, (cubeNow - lastCubeFrameRef.current) / 1000)) : 0;
       lastCubeFrameRef.current = cubeNow;
       const solve = solveProgress(neuralRef.current.completedAt ?? 0, nowTs);
-      const soul = soulRef.current;
+
       // Left-to-right order of the cubes, for the Mexican wave.
       const cubeOrder = new Map<number, number>();
       [...nodesRef.current.values()].filter(n => n.layer === 2).sort((a, b) => a.x - b.x).forEach((n, i) => cubeOrder.set(n.id, i));
@@ -709,6 +709,7 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
         // blocked freezes, completion squares up) come from the neural state.
         if (node.layer === 2) {
           const lit = Boolean(node.toolLit);
+          const soul = soulRef.current;
           const look = cubeLook(soul, nowTs, cubeOrder.get(node.id) ?? 0, node.id);
           const exploding = look.explode > 0;
           const phaseRate = cubeSpinRate(st.phase, st.tokenVelocity, lit);
