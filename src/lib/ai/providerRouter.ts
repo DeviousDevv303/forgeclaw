@@ -126,6 +126,10 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
     if (isDeepSeekProvider(selected) && latest?.name === 'deepseek_reason' && isSuccessfulDeepSeekToolResult(latest.content)) {
       const raw = latest.content.split('\n\n').slice(1).join('\n\n').trim()
       const answer = stripReasoningArtifacts(raw)
+      // If filtering removed everything, the model echoed prompt fragments instead of answering
+      if (!answer) {
+        return { success: false, error: classifyError(new Error('DeepSeek generated an empty or garbled response. Please try rephrasing your question.'), selected) }
+      }
       if (answer) return success({ text: answer, provider: 'deepseek', model: `DeepSeek 16B Actions (${deepSeekCheckpointLabel(latest.content)})`, stopReason: 'deepseek-synthesis-complete' })
     }
     if (isDeepSeekProvider(selected)) return { success: false, error: classifyError(new Error('DeepSeek 16B is temporarily unavailable (GitHub Actions unreachable). Please try again in a moment.'), selected) }
