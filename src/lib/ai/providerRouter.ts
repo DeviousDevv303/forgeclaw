@@ -67,9 +67,25 @@ function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: Provi
   const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? ''
   return /repository evidence comes from github tools|\b(repo|repository|codebase|forgeclaw|source|file|branch|commit|github)\b/i.test(text)
 }
+/**
+ * Simple messages that don't need DeepSeek reasoning — answer directly
+ * without hitting GitHub Actions. Covers greetings, acknowledgments,
+ * and other low-complexity chat in English and Spanish.
+ */
+const SIMPLE_MESSAGE_RE = /^(hi+|hey+|hello+|hola+|buenos?\s*d[ií]as|buenas?\s*(tardes|noches)|thanks?|gracias|thank\s*you|ok|okay|vale|bien|cool|nice|lol|jaja+|ad[ií]os|bye+|chao|sí|si|no|yeah?|yep|nope|\.+|\?+|!+)$/i;
+
+function isSimpleMessage(request: AIRequest): boolean {
+  const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? '';
+  const trimmed = text.trim();
+  // Short (< 30 chars) and matches simple pattern, or very short (< 10 chars)
+  return trimmed.length < 10 || (trimmed.length < 30 && SIMPLE_MESSAGE_RE.test(trimmed));
+}
+
 function shouldBootstrapDeepSeekReasoning(request: AIRequest, providerId: ProviderId): boolean {
   if (!isDeepSeekProvider(providerId) || !request.tools?.some(t => t.name === 'deepseek_reason')) return false
   if (failedDeepSeekToolResult(request)) return false
+  // Simple messages bypass GitHub Actions entirely
+  if (isSimpleMessage(request)) return false
   const latest = latestCurrentToolResult(request)
   return !latest || latest.name !== 'deepseek_reason'
 }
@@ -87,6 +103,14 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   const lastUser = [...request.messages].reverse().find(m => m.role === 'user')
   if (lastUser && isImageGenerationRequest(lastUser.content)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `direct-image-${Date.now()}`, name: 'generate_image', input: { prompt: extractImagePrompt(lastUser.content), style: inferImageStyle(extractImagePrompt(lastUser.content)), width: 512, height: 512 } }], stopReason: 'direct-image-intent' })
   const prior = latestCurrentToolResult(request)
+  // Simple greetings get a direct response — no GitHub Actions needed
+  if (isDeepSeekProvider(selected) && isSimpleMessage(request)) {
+    const lang = request.responseLanguage || 'en';
+    const greeting = lang.startsWith('es')
+      ? '¡Hola! ¿En qué te puedo ayudar?'
+      : 'Hey! What can I help you with?';
+    return success({ text: greeting, provider: selected, model: choice.model, stopReason: 'simple-greeting' });
+  }
   if (isDeepSeekProvider(selected) && prior?.name === 'deepseek_reason' && isGuardianBlockedResult(prior.content)) return { success: false, error: classifyError(new Error(`Guardian blocked the DeepSeek reasoning step. ${prior.content.slice(0, 300)}`), selected) }
   // Repository facts must be established before DeepSeek receives a coding or
   // repository-oriented task. Previously this check ran first, so a request
