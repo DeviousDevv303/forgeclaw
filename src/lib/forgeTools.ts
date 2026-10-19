@@ -768,6 +768,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         try {
           res = await toolFetch(ctx, `https://api.github.com/search/code?q=${q}&per_page=10`, { headers })
         } catch (error) {
+          void error
           searchFailed = true
         }
         if (res && res.ok) {

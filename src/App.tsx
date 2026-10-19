@@ -1963,7 +1963,7 @@ function App() {
         setLoading(false)
       }
     }
-  }, [anthropicApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, guardianPosture, requestGuardianApproval, agentResumedState]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [anthropicApiKey, moonshotApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, guardianPosture, requestGuardianApproval, agentResumedState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return

@@ -93,6 +93,87 @@ async function moonshotError(response: Response): Promise<string> {
   }
 }
 
+type MoonshotStreamEvent = {
+  choices?: Array<{
+    delta?: {
+      content?: string | null
+      tool_calls?: Array<{
+        index?: number
+        id?: string
+        function?: { name?: string; arguments?: string }
+      }>
+    }
+    finish_reason?: string | null
+  }>
+  error?: { message?: string } | string
+}
+
+async function readMoonshotStream(
+  response: Response,
+  onToken: (token: string) => void,
+): Promise<{ text: string; toolCalls?: AIToolCall[]; stopReason?: string }> {
+  const reader = response.body?.getReader()
+  if (!reader) return { text: '' }
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let text = ''
+  const streamedCalls = new Map<number, { id: string; name: string; arguments: string }>()
+  let stopReason: string | undefined
+
+  const consumeLine = (line: string) => {
+    if (!line.startsWith('data: ')) return
+    const raw = line.slice(6).trim()
+    if (!raw || raw === '[DONE]') return
+    const event = JSON.parse(raw) as MoonshotStreamEvent
+    if (event.error) {
+      const detail = typeof event.error === 'string' ? event.error : event.error.message
+      throw new Error(detail || 'Moonshot stream error')
+    }
+    const choice = event.choices?.[0]
+    const delta = choice?.delta
+    if (choice?.finish_reason) stopReason = choice.finish_reason
+    if (delta?.content) {
+      text += delta.content
+      onToken(delta.content)
+    }
+    for (const call of delta?.tool_calls ?? []) {
+      const index = call.index ?? streamedCalls.size
+      const existing = streamedCalls.get(index) ?? { id: '', name: '', arguments: '' }
+      if (call.id) existing.id = call.id
+      if (call.function?.name) existing.name += call.function.name
+      if (call.function?.arguments) existing.arguments += call.function.arguments
+      streamedCalls.set(index, existing)
+    }
+  }
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) consumeLine(line.trimEnd())
+    }
+    if (buffer) consumeLine(buffer.trimEnd())
+  } finally {
+    reader.releaseLock()
+  }
+
+  const toolCalls = [...streamedCalls.values()]
+    .map(call => ({
+      id: call.id,
+      name: call.name,
+      input: (() => {
+        try { return JSON.parse(call.arguments || '{}') as Record<string, unknown> } catch { return {} }
+      })(),
+    }))
+    .filter(call => call.id && call.name)
+
+  return { text, toolCalls: toolCalls.length ? toolCalls : undefined, stopReason }
+}
+
 export const moonshotProvider: AIProvider = {
   id: 'moonshot',
   label: 'Moonshot (Kimi)',
@@ -137,46 +218,8 @@ export const moonshotProvider: AIProvider = {
     
     if (request.onToken) {
       // Streaming response
-      const reader = response.body?.getReader()
-      if (!reader) return { text: '', provider: 'moonshot', model, stopReason: 'stop' }
-      
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let text = ''
-      
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() ?? ''
-          
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue
-            const raw = line.slice(6).trim()
-            if (!raw || raw === '[DONE]') continue
-            
-            try {
-              const event = JSON.parse(raw) as { choices?: Array<{ delta?: { content?: string }; finish_reason?: string }>; error?: { message?: string } }
-              if (event.error?.message) throw new Error(event.error.message)
-              
-              const token = event.choices?.[0]?.delta?.content
-              if (token) {
-                text += token
-                request.onToken?.(token)
-              }
-            } catch (e) {
-              console.warn('Failed to parse Moonshot stream event:', e, raw)
-            }
-          }
-        }
-      } finally {
-        reader.releaseLock()
-      }
-      
-      return { text, provider: 'moonshot', model, stopReason: 'stop' }
+      const streamed = await readMoonshotStream(response, request.onToken)
+      return { text: streamed.text, provider: 'moonshot', model, toolCalls: streamed.toolCalls, stopReason: streamed.stopReason || 'stop' }
     }
     
     // Non-streaming response
