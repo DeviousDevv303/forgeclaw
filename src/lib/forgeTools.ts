@@ -7,7 +7,7 @@
 import { safeGetItem, safeSetItem } from './storage'
 import { resolveGithubToken } from './githubAuth'
 import { describeGithubDispatchFailure } from './githubDispatchErrors'
-import { describeGithubTransportFailure, toolFetch } from './githubFetch'
+import { describeGithubHttpFailure, describeGithubTransportFailure, toolFetch } from './githubFetch'
 import { normalizeKnownShellExecutable } from './shellCommand'
 import {
   FORGECLAW_AGENT_ID,
@@ -756,11 +756,24 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       // ── GitHub: search code ──────────────────────────────────────────────────
       case 'github_search_code': {
         const query = input.query as string
+        if (!token.trim()) throw new Error('GitHub code search requires authentication. Add a GitHub token in Settings; public file reads may still work without one.')
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
-        if (token) headers.Authorization = `token ${token}`
+        headers.Authorization = `token ${token}`
         const q = encodeURIComponent(`${query} repo:${owner}/${repo}`)
-        const res = await toolFetch(ctx, `https://api.github.com/search/code?q=${q}&per_page=10`, { headers })
-        if (!res.ok) throw new Error(`GitHub search ${res.status}`)
+        let res: Response
+        try {
+          res = await toolFetch(ctx, `https://api.github.com/search/code?q=${q}&per_page=10`, { headers })
+        } catch (error) {
+          throw new Error(describeGithubTransportFailure('GitHub code search', error))
+        }
+        if (!res.ok) {
+          const body = await res.json().catch(() => null) as { message?: unknown } | null
+          const githubMessage = typeof body?.message === 'string'
+            ? body.message.replace(/\s+/g, ' ').trim().slice(0, 300)
+            : ''
+          const failure = describeGithubHttpFailure('GitHub code search', res.status, res.statusText)
+          throw new Error(githubMessage ? `${failure} GitHub message: ${githubMessage}` : failure)
+        }
         const data = await res.json() as { total_count: number; items: Array<{ path: string; html_url: string }> }
         const hits = data.items.map(i => `• ${i.path}`).join('\n')
         return `Found ${data.total_count} matches for "${query}":\n${hits || '(none)'}`
