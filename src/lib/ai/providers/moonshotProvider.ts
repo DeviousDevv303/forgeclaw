@@ -37,6 +37,11 @@ function toMoonshotMessages(systemPrompt: string, messages: AIMessage[]): Array<
   ]
   
   for (const msg of messages) {
+    // Moonshot rejects empty assistant messages (400). Skip messages with
+    // no content and no tool calls — these come from failed/empty responses.
+    const hasContent = msg.content && msg.content.trim().length > 0
+    const hasToolCalls = msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0
+    if (!hasContent && !hasToolCalls) continue
     if (msg.role === 'tool') {
       result.push({
         role: 'tool',
