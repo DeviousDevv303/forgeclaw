@@ -59,21 +59,24 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Cache Hugging Face model files
-        uses: actions/cache@v4
+      # Fast engine: a 4-bit GGUF (about 4 GB) of the same DeepSeek 7B chat model, run by llama.cpp.
+      # The cache is restored here and saved only after the file is confirmed present, so a run that fell
+      # back to the slow engine can never poison the key with an empty directory. The old 14 GB float16
+      # cache is deliberately not restored (it cost 2-4 minutes per run); the slow fallback downloads on demand.
+      - name: Restore GGUF model cache
+        id: gguf_cache
+        uses: actions/cache/restore@v4
         with:
-          path: ~/.cache/huggingface
-          key: deepseek-16b-${{ runner.os }}-${{ hashFiles('.github/workflows/deepseek-16b.yml') }}
-          # The key hashes this file, so any edit would otherwise force a full model
-          # re-download. Fall back to the newest earlier cache for this runner OS.
-          restore-keys: |
-            deepseek-16b-${{ runner.os }}-
+          path: ~/.cache/forgeclaw-gguf
+          key: deepseek-gguf-v1-${{ runner.os }}
 
       - name: Install inference dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install transformers accelerate
+          # Prebuilt CPU wheel (no compiling). If it is unavailable the run continues on the slow engine.
+          pip install llama-cpp-python --only-binary=llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+            || echo "::warning::llama-cpp-python wheel unavailable; DeepSeek will use the slow transformers engine"
 
       - name: Run DeepSeek
         env:
@@ -90,6 +93,7 @@ jobs:
           # Stops the model narrating results for a tool call it only requested.
           sys.path.insert(0, '.github/scripts')
           from deepseek_tool_calls import normalize_tool_call_output
+          import deepseek_gguf
           from transformers import AutoModelForCausalLM, AutoTokenizer
 
           # Use DeepSeek's general conversational checkpoint for the primary
@@ -215,8 +219,61 @@ jobs:
 
           loaded_models = {}
 
+          # ---- fast engine: llama.cpp + 4-bit GGUF of the same primary model -------------------------
+          GGUF_DIR = os.path.expanduser('~/.cache/forgeclaw-gguf')
+          FAST_TIME_BUDGET_S = 420  # a partial answer is returned (and flagged) rather than waiting longer
+          fast = {'llm': None, 'failed': False, 'file': None, 'load_s': 0.0, 'tokens': 0, 'gen_s': 0.0,
+                  'timed_out': False, 'trimmed': False, 'version': None, 'error': None}
+
+          def fast_engine():
+              if os.environ.get('DEEPSEEK_ENGINE', 'gguf') == 'hf' or fast['failed']:
+                  return None
+              if fast['llm'] is None:
+                  try:
+                      import llama_cpp
+                      from huggingface_hub import hf_hub_download, list_repo_files
+                      t0 = time.time()
+                      llm, file_name = deepseek_gguf.load_model(
+                          GGUF_DIR, list_repo_files,
+                          lambda repo, name, local_dir: hf_hub_download(repo_id=repo, filename=name, local_dir=local_dir),
+                          llama_cpp.Llama,
+                      )
+                      fast.update(llm=llm, file=file_name, load_s=round(time.time() - t0, 1),
+                                  version=getattr(llama_cpp, '__version__', 'unknown'))
+                      print(f'Fast engine ready: {file_name} (llama-cpp-python {fast["version"]}) in {fast["load_s"]}s')
+                  except Exception as error:  # noqa: BLE001 - any failure means: use the slow engine
+                      fast.update(failed=True, error=f'{type(error).__name__}: {error}'[:300])
+                      print(f'Fast engine unavailable ({fast["error"]}); using the transformers engine.')
+                      return None
+              return fast['llm']
+
+          def run_fast(llm, active_messages, max_new_tokens):
+              system_text = '\n\n'.join(m['content'] for m in active_messages if m['role'] == 'system')
+              user_text = '\n\n'.join(m['content'] for m in active_messages if m['role'] == 'user')
+              prompt = deepseek_gguf.build_prompt(system_text, user_text)
+              budget = deepseek_gguf.N_CTX - max_new_tokens - 16
+              prompt, trimmed = deepseek_gguf.fit_text(
+                  prompt, lambda text: len(llm.tokenize(text.encode('utf-8'), add_bos=False)), budget)
+              stream = llm.create_completion(prompt, max_tokens=max_new_tokens, temperature=0.0,
+                                             stop=deepseek_gguf.STOP, stream=True)
+              text, tokens, seconds, timed_out = deepseek_gguf.generate(stream, max_new_tokens, FAST_TIME_BUDGET_S)
+              fast['tokens'] += tokens
+              fast['gen_s'] = round(fast['gen_s'] + seconds, 1)
+              fast['timed_out'] = fast['timed_out'] or timed_out
+              fast['trimmed'] = fast['trimmed'] or trimmed
+              print(f'Fast engine: {tokens} tokens in {seconds}s (timed_out={timed_out}, trimmed={trimmed})')
+              return text
+
           def run_inference(model_id, active_messages=None, max_new_tokens=768):
               active_messages = active_messages or messages
+              if model_id == PRIMARY_MODEL:
+                  llm = fast_engine()
+                  if llm is not None:
+                      try:
+                          return run_fast(llm, active_messages, max_new_tokens)
+                      except Exception as error:  # noqa: BLE001
+                          fast.update(failed=True, error=f'generation: {type(error).__name__}: {error}'[:300])
+                          print(f'Fast engine failed during generation ({fast["error"]}); using the transformers engine.')
               loaded = loaded_models.get(model_id)
               if loaded is None:
                   tokenizer = AutoTokenizer.from_pretrained(model_id)
@@ -262,6 +319,7 @@ jobs:
                   output = model.generate(
                       **encoded,
                       max_new_tokens=max_new_tokens,
+                      max_time=600,
                       do_sample=False,
                       pad_token_id=tokenizer.eos_token_id,
                   )
@@ -353,6 +411,18 @@ jobs:
                   f'output_cleanup_applied={str(output_cleanup_applied).lower()}\n'
                   f'tool_call_tail_dropped={str(tool_call_tail_dropped).lower()}\n'
                   f'elapsed_seconds={elapsed}\n'
+                  + (
+                      f'engine=llama.cpp GGUF {deepseek_gguf.QUANT.upper()} ({deepseek_gguf.GGUF_REPO}/{fast["file"]}) of {PRIMARY_MODEL}\n'
+                      f'engine_load_seconds={fast["load_s"]}\n'
+                      f'generated_tokens={fast["tokens"]}\n'
+                      f'generation_seconds={fast["gen_s"]}\n'
+                      f'stopped_by_time_budget={str(fast["timed_out"]).lower()}\n'
+                      f'prompt_trimmed={str(fast["trimmed"]).lower()}\n'
+                      f'llama_cpp_python={fast["version"]}\n'
+                      if fast['llm'] is not None and not fast['failed'] and model_used == PRIMARY_MODEL else
+                      'engine=transformers float16 (slow fallback)\n'
+                      f'fast_engine_error={fast["error"] or "not attempted"}\n'
+                  )
               )
           print(f'Wrote DeepSeek result for {invocation_id} using {model_used}')
           PY
@@ -380,7 +450,14 @@ jobs:
           cp result_meta.txt "/tmp/deepseek-results-worktree/deepseek-results/${INVOCATION_ID}.meta.txt"
           git -C /tmp/deepseek-results-worktree add "deepseek-results/${INVOCATION_ID}.txt" "deepseek-results/${INVOCATION_ID}.meta.txt"
           git -C /tmp/deepseek-results-worktree commit -m "deepseek: publish ${INVOCATION_ID}"
-          git -C /tmp/deepseek-results-worktree push origin HEAD:deepseek-results
+          # Concurrent runs push to the same branch; on a rejected push, rebase onto the new tip and retry.
+          for attempt in 1 2 3 4; do
+            if git -C /tmp/deepseek-results-worktree push origin HEAD:deepseek-results; then break; fi
+            if [ "$attempt" = 4 ]; then echo "::warning::mirror push failed after 4 attempts; the artifact remains the fallback"; exit 1; fi
+            git -C /tmp/deepseek-results-worktree fetch origin deepseek-results
+            git -C /tmp/deepseek-results-worktree rebase origin/deepseek-results
+            sleep $((attempt * 2))
+          done
 
       - name: Upload result artifact
         uses: actions/upload-artifact@v4
@@ -391,3 +468,16 @@ jobs:
             result_meta.txt
           if-no-files-found: error
           retention-days: 7
+
+      - name: Check GGUF file is present
+        id: gguf_present
+        if: ${{ steps.gguf_cache.outputs.cache-hit != 'true' }}
+        run: |
+          if ls ~/.cache/forgeclaw-gguf/*.gguf >/dev/null 2>&1; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Save GGUF model cache
+        if: ${{ steps.gguf_cache.outputs.cache-hit != 'true' && steps.gguf_present.outputs.present == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/forgeclaw-gguf
+          key: deepseek-gguf-v1-${{ runner.os }}
