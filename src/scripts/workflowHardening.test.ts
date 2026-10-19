@@ -189,3 +189,25 @@ describe('runner pinning', () => {
     }
   })
 })
+
+describe('shell-repair pull request body', () => {
+  // The body heredoc is unquoted (it must expand $INVOCATION_ID etc.). It used to contain \\`main\\`:
+  // bash turned that into a command substitution, logged "main\: command not found" and rendered
+  // "pull request to \;" (seen in run 38426819317). Render the real step text through bash.
+  it('renders without errors and names main as the landing branch', () => {
+    const workflow = read('.github/workflows/shell-repair.yml')
+    const start = workflow.indexOf('            body=$(cat <<EOF')
+    const end = workflow.indexOf('          )\n', start) + '          )\n'.length
+    expect(start).toBeGreaterThan(0)
+    const block = workflow.slice(start, end).split('\n')
+      .map(line => line.startsWith('          ') ? line.slice(10) : line).join('\n')
+      .replace(/\$\{\{[^}]*\}\}/g, '0')
+    const script = 'set -euo pipefail\nINVOCATION_ID=repair-test GITHUB_SERVER_URL=https://github.com GITHUB_REPOSITORY=o/r GITHUB_RUN_ID=1\n'
+      + `${block}\nprintf '%s\\n' "$body"\n`
+    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8' })
+    expect(result.status).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('- Invocation ID: repair-test')
+    expect(result.stdout).toContain('- Landing path: pull request to main; this workflow never merges.')
+  })
+})
