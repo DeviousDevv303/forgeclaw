@@ -41,3 +41,11 @@ describe('generate_image tool output contract', () => {
     expect(toolOutput).not.toContain('base64')
   })
 })
+
+describe('image discovery resilience', () => {
+  it('exports a reduced page size (not 100)', async () => {
+    const { IMAGE_DISCOVERY_PAGE_SIZE } = await import('./imageArtifact')
+    expect(IMAGE_DISCOVERY_PAGE_SIZE).toBeLessThanOrEqual(20)
+    expect(IMAGE_DISCOVERY_PAGE_SIZE).toBeGreaterThan(0)
+  })
+})
