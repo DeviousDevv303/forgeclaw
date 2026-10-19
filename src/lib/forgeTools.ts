@@ -765,11 +765,19 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // CORS behavior than the repos API, causing "Failed to fetch" in browsers.
         let res: Response | null = null
         let searchFailed = false
+        let searchFailureMessage = ''
         try {
           res = await toolFetch(ctx, `https://api.github.com/search/code?q=${q}&per_page=10`, { headers })
         } catch (error) {
           void error
           searchFailed = true
+          searchFailureMessage = describeGithubTransportFailure('GitHub code search', error)
+        }
+        if (res && !res.ok) {
+          const body = await res.json().catch(() => null) as { message?: unknown } | null
+          searchFailureMessage = typeof body?.message === 'string'
+            ? body.message.replace(/\s+/g, ' ').trim().slice(0, 300)
+            : ''
         }
         if (res && res.ok) {
           const data = await res.json() as { total_count: number; items: Array<{ path: string; html_url: string }> }
@@ -779,10 +787,17 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // Fallback: use git trees API (repos endpoint, no search rate limit)
         // to list all files and match against the query client-side.
         if (searchFailed || (res && !res.ok)) {
-          const treesRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/git/trees/main?recursive=1`, { headers })
+          let treesRes: Response
+          try {
+            treesRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/git/trees/main?recursive=1`, { headers })
+          } catch (error) {
+            const fallbackFailure = describeGithubTransportFailure('GitHub code search tree fallback', error)
+            throw new Error(`${searchFailureMessage || fallbackFailure} (search API unavailable, trees fallback also failed: ${fallbackFailure})`)
+          }
           if (!treesRes.ok) {
             const failure = describeGithubHttpFailure('GitHub code search', res?.status ?? 0, res?.statusText ?? 'transport failure')
-            throw new Error(`${failure} (search API unavailable, trees fallback also failed)`)
+            const detail = searchFailureMessage ? ` GitHub message: ${searchFailureMessage}` : ''
+            throw new Error(`${failure}${detail} (search API unavailable, trees fallback also failed)`)
           }
           const treesData = await treesRes.json() as { tree?: Array<{ path: string; type: string }> }
           const queryLower = query.toLowerCase()
