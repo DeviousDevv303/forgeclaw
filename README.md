@@ -1,6 +1,6 @@
 # ForgeClaw
 
-> **An operator-controlled AI development and automation console with the DeepSeek + NEXUS/CORPUS reasoning duo as its default.**
+> **An operator-controlled AI development and automation console with DeepSeek + CORPUS as its default reasoning stack.**
 >
 > ForgeClaw combines structured agent workflows, a provider-backed AI runtime, GitHub operations, browser-automation runners, safety checks, and failure visibility in one browser-based workspace.
 
@@ -24,7 +24,7 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 The default provider is **DeepSeek on GitHub Actions** (`DEFAULT_PROVIDER = 'deepseek'`, no API key needed; a GitHub token is). The repository's `deepseek-16b.yml` workflow runs `deepseek-ai/deepseek-llm-7b-chat` on a CPU-only runner: normally a 4-bit GGUF (`TheBloke/deepseek-llm-7B-chat-GGUF`, Q4_K_M) through llama.cpp, with the full float16 model through transformers as a slow fallback, and `deepseek-ai/deepseek-coder-1.3b-instruct` only if the primary cannot run. The "16B" in the name is legacy: no 16B model runs. With the GGUF engine a short answer took about 2 minutes on 3 runs (before it, 10–17 minutes); long answers take longer at roughly 2 tokens/s. The chat shows elapsed time while it runs. Moonshot/Kimi, Anthropic and local llama.cpp are explicit provider choices.
 
-**Default flow (as implemented):** `User → (greetings answered instantly) → CORPUS context → DeepSeek workflow → (optional ForgeTools execution → real results → DeepSeek continuation) → response`. Side effects stay in ForgeTools behind its Guardian checks. A NEXUS/Qwen WebGPU provider exists in `src/lib/ai/providers/` but is **not wired into any route**, so there is no browser-local synthesis or fallback step today.
+**Default flow (as implemented):** `User → (greetings answered instantly) → CORPUS context → DeepSeek workflow → (optional ForgeTools execution → real results → DeepSeek continuation) → response`. Side effects stay in ForgeTools behind its Guardian checks.
 
 The operator supplies provider credentials through the application's settings flow. Credentials are not intended to be committed to the repository.
 
@@ -107,7 +107,7 @@ scripts/
 | Build | Vite |
 | Styling | Tailwind CSS |
 | State | Zustand |
-| AI runtime | DeepSeek workflow + CORPUS/NEXUS Browser WebGPU default duo; optional llama.cpp and Anthropic adapters |
+| AI runtime | DeepSeek workflow + CORPUS context; optional llama.cpp and Anthropic adapters |
 | GitHub API | Octokit REST |
 | Optional backend | Supabase Edge Function |
 | Browser automation | Playwright |
