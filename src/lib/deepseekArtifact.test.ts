@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeTool, type ToolContext } from './forgeTools'
 import { describeGithubTransportFailure, isBrowserNetworkFailure } from './githubFetch'
-import { DEEPSEEK_EMPTY_RESPONSE_PLACEHOLDER, DEEPSEEK_GITHUB_READ_TIMEOUT_MS, DEEPSEEK_MAX_WAIT_MS, isEmptyDeepSeekResponse, normalizeDeepSeekOutput, waitForDeepSeekRun } from './deepseekArtifact'
+import { DEEPSEEK_DISCOVERY_PAGE_SIZE, DEEPSEEK_EMPTY_RESPONSE_PLACEHOLDER, DEEPSEEK_MAX_WAIT_MS, isEmptyDeepSeekResponse, normalizeDeepSeekOutput, waitForDeepSeekRun } from './deepseekArtifact'
 
 function ctx(): ToolContext {
   return { ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' }
@@ -142,17 +142,65 @@ describe('DeepSeek result retrieval', () => {
 })
 
 describe('DeepSeek stage-specific failures', () => {
-  it('names the workflow-run discovery endpoint when that GitHub read times out', async () => {
+  it('keeps looking for the run after a discovery read times out, then names the stage and the read error', async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
     }))
     vi.stubGlobal('fetch', fetchMock)
     const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', 'deepseek-timeout-discovery', Date.now())
-    const assertion = expect(pending).rejects.toThrow('deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs: GitHub read timed out after 30000ms')
-    await vi.advanceTimersByTimeAsync(DEEPSEEK_GITHUB_READ_TIMEOUT_MS + 1)
+    const assertion = expect(pending).rejects.toThrow('deepseek-run-discovery: DeepSeek dispatched, but GitHub could not be read to find run "deepseek-timeout-discovery" within 120s. Last read error: deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs: GitHub read timed out after 30000ms')
+    await vi.advanceTimersByTimeAsync(121_000)
     await assertion
-    expect(fetchMock).toHaveBeenCalledOnce()
+    // One hung read is not the end of discovery: the dispatched run may already be executing.
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1)
+  })
+
+  it('finds the run when one discovery read fails and the next succeeds', async () => {
+    vi.useFakeTimers()
+    const invocationId = 'deepseek-flaky-discovery'
+    const run = {
+      id: 91, name: `DeepSeek 16B ${invocationId}`, display_title: `DeepSeek 16B ${invocationId}`,
+      event: 'workflow_dispatch', status: 'completed', conclusion: 'success', created_at: new Date().toISOString(),
+      head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/91', run_number: 91,
+    }
+    let listCalls = 0
+    const listUrls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/deepseek-16b.yml/runs?')) {
+        listUrls.push(url)
+        listCalls += 1
+        // A network failure on every retry of the first poll, then a normal list.
+        if (listCalls <= 3) throw new TypeError('Failed to fetch')
+        return Response.json({ workflow_runs: [run] })
+      }
+      if (url.includes('raw.githubusercontent.com')) return new Response('ok', { status: 200 })
+      throw new Error(`Unexpected fetch URL: ${url}`)
+    }) as unknown as typeof fetch)
+
+    const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', invocationId, Date.now())
+    await vi.advanceTimersByTimeAsync(5_000)
+    await expect(pending).resolves.toMatchObject({ id: 91, status: 'completed', conclusion: 'success' })
+    expect(listCalls).toBeGreaterThan(3)
+    // Small pages: 100 runs is ~1.6 MB per poll on the real repository.
+    expect(listUrls.every(url => url.includes(`per_page=${DEEPSEEK_DISCOVERY_PAGE_SIZE}`))).toBe(true)
+    expect(DEEPSEEK_DISCOVERY_PAGE_SIZE).toBeLessThanOrEqual(20)
+  })
+
+  it('reports run-not-found, not unreadable, when reads recovered but the run never appeared', async () => {
+    vi.useFakeTimers()
+    let listCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (!String(input).includes('/deepseek-16b.yml/runs?')) throw new Error(`Unexpected fetch URL: ${String(input)}`)
+      listCalls += 1
+      if (listCalls <= 3) throw new TypeError('Failed to fetch')
+      return Response.json({ workflow_runs: [] })
+    }) as unknown as typeof fetch)
+    const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', 'deepseek-never-registered', Date.now())
+    const assertion = expect(pending).rejects.toThrow('deepseek-run-discovery: DeepSeek dispatched but correlated run "deepseek-never-registered" was not found within 120s.')
+    await vi.advanceTimersByTimeAsync(121_000)
+    await assertion
   })
 
   it('tolerates transient poll failures and times out after max wait', async () => {

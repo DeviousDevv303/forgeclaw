@@ -78,4 +78,16 @@ describe('provider router', () => {
     const result = await sendViaRouter(request, '', 'corpus')
     expect(result).toMatchObject({ success: true, response: { provider: 'deepseek', text: 'Verified answer.', model: 'DeepSeek 16B Actions (deepseek-16b)' } })
   })
+
+  it('says DeepSeek was not dispatched, not that GitHub is unreachable, when the request carries no deepseek_reason tool', async () => {
+    const request: AIRequest = {
+      model: 'deepseek-16b', systemPrompt: '',
+      messages: [{ role: 'user', content: 'What causes rainbows to form after rain?' }],
+    }
+    const result = await sendViaRouter(request, '', 'deepseek')
+    expect(result.success).toBe(false)
+    if (result.success) return
+    expect(result.error.message).toMatch(/^deepseek-not-dispatched:/)
+    expect(result.error.message).not.toMatch(/unreachable|temporarily unavailable/i)
+  })
 })

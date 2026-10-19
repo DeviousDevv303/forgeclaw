@@ -26,7 +26,7 @@ import type { ProviderId } from './lib/modelProviders'
 import { RESPONSE_LANGUAGE_INSTRUCTIONS, withResponseLanguage } from './lib/responseLanguage'
 import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, isDeepSeekProvider, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { isToolFailureOutput } from './lib/toolOutcome'
 import { createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
@@ -597,8 +597,8 @@ function App() {
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
   const [corpusWebhookUrl, setCorpusWebhookUrl] = useState<string>(() => safeGetItem('fm_corpus_webhook') || '')
   const [corpusSyncStatus, setCorpusSyncStatus] = useState('')
-  const normalizedActiveModel = activeProvider === 'local' ? localModel : activeProvider === 'corpus' ? 'deepseek-16b' : activeProvider === 'moonshot' ? moonshotModel : anthropicModel
-  const activeModelLabel = activeProvider === 'corpus'
+  const normalizedActiveModel = activeProvider === 'local' ? localModel : isDeepSeekProvider(activeProvider) ? 'deepseek-16b' : activeProvider === 'moonshot' ? moonshotModel : anthropicModel
+  const activeModelLabel = isDeepSeekProvider(activeProvider)
     ? corpusProvider.models[0]?.label ?? 'DeepSeek 16B · GitHub Actions'
     : activeProvider === 'local'
       ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
@@ -936,7 +936,7 @@ function App() {
     // DeepSeek-primary providers require a GitHub token. Fail fast with a clear
     // message instead of dispatching DeepSeek (which will fail) and falling back
     // to an unverified local fallback.
-    const deepSeekProvider = activeProvider === 'corpus'
+    const deepSeekProvider = isDeepSeekProvider(activeProvider)
     if (deepSeekProvider && !ghToken?.trim()) {
       const errorMsg: Message = {
         id: Date.now().toString(),
@@ -975,7 +975,7 @@ function App() {
       }).catch(() => { /* Taste is optional; a slow or offline service never blocks chat. */ })
     }
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : ''
-    const currentProviderLabel = activeProvider === 'corpus' ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : 'Anthropic'
+    const currentProviderLabel = isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : 'sk-ant-...'
 
     const explicitDeepSeek = !imageUrl ? parseDirectDeepSeekCommand(promptText) : null
@@ -1136,7 +1136,7 @@ function App() {
 
     setMessages(prev => [...prev, userMsg])
 
-    let source: 'local' | 'cloud' = activeProvider === 'corpus' || activeProvider === 'local' ? 'local' : 'cloud'
+    let source: 'local' | 'cloud' = isDeepSeekProvider(activeProvider) || activeProvider === 'local' ? 'local' : 'cloud'
     let cloudMsgId: string | null = null
     // Declared outside the try so a terminal failure can still attach the real
     // tool outcomes the run produced (Activity/Diagnostics must reflect reality).
@@ -1179,7 +1179,7 @@ function App() {
     // Keep ordinary chat free of the execution catalog; browser-local models
     // can emit code-token soup when a large tool protocol is injected for a
     // request that does not need tools.
-    const deepSeekDuoDefault = activeProvider === 'corpus'
+    const deepSeekDuoDefault = isDeepSeekProvider(activeProvider)
     const complexReasoningTask = !imageUrl && activeProvider !== 'anthropic' && shouldDispatchComplexTaskToDeepSeek(promptText)
     const coreToolNames = codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
@@ -1286,7 +1286,7 @@ function App() {
       // Live-world questions ("any UFC fights tonight?") go straight to web_search on the DeepSeek
       // provider: its 16B CPU workflow takes 9-23 min per hop and has no live data. Other providers
       // can call tools themselves, so they are left alone.
-      const liveDataCall = !directShellCommand && !toolDetected && !imageUrl && activeProvider === 'corpus'
+      const liveDataCall = !directShellCommand && !toolDetected && !imageUrl && isDeepSeekProvider(activeProvider)
         ? routeLiveDataQuestion(promptText)
         : null
       const explicitTool = toolDetected ? extractExplicitToolCall(promptText) : liveDataCall
@@ -2110,7 +2110,7 @@ function App() {
     if (activeProvider === 'local') return <span style={{ color: localEndpoint ? '#6b6b6b' : '#ef4444' }}>{localEndpoint ? activeModelLabel : t('status.localEndpointMissing')}</span>
     const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : true
     if (!keyPresent) return <span style={{ color: '#ef4444' }}>{t('status.anthropicNoKey')}</span>
-    if (activeProvider === 'corpus') return <span style={{ color: '#6b6b6b' }}>DeepSeek 16B · GitHub Actions</span>
+    if (isDeepSeekProvider(activeProvider)) return <span style={{ color: '#6b6b6b' }}>DeepSeek 16B · GitHub Actions</span>
     return <span style={{ color: lastSource === 'cloud' ? '#3b82f6' : '#6b6b6b', fontWeight: lastSource === 'cloud' ? 'bold' : 'normal' }}>{activeModelLabel}</span>
   }
 
@@ -2275,7 +2275,8 @@ function App() {
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.runtimeProvider')}</label>
                 <select
-                  value={activeProvider}
+                  // 'deepseek' and 'corpus' are the same DeepSeek 16B runtime; show it as the one DeepSeek option.
+                  value={activeProvider === 'deepseek' ? 'corpus' : activeProvider}
                   onChange={e => setActiveProvider(e.target.value as ProviderId)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
@@ -2300,7 +2301,7 @@ function App() {
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>{t('settings.anthropicDesc')}</span>
                 </div>
               )}
-              {activeProvider === 'corpus' && (
+              {isDeepSeekProvider(activeProvider) && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>DeepSeek 16B · GitHub Actions</span>
@@ -2394,7 +2395,7 @@ function App() {
                 </div>
               )}
 
-              {activeProvider === 'corpus' && (
+              {isDeepSeekProvider(activeProvider) && (
                 <div style={{ marginBottom: '14px' }}>
                   <div style={{ color: '#777', fontSize: '10px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.corpusRecords', { records: corpusRepository.getInteractionCount(), approved: corpusRepository.getApprovedCount(), candidates: corpusRepository.getCandidateCount(), version: corpusRepository.getVersion() })}</div>
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #222' }}>
@@ -2411,7 +2412,7 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>{t('settings.operatorDiagnostics')}</div>
                 {[
-                  [t('diag.rowRuntimeProvider'), activeProvider === 'corpus' ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],
+                  [t('diag.rowRuntimeProvider'), isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],
                   [t('diag.rowRuntimeModel'), activeModelLabel],
                   [t('diag.rowLastRoute'), lastRuntimeRoute],
                   [t('diag.rowAuthState'), activeProvider === 'local' ? (localEndpoint ? t('diag.endpointConfigured') : t('diag.missingLower')) : activeProvider === 'anthropic' ? (anthropicApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'moonshot' ? (moonshotApiKey ? t('diag.presentLower') : t('diag.missingLower')) : safeGetItem('gh_token') ? t('diag.githubTokenPresent') : t('diag.githubTokenMissing')],
@@ -2590,12 +2591,12 @@ function App() {
 
                   {/* API / workflow credential */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{activeProvider === 'corpus' ? t('diag.credentials') : t('diag.apiKey')}</div>
-                    <div style={{ color: activeProvider === 'corpus' ? '#22c55e' : diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
-                      {activeProvider === 'corpus' ? t('diag.githubWorkflowToken') : diagnostics.keyPresent ? t('diag.present') : t('diag.missing')}
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{isDeepSeekProvider(activeProvider) ? t('diag.credentials') : t('diag.apiKey')}</div>
+                    <div style={{ color: isDeepSeekProvider(activeProvider) ? '#22c55e' : diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
+                      {isDeepSeekProvider(activeProvider) ? t('diag.githubWorkflowToken') : diagnostics.keyPresent ? t('diag.present') : t('diag.missing')}
                     </div>
                     <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                      {activeProvider === 'corpus' ? (safeGetItem('gh_token') ? t('diag.workflowTokenSaved') : t('diag.workflowTokenNeeded')) : diagnostics.keyPresent ? t('diag.keyFormatValid') : t('diag.enterKeyAbove')}
+                      {isDeepSeekProvider(activeProvider) ? (safeGetItem('gh_token') ? t('diag.workflowTokenSaved') : t('diag.workflowTokenNeeded')) : diagnostics.keyPresent ? t('diag.keyFormatValid') : t('diag.enterKeyAbove')}
                     </div>
                   </div>
 

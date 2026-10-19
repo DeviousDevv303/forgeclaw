@@ -45,6 +45,11 @@ const DISCOVERY_TIMEOUT_MS = 120_000
 const MIRROR_TIMEOUT_MS = 20_000
 export const DEEPSEEK_GITHUB_READ_TIMEOUT_MS = 30_000
 const discoveryDelays = [100, 250, 500, 1000, 2000] as const
+// The dispatched run is the newest one (or one of the few newest when dispatches overlap). 100 rows
+// is ~1.6 MB per poll, re-read every 2s with no-store; on a phone link that alone hits the read timeout.
+export const DEEPSEEK_DISCOVERY_PAGE_SIZE = 20
+// Statuses that will not change by asking again: bad credential, missing permission, wrong repo/workflow.
+const PERSISTENT_DISCOVERY_STATUS = /GitHub HTTP (?:401|403|404)\b/
 const statusDelays = [30000, 45000, 60000, 60000, 60000] as const
 
 type DeepSeekWorkflowRun = ShellWorkflowRun
@@ -142,7 +147,7 @@ export function deepseekMirrorUrl(owner: string, repo: string, invocationId: str
 async function findRun(ctx: ToolContext, owner: string, repo: string, invocationId: string, dispatchedAt: number): Promise<DeepSeekWorkflowRun | undefined> {
   const response = await githubStage('deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs', () => toolFetch(
     { ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS },
-    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${DEEPSEEK_WORKFLOW_ID}/runs?event=workflow_dispatch&per_page=100`,
+    `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${DEEPSEEK_WORKFLOW_ID}/runs?event=workflow_dispatch&per_page=${DEEPSEEK_DISCOVERY_PAGE_SIZE}`,
     // GitHub caches REST GET responses briefly. Polling the identical URL
     // without cache bypass can replay the pre-dispatch list until discovery
     // times out, even though the workflow has already run.
@@ -168,14 +173,27 @@ export async function waitForDeepSeekRun(ctx: ToolContext, owner: string, repo: 
   const discoveryDeadline = Date.now() + DISCOVERY_TIMEOUT_MS
   let run: DeepSeekWorkflowRun | undefined
   let attempt = 0
+  let lastReadError: string | undefined
   while (!run && Date.now() < discoveryDeadline) {
     if (ctx.signal?.aborted) throw new DOMException('DeepSeek run aborted', 'AbortError')
-    run = await findRun(ctx, owner, repo, invocationId, dispatchedAt)
+    // The dispatch already succeeded, so one slow or failed list read must not abandon a run that is
+    // executing on GitHub. Keep polling until the deadline; only persistent HTTP statuses stop early.
+    try {
+      run = await findRun(ctx, owner, repo, invocationId, dispatchedAt)
+      lastReadError = undefined
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      const message = error instanceof Error ? error.message : String(error)
+      if (PERSISTENT_DISCOVERY_STATUS.test(message)) throw error
+      lastReadError = message
+      console.warn(`[deepseek-discovery] read failed for ${invocationId}, retrying: ${message}`)
+    }
     if (run) break
     const remaining = discoveryDeadline - Date.now()
     if (remaining <= 0) break
     await new Promise(resolve => setTimeout(resolve, Math.min(discoveryDelays[Math.min(attempt++, discoveryDelays.length - 1)], remaining)))
   }
+  if (!run && lastReadError) throw new Error(`deepseek-run-discovery: DeepSeek dispatched, but GitHub could not be read to find run "${invocationId}" within ${DISCOVERY_TIMEOUT_MS / 1000}s. Last read error: ${lastReadError}`)
   if (!run) throw new Error(`deepseek-run-discovery: DeepSeek dispatched but correlated run "${invocationId}" was not found within ${DISCOVERY_TIMEOUT_MS / 1000}s.`)
 
   const started = Date.now()
