@@ -714,7 +714,10 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}`, { headers })
-        if (!res.ok) throw new Error(`GitHub ${res.status}`)
+        if (!res.ok) {
+          if (res.status === 404) throw new Error(`Run not found: "${runId}" is not a valid run ID for ${owner}/${repo}. Run IDs are long numbers (e.g. 39333499997).`)
+          throw new Error(`GitHub ${res.status}`)
+        }
         type Run = { id: number; name: string; status: string; conclusion: string | null; html_url: string; created_at: string; updated_at: string }
         const run = await res.json() as Run
         return `Run #${run.id} — ${run.name}\nStatus: ${run.status}\nConclusion: ${run.conclusion ?? 'pending'}\nStarted: ${run.created_at}\nUpdated: ${run.updated_at}\n${run.html_url}`
@@ -726,7 +729,10 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         if (token) headers.Authorization = `token ${token}`
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/runs/${runId}/jobs`, { headers })
-        if (!res.ok) throw new Error(`GitHub ${res.status}`)
+        if (!res.ok) {
+          if (res.status === 404) throw new Error(`Run not found: "${runId}" is not a valid run ID for ${owner}/${repo}. Run IDs are long numbers (e.g. 39333499997).`)
+          throw new Error(`GitHub ${res.status}`)
+        }
         type Step = { name: string; status: string; conclusion: string | null; number: number }
         type Job  = { id: number; name: string; status: string; conclusion: string | null; steps: Step[] }
         const data = await res.json() as { jobs: Job[] }
