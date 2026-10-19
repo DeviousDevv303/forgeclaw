@@ -3318,9 +3318,19 @@ function App() {
                       calendar: '📅',
                       shell_exec: '💻',
                     }
+                    // Provider-aware labels for reasoning tools
+                    const getToolDisplayName = (toolName: string): string => {
+                      const provider = activeProvider || 'deepseek'
+                      if (toolName === 'deepseek_reason' || toolName === 'ask_deepseek') {
+                        if (provider === 'moonshot') return 'Kimi Reason'
+                        if (provider === 'anthropic') return 'Claude Reason'
+                        return 'DeepSeek Reason'
+                      }
+                      return toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+                    }
                     return {
                       id: e.id,
-                      title: e.tool.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                      title: getToolDisplayName(e.tool),
                       status: e.status === 'running' ? 'active' : e.status,
                       timestamp: e.timestamp,
                       description: Object.entries(e.input).slice(0, 2).map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`).join(' · '),
