@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_PROVIDER, PROVIDER_IDS, resolveInitialProvider } from './providerDefaults'
 
 describe('canonical provider defaults', () => {
-  it('selects Moonshot/Kimi when there is no saved provider', () => {
-    expect(DEFAULT_PROVIDER).toBe('moonshot')
-    expect(resolveInitialProvider(null)).toBe('moonshot')
-    expect(resolveInitialProvider('')).toBe('moonshot')
-    expect(resolveInitialProvider('unknown')).toBe('moonshot')
+  it('selects DeepSeek 16B when there is no saved provider', () => {
+    expect(DEFAULT_PROVIDER).toBe('deepseek')
+    expect(resolveInitialProvider(null)).toBe('deepseek')
+    expect(resolveInitialProvider('')).toBe('deepseek')
+    expect(resolveInitialProvider('unknown')).toBe('deepseek')
   })
 
   it('preserves an explicitly saved valid provider selection across initialization', () => {
