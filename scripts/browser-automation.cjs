@@ -1,3 +1,5 @@
+// CommonJS on purpose: package.json is "type": "module", and Playwright is installed by the workflow
+// (NODE_PATH), not added to the app's dependencies.
 const { chromium } = require('playwright');
 const fs = require('fs');
 const https = require('https');
@@ -108,6 +110,7 @@ async function run() {
 
   } catch (error) {
     log(`Error: ${error.message}`);
+    console.log(`::error title=browser-automation ${TASK}::${String(error.message).split('\n')[0].slice(0, 300)}`);
     RESULT.error = error.message;
     RESULT.success = false;
   } finally {

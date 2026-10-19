@@ -1,0 +1,11 @@
+# Exact pins for .github/workflows/image-analyze.yml (Qwen2-VL-2B on CPU, Python 3.11).
+# The set mirrors .github/requirements-image.txt (verified on this runner image) minus diffusers, plus
+# requests. requests 2.34.2 is the version a fresh resolve returned on 2026-10-19; it has not yet been
+# exercised on a runner. torch/torchvision are installed separately from the CPU index (see the workflow).
+accelerate==1.15.0
+huggingface_hub==1.33.0
+numpy==2.4.6
+Pillow==13.0.0
+requests==2.34.2
+safetensors==0.8.0
+transformers==5.20.1
