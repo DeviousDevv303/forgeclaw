@@ -176,7 +176,7 @@ export async function waitForDeepSeekRun(ctx: ToolContext, owner: string, repo: 
     if (remaining <= 0) break
     await new Promise(resolve => setTimeout(resolve, Math.min(discoveryDelays[Math.min(attempt++, discoveryDelays.length - 1)], remaining)))
   }
-  if (!run) throw new Error(`deepseek-run-discovery: DeepSeek dispatched but correlated run "${invocationId}" was not found within ${DISCOVERY_TIMEOUT_MS / 1000}s.`)
+  if (!run) throw new Error(`deepseek-run-discovery: DeepSeek dispatched but correlated run "${invocationId}" was not found within ${DISCOVERY_TIMEOUT_MS / 1000}s. [diag: invocationId=${invocationId} dispatchedAt=${dispatchedAt}]`)
 
   const started = Date.now()
   let statusAttempt = 0

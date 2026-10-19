@@ -21,7 +21,9 @@ export function sanitizeChatText(text: string): string {
 export function formatUserFacingError(rawMessage: string): string {
   const message = rawMessage.trim()
   if (/deepseek-run-discovery[\s\S]*(?:timed out|timeout)|GitHub read timed out/i.test(message)) {
-    return 'I couldn’t reach GitHub Actions in time while starting the DeepSeek job. Your request was not completed. Please try again in a moment; if it keeps happening, open Settings and run “TEST GITHUB READ” to check the connection.'
+    const idMatch = message.match(/correlated run "([^"]+)"/)
+    const diag = idMatch ? ` (looked for ${idMatch[1]})` : ''
+    return `I couldn’t find the DeepSeek job on GitHub after dispatching it${diag}. Your request was not completed. Please try again in a moment; if it keeps happening, open Settings and run “TEST GITHUB READ” to check the connection.`
   }
   if (/shell execution dispatched but correlated run|correlated run .* not found/i.test(message)) {
     return 'GitHub accepted the shell request, but its workflow run was not visible yet. Nothing was reported as completed. Please try again in a moment; the execution panel will keep the technical run details.'

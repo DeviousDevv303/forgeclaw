@@ -17,7 +17,7 @@ describe('user-facing chat response boundary', () => {
   it('turns DeepSeek discovery timeouts into an actionable response', () => {
     const output = formatUserFacingError('deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs: GitHub read timed out after 30000ms')
 
-    expect(output).toContain('couldn’t reach GitHub Actions in time')
+    expect(output).toContain('couldn’t find the DeepSeek job on GitHub')
     expect(output).toContain('TEST GITHUB READ')
     expect(output).not.toContain('deepseek-run-discovery')
     expect(output).not.toContain('30000ms')
