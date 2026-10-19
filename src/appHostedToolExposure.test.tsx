@@ -54,6 +54,9 @@ describe('hosted tool-calling providers get read-only repo tools', () => {
     expect(names).not.toContain('github_write_file')
     // #139: Claude can run ForgeClaw shell commands (through executeTool + Guardian).
     expect(names).toContain('shell_exec')
+    // ...and is told where they run, so it stops cloning the repo it is already in.
+    expect(body.system ?? '').toContain('never git clone it')
+    expect(body.system ?? '').toContain('github_search_code (seconds)')
   }, 15_000)
 
   it('never hands Claude the slow DeepSeek workflow, even for "review"/"analyze" wording or a coding task', async () => {
