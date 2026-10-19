@@ -14,6 +14,7 @@
 import JSZip from 'jszip'
 import type { ToolContext } from './forgeTools'
 import { isCorrelatedShellRun, type ShellWorkflowRun } from './shellCorrelation'
+import { describeGithubHttpFailure, githubStage, toolFetch } from './githubFetch'
 
 export interface ImageWorkflowRun {
   id: number
@@ -51,7 +52,12 @@ const statusDelays = [1000, 2000, 3000, 5000, 8000] as const
 // and far kinder to phone links (same fix as deepseekArtifact.ts #131).
 export const IMAGE_DISCOVERY_PAGE_SIZE = 20
 // Statuses that will not change by asking again: bad credential, missing permission, wrong repo/workflow.
+// Matches the describeGithubHttpFailure() text both stages throw.
 const PERSISTENT_DISCOVERY_STATUS = /GitHub HTTP (?:401|403|404)\b/
+// Bounds every GitHub read. Raw fetch has no timeout, so one dead connection used to hang the tool forever.
+const IMAGE_GITHUB_READ_TIMEOUT_MS = 30_000
+const DISCOVERY_STAGE = 'image-run-discovery GET /actions/workflows/generate-image.yml/runs'
+const STATUS_STAGE = 'image-run-poll GET /actions/runs/{run_id}'
 
 function ghHeaders(ctx: ToolContext): Record<string, string> {
   return {
@@ -67,12 +73,13 @@ async function findCorrelatedImageRun(
   invocationId: string,
   dispatchedAt: number,
 ): Promise<ImageWorkflowRun | undefined> {
-  const runsRes = await fetch(
+  const runsRes = await githubStage(DISCOVERY_STAGE, () => toolFetch(
+    { ...ctx, timeoutMs: IMAGE_GITHUB_READ_TIMEOUT_MS },
     `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${IMAGE_WORKFLOW_ID}/runs?event=workflow_dispatch&per_page=${IMAGE_DISCOVERY_PAGE_SIZE}`,
-    { headers: ghHeaders(ctx), cache: 'no-store', signal: ctx.signal },
-  )
-  if (!runsRes.ok) throw new Error(`GitHub runs list ${runsRes.status}`)
-  const runsData = await runsRes.json() as { workflow_runs?: Array<Partial<ShellWorkflowRun>> }
+    { headers: ghHeaders(ctx), cache: 'no-store' },
+  ))
+  if (!runsRes.ok) throw new Error(describeGithubHttpFailure(DISCOVERY_STAGE, runsRes.status, runsRes.statusText))
+  const runsData = await githubStage(`${DISCOVERY_STAGE} response JSON`, () => runsRes.json()) as { workflow_runs?: Array<Partial<ShellWorkflowRun>> }
   const runs = runsData.workflow_runs || []
   const match = runs.find(run => isCorrelatedShellRun(run, invocationId, dispatchedAt))
   return match as ImageWorkflowRun | undefined
@@ -121,7 +128,7 @@ export async function waitForImageRun(
     throw new Error(`Image generation dispatched, but GitHub could not be read to find run "${invocationId}" within ${IMAGE_DISCOVERY_TIMEOUT_MS / 1000}s. Last read error: ${lastReadError}`)
   }
   if (!run) {
-    throw new Error(`Image generation dispatched but correlated run "${invocationId}" was not found.`)
+    throw new Error(`Image generation dispatched but correlated run "${invocationId}" was not found within ${IMAGE_DISCOVERY_TIMEOUT_MS / 1000}s.`)
   }
 
   const startTime = Date.now()
@@ -131,21 +138,15 @@ export async function waitForImageRun(
   while (Date.now() - startTime < IMAGE_MAX_WAIT_MS) {
     if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
 
-    // A single failed status read must not kill a 46-minute image job.
-    // Treat transient failures as "still running" and keep polling.
+    // A single failed status read must not kill a 46-minute image job; a refused credential must.
     try {
-      const statusRes = await fetch(
+      const statusRes = await githubStage(STATUS_STAGE, () => toolFetch(
+        { ...ctx, timeoutMs: IMAGE_GITHUB_READ_TIMEOUT_MS },
         `https://api.github.com/repos/${owner}/${repo}/actions/runs/${run.id}`,
-        { headers: ghHeaders(ctx), signal: ctx.signal },
-      )
-
-      if (!statusRes.ok) {
-        const msg = `GitHub run status ${statusRes.status}`
-        if (PERSISTENT_DISCOVERY_STATUS.test(msg)) throw new Error(msg)
-        console.warn(`[image-status] read failed for run ${run.id}, retrying: ${msg}`)
-      } else {
-        finalRun = await statusRes.json() as ImageWorkflowRun
-      }
+        { headers: ghHeaders(ctx), cache: 'no-store' },
+      ))
+      if (!statusRes.ok) throw new Error(describeGithubHttpFailure(STATUS_STAGE, statusRes.status, statusRes.statusText))
+      finalRun = await githubStage(`${STATUS_STAGE} response JSON`, () => statusRes.json()) as ImageWorkflowRun
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
