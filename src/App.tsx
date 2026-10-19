@@ -898,8 +898,19 @@ function App() {
   }
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottomInstant = () => messagesEndRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior })
 
   useEffect(() => { scrollToBottom() }, [messages])
+  // On initial load and when returning to the chat tab, jump straight to the
+  // latest message instead of landing mid-chat. Uses instant (not smooth) so it
+  // completes before paint; a second pass catches late layout shifts.
+  useEffect(() => {
+    if (activeTab === 'forgemind') {
+      scrollToBottomInstant()
+      const t = window.setTimeout(scrollToBottomInstant, 300)
+      return () => window.clearTimeout(t)
+    }
+  }, [activeTab])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
