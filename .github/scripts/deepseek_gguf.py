@@ -73,12 +73,12 @@ def generate(stream, max_new_tokens, time_budget_s, clock=time.monotonic):
     return "".join(parts).strip(), tokens, round(clock() - start, 1), stopped_by_time
 
 
-def load_model(local_dir, hf_list_files, hf_download, llama_cls):
+def load_model(local_dir, hf_list_files, hf_download, llama_cls, repo=GGUF_REPO, quant=QUANT):
     """Resolve the GGUF file at runtime (the exact file name is looked up, not assumed), download it
     into `local_dir` (which the workflow caches), and open it. Raises on any problem."""
-    name = pick_gguf_file(hf_list_files(GGUF_REPO))
+    name = pick_gguf_file(hf_list_files(repo), quant)
     if name is None:
-        raise RuntimeError(f"no {QUANT} .gguf file found in {GGUF_REPO}")
-    path = hf_download(GGUF_REPO, name, local_dir)
+        raise RuntimeError(f"no {quant} .gguf file found in {repo}")
+    path = hf_download(repo, name, local_dir)
     llm = llama_cls(model_path=path, n_ctx=N_CTX, n_threads=N_THREADS, n_batch=512, verbose=False)
     return llm, name
