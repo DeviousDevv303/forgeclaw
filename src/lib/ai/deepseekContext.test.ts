@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { CorpusRepository } from '../corpus'
 import { authorizationPayload, RFC8032_TEST_KEY_ID } from '../corpusAdmissionAuth'
 import { buildDeepSeekTaskPayload } from './deepseekContext'
+import { buildRuntimeRequestContext } from '../codingAgentRuntime'
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -71,5 +72,22 @@ describe('DeepSeek task/context boundary', () => {
 
   it('does not add ForgeClaw architecture context to an unrelated user task', () => {
     expect(buildDeepSeekTaskPayload('What is 2 + 2?')).toEqual({ task: 'What is 2 + 2?' })
+  })
+
+  it('keeps the APPLICATION_IDENTITY block out of the task the model is asked to answer', () => {
+    // Exactly what App.tsx sends: the question, then buildRuntimeRequestContext().
+    const envelope = buildRuntimeRequestContext({ owner: 'DeviousDevv303', repo: 'forgeclaw', taskStatus: 'idle' })
+    const payload = buildDeepSeekTaskPayload(`What causes rainbows to form after rain?\n\n${envelope}`)
+    expect(payload.task).toBe('What causes rainbows to form after rain?')
+    expect(payload.task).not.toMatch(/APPLICATION_IDENTITY|RUNTIME_STATE/)
+    // Still available to the model, but labelled as context, not as the question.
+    expect(payload.context).toContain('[APPLICATION_IDENTITY application="ForgeClaw"')
+    expect(payload.context).toContain('[RUNTIME_STATE repository="DeviousDevv303/forgeclaw"')
+  })
+
+  it('leaves an identity block the user typed mid-question in the task', () => {
+    const envelope = buildRuntimeRequestContext({ owner: 'DeviousDevv303', repo: 'forgeclaw', taskStatus: 'idle' })
+    const typed = 'Explain this tag: [APPLICATION_IDENTITY application="X"] then more words [/APPLICATION_IDENTITY] and why it matters'
+    expect(buildDeepSeekTaskPayload(`${typed}\n\n${envelope}`).task).toBe(typed)
   })
 })

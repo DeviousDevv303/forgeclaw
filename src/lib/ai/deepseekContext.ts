@@ -31,10 +31,15 @@ function separateRuntimeEnvelope(rawTask: string): { task: string; runtimeContex
   const closing = '[/RUNTIME_STATE]'
   const end = rawTask.indexOf(closing, start)
   if (end < 0) return { task: rawTask.trim() }
-  const prefix = rawTask.slice(0, start).trim()
+  // buildRuntimeRequestContext() emits the APPLICATION_IDENTITY block immediately before RUNTIME_STATE.
+  // It belongs to the envelope, not the user's question: left in the task, the model echoed it back.
+  const identityStart = rawTask.lastIndexOf('[APPLICATION_IDENTITY', start)
+  const identityOnly = /^\[APPLICATION_IDENTITY[^\]]*\][\s\S]*?\[\/APPLICATION_IDENTITY\]\s*$/
+  const envelopeStart = identityStart >= 0 && identityOnly.test(rawTask.slice(identityStart, start)) ? identityStart : start
+  const prefix = rawTask.slice(0, envelopeStart).trim()
   const trailing = rawTask.slice(end + closing.length).trim()
   const task = [prefix, trailing].filter(Boolean).join('\n\n').trim()
-  return { task, runtimeContext: rawTask.slice(start, end + closing.length).trim() }
+  return { task, runtimeContext: rawTask.slice(envelopeStart, end + closing.length).trim() }
 }
 
 /** Extract only the user's textual objective, excluding appended runtime/image payloads. */

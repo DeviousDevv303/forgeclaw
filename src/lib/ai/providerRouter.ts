@@ -8,7 +8,7 @@ import { corpusProvider } from './providers/corpusProvider'
 import { tasteProvider } from './providers/tasteProvider'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
-import { buildDeepSeekTaskPayload } from './deepseekContext'
+import { buildDeepSeekTaskPayload, extractOriginalDeepSeekTask } from './deepseekContext'
 import { stripReasoningArtifacts } from './responseFilter'
 import { withResponseLanguage } from '../responseLanguage'
 
@@ -76,7 +76,8 @@ const SIMPLE_MESSAGE_RE = /^(hi+|hey+|hello+|hola+|buenos?\s*d[ií]as|buenas?\s*
 
 function isSimpleMessage(request: AIRequest): boolean {
   const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? '';
-  const trimmed = text.trim();
+  // The App appends its runtime envelope to every user message; judge only what the person typed.
+  const trimmed = extractOriginalDeepSeekTask(text).trim();
   // Short (< 30 chars) and matches simple pattern, or very short (< 10 chars)
   return trimmed.length < 10 || (trimmed.length < 30 && SIMPLE_MESSAGE_RE.test(trimmed));
 }
