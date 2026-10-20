@@ -39,6 +39,20 @@ describe('NEXUS recursive learning', () => {
     expect(s.failureRate).toBeCloseTo(5 / 6)
   })
 
+  it('summarizes 1,200 candidates in under 50 ms', () => {
+    const candidates = Array.from({ length: 1_200 }, (_, i) =>
+      candidate('web_search', 'completed', `verified search result ${i}`, `2026-10-${String((i % 28) + 1).padStart(2, '0')}T00:00:00Z`),
+    )
+
+    const started = performance.now()
+    const summary = summarizeLearning(candidates)
+    const elapsedMs = performance.now() - started
+
+    expect(summary.total).toBe(1_200)
+    expect(summary.tools).toMatchObject([{ tool: 'web_search', total: 1_200, completed: 1_200 }])
+    expect(elapsedMs).toBeLessThan(50)
+  })
+
   it('feeds lessons back only for tools offered this turn, labelled as evidence', () => {
     const s = summarizeLearning([
       candidate('github_publish_site', 'failed', '[TOOL ERROR] refusing to publish to main'),

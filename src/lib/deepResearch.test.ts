@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatResearchResult, normalizeQueries, runDeepResearch, type ResearchReport } from './deepResearch'
+import { formatResearchResult, normalizeQueries, RESEARCH_RESULT_MAX_CHARS, runDeepResearch, type ResearchReport } from './deepResearch'
 import type { GithubRequest } from './githubPublish'
 
 const WF = 'https://api.github.com/repos/DeviousDevv303/forgeclaw'
@@ -53,6 +53,22 @@ describe('runDeepResearch', () => {
 })
 
 describe('formatResearchResult', () => {
+  it('accepts research output exactly at the 40,000-character limit', () => {
+    const base = { ...report, question: 'q', queries: [], sources: [{ id: 1, url: 'https://a.example', domain: 'a.example', title: 't', date: '', excerpt: '' }], failures: [] }
+    const runUrl = 'https://run'
+    const header = `✓ Deep research: 1 source(s) for "${base.question}" (${base.queries.length} queries, ${base.elapsed_seconds}s)\n` +
+      'Write the answer only from these sources and cite them as [n]. Say plainly what they do not cover; never cite a source that is not listed.\nrun: https://run\n'
+    const entryPrefix = `\n[1] ${base.sources[0].title} (${base.sources[0].domain})\n${base.sources[0].url}\n`
+    const excerptLength = RESEARCH_RESULT_MAX_CHARS - header.length - entryPrefix.length - 1
+    const exactReport = { ...base, sources: [{ ...base.sources[0], excerpt: 'x'.repeat(excerptLength) }] }
+
+    const result = formatResearchResult(exactReport, runUrl)
+
+    expect(result).toHaveLength(RESEARCH_RESULT_MAX_CHARS)
+    expect(result).toContain('x'.repeat(excerptLength))
+    expect(result).not.toContain('more source(s) omitted for length')
+  })
+
   it('numbers sources for citation and states the citation rule', () => {
     const text = formatResearchResult(report, 'https://run')
     expect(text).toMatch(/^✓ Deep research: 2 source\(s\)/)
