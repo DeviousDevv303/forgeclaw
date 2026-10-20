@@ -7,7 +7,7 @@
 import { safeGetItem, safeSetItem } from './storage'
 import { resolveGithubToken } from './githubAuth'
 import { describeGithubDispatchFailure } from './githubDispatchErrors'
-import { describeGithubHttpFailure, describeGithubTransportFailure, toolFetch } from './githubFetch'
+import { describeGithubTransportFailure, toolFetch } from './githubFetch'
 import { normalizeKnownShellExecutable } from './shellCommand'
 import {
   FORGECLAW_AGENT_ID,
@@ -790,30 +790,64 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           const hits = data.items.map(i => `• ${i.path}`).join('\n')
           return `Found ${data.total_count} matches for "${query}":\n${hits || '(none)'}`
         }
-        // Fallback: use git trees API (repos endpoint, no search rate limit)
-        // to list all files and match against the query client-side.
+        // Fallback: dispatch search-proxy workflow for server-side search.
+        // The /search/code endpoint has strict rate limits and CORS issues in browsers.
+        // The proxy runs on GitHub's servers with no such limitations.
         if (searchFailed || (res && !res.ok)) {
-          let treesRes: Response
-          try {
-            treesRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/git/trees/main?recursive=1`, { headers })
-          } catch (error) {
-            const fallbackFailure = describeGithubTransportFailure('GitHub code search tree fallback', error)
-            throw new Error(`${searchFailureMessage || fallbackFailure} (search API unavailable, trees fallback also failed: ${fallbackFailure})`)
+          const invocationId = `search-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+          const dispatchHeaders = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
+          const dispatchRes = await toolFetch(ctx,
+            `https://api.github.com/repos/${owner}/${repo}/actions/workflows/search-proxy.yml/dispatches`,
+            { method: 'POST', headers: dispatchHeaders, body: JSON.stringify({ ref: 'main', inputs: { query, invocation_id: invocationId } }) })
+          if (!dispatchRes.ok) {
+            throw new Error(`Search proxy dispatch failed: GitHub ${dispatchRes.status}. Direct search also failed: ${searchFailureMessage || 'transport failure'}`)
           }
-          if (!treesRes.ok) {
-            const failure = describeGithubHttpFailure('GitHub code search', res?.status ?? 0, res?.statusText ?? 'transport failure')
-            const detail = searchFailureMessage ? ` GitHub message: ${searchFailureMessage}` : ''
-            throw new Error(`${failure}${detail} (search API unavailable, trees fallback also failed)`)
+          // Poll for the workflow run with our invocation ID (max 2 minutes)
+          const pollStart = Date.now()
+          const maxWait = 120_000
+          while (Date.now() - pollStart < maxWait) {
+            await new Promise(r => setTimeout(r, 5000))
+            const runsRes = await toolFetch(ctx,
+              `https://api.github.com/repos/${owner}/${repo}/actions/workflows/search-proxy.yml/runs?per_page=10`,
+              { headers })
+            if (!runsRes.ok) continue
+            const runsData = await runsRes.json() as { workflow_runs: Array<{ id: number; name: string; status: string; conclusion: string | null }> }
+            const ourRun = runsData.workflow_runs.find(r => r.name.includes(invocationId))
+            if (ourRun && ourRun.status === 'completed') {
+              // Fetch job logs and extract the JSON result
+              const jobsRes = await toolFetch(ctx,
+                `https://api.github.com/repos/${owner}/${repo}/actions/runs/${ourRun.id}/jobs`,
+                { headers })
+              if (jobsRes.ok) {
+                const jobsData = await jobsRes.json() as { jobs: Array<{ id: number }> }
+                for (const job of jobsData.jobs) {
+                  const logsRes = await toolFetch(ctx,
+                    `https://api.github.com/repos/${owner}/${repo}/actions/jobs/${job.id}/logs`,
+                    { headers })
+                  if (logsRes.ok) {
+                    const logsText = await logsRes.text()
+                    // Find the JSON result line (starts with {"total_count" or {"error")
+                    const match = logsText.match(/\{"(?:total_count|error)"[^\n]+\}/)
+                    if (match) {
+                      try {
+                        const result = JSON.parse(match[0]) as { total_count?: number; items?: Array<{ path: string }>; error?: string }
+                        if (result.error) {
+                          throw new Error(`Search proxy error: ${result.error}`)
+                        }
+                        const hits = (result.items || []).map(i => `• ${i.path}`).join('\n')
+                        return `Found ${result.total_count ?? 0} matches for "${query}" (via search proxy):\n${hits || '(none)'}`
+                      } catch {
+                        // JSON parse failed, continue
+                      }
+                    }
+                  }
+                }
+              }
+              return `Search completed via proxy. Run: https://github.com/${owner}/${repo}/actions/runs/${ourRun.id}`
+            }
           }
-          const treesData = await treesRes.json() as { tree?: Array<{ path: string; type: string }> }
-          const queryLower = query.toLowerCase()
-          const matches = (treesData.tree || [])
-            .filter(t => t.type === 'blob' && t.path.toLowerCase().includes(queryLower))
-            .slice(0, 10)
-          const hits = matches.map(m => `• ${m.path}`).join('\n')
-          return `Found ${matches.length} matches for "${query}" (via file listing):\n${hits || '(none)'}`
+          throw new Error(`Search proxy timed out after 2 minutes. Direct search also failed: ${searchFailureMessage || 'transport failure'}`)
         }
-        // Should not reach here, but handle it
         throw new Error(describeGithubTransportFailure('GitHub code search', new Error('Unknown failure')))
       }
 
