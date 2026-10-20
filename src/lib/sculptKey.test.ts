@@ -21,7 +21,10 @@ describe('self-sculpt key', () => {
     expect(isSculptUnlocked()).toBe(false)
     expect(await unlockSculpt('correct horse battery staple')).toBe(true)
     expect(isSculptUnlocked()).toBe(true)
-    expect(isSculptUnlocked(Date.now() + 3 * 60 * 60 * 1000)).toBe(false)  // unlock expires
+    sessionStorage.clear()  // a closed tab must not re-lock: the unlock persists in this browser
+    expect(isSculptUnlocked()).toBe(true)
+    lockSculpt()
+    expect(isSculptUnlocked()).toBe(false)
   }, 30_000)
 
   it('rejects short keys and changing the key without the current one', async () => {
