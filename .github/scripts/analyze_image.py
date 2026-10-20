@@ -59,6 +59,17 @@ def fetch_image_bytes(url: str, get) -> bytes:
     return b"".join(chunks)
 
 
+def read_local_image(path: str) -> bytes:
+    """An attached picture the app uploaded to the vision-inputs branch; the workflow wrote it to `path`."""
+    with open(path, "rb") as handle:
+        data = handle.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise SpecError(f"image is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB")
+    if not data:
+        raise SpecError("the attached image is empty")
+    return data
+
+
 def strip_prompt_echo(decoded: str) -> str:
     """Keep only the assistant turn if a decoder returned the whole chat transcript."""
     marker = "assistant\n"
@@ -70,8 +81,13 @@ def annotate_error(message: str) -> None:
 
 
 def run(env: dict) -> int:
+    local = env.get("IMAGE_FILE", "").strip()
     try:
-        url, prompt = validate(env.get("IMAGE_URL", ""), env.get("PROMPT", ""))
+        if local:
+            # The picture came from the app, not from a URL: only the prompt needs checking.
+            url, prompt = "", validate("https://attached.invalid/", env.get("PROMPT", ""))[1]
+        else:
+            url, prompt = validate(env.get("IMAGE_URL", ""), env.get("PROMPT", ""))
     except SpecError as exc:
         annotate_error(str(exc))
         return 2
@@ -83,7 +99,8 @@ def run(env: dict) -> int:
 
         torch.set_num_threads(min(4, os.cpu_count() or 1))
         started = time.time()
-        image = Image.open(io.BytesIO(fetch_image_bytes(url, requests.get))).convert("RGB")
+        raw = read_local_image(local) if local else fetch_image_bytes(url, requests.get)
+        image = Image.open(io.BytesIO(raw)).convert("RGB")
         processor = AutoProcessor.from_pretrained(MODEL, min_pixels=MIN_PIXELS, max_pixels=MAX_PIXELS)
         model = AutoModelForImageTextToText.from_pretrained(MODEL, torch_dtype=torch.float32)
         model.eval()

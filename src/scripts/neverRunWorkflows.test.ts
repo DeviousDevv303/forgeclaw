@@ -46,6 +46,19 @@ describe('image-analyze.yml', () => {
     expect(lines.length).toBeGreaterThan(5)
     for (const line of lines) expect(line, line).toMatch(/^[A-Za-z0-9_.-]+==[0-9][^\s]*$/)
   })
+  it('takes an attached picture from vision-inputs; only the model-free mirror job can write', () => {
+    const analyze = wf.slice(wf.indexOf('\n  analyze:\n'), wf.indexOf('\n  mirror:\n'))
+    const mirror = wf.slice(wf.indexOf('\n  mirror:\n'))
+    expect(analyze).not.toContain('contents: write')
+    expect(analyze).toContain("grep -Eqx 'vision-inputs/[A-Za-z0-9._-]{1,120}\\.(jpg|png|webp|gif)'")
+    expect(analyze).toContain('git show "FETCH_HEAD:$IMAGE_REF"')
+    expect(mirror).toMatch(/permissions:\n {6}contents: write/)
+    expect(mirror).not.toContain('analyze_image.py')
+    expect(mirror).not.toContain('pip install')
+    expect(mirror).toContain('bash .github/scripts/vision_mirror.sh')
+    // Checkout cleans the workspace, so it must come before the downloaded result.
+    expect(mirror.indexOf('actions/checkout')).toBeLessThan(mirror.indexOf('actions/download-artifact'))
+  })
   it('still publishes the artifact the app expects, even when the run fails', () => {
     expect(wf).toContain('name: image-analysis-${{ inputs.invocation_id }}')
     expect(wf).toContain('if: always()')

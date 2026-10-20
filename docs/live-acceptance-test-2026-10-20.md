@@ -111,6 +111,15 @@ slower; later runs restore it from cache. The run's `result_meta.txt` should say
 2. In your own browser, NEXUS → paste the relay owner key → **IMPORT TO NEXUS**. **PASS if** the visitor's
    question shows up as a candidate. **ERROR REPORTS** lists reports; one also arrives at your email.
 
+## L. Pictures (10 min)
+
+1. Kimi selected. Attach a photo (📎), type `what is this?`, send. **PASS if** the answer describes the photo,
+   not ForgeClaw or the repository.
+2. Provider **DeepSeek 16B**, same photo. **PASS if** Activity shows `analyze_image` (Actions run **Analyze Image**,
+   a few minutes), the answer describes the photo and ends "(Looked at by Qwen/Qwen2-VL-2B-Instruct · run …)".
+   The `vision-results` branch has the answer; the photo is gone from the tip of `vision-inputs`.
+3. Free mode (private window). **PASS if** a photo gets "Free mode can't read pictures yet …" and nothing runs.
+
 ## Results
 
 | Step | PASS/FAIL | Evidence (URL / run / commit) |
@@ -126,3 +135,4 @@ slower; later runs restore it from cache. The run's `result_meta.txt` should say
 | I | | |
 | J | | |
 | K | | |
+| L | | |

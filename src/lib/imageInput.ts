@@ -23,12 +23,19 @@ export function isSendableImage(url: string | undefined): url is string {
   return Boolean(url) && (parseImageDataUrl(url as string) !== null || /^https:\/\/\S+$/i.test(url as string))
 }
 
+/** analyze_image's image_url for "the picture attached to this message" (kept here, never in the prompt). */
+export const ATTACHED_IMAGE = 'attached'
+let attachedImage: string | undefined
+/** The App records each message's picture (or clears it) before the turn runs. */
+export function rememberAttachedImage(url: string | undefined): void { attachedImage = url }
+export function currentAttachedImage(): string | undefined { return attachedImage }
+
 export const VISION_POLICY = 'The user attached an image to this message; it is included above. Look at it and answer about what it actually shows. Do not describe ForgeClaw, its tools or this conversation unless the user asks about them. If you cannot see an image, say so plainly instead of guessing.'
 
 export function visionUnavailableReply(publicVisitor: boolean): string {
   return publicVisitor
     ? "Free mode can't read pictures yet. Tell me what's in it, or paste its text, and I'll take it from there."
-    : "This provider can't see pictures, so I won't guess what yours shows. Switch the provider to Moonshot · Kimi or Anthropic · Claude in SETTINGS and send it again."
+    : "This provider can't see pictures, so I won't guess what yours shows. Switch the provider to Moonshot · Kimi, Anthropic · Claude or DeepSeek 16B in SETTINGS and send it again."
 }
 
 /** Scales a picture so its longest edge is at most MAX_IMAGE_EDGE (JPEG). Returns the input unchanged when it is already small or the browser can't decode it. */

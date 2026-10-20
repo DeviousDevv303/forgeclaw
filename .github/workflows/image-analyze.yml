@@ -3,18 +3,32 @@ name: Analyze Image
 # Vision analysis with Qwen2-VL-2B-Instruct on the CPU runner. The logic lives in
 # .github/scripts/analyze_image.py (validated and unit-tested); failures are printed as ::error::
 # annotations. The result is uploaded as the artifact image-analysis-<invocation_id> (1 day).
+#
+# The picture comes from either a public https URL (image_url) or a picture the app attached to a chat
+# message (image_ref): the app commits it to the vision-inputs branch and passes its path here.
+# The analyze job is read-only; the separate mirror job (no model code) publishes the answer to the
+# vision-results branch, where the browser reads it, and removes the picture from vision-inputs.
 on:
   workflow_dispatch:
     inputs:
       image_url:
-        description: 'https URL of the image to analyze'
-        required: true
+        description: 'https URL of the image to analyze (or use image_ref)'
+        required: false
+        default: ''
+      image_ref:
+        description: 'Path of an attached picture on the vision-inputs branch, e.g. vision-inputs/<id>.jpg'
+        required: false
+        default: ''
       prompt:
         description: 'What to analyze'
         default: 'Describe this image in detail'
       invocation_id:
         description: 'Unique ID for this request'
         required: true
+      mirror:
+        description: "Publish the answer to the browsable vision-results branch ('false' to skip)"
+        required: false
+        default: 'true'
 
 run-name: Analyze Image ${{ inputs.invocation_id }}
 
@@ -26,9 +40,29 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - name: Validate inputs
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          IMAGE_REF: ${{ inputs.image_ref }}
+        run: |
+          printf '%s' "$INVOCATION_ID" | grep -Eqx '[A-Za-z0-9._-]{1,120}' || { echo "::error title=analyze_image::invalid invocation_id"; exit 1; }
+          if [ -n "$IMAGE_REF" ] && ! printf '%s' "$IMAGE_REF" | grep -Eqx 'vision-inputs/[A-Za-z0-9._-]{1,120}\.(jpg|png|webp|gif)'; then
+            echo "::error title=analyze_image::image_ref must be vision-inputs/<name>.(jpg|png|webp|gif)"; exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Fetch the attached picture
+        if: ${{ inputs.image_ref != '' }}
+        env:
+          IMAGE_REF: ${{ inputs.image_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=$AUTH" fetch --depth 1 origin vision-inputs
+          git show "FETCH_HEAD:$IMAGE_REF" > "$RUNNER_TEMP/attached-image"
+          echo "IMAGE_FILE=$RUNNER_TEMP/attached-image" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -54,3 +88,33 @@ jobs:
             result_meta.txt
           if-no-files-found: ignore
           retention-days: 1
+
+  mirror:
+    needs: analyze
+    # Failures are published too, so the app stops waiting with the reason.
+    if: ${{ always() && inputs.mirror != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # Checkout first: it cleans the workspace, which would delete a result downloaded before it.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: image-analysis-${{ inputs.invocation_id }}
+          path: result
+      - name: Publish the answer and remove the attached picture
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          IMAGE_REF: ${{ inputs.image_ref }}
+          ANALYZE_RESULT: ${{ needs.analyze.result }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export GIT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          bash .github/scripts/vision_mirror.sh "https://github.com/$REPO.git" "$INVOCATION_ID" "$IMAGE_REF" result "$ANALYZE_RESULT"

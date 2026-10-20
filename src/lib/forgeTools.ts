@@ -36,6 +36,8 @@ import { buildAndPublishSite } from './siteBuild'
 import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
 import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
 import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
+import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
+import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -476,11 +478,11 @@ export const FORGE_TOOLS: ToolDef[] = [
   
   {
     name: 'analyze_image',
-    description: 'Analyze image via free GitHub Actions vision model',
+    description: 'Look at a picture with the free GitHub Actions vision model (Qwen2-VL-2B, a few minutes) and return what it shows.',
     parameters: {
       type: 'object',
       properties: {
-        image_url: { type: 'string', description: 'Public image URL' },
+        image_url: { type: 'string', description: 'A public https image URL, or "attached" for the picture attached to this message' },
         prompt: { type: 'string', description: 'What to analyze' }
       },
       required: ['image_url']
@@ -1687,16 +1689,14 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       }
 
       case 'analyze_image': {
-        const imageUrl = input.image_url as string
-        const prompt = (input.prompt as string) || 'Describe this image'
-        const invocationId = `img-${Date.now()}`
-        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/image-analyze.yml/dispatches`, {
-          method: 'POST',
-          headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' },
-          body: JSON.stringify({ ref: 'main', inputs: { image_url: imageUrl, prompt: prompt, invocation_id: invocationId } })
-        })
-        if (!res.ok) throw new Error(`GitHub ${res.status}`)
-        return `Dispatched: ${invocationId}. Check artifacts in ~2 min.`
+        if (!token) throw new Error('No GitHub token configured. analyze_image runs as a GitHub Actions job and needs gh_token with Contents and Actions: write.')
+        // Used to return "Dispatched" and never the answer, and could not take an uploaded picture at all.
+        const requested = String(input.image_url || '').trim()
+        const image = requested && requested !== ATTACHED_IMAGE ? requested : currentAttachedImage()
+        if (!image) throw new Error('No picture is attached to this message, and no https image URL was given.')
+        // The workflow lives in ForgeClaw's own repository regardless of any owner/repo in the call.
+        const result = await runImageAnalysis(githubRequest, { owner: ctx.ghOwner, repo: ctx.ghRepo, token, prompt: String(input.prompt || ''), image, signal: ctx.signal })
+        return formatImageAnalysis(result)
       }
 
 
