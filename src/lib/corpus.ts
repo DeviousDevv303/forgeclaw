@@ -282,6 +282,17 @@ export class CorpusRepository {
     return readIndex(CANDIDATE_INDEX_KEY).length
   }
 
+  /** Learning candidates, newest first. Read-only view for the NEXUS page; never changes admission. */
+  listCandidates(limit = 1000): LearningCandidate[] {
+    const out: LearningCandidate[] = []
+    for (const id of readIndex(CANDIDATE_INDEX_KEY).slice(-limit)) {
+      const raw = safeGetItem(`${CANDIDATE_PREFIX}${id}`)
+      if (!raw) continue
+      try { out.push(JSON.parse(raw) as LearningCandidate) } catch { /* skip a corrupt record */ }
+    }
+    return out.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+  }
+
   getApprovedCount(): number {
     let count = 0
     for (const id of readIndex(INDEX_KEY)) {

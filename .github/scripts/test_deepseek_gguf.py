@@ -89,6 +89,7 @@ class Load(unittest.TestCase):
         self.assertEqual(name, "m.Q4_K_M.gguf")
         self.assertEqual(calls["llama"]["model_path"], "/tmp/dir/m.Q4_K_M.gguf")
         self.assertEqual(calls["llama"]["n_ctx"], 8192)
+        self.assertEqual(calls["llama"]["n_gpu_layers"], 0)  # CPU unless the workflow configured a GPU runner
 
     def test_raises_when_no_matching_file_so_the_caller_falls_back(self):
         with self.assertRaises(RuntimeError):

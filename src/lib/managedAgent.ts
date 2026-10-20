@@ -25,6 +25,8 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'github_publish_site',
   'github_create_repo',
   'github_build_site',
+  'sculpt_self',
+  'shell_patch',
   'github_create_issue',
   'github_run_workflow',
   'shell_exec',
@@ -53,6 +55,9 @@ export const CODING_TOOL_ORDER: readonly string[] = [
   'github_publish_site',
   'github_build_site',
   'github_pages_status',
+  // Self-improvement (2026-10-20): PR-only, co-signed, protected paths refused by the workflows.
+  'sculpt_self',
+  'shell_patch',
   'github_create_issue',
   'github_run_workflow',
   'github_get_run_status',

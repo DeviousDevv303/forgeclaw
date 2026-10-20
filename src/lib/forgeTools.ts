@@ -34,6 +34,24 @@ import { journalRecord, type RunJournal } from './runRollback'
 import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type GithubRequest, type PublishFile } from './githubPublish'
 import { buildAndPublishSite } from './siteBuild'
 import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
+import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
+
+/**
+ * Wait for a self-modification run (self-sculpt or shell-repair) and report what really happened:
+ * the pull request it opened, a run that changed nothing, or the failing run. A dispatch alone used to
+ * be reported as done, although the build check or the protected-path policy could still reject it.
+ */
+async function reportProposalRun(request: GithubRequest, input: { owner: string; repo: string; token: string; workflow: string; needle: string; since: number; branch: string; label: string; signal?: AbortSignal }): Promise<string> {
+  const run = await waitForCorrelatedRun(request, { ...input, maxWaitMs: PROPOSAL_MAX_WAIT_MS })
+  if (run.conclusion !== 'success') {
+    throw new Error(`${input.label} run #${run.run_number} concluded "${run.conclusion}": nothing was proposed (protected path, patch that does not apply, or a failing build). Logs: ${run.html_url}`)
+  }
+  const pr = await findPullRequest(request, input.owner, input.repo, input.token, input.branch)
+  if (!pr) return `✓ ${input.label} run #${run.run_number} succeeded but made no change (the content was identical), so no pull request was opened. Run: ${run.html_url}`
+  return `✓ ${input.label}: build-validated and proposed as pull request #${pr.number} on ${input.branch} (not merged; review it).\n  pr: ${pr.html_url}\n  run: ${run.html_url}`
+}
+
+const PROPOSAL_MAX_WAIT_MS = 25 * 60 * 1000
 
 /** Models send files as an array or as a JSON string of one; anything else is rejected by the publisher. */
 function parsePublishFiles(raw: unknown): PublishFile[] {
@@ -235,21 +253,21 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'sculpt_self',
-    description: 'Propose a self-modification by dispatching the guarded self-sculpt workflow. Changes are build-validated, committed to a sculpt/* feature branch, and opened as a pull request; Guardian, workflow, and package-control paths are rejected.',
+    description: 'Improve ForgeClaw itself: replace ONE file (up to 60,000 characters) through the guarded self-sculpt workflow, which rejects protected paths, build-validates the change, pushes a sculpt/* branch and opens a pull request for human review (never merged automatically). Read the current file first with github_read_file and send the COMPLETE new content. For a small change to a large file use shell_patch instead. Waits for the run and returns the pull request URL or the failing run.',
     parameters: {
       type: 'object',
       properties: {
         file_path: { type: 'string', description: 'Repository-relative file path to update' },
         content: { type: 'string', description: 'Complete replacement file content' },
-        reason: { type: 'string', description: 'Reason for the proposed change' },
-        branch: { type: 'string', description: 'New feature branch name' },
+        reason: { type: 'string', description: 'One-line reason for the change, at most 240 characters' },
+        branch: { type: 'string', description: 'Optional new branch sculpt/<name>; generated when omitted' },
       },
-      required: ['file_path', 'content', 'reason', 'branch'],
+      required: ['file_path', 'content', 'reason'],
     },
   },
   {
     name: 'shell_patch',
-    description: 'Propose a code change as a unified diff by dispatching the guarded shell-repair workflow. The workflow checks the diff against the protected-path policy (symlinks are refused), build-validates it, pushes it to a branch the tool names itself (forge/repair/*), and opens a pull request for human review; nothing is merged. Requires Guardian co-sign. The result only confirms the workflow was STARTED: the change is not applied or verified until its run and pull request exist.',
+    description: 'Improve ForgeClaw with a unified diff (any size of file, several files at once) through the guarded shell-repair workflow, which checks the protected-path policy (symlinks refused), applies the diff with git, build-validates it, pushes a forge/repair/* branch it names itself and opens a pull request for human review; nothing is merged. Requires Guardian co-sign. Waits for the run and returns the pull request URL or the failing run.',
     parameters: {
       type: 'object',
       properties: {
@@ -990,8 +1008,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
               context,
               nexus_learning: nexusLearn ? 'true' : 'false',
               invocation_id: invocationId,
-              // 'site': long single-file HTML output (deepseek-16b.yml site profile). Omitted otherwise.
-              ...(input.profile === 'site' ? { profile: 'site' } : {}),
+              // 'site' (one HTML page) / 'code' (one edited source file): long-output profiles of deepseek-16b.yml.
+              ...(input.profile === 'site' || input.profile === 'code' ? { profile: input.profile } : {}),
             },
           }),
         } as const
@@ -1042,8 +1060,9 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const filePath = typeof input.file_path === 'string' ? input.file_path.trim() : ''
         const content = typeof input.content === 'string' ? input.content : ''
         const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
-        const branch = typeof input.branch === 'string' ? input.branch.trim() : ''
-        if (!filePath || !reason || !branch) throw new Error('file_path, content, reason, and branch are required.')
+        let branch = typeof input.branch === 'string' ? input.branch.trim() : ''
+        if (!filePath || !reason) throw new Error('file_path, content and reason are required.')
+        if (!branch) branch = `sculpt/${filePath.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'change'}-${Date.now().toString(36)}`
         if (content.length > 60_000) throw new Error('Self-sculpt content exceeds the 60KB workflow-input limit.')
         const protectedPath = filePath === 'package.json' || filePath === 'package-lock.json' || filePath === 'src/lib/guardianGate.ts' || filePath === 'src/lib/forgeTools.ts' || filePath === '.github/workflows' || filePath.startsWith('.github/workflows/')
         if (!/^[A-Za-z0-9._/-]+$/.test(filePath) || filePath.startsWith('/') || filePath.startsWith('.') || filePath.includes('..') || filePath === 'foundation/codex' || filePath.startsWith('foundation/codex/') || protectedPath) {
@@ -1070,7 +1089,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         if (!res.ok) throw new Error(`Self-sculpt dispatch failed: ${res.status}`)
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'self-sculpt.yml', needle: branch, since: sculptSince, label: `sculpt_self ${branch}` })
         if (!sculptBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch, label: `sculpt_self ${branch}` })
-        return `✓ Self-sculpt ${invocationId} dispatched for ${filePath}; branch ${branch} will be pushed and a pull request opened for review.`
+        if (input.wait === false) return `✓ Self-sculpt ${invocationId} DISPATCHED, NOT VERIFIED for ${filePath}; look for the run "Self Sculpt ${branch}".`
+        return await reportProposalRun(githubRequest, { owner, repo, token, workflow: 'self-sculpt.yml', needle: branch, since: sculptSince, branch, label: `Self-sculpt of ${filePath}`, signal: ctx.signal })
       }
 
       // ── Shell patch: guarded shell-repair workflow (branch + pull request proposal) ──
@@ -1111,7 +1131,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // Run-name is "Shell repair <invocation id>", so the id finds exactly this run.
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, label: `shell_patch ${repairBranch}` })
         if (!repairBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch: repairBranch, label: `shell_patch ${repairBranch}` })
-        return `✓ Shell-patch ${invocationId} DISPATCHED, NOT VERIFIED. The workflow must still apply the diff, pass the protected-path, symlink and build checks, and only then push ${repairBranch} and open a pull request. Look for the run named "Shell repair ${invocationId}".`
+        if (input.wait === false) return `✓ Shell-patch ${invocationId} DISPATCHED, NOT VERIFIED. Look for the run named "Shell repair ${invocationId}".`
+        return await reportProposalRun(githubRequest, { owner, repo, token, workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, branch: repairBranch, label: `Shell-patch ${invocationId}`, signal: ctx.signal })
       }
 
       // ── HTTP fetch ───────────────────────────────────────────────────────────

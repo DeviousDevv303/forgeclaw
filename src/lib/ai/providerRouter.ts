@@ -11,6 +11,7 @@ import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { buildDeepSeekTaskPayload, extractOriginalDeepSeekTask } from './deepseekContext'
 import { stripReasoningArtifacts } from './responseFilter'
 import { withResponseLanguage } from '../responseLanguage'
+import { extractRewrittenFile, readFileBody, sculptTarget, sculptTask } from './deepseekSculpt'
 import { extractSiteHtml, isSiteDeployRequest, parseCreatedRepo, parsePublishedCommit, siteGenerationTask, siteRepoName } from './deepseekSite'
 
 /** True for providers that run DeepSeek 16B via GitHub Actions. */
@@ -153,6 +154,34 @@ function nextSiteStep(request: AIRequest, model: string, selected: ProviderId): 
   return success({ text: answer, provider: 'deepseek', model: 'DeepSeek site chain', stopReason: built ? 'deepseek-site-complete' : 'deepseek-site-unverified' })
 }
 
+/**
+ * DeepSeek self-sculpt chain: read -> rewrite -> sculpt_self (build-validated PR) -> report. Chosen from
+ * this turn's real tool results, so a retry resumes at the first missing step.
+ */
+function nextSculptStep(request: AIRequest, model: string, selected: ProviderId): { success: true; response: AIResponse } | { success: false; error: AIError } | undefined {
+  const text = latestUserTask(request)
+  const path = sculptTarget(text)
+  if (!path || !request.tools?.some(t => t.name === 'deepseek_reason')) return undefined
+  const call = (name: string, input: Record<string, unknown>, step: string) => success({ text: '', provider: selected, model, toolCalls: [{ id: `sculpt-${step}-${Date.now()}`, name, input }], stopReason: `deterministic-sculpt-${step}` })
+  const fail = (message: string) => ({ success: false as const, error: classifyError(new Error(message), selected) })
+
+  const read = toolResultFor(request, 'github_read_file')
+  if (!read) return call('github_read_file', { path }, 'read')
+  const file = readFileBody(read)
+  if ('error' in file) return fail(`Self-sculpt of ${path} stopped before any change: ${file.error}`)
+
+  const rewritten = toolResultFor(request, 'deepseek_reason')
+  if (!rewritten) return call('deepseek_reason', { task: sculptTask(text, path, file.content), profile: 'code', nexus_learn: true }, 'rewrite')
+  if (isFailure(rewritten) || !isSuccessfulDeepSeekToolResult(rewritten)) return fail(`DeepSeek could not rewrite ${path}, so nothing was proposed. ${rewritten.slice(0, 300)}`)
+  const next = extractRewrittenFile(rewritten.split('\n\n').slice(1).join('\n\n'), file.content)
+  if ('error' in next) return fail(`${next.error}, so nothing was proposed for ${path}.`)
+
+  const proposed = toolResultFor(request, 'sculpt_self')
+  if (!proposed) return call('sculpt_self', { file_path: path, content: next.content, reason: `DeepSeek self-sculpt: ${text.replace(/\s+/g, ' ').slice(0, 200)}` }, 'propose')
+  if (isFailure(proposed)) return fail(`The self-sculpt proposal for ${path} did not go through. ${proposed.replace(/^\s*\[TOOL ERROR\]\s*/i, '').slice(0, 400)}`)
+  return success({ text: proposed.replace(/^✓\s*/, ''), provider: 'deepseek', model: 'DeepSeek self-sculpt chain', stopReason: 'deepseek-sculpt-complete' })
+}
+
 function shouldBootstrapDeepSeekReasoning(request: AIRequest, providerId: ProviderId): boolean {
   if (!isDeepSeekProvider(providerId) || !request.tools?.some(t => t.name === 'deepseek_reason')) return false
   if (failedDeepSeekToolResult(request)) return false
@@ -191,6 +220,9 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // A website request on DeepSeek runs the fixed generate -> repo -> publish -> verify chain.
   const siteStep = isDeepSeekProvider(selected) ? nextSiteStep(request, choice.model, selected) : undefined
   if (siteStep) return siteStep
+  // "Improve <file>" on DeepSeek runs the fixed read -> rewrite -> sculpt_self chain.
+  const sculptStep = isDeepSeekProvider(selected) ? nextSculptStep(request, choice.model, selected) : undefined
+  if (sculptStep) return sculptStep
   // Research before repository evidence: a research question that mentions GitHub needs sources, not HEAD.
   if (shouldBootstrapResearch(request, selected)) {
     const question = latestUserTask(request).slice(0, 1000)

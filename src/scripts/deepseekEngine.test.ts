@@ -18,7 +18,8 @@ describe('deepseek python tests', () => {
 
 describe('deepseek-16b.yml wiring', () => {
   it('stays pinned to ubuntu-24.04 and keeps the job timeout', () => {
-    expect(workflow).toContain('runs-on: ubuntu-24.04')
+    // Default is the pinned free CPU runner; a GPU runner is opt-in through a repository variable.
+    expect(workflow).toContain("runs-on: ${{ vars.FORGECLAW_GPU_RUNNER || 'ubuntu-24.04' }}")
     expect(workflow).not.toContain('ubuntu-latest')
     expect(workflow).toContain('timeout-minutes: 30')
   })
@@ -34,7 +35,9 @@ describe('deepseek-16b.yml wiring', () => {
   it('installs the prebuilt llama.cpp wheel without compiling, and survives its absence', () => {
     expect(workflow).toContain('--only-binary=llama-cpp-python')
     expect(workflow).toMatch(/pip install llama-cpp-python==\d+\.\d+\.\d+ --only-binary/)
-    expect(workflow).toContain('abetlen.github.io/llama-cpp-python/whl/cpu')
+    expect(workflow).toContain('WHEELS=cpu; if [ -n "$GPU_RUNNER" ]; then WHEELS=cu124; fi')
+    expect(workflow).toContain('abetlen.github.io/llama-cpp-python/whl/$WHEELS')
+    expect(workflow).toContain("DEEPSEEK_GPU_LAYERS: ${{ vars.FORGECLAW_GPU_RUNNER && '-1' || '0' }}")
     expect(workflow).toMatch(/\|\| echo "::warning::llama-cpp-python wheel unavailable/)
   })
 

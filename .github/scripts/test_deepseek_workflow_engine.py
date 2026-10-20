@@ -59,6 +59,9 @@ class Llama:
             raise RuntimeError('boom mid-generation')
         if os.environ.get('STUB_EMPTY_PRIMARY'):
             return
+        if os.environ.get('STUB_CODE'):
+            yield {'choices': [{'text': os.environ['STUB_CODE']}]}
+            return
         for word in ['FAST', ' ANSWER']:
             yield {'choices': [{'text': word}]}
 """,
@@ -146,10 +149,18 @@ class EngineSelection(unittest.TestCase):
         self.assertIn("degraded=true", meta)
         self.assertIn("fast_engine_error=not attempted", meta)
 
+    def test_code_profile_keeps_indentation_verbatim(self):
+        code = "```ts\nexport function f() {\n  if (x) {\n    return 1\n  }\n}\n```"
+        proc, result, meta = run({"PROFILE": "code", "TASK": "edit", "STUB_CODE": code})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(result, code)
+        self.assertIn("output_cleanup_applied=false", meta)
+
     def test_site_profile_raises_the_output_budget_and_skips_the_tool_protocol(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertIn("MAX_NEW_TOKENS = 3000 if SITE else 768", workflow)
-        self.assertIn("FAST_TIME_BUDGET_S = 900 if SITE else 420", workflow)
+        self.assertIn("MAX_NEW_TOKENS = 3000 if LONG_OUTPUT else 768", workflow)
+        self.assertIn("FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 420", workflow)
+        self.assertIn("LONG_OUTPUT = SITE or CODE", workflow)
         self.assertIn("repeat_penalty=1.1 if SITE else 1.0", workflow)
         proc, result, meta = run({"PROFILE": "site", "TASK": "Write a complete single-file website"})
         self.assertEqual(proc.returncode, 0, proc.stderr)

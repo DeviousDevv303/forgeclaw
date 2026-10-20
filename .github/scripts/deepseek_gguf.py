@@ -15,6 +15,7 @@ should be treated as proof that the fast path worked.
 """
 from __future__ import annotations
 
+import os
 import time
 
 GGUF_REPO = "Qwen/Qwen3-8B-GGUF"
@@ -85,5 +86,7 @@ def load_model(local_dir, hf_list_files, hf_download, llama_cls, repo=GGUF_REPO,
     if name is None:
         raise RuntimeError(f"no {quant} .gguf file found in {repo}")
     path = hf_download(repo, name, local_dir)
-    llm = llama_cls(model_path=path, n_ctx=N_CTX, n_threads=N_THREADS, n_batch=512, verbose=False)
+    # DEEPSEEK_GPU_LAYERS=-1 (set by the workflow only on a configured GPU runner) offloads every layer.
+    gpu_layers = int(os.environ.get("DEEPSEEK_GPU_LAYERS", "0") or "0")
+    llm = llama_cls(model_path=path, n_ctx=N_CTX, n_threads=N_THREADS, n_batch=512, n_gpu_layers=gpu_layers, verbose=False)
     return llm, name

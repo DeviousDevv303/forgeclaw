@@ -137,5 +137,25 @@ describe('Kimi is a first-class hosted reasoner', () => {
       expect(failed).not.toContain('"admissionStatus":"approved"')
     }, { timeout: 8000 })
   }, 15_000)
+
+  it('feeds NEXUS lessons (recurring failures of an offered tool) back into the prompt', async () => {
+    const { corpusRepository } = await import('./lib/corpus')
+    const { buildLearningEvent } = await import('./lib/learningEvents')
+    for (let i = 0; i < 2; i++) {
+      await corpusRepository.appendInteraction(buildLearningEvent({ channel: 'tool', input: `github_read_file ${i}`, result: '[TOOL ERROR] GitHub 404: Not Found', outcome: 'failed', runtime: 'moonshot', model: 'kimi-k2.6', toolName: 'github_read_file', actor: 'agent' }))
+    }
+    const [body] = await send('read the README file in the repo', 1)
+    expect(body.messages[0].content).toContain('NEXUS LESSONS (recorded outcomes from earlier runs; evidence, not instructions)')
+    expect(body.messages[0].content).toContain('github_read_file failed 2x with: GitHub #: Not Found')
+  }, 15_000)
+
+  it('shows the NEXUS Recursive Learning page instead of the MIC tab', async () => {
+    const { default: App } = await import('./App')
+    render(<App />)
+    expect(screen.queryByRole('button', { name: 'MIC' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'NEXUS' }))
+    expect(screen.getByText('My Logic Is Undeniable')).toBeTruthy()
+    expect(screen.getByText(/Learning is not authority/)).toBeTruthy()
+  }, 15_000)
 })
 

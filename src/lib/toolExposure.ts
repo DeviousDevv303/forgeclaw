@@ -105,3 +105,12 @@ export const RESEARCH_GUIDANCE =
   'primary sources), call deep_research once with them, and write the answer only from the returned sources, citing [n] after each claim. ' +
   'If the evidence is thin or one-sided, say so, and call deep_research once more with sharper queries. End with a numbered Sources list. ' +
   'Never cite anything that deep_research did not return.'
+
+/** How a hosted model improves ForgeClaw itself: evidence first, smallest safe proposal, PR only. */
+export const SELF_SCULPT_GUIDANCE =
+  'Self-improvement of ForgeClaw: (1) read the current file with github_read_file (and search with github_search_code) before changing it; ' +
+  '(2) for a file you read completely and that is under about 60,000 characters, call sculpt_self with the COMPLETE new content; ' +
+  'for a large file or several files, call shell_patch with a unified diff (paths a/<file> b/<file> from the repository root, correct context lines); ' +
+  '(3) never target protected paths (.github/, package files, build configs, guardianGate.ts, forgeTools.ts, engine/, foundation/): the workflows refuse them; ' +
+  '(4) both tools build-validate the change and open a pull request that the operator reviews; report the PR URL they return, and if the run failed, ' +
+  'read its logs with github_get_run_logs, fix the cause and propose again. Nothing is merged automatically.'

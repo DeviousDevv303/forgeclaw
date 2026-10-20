@@ -43,7 +43,7 @@ on:
         required: true
         type: string
       profile:
-        description: "Output profile: chat (default) or site (one complete single-file HTML page)"
+        description: "Output profile: chat (default), site (one complete HTML page) or code (one complete edited source file)"
         required: false
         default: chat
         type: string
@@ -53,7 +53,10 @@ permissions:
 
 jobs:
   process:
-    runs-on: ubuntu-24.04
+    # Free CPU runner by default. Set the repository variable FORGECLAW_GPU_RUNNER to a GPU larger-runner
+    # label (needs an organization on GitHub Team/Enterprise; billed per minute) to run the same model
+    # with every layer on the GPU. Unset, nothing here changes.
+    runs-on: ${{ vars.FORGECLAW_GPU_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
       - name: Check out repository
@@ -77,11 +80,15 @@ jobs:
           key: deepseek-gguf-v2-qwen3-8b-${{ runner.os }}
 
       - name: Install inference dependencies
+        env:
+          GPU_RUNNER: ${{ vars.FORGECLAW_GPU_RUNNER }}
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install transformers accelerate
           # Prebuilt CPU wheel (no compiling). If it is unavailable the run continues on the slow engine.
-          pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+          # Same pinned version; the CUDA 12.4 build when a GPU runner is configured.
+          WHEELS=cpu; if [ -n "$GPU_RUNNER" ]; then WHEELS=cu124; fi
+          pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url "https://abetlen.github.io/llama-cpp-python/whl/$WHEELS" \
             || echo "::warning::llama-cpp-python wheel unavailable; the small fallback model will answer (marked DEGRADED)"
 
       - name: Run DeepSeek
@@ -90,6 +97,8 @@ jobs:
           CONTEXT: ${{ inputs.context }}
           INVOCATION_ID: ${{ inputs.invocation_id }}
           PROFILE: ${{ inputs.profile }}
+          # -1 offloads every layer when a GPU runner is configured; 0 keeps the CPU path.
+          DEEPSEEK_GPU_LAYERS: ${{ vars.FORGECLAW_GPU_RUNNER && '-1' || '0' }}
         run: |
           python - <<'PY'
           import os
@@ -117,8 +126,12 @@ jobs:
           # 'site' (ForgeClaw's DeepSeek website chain): one long, complete HTML document, so a larger
           # output budget, a longer time cap and a repetition penalty against the selector loops seen
           # on 2026-10-20. Anything else is the normal chat profile.
-          SITE = os.environ.get('PROFILE', 'chat').strip().lower() == 'site'
-          MAX_NEW_TOKENS = 3000 if SITE else 768
+          PROFILE = os.environ.get('PROFILE', 'chat').strip().lower()
+          SITE = PROFILE == 'site'
+          # 'code' (ForgeClaw's DeepSeek self-sculpt chain): rewrite one whole source file.
+          CODE = PROFILE == 'code'
+          LONG_OUTPUT = SITE or CODE
+          MAX_NEW_TOKENS = 3000 if LONG_OUTPUT else 768
           task = os.environ['TASK'].strip()
           context = os.environ.get('CONTEXT', '').strip()
           invocation_id = os.environ['INVOCATION_ID']
@@ -209,6 +222,19 @@ jobs:
                   },
                   {'role': 'user', 'content': task},
               ]
+          if CODE:
+              messages = [
+                  {
+                      'role': 'system',
+                      'content': (
+                          'You are a careful senior engineer editing exactly one source file of ForgeClaw. '
+                          'Make only the requested change and keep every unrelated line identical. Reply with the '
+                          'COMPLETE updated file in a single fenced code block and nothing else: no explanation, '
+                          'no omitted sections, no placeholders such as "rest unchanged".'
+                      ),
+                  },
+                  {'role': 'user', 'content': task},
+              ]
 
           def is_creative_task(task_text):
               folded = task_text.casefold()
@@ -251,7 +277,7 @@ jobs:
 
           # ---- fast engine: llama.cpp + 4-bit GGUF of the same primary model -------------------------
           GGUF_DIR = os.path.expanduser('~/.cache/forgeclaw-gguf')
-          FAST_TIME_BUDGET_S = 900 if SITE else 420  # a partial answer is returned (and flagged) rather than waiting longer
+          FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 420  # a partial answer is returned (and flagged) rather than waiting longer
           fast = {'llm': None, 'failed': False, 'file': None, 'load_s': 0.0, 'tokens': 0, 'gen_s': 0.0,
                   'timed_out': False, 'trimmed': False, 'version': None, 'error': None}
 
@@ -378,12 +404,17 @@ jobs:
               note = 'fallback checkpoint after primary empty response'
               result = run_inference(FALLBACK_MODEL)
 
-          result, output_cleanup_applied = clean_model_output(result)
-          result, tool_call_tail_dropped = normalize_tool_call_output(result)
+          if LONG_OUTPUT:
+              # Site and code output is used verbatim. clean_model_output collapses runs of spaces, which
+              # flattened every indent of a rewritten source file (seen in the 2026-10-20 code smoke run).
+              result, output_cleanup_applied, tool_call_tail_dropped = result.strip(), False, False
+          else:
+              result, output_cleanup_applied = clean_model_output(result)
+              result, tool_call_tail_dropped = normalize_tool_call_output(result)
 
           creative_retry_attempted = False
           creative_retry_succeeded = False
-          needs_creative_retry = not SITE and is_creative_task(task) and (
+          needs_creative_retry = not LONG_OUTPUT and is_creative_task(task) and (
               is_generic_scope_refusal(result)
               or (is_presentation_task(task) and not has_presentation_structure(result))
           )
