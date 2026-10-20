@@ -2837,7 +2837,7 @@ function App() {
                 <div style={{ display: 'flex', gap: '8px', marginBottom: '6px' }}>
                   <input
                     type={showGhToken ? 'text' : 'password'}
-                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    placeholder="ghp_… or github_pat_…"
                     value={ghToken}
                     onChange={e => {
                       setGhToken(e.target.value)
