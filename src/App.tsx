@@ -539,7 +539,8 @@ function renderMessageContent(text: string, onCopy: (code: string) => void, copi
         </div>
       )
     }
-    return <span key={i} style={{ whiteSpace: 'pre-wrap' }}>{part}</span>
+    // Long URLs and paths wrap inside the bubble instead of running past its edge; links are tappable.
+    return <span key={i} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{renderWithLinks(part)}</span>
   })
 }
 
@@ -563,7 +564,7 @@ function renderWithLinks(text: string): React.ReactNode[] {
     const href  = m[2] ?? m[3]
     nodes.push(
       <a key={m.index} href={href} target="_blank" rel="noopener noreferrer"
-        style={{ color: '#38bdf8', textDecoration: 'underline', textDecorationColor: 'rgba(56,189,248,0.4)', wordBreak: 'break-all' }}>
+        style={{ color: '#38bdf8', textDecoration: 'underline', textDecorationColor: 'rgba(56,189,248,0.4)', overflowWrap: 'anywhere' }}>
         {label}
       </a>
     )
@@ -2432,12 +2433,12 @@ function App() {
         </button>
       )}
       {/* Header */}
-      <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a' }}>
+      <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px clamp(10px, 3vw, 20px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px 12px', background: '#0a0a0a' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button onClick={() => setActiveTab('settings')} style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: 0 }}>⚙</button>
           <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>FORGECLAW</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px 12px', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0, flex: '1 1 auto' }}>
           {/* Language selector */}
           <select aria-label={t('lang.selectorLabel')} title={t('lang.selectorLabel')} value={selectedLanguage} onChange={e => setSelectedLanguage(e.target.value)} style={{ background: '#111', color: '#f97316', border: '1px solid #222', borderRadius: '4px', padding: '4px 8px', fontSize: '10px', fontFamily: 'monospace', outline: 'none' }}>
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
@@ -2471,7 +2472,7 @@ function App() {
                 }}
               >WA</span>
             </div>
-            <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
+            <div style={{ fontSize: '11px', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getStatusIndicator()}</div>
           </div>
           <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>{t('header.wipe')}</button>
           <button onClick={handleExportCorpus} style={headerBtnStyle}>{t('header.export')}</button>
@@ -2479,7 +2480,7 @@ function App() {
       </header>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0' }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0', overflowX: 'auto', scrollbarWidth: 'none' }}>
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id
           const isAlert = tab.id === 'activity' && unresolvedCount > 0
@@ -2493,7 +2494,9 @@ function App() {
                 border: 'none',
                 borderBottom: isActive ? '2px solid #f97316' : '2px solid transparent',
                 color: isActive ? '#f97316' : (isAlert ? '#eab308' : '#555'),
-                padding: '10px 16px',
+                padding: '10px clamp(9px, 2.6vw, 16px)',
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
                 cursor: 'pointer',
                 fontSize: '9px',
                 fontWeight: 'bold',
@@ -2507,8 +2510,8 @@ function App() {
               {tab.badge && (
                 <span style={{
                   position: 'absolute',
-                  top: '6px',
-                  right: '6px',
+                  top: '2px',
+                  right: '0',
                   background: '#ef4444',
                   color: '#fff',
                   fontSize: '7px',
@@ -3058,7 +3061,7 @@ function App() {
                         </div>
                       )}
                       {/* Message bubble — clean response only */}
-                      <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined }}>
+                      <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined, minWidth: 0, boxSizing: 'border-box', overflowWrap: 'anywhere' }}>
                         {msg.imageUrl && (
                           <img src={msg.imageUrl} alt={t('chat.uploadedAlt')} style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
                         )}
@@ -3129,7 +3132,7 @@ function App() {
             />
             
               {/* ── Autonomy mode toggle ── */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: pendingCoSigns.length ? '8px' : '0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: pendingCoSigns.length ? '8px' : '0' }}>
                 <button
                   onClick={() => setGuardianPosture(p => p === 'operator-shell' ? 'full-cosign' : p === 'full-cosign' ? 'autonomous' : 'operator-shell')}
                   style={{
@@ -3138,12 +3141,12 @@ function App() {
                     color: guardianPosture !== 'autonomous' ? '#86efac' : '#22c55e',
                     borderRadius: '5px', padding: '4px 10px', fontSize: '9px',
                     fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1.5px',
-                    textTransform: 'uppercase', fontFamily: 'monospace',
+                    textTransform: 'uppercase', fontFamily: 'monospace', whiteSpace: 'nowrap', flexShrink: 0,
                   }}
                 >
                   {guardianPosture === 'full-cosign' ? t('guardian.fullCosign') : guardianPosture === 'operator-shell' ? t('guardian.operatorShell') : t('guardian.autonomous')}
                 </button>
-                <span style={{ color: '#3a5c3a', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>
+                <span style={{ color: '#3a5c3a', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '0.5px', minWidth: 0, flex: '1 1 140px' }}>
                   {guardianPosture === 'full-cosign'
                     ? t('guardian.fullCosignDesc')
                     : guardianPosture === 'operator-shell'
@@ -3499,6 +3502,7 @@ function App() {
         @keyframes micPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 5px rgba(239,68,68,0); } }
         @keyframes micRing { 0% { box-shadow: 0 0 0 0 rgba(57,255,20,0.35); } 70% { box-shadow: 0 0 0 18px rgba(57,255,20,0); } 100% { box-shadow: 0 0 0 0 rgba(57,255,20,0); } }
         .pulse-text { animation: pulse 1.5s infinite; }
+        textarea::placeholder { text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #0a0a0a; }
         ::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }
