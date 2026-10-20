@@ -4,9 +4,9 @@
 // ForgeClaw public relay (Cloudflare Worker). Lets visitors of the public ForgeClaw site use the hosted
 // model (deepseek-16b.yml, Qwen/Qwen3-8B) without ever holding the owner's credentials.
 //
-// What it can do: dispatch ONE workflow (deepseek-16b.yml, chat profile, no NEXUS learning, no mirror
-// branch) and read that run's result artifact. Nothing else: no repository writes, no other workflow,
-// no tools. Abuse limits: allowed origins only, a per-IP hourly quota (needs the RATE KV binding), and a
+// What it can do: dispatch TWO workflows (deepseek-16b.yml, chat profile, no NEXUS learning; and
+// deep-research.yml, which searches the live web and reads pages), both without a mirror branch, and
+// read those runs' result artifacts. Nothing else: no repository writes, no other workflow, no tools. Abuse limits: allowed origins only, a per-IP hourly quota (needs the RATE KV binding), and a
 // cap on concurrently running public jobs so visitors cannot starve the owner's own runs.
 //
 // Secrets / vars (see relay/README.md):
@@ -22,8 +22,13 @@
 //   REPORT_EMAIL     the owner's email address for error reports
 
 const WORKFLOW = 'deepseek-16b.yml'
+const RESEARCH_WORKFLOW = 'deep-research.yml'
 const ID_RE = /^public-[a-z0-9]{6,12}-[a-z0-9]{6,12}$/
 const MAX_TASK_CHARS = 4000
+// Gathered web evidence for the answer; about 4K tokens of the model's 8K context.
+const MAX_CONTEXT_CHARS = 16000
+const MAX_QUESTION_CHARS = 500
+const RESEARCH_SOURCES = '6'
 const MAX_ERROR_ENTRIES = 30
 const MAX_ERROR_CHARS = 600
 const LEARN_TTL_S = 180 * 24 * 3600
@@ -47,10 +52,10 @@ function gh(env, path, init = {}) {
   })
 }
 
-async function publicRunsInProgress(env) {
+async function publicRunsInProgress(env, workflow = WORKFLOW) {
   let count = 0
   for (const status of ['queued', 'in_progress']) {
-    const res = await gh(env, `/actions/workflows/${WORKFLOW}/runs?status=${status}&per_page=50`)
+    const res = await gh(env, `/actions/workflows/${workflow}/runs?status=${status}&per_page=50`)
     if (!res.ok) throw new Error(`GitHub ${res.status} listing runs`)
     const data = await res.json()
     count += (data.workflow_runs || []).filter(r => String(r.display_title || '').includes(' public-')).length
@@ -104,14 +109,16 @@ async function startReasoning(request, env, cors) {
   let body
   try { body = await request.json() } catch { return json({ error: 'body must be JSON {"task": "..."}' }, 400, cors) }
   const task = typeof body?.task === 'string' ? body.task.trim() : ''
+  const context = typeof body?.context === 'string' ? body.context.trim() : ''
   if (!task) return json({ error: 'task is required' }, 400, cors)
   if (task.length > MAX_TASK_CHARS) return json({ error: `task is limited to ${MAX_TASK_CHARS} characters` }, 413, cors)
+  if (context.length > MAX_CONTEXT_CHARS) return json({ error: `context is limited to ${MAX_CONTEXT_CHARS} characters` }, 413, cors)
   if (await overQuota(request, env)) return json({ error: `hourly limit reached (${env.MAX_PER_HOUR || 10} per hour); try again later` }, 429, cors)
   if (await publicRunsInProgress(env) >= Number(env.MAX_CONCURRENT || 3)) return json({ error: 'the public model is busy; try again in a few minutes' }, 503, cors)
   const id = `public-${Date.now().toString(36)}-${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`
   const res = await gh(env, `/actions/workflows/${WORKFLOW}/dispatches`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ref: 'main', inputs: { task, context: '', nexus_learning: 'false', invocation_id: id, mirror: 'false' } }),
+    body: JSON.stringify({ ref: 'main', inputs: { task, context, nexus_learning: 'false', invocation_id: id, mirror: 'false' } }),
   })
   if (!res.ok) return json({ error: `the model could not be started (GitHub ${res.status})` }, 502, cors)
   // Kept until the answer arrives, then stored with it as a NEXUS learning record (see readReasoning).
@@ -119,21 +126,61 @@ async function startReasoning(request, env, cors) {
   return json({ invocation_id: id, status: 'queued' }, 202, cors)
 }
 
+async function findRun(env, workflow, id) {
+  const runs = await gh(env, `/actions/workflows/${workflow}/runs?event=workflow_dispatch&per_page=50`)
+  if (!runs.ok) throw new Error(`GitHub ${runs.status} listing runs`)
+  return ((await runs.json()).workflow_runs || []).find(r => String(r.display_title || '').includes(id))
+}
+
+async function readArtifact(env, run, name, wanted) {
+  const arts = await gh(env, `/actions/runs/${run.id}/artifacts?per_page=20`)
+  if (!arts.ok) throw new Error(`GitHub ${arts.status} listing artifacts`)
+  const artifact = ((await arts.json()).artifacts || []).find(a => a.name === name && !a.expired)
+  if (!artifact) return null
+  const zip = await gh(env, `/actions/artifacts/${artifact.id}/zip`, { redirect: 'follow' })
+  if (!zip.ok) throw new Error(`GitHub ${zip.status} downloading the result`)
+  return readZipEntries(await zip.arrayBuffer(), wanted)
+}
+
+/** Live web research for a visitor's question: deep-research.yml searches and reads pages server-side. */
+async function startResearch(request, env, cors) {
+  let body
+  try { body = await request.json() } catch { return json({ error: 'body must be JSON {"question": "..."}' }, 400, cors) }
+  const question = typeof body?.question === 'string' ? body.question.trim() : ''
+  if (!question) return json({ error: 'question is required' }, 400, cors)
+  if (question.length > MAX_QUESTION_CHARS) return json({ error: `question is limited to ${MAX_QUESTION_CHARS} characters` }, 413, cors)
+  if (await overQuota(request, env, 'research')) return json({ error: `hourly limit reached (${env.MAX_PER_HOUR || 10} per hour); try again later` }, 429, cors)
+  if (await publicRunsInProgress(env, RESEARCH_WORKFLOW) >= Number(env.MAX_CONCURRENT || 3)) return json({ error: 'web research is busy; try again in a minute' }, 503, cors)
+  const id = `public-${Date.now().toString(36)}-${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`
+  const res = await gh(env, `/actions/workflows/${RESEARCH_WORKFLOW}/dispatches`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ref: 'main', inputs: { question, queries: '', max_sources: RESEARCH_SOURCES, invocation_id: id, mirror: 'false' } }),
+  })
+  if (!res.ok) return json({ error: `web research could not be started (GitHub ${res.status})` }, 502, cors)
+  return json({ invocation_id: id, status: 'queued' }, 202, cors)
+}
+
+async function readResearch(id, env, cors) {
+  if (!ID_RE.test(id)) return json({ error: 'unknown invocation id' }, 404, cors)
+  const run = await findRun(env, RESEARCH_WORKFLOW, id)
+  if (!run) return json({ status: 'queued' }, 200, cors)
+  if (run.status !== 'completed') return json({ status: run.status }, 200, cors)
+  // A run that found no sources fails on purpose but still uploads its report (with the failures), so read it either way.
+  const files = await readArtifact(env, run, `research-${id}`, ['research.json'])
+  if (!files?.['research.json']) return json({ status: 'failed', conclusion: run.conclusion || 'no result artifact', run_url: run.html_url }, 200, cors)
+  let report
+  try { report = JSON.parse(files['research.json']) } catch { return json({ status: 'failed', conclusion: 'unreadable research report', run_url: run.html_url }, 200, cors) }
+  return json({ status: 'done', report, run_url: run.html_url }, 200, cors)
+}
+
 async function readReasoning(id, env, cors) {
   if (!ID_RE.test(id)) return json({ error: 'unknown invocation id' }, 404, cors)
-  const runs = await gh(env, `/actions/workflows/${WORKFLOW}/runs?event=workflow_dispatch&per_page=50`)
-  if (!runs.ok) return json({ error: `GitHub ${runs.status}` }, 502, cors)
-  const run = ((await runs.json()).workflow_runs || []).find(r => String(r.display_title || '').includes(id))
+  const run = await findRun(env, WORKFLOW, id)
   if (!run) return json({ status: 'queued' }, 200, cors)
   if (run.status !== 'completed') return json({ status: run.status }, 200, cors)
   if (run.conclusion !== 'success') return json({ status: 'failed', conclusion: run.conclusion }, 200, cors)
-  const arts = await gh(env, `/actions/runs/${run.id}/artifacts?per_page=20`)
-  if (!arts.ok) return json({ error: `GitHub ${arts.status} listing artifacts` }, 502, cors)
-  const artifact = ((await arts.json()).artifacts || []).find(a => a.name === `deepseek-${id}` && !a.expired)
-  if (!artifact) return json({ status: 'failed', conclusion: 'no result artifact' }, 200, cors)
-  const zip = await gh(env, `/actions/artifacts/${artifact.id}/zip`, { redirect: 'follow' })
-  if (!zip.ok) return json({ error: `GitHub ${zip.status} downloading the result` }, 502, cors)
-  const files = await readZipEntries(await zip.arrayBuffer(), ['result.txt', 'result_meta.txt'])
+  const files = await readArtifact(env, run, `deepseek-${id}`, ['result.txt', 'result_meta.txt'])
+  if (!files) return json({ status: 'failed', conclusion: 'no result artifact' }, 200, cors)
   const model = /^model=(.+)$/m.exec(files['result_meta.txt'] || '')?.[1] || ''
   const result = files['result.txt'] || ''
   await recordLearning(env, id, result, model)
@@ -216,14 +263,17 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
     const url = new URL(request.url)
     // Error reports and the owner exports work even before the model token is configured.
-    if (!env.GITHUB_TOKEN && url.pathname.startsWith('/v1/reason')) return json({ error: 'relay is not configured' }, 503, cors)
+    if (!env.GITHUB_TOKEN && (url.pathname.startsWith('/v1/reason') || url.pathname.startsWith('/v1/research'))) return json({ error: 'relay is not configured' }, 503, cors)
     try {
       if (request.method === 'POST' && url.pathname === '/v1/reason') return await startReasoning(request, env, cors)
       if (request.method === 'POST' && url.pathname === '/v1/errors') return await receiveErrors(request, env, cors)
       if (request.method === 'GET' && url.pathname === '/v1/learning') return await exportRecords(request, env, cors, 'learn:')
       if (request.method === 'GET' && url.pathname === '/v1/errors') return await exportRecords(request, env, cors, 'err:')
+      if (request.method === 'POST' && url.pathname === '/v1/research') return await startResearch(request, env, cors)
       const m = /^\/v1\/reason\/([^/]+)$/.exec(url.pathname)
       if (request.method === 'GET' && m) return await readReasoning(m[1], env, cors)
+      const r = /^\/v1\/research\/([^/]+)$/.exec(url.pathname)
+      if (request.method === 'GET' && r) return await readResearch(r[1], env, cors)
       return json({ error: 'not found' }, 404, cors)
     } catch (error) {
       return json({ error: `relay error: ${error instanceof Error ? error.message : String(error)}` }, 502, cors)

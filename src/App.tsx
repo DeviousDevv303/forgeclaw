@@ -220,11 +220,13 @@ import { NexusLearningPanel } from './components/NexusLearningPanel'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { isPublicVisitor, PUBLIC_MODE_NOTICE } from './lib/publicRelay'
+import { isSendableImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { startErrorReporting } from './lib/errorReporting'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
+import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
 import { baselineToolNames, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
@@ -1296,6 +1298,22 @@ function App() {
     const arithmeticResult = !imageUrl && activeProvider !== 'anthropic'
       ? evaluateSimpleArithmetic(promptText)
       : null
+    // Only Claude and Kimi receive the picture itself; any other provider would answer without seeing it.
+    if (imageUrl && !HOSTED_TOOL_PROVIDERS.has(activeProvider) && (isDeepSeekProvider(activeProvider) || activeProvider === 'corpus' || isPublicVisitor(ghToken || ''))) {
+      setMessages(prev => [...prev, userMsg, {
+        id: `${Date.now() + 1}`,
+        role: 'assistant',
+        content: visionUnavailableReply(isPublicVisitor(ghToken || '')),
+        timestamp: Date.now(),
+        source: 'local',
+        provider: 'ForgeClaw',
+        model: 'image check',
+        agentPhase: 'COMPLETE',
+      }])
+      setRequestStatus('success')
+      setLastRequestError('')
+      return
+    }
     if (arithmeticResult !== null) {
       const answer = Number.isInteger(arithmeticResult) ? String(arithmeticResult) : String(Number(arithmeticResult.toPrecision(12)))
       const answerId = `${Date.now() + 1}`
@@ -1441,19 +1459,25 @@ function App() {
     if (isHostedReasoner && !codingTask) {
       coreToolNames.push('github_repo_state', 'shell_exec', 'github_read_file', 'github_search_code')
     }
-    if (imageUrl) coreToolNames.push('analyze_image')
+    // Claude and Kimi see the picture directly; analyze_image is the URL-based workflow for the others.
+    if (imageUrl && !isHostedReasoner) coreToolNames.push('analyze_image')
+    // Questions about what is current get gathered sources, whatever the wording (currentInfo.ts).
+    if (needsCurrentInfo(promptText)) coreToolNames.push('deep_research')
     coreToolNames.push(...baselineToolNames(activeProvider))
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     // Self-modification tools are offered only while the owner's self-sculpt key is unlocked.
     const sculptUnlocked = isSculptUnlocked()
-    const finalTools = [...new Set([...relevantTools, ...coreToolDefs])].filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
+    const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
+      .filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
 
     const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding', finalTools)) : finalTools
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'This model has no native function calling. ForgeClaw supplies a compact manual protocol and routes every call through its existing dispatcher.'
     const needsManualTools = codingTask || imageUrl !== undefined || relevantTools.length > 0 || complexReasoningTask || deepSeekDuoDefault
-    const primaryInstruction = imageUrl
+    const primaryInstruction = imageUrl && isHostedReasoner
+      ? `\n\nPRIMARY REASONING POLICY\n${VISION_POLICY}`
+      : imageUrl
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
@@ -1464,7 +1488,7 @@ function App() {
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
           : '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for tasks that require delegated reasoning, then formulate the final response from the tool result.'
         : '\n\nPRIMARY REASONING POLICY\nAnswer the user directly and clearly. Do not emit tool syntax, code, token IDs, or internal runtime instructions.'
-    const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
+    const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nCURRENT DATE\n${currentDateNote()}${needsCurrentInfo(promptText) && finalTools.some(t => t.name === 'deep_research') ? ' This question is about what is current: call deep_research first and answer from its sources.' : ''}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
     
     // NEXUS recursive learning: recurring failures of the tools offered now, as counted evidence.
     const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(500)), runtimeTools.map(tool => tool.name))
@@ -1686,12 +1710,12 @@ function App() {
 
       const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
         m.role === 'user' || m.role === 'assistant'
-          ? [{ role: m.role, content: m.content, ...(m.imageUrl ? { image_url: m.imageUrl } : {}) }]
+          ? [{ role: m.role, content: m.content, ...(m.role === 'user' && isSendableImage(m.imageUrl) ? { image_url: m.imageUrl } : {}) }]
           : []
       )
       // Only project the minimum runtime state required for this request. Full
       // task state remains in storage and is surfaced by the UI, not token stream.
-      effectivePrompt = `${promptText}${imageUrl ? `\n\n[IMAGE_ATTACHMENT]\n${imageUrl}` : ''}\n\n${buildRuntimeRequestContext({
+      effectivePrompt = `${promptText}${imageUrl && !isHostedReasoner ? `\n\n[IMAGE_ATTACHMENT]\n${imageUrl}` : ''}\n\n${buildRuntimeRequestContext({
         owner,
         repo,
         taskStatus: codingAgentState.taskStatus,
@@ -2076,8 +2100,8 @@ function App() {
       const isImage = attachedFile.content.startsWith('data:image')
       if (isImage) {
         imageUrl = attachedFile.content
-        // API gets the raw base64; display strips it cleanly in sendPrompt
-        promptText = input.trim() ? `${attachedFile.content}\n\n${input.trim()}` : attachedFile.content
+        // The picture travels as image_url, never as base64 text in the prompt.
+        promptText = input.trim() || t('chat.describeImage')
       } else {
         const maxFileSize = 50000 // ~50KB of text
         const fileContent = attachedFile.content.length > maxFileSize

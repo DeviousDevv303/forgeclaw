@@ -74,9 +74,20 @@ describe('buildAndPublishSite', () => {
     expect(f.calls.some(c => c.url.startsWith(SITE))).toBe(false)
   })
 
-  it('reports an empty output when the mirror tree listing is truncated', async () => {
+  it('publishes nothing when the mirror listing is truncated and shows none of the files', async () => {
     const f = fake({ mirrorFiles: [], treeTruncated: true })
-    await expect(buildAndPublishSite(f.request, f.input)).rejects.toThrow(/site-builds is empty \(tree listing truncated\)/)
+    await expect(buildAndPublishSite(f.request, f.input)).rejects.toThrow(/truncated listing .* nothing was published/)
+    expect(f.calls.some(c => c.url.startsWith(SITE))).toBe(false)
+  })
+
+  it('publishes nothing when the mirror listing is truncated, even if some files are visible (#169)', async () => {
+    const f = fake()
+    const request: GithubRequest = async (url, init) => {
+      const res = await f.request(url, init)
+      if (url.endsWith('/git/trees/site-builds?recursive=1')) return Response.json({ ...(await res.json()), truncated: true })
+      return res
+    }
+    await expect(buildAndPublishSite(request, f.input)).rejects.toThrow(/truncated listing .* nothing was published/)
     expect(f.calls.some(c => c.url.startsWith(SITE))).toBe(false)
   })
 

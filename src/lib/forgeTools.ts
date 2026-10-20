@@ -35,7 +35,7 @@ import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type Git
 import { buildAndPublishSite } from './siteBuild'
 import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
 import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
-import { PUBLIC_RELAY_URL, runPublicReasoning } from './publicRelay'
+import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -988,7 +988,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // Public visitor (no token in this browser, relay configured for this build): the owner's relay runs
         // the chat model; the owner's token, tools and NEXUS are never involved.
         if (!token && ctx.publicRelayUrl) {
-          const answer = await runPublicReasoning(`${task}${context ? `\n\nContext:\n${context}` : ''}`.slice(0, 4000), { relayUrl: ctx.publicRelayUrl, signal: ctx.signal })
+          const answer = await runPublicReasoning(task, { context, relayUrl: ctx.publicRelayUrl, signal: ctx.signal })
           if (isEmptyDeepSeekResponse(answer.result)) return `[TOOL ERROR] The public model run ${answer.invocationId} produced an empty response.`
           return formatDeepSeekResultText(answer.invocationId, owner, repo, 'main', `Stages: dispatch=public-relay; result-retrieval=relay-artifact; checkpoint=${answer.model || 'unknown'}`, '(public relay run)', answer.result)
         }
@@ -1867,6 +1867,11 @@ case 'spawn_agent': {
 
       // ── Deep research ────────────────────────────────────────────────────────
       case 'deep_research': {
+        // Public visitor: the owner's relay runs the same research workflow; no token in this browser.
+        if (!token && ctx.publicRelayUrl) {
+          const { report, runUrl } = await runPublicResearch(String(input.question || ''), { relayUrl: ctx.publicRelayUrl, signal: ctx.signal })
+          return formatResearchResult(report, runUrl)
+        }
         if (!token) throw new Error('No GitHub token configured. deep_research runs as a GitHub Actions job and needs gh_token with Actions: write.')
         // The workflow lives in ForgeClaw's own repository regardless of any owner/repo in the call.
         const { report, runUrl } = await runDeepResearch(githubRequest, {

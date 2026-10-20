@@ -33,7 +33,7 @@ describe('relay worker', () => {
     expect(pre.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN)
   })
 
-  it('dispatches only deepseek-16b.yml, with learning and the public mirror off', async () => {
+  it('dispatches deepseek-16b.yml with learning and the public mirror off', async () => {
     const calls: Array<{ url: string; body?: Record<string, unknown> }> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
@@ -82,6 +82,65 @@ describe('relay worker', () => {
     expect(await (await worker.fetch(req(`/v1/reason/${id}`), env())).json()).toEqual({ status: 'done', result: 'Recursion is a function calling itself.', model: 'Qwen/Qwen3-8B' })
     expect((await worker.fetch(req('/v1/reason/../../etc'), env())).status).toBe(404)
     expect((await worker.fetch(req('/v1/reason/deepseek-owner-run'), env())).status).toBe(404)  // only public ids
+  })
+
+  it('passes gathered evidence as a separate, bounded context', async () => {
+    const calls: Array<{ url: string; body?: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      return url.includes('/runs?status=') ? Response.json({ workflow_runs: [] }) : new Response(null, { status: 204 })
+    }))
+    const post = (context: string) => worker.fetch(req('/v1/reason', { method: 'POST', body: JSON.stringify({ task: 'Answer with [n] citations', context }) }), env({ MAX_PER_HOUR: '10' }))
+    expect((await post('x'.repeat(16001))).status).toBe(413)
+    expect((await post('[1] Example source\nhttps://example.com\nevidence')).status).toBe(202)
+    expect((calls.find(c => c.url.endsWith('/dispatches'))!.body!.inputs as Record<string, string>).context).toBe('[1] Example source\nhttps://example.com\nevidence')
+  })
+
+  it('runs live web research only through deep-research.yml, bounded and without the mirror branch', async () => {
+    const calls: Array<{ url: string; body?: Record<string, unknown> }> = []
+    let inProgress: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      return url.includes('/runs?status=') ? Response.json({ workflow_runs: inProgress }) : new Response(null, { status: 204 })
+    }))
+    const e = env()
+    const post = (question: string) => worker.fetch(req('/v1/research', { method: 'POST', body: JSON.stringify({ question }) }), e)
+    expect((await post('')).status).toBe(400)
+    expect((await post('x'.repeat(501))).status).toBe(413)
+    inProgress = [{ display_title: 'Deep research public-abc-123' }]
+    expect((await post('latest in tech')).status).toBe(503)
+    expect(calls.some(c => c.url.includes('/workflows/deep-research.yml/runs?status='))).toBe(true)
+    inProgress = []
+    const res = await post('latest in tech')
+    expect(res.status).toBe(202)
+    const { invocation_id } = await res.json() as { invocation_id: string }
+    const dispatch = calls.find(c => c.url.endsWith('/dispatches'))!
+    expect(dispatch.url).toBe(`${API}/actions/workflows/deep-research.yml/dispatches`)
+    expect(dispatch.body).toEqual({ ref: 'main', inputs: { question: 'latest in tech', queries: '', max_sources: '6', invocation_id, mirror: 'false' } })
+    expect((await post('again')).status).toBe(429)  // MAX_PER_HOUR=2, its own bucket; the busy attempt counted too
+    expect((await worker.fetch(req('/v1/research', { method: 'POST', body: '{}' }), env({ GITHUB_TOKEN: '' }))).status).toBe(503)
+  })
+
+  it('reads the research report from the run artifact, also from a run that found nothing', async () => {
+    const id = 'public-mabc123-0123456789'
+    const report = { question: 'latest in tech', queries: ['latest in tech'], sources: [{ id: 1, url: 'https://example.com/a', domain: 'example.com', title: 'A', date: '2026-10-19', excerpt: 'news' }], failures: [], elapsed_seconds: 5 }
+    const zip = new JSZip()
+    zip.file('research.json', JSON.stringify(report))
+    const archive = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' })
+    let run: Record<string, unknown> = { id: 8, display_title: `Deep research ${id}`, status: 'in_progress', conclusion: null, html_url: 'https://github.com/run/8' }
+    let artifacts = [{ id: 98, name: `research-${id}`, expired: false }]
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/workflows/deep-research.yml/runs?event=')) return Response.json({ workflow_runs: [run] })
+      if (url.endsWith('/actions/runs/8/artifacts?per_page=20')) return Response.json({ artifacts })
+      if (url.endsWith('/actions/artifacts/98/zip')) return new Response(archive)
+      return new Response('{}', { status: 404 })
+    }))
+    expect(await (await worker.fetch(req(`/v1/research/${id}`), env())).json()).toEqual({ status: 'in_progress' })
+    run = { ...run, status: 'completed', conclusion: 'failure' }
+    expect(await (await worker.fetch(req(`/v1/research/${id}`), env())).json()).toEqual({ status: 'done', report, run_url: 'https://github.com/run/8' })
+    artifacts = []
+    expect(await (await worker.fetch(req(`/v1/research/${id}`), env())).json()).toEqual({ status: 'failed', conclusion: 'failure', run_url: 'https://github.com/run/8' })
+    expect((await worker.fetch(req('/v1/research/owner-run'), env())).status).toBe(404)
   })
 
   it('unzips stored and deflated entries', async () => {

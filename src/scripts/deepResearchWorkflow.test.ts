@@ -30,6 +30,8 @@ describe('deep-research.yml', () => {
   it('is correlatable, pinned, and keeps the failures visible', () => {
     expect(wf).toContain('run-name: Deep research ${{ inputs.invocation_id }}')
     expect(wf).toContain('runs-on: ubuntu-24.04')
-    expect(wf.match(/if: always\(\)/g)?.length).toBeGreaterThanOrEqual(2)
+    // Artifact and mirror steps run on failure too; public-visitor runs skip only the browsable mirror.
+    expect(wf).toContain("if: ${{ always() && inputs.mirror != 'false' }}")
+    expect(wf.match(/if: (?:\$\{\{ )?always\(\)/g)?.length).toBeGreaterThanOrEqual(2)
   })
 })
