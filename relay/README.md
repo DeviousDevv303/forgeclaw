@@ -1,0 +1,50 @@
+# ForgeClaw public relay
+
+Lets visitors of the public ForgeClaw site use the hosted model (Qwen3-8B in `deepseek-16b.yml`)
+**without your credentials and without anything from your own session**. It is a ~150-line
+Cloudflare Worker (`worker.js`, free tier is enough) that can do exactly two things:
+
+- `POST /v1/reason {task}`: dispatch `deepseek-16b.yml` with NEXUS learning **off** and the
+  browsable results mirror **off**.
+- `GET /v1/reason/<id>`: read that run's result from its artifact.
+
+It cannot write to the repository or run any other workflow or tool.
+
+**Limits** (all set in `wrangler.toml`):
+- **Allowed origins:** only the sites listed in `ALLOWED_ORIGINS` can call it.
+- **Task size:** 4,000 characters at most.
+- **Per-IP:** 10 runs an hour (`MAX_PER_HOUR`). This needs the `RATE` KV namespace.
+- **Concurrency:** 3 public runs at once (`MAX_CONCURRENT`), so your own runs are never starved.
+
+**Privacy notice shown to visitors:** prompts run in your public repository's Actions, and run
+artifacts on a public repository can be downloaded by signed-in GitHub users. The app tells
+visitors not to enter private information.
+
+## Deploy (about 10 minutes, one time)
+
+1. **Create the token.** GitHub → Settings → Developer settings → Fine-grained tokens → Generate:
+   - Repository access: **Only select repositories → forgeclaw**
+   - Permissions: **Actions: Read and write**. Nothing else (Metadata: read is automatic).
+   - Expiration: your choice; put a reminder to rotate it.
+2. **Deploy the worker** (needs a free Cloudflare account):
+   ```bash
+   cd relay
+   npx wrangler@4 login
+   npx wrangler@4 kv namespace create RATE      # paste the printed id into wrangler.toml, uncomment the block
+   npx wrangler@4 secret put GITHUB_TOKEN       # paste the token from step 1
+   npx wrangler@4 deploy                        # prints https://forgeclaw-relay.<you>.workers.dev
+   ```
+   If your site is served from a custom `.io` domain, add it to `ALLOWED_ORIGINS` (comma-separated)
+   before `deploy`, e.g. `https://deviousdevv303.github.io,https://forgeclaw.io`.
+3. **Point the site at it.** GitHub → forgeclaw → Settings → Secrets and variables → Actions →
+   **Variables** → New variable `FORGECLAW_PUBLIC_RELAY_URL` = the workers.dev URL from step 2.
+4. **Redeploy the site.** Actions → *Deploy to GitHub Pages* → Run workflow (or push to main).
+
+## Check it
+
+- In a **private window** (no token there), open the site and ask something with the DeepSeek
+  provider selected. You should see the yellow "Public mode" note, then an answer in a few minutes.
+- In **your normal browser** (token present) nothing changes. The relay is never used there.
+- `curl -i -X POST https://forgeclaw-relay.<you>.workers.dev/v1/reason -H 'Origin: https://evil.example'` must return `403`.
+
+To turn public mode off, delete the `FORGECLAW_PUBLIC_RELAY_URL` variable and redeploy, or revoke the token.

@@ -35,6 +35,7 @@ import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type Git
 import { buildAndPublishSite } from './siteBuild'
 import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
 import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
+import { PUBLIC_RELAY_URL, runPublicReasoning } from './publicRelay'
 
 /**
  * Wait for a self-modification run (self-sculpt or shell-repair) and report what really happened:
@@ -110,6 +111,8 @@ export interface ToolContext {
   ghToken: string
   ghOwner: string
   ghRepo: string
+  /** Public relay for visitors without a GitHub token (src/lib/publicRelay.ts); empty for the owner. */
+  publicRelayUrl?: string
   sessionId?: string
   waPhoneNumberId?: string
   waAccessToken?: string
@@ -650,6 +653,7 @@ export function loadToolContext(): ToolContext {
     ghToken:         resolveGithubToken(),
     ghOwner:         safeGetItem('fc_gh_owner') || CANONICAL_IDENTITY.owner,
     ghRepo:          safeGetItem('fc_gh_repo')  || CANONICAL_IDENTITY.repository,
+    publicRelayUrl:  PUBLIC_RELAY_URL || undefined,
     waPhoneNumberId: wa.phoneNumberId,
     waAccessToken:   wa.accessToken,
     waRecipient:     wa.recipientNumber,
@@ -969,7 +973,6 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           return formatDeepSeekResultText(resumeInvocationId, owner, repo, ref, 'Resumed after app background', completed.run.html_url, completed.result)
         }
         if (!task) throw new Error('DeepSeek task is required.')
-        if (!token) throw new Error('No GitHub token configured.')
         // GitHub workflow_dispatch inputs have size limits (~64KB total).
         // Base64 image data (data:image/...) blows past this with a 422.
         // Strip it before dispatch — the DeepSeek workflow can't process images.
@@ -977,6 +980,14 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const stripImages = (text: string) => text.replace(IMAGE_DATA_PATTERN, '[image omitted: not supported via DeepSeek workflow dispatch]')
         task = stripImages(task)
         context = stripImages(context)
+        // Public visitor (no token in this browser, relay configured for this build): the owner's relay runs
+        // the chat model; the owner's token, tools and NEXUS are never involved.
+        if (!token && ctx.publicRelayUrl) {
+          const answer = await runPublicReasoning(`${task}${context ? `\n\nContext:\n${context}` : ''}`.slice(0, 4000), { relayUrl: ctx.publicRelayUrl, signal: ctx.signal })
+          if (isEmptyDeepSeekResponse(answer.result)) return `[TOOL ERROR] The public model run ${answer.invocationId} produced an empty response.`
+          return formatDeepSeekResultText(answer.invocationId, owner, repo, 'main', `Stages: dispatch=public-relay; result-retrieval=relay-artifact; checkpoint=${answer.model || 'unknown'}`, '(public relay run)', answer.result)
+        }
+        if (!token) throw new Error('No GitHub token configured.')
         // Defense-in-depth: drop context that shares no significant words with the task.
         // Stale context (e.g. 18h-old SHA Q&A) confuses DeepSeek into answering the wrong question.
         if (context && task) {

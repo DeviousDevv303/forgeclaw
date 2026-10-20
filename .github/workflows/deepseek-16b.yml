@@ -42,6 +42,11 @@ on:
         description: Correlation identifier
         required: true
         type: string
+      mirror:
+        description: "Publish the result to the browsable deepseek-results branch ('false' for public-visitor runs from the relay)"
+        required: false
+        default: 'true'
+        type: string
       profile:
         description: "Output profile: chat (default), site (one complete HTML page) or code (one complete edited source file)"
         required: false
@@ -499,6 +504,8 @@ jobs:
           PY
 
       - name: Publish browser-readable result mirror
+        # Public-visitor runs (relay/worker.js) skip the browsable branch; the relay reads the artifact.
+        if: ${{ inputs.mirror != 'false' }}
         continue-on-error: true
         env:
           INVOCATION_ID: ${{ inputs.invocation_id }}

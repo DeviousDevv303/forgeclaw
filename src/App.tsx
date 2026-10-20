@@ -218,6 +218,7 @@ import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
 import { NexusLearningPanel } from './components/NexusLearningPanel'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
+import { isPublicVisitor, PUBLIC_MODE_NOTICE } from './lib/publicRelay'
 import { baselineToolNames, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
@@ -1153,7 +1154,8 @@ function App() {
     // message instead of dispatching DeepSeek (which will fail) and falling back
     // to an unverified local fallback.
     const deepSeekProvider = isDeepSeekProvider(activeProvider)
-    if (deepSeekProvider && !ghToken?.trim()) {
+    // A public visitor (no token, relay configured) reaches the model through the relay instead.
+    if (deepSeekProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '')) {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: 'assistant',
@@ -2935,6 +2937,9 @@ function App() {
         {activeTab === 'forgemind' && (
           <>
             <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
+              {isPublicVisitor(ghToken) && (
+                <div role="note" style={{ border: '1px solid #3a2a05', background: '#120d02', color: '#eab308', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{PUBLIC_MODE_NOTICE}</div>
+              )}
               {/* Persisted coding task — visible so a reload reads as a resume. */}
               <CodingAgentStatePanel state={codingAgentState} resumed={Boolean(agentResumedState)} onChange={setCodingAgentState} />
               <LiveExecution
