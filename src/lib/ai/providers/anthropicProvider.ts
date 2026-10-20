@@ -8,6 +8,8 @@ import type { AIMessage, AIProvider, AIRequest, AIResponse, AIToolCall } from '.
 
 const ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
+/** Room for a whole-file github_write_file argument; at 4096 a page of HTML hit the limit mid-call. */
+export const ANTHROPIC_DEFAULT_MAX_TOKENS = 16384
 
 // Current Messages API model IDs (checked against Anthropic's published model strings on
 // 2026-10-16). The earlier 3.5 Haiku / 3.7 Sonnet / Sonnet 4 entries were older aliases that
@@ -50,29 +52,39 @@ function isConfigured(apiKey: string): boolean {
   return key.startsWith('sk-ant-') && key.length > 20
 }
 
-function toAnthropicMessages(messages: AIMessage[]): AnthropicMessage[] {
-  return messages.map((message): AnthropicMessage => {
+/**
+ * The Messages API rejects an empty text block, needs every tool_result for one assistant turn in the
+ * very next user message, and starts with a user turn. The tool loop produces one 'tool' message per
+ * result and the 6-message history window can start on an assistant reply, so normalize here.
+ */
+export function toAnthropicMessages(messages: AIMessage[]): AnthropicMessage[] {
+  const result: Array<{ role: 'user' | 'assistant'; content: AnthropicContentBlock[] }> = []
+  for (const message of messages) {
+    const blocks: AnthropicContentBlock[] = []
+    let role: 'user' | 'assistant'
     if (message.role === 'tool') {
-      return {
-        role: 'user',
-        content: [{ type: 'tool_result', tool_use_id: message.tool_call_id || '', content: message.content }],
+      role = 'user'
+      blocks.push({ type: 'tool_result', tool_use_id: message.tool_call_id || '', content: message.content || '(empty result)' })
+    } else {
+      role = message.role === 'assistant' ? 'assistant' : 'user'
+      if (message.content?.trim()) blocks.push({ type: 'text', text: message.content })
+      if (message.role === 'assistant') {
+        blocks.push(...(message.tool_calls ?? []).map(call => ({
+          type: 'tool_use' as const,
+          id: call.id,
+          name: call.name,
+          input: call.input ?? {},
+        })))
       }
     }
-
-    if (message.role === 'assistant' && message.tool_calls?.length) {
-      const blocks: AnthropicContentBlock[] = []
-      if (message.content) blocks.push({ type: 'text', text: message.content })
-      blocks.push(...message.tool_calls.map(call => ({
-        type: 'tool_use' as const,
-        id: call.id,
-        name: call.name,
-        input: call.input ?? {},
-      })))
-      return { role: 'assistant', content: blocks }
-    }
-
-    return { role: message.role === 'assistant' ? 'assistant' : 'user', content: message.content }
-  })
+    if (!blocks.length) continue
+    const previous = result[result.length - 1]
+    if (previous?.role === role) previous.content.push(...blocks)
+    else result.push({ role, content: blocks })
+  }
+  while (result[0]?.role === 'assistant') result.shift()
+  // Plain single-text turns keep the simple string form.
+  return result.map(m => m.content.length === 1 && m.content[0].type === 'text' ? { role: m.role, content: m.content[0].text } : m)
 }
 
 function toAnthropicTools(tools: NonNullable<AIRequest['tools']>) {
@@ -160,7 +172,7 @@ export const anthropicProvider: AIProvider = {
     const model = request.model || DEFAULT_ANTHROPIC_MODEL
     const body: Record<string, unknown> = {
       model,
-      max_tokens: request.maxTokens ?? 4096,
+      max_tokens: request.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
       system: request.systemPrompt,
       messages: toAnthropicMessages(request.messages),
       stream: !!request.onToken,
@@ -186,7 +198,13 @@ export const anthropicProvider: AIProvider = {
     const text = blocks.filter((block): block is { type: 'text'; text: string } => block.type === 'text').map(block => block.text).join('')
     const toolCalls: AIToolCall[] = blocks
       .filter((block): block is { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> } => block.type === 'tool_use')
-      .map(block => ({ id: block.id, name: block.name, input: block.input ?? {} }))
+      .map(block => ({
+        id: block.id,
+        name: block.name,
+        input: block.input ?? {},
+        // A tool_use cut off at max_tokens carries incomplete input; it must not run.
+        ...(data.stop_reason === 'max_tokens' ? { parseError: 'the response hit the output token limit before the tool arguments were complete' } : {}),
+      }))
 
     return {
       text,

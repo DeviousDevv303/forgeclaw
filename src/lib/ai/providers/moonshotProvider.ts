@@ -15,12 +15,42 @@ import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '.
 // case for GitHub Pages deployments.
 const MOONSHOT_BASE_URL = 'https://api.moonshot.ai/v1';
 
+// Model IDs checked against Moonshot's docs on 2026-10-20 (platform.kimi.ai). kimi-k2.5, the
+// moonshot-v1 series and the kimi-k2-thinking IDs are retired and return 404.
 export const MOONSHOT_MODELS = [
   { id: 'kimi-k2.6', label: 'Kimi K2.6', contextK: 256, note: 'General reasoning model' },
   { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code', contextK: 256, note: 'Coding-focused model' },
+  { id: 'kimi-k2.7-code-highspeed', label: 'Kimi K2.7 Code Highspeed', contextK: 256, note: 'Coding, faster output' },
+  { id: 'kimi-k3', label: 'Kimi K3', contextK: 1024, note: 'Flagship, highest cost' },
 ]
 
 export const DEFAULT_MOONSHOT_MODEL = MOONSHOT_MODELS[0].id // K2.6 default for this API account
+
+/**
+ * Kimi models always think, and reasoning tokens count toward max_tokens. Moonshot recommends
+ * max_tokens >= 16000 for tool use; at the old 4096 the reasoning could use the whole budget and
+ * leave an empty answer or a tool call cut off mid-arguments.
+ */
+export const MOONSHOT_DEFAULT_MAX_TOKENS = 16384
+
+/** A saved model ID that is not in the current list (e.g. a retired one) falls back to the default. */
+export function resolveMoonshotModel(stored: string | null | undefined): string {
+  return MOONSHOT_MODELS.some(m => m.id === stored) ? (stored as string) : DEFAULT_MOONSHOT_MODEL
+}
+
+/** finish_reason values meaning the output limit cut the response off. */
+const TRUNCATED_FINISH_REASONS = new Set(['length', 'max_tokens'])
+
+function parseToolArguments(raw: string, truncated: boolean): { input: Record<string, unknown>; parseError?: string } {
+  if (truncated) return { input: {}, parseError: 'the response hit the output token limit before the tool arguments were complete' }
+  try {
+    const parsed = JSON.parse(raw || '{}') as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return { input: parsed as Record<string, unknown> }
+    return { input: {}, parseError: 'tool arguments were not a JSON object' }
+  } catch {
+    return { input: {}, parseError: `tool arguments were not valid JSON (${raw.length} chars)` }
+  }
+}
 
 function cleanApiKey(apiKey: string): string {
   return apiKey.trim()
@@ -31,8 +61,10 @@ function isConfigured(apiKey: string): boolean {
   return key.startsWith('sk-') && key.length > 20
 }
 
-function toMoonshotMessages(systemPrompt: string, messages: AIMessage[]): Array<{ role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }> {
-  const result: Array<{ role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string }> = [
+type MoonshotMessage = { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string; reasoning_content?: string }
+
+export function toMoonshotMessages(systemPrompt: string, messages: AIMessage[]): MoonshotMessage[] {
+  const result: MoonshotMessage[] = [
     { role: 'system', content: systemPrompt },
   ]
   
@@ -52,6 +84,8 @@ function toMoonshotMessages(systemPrompt: string, messages: AIMessage[]): Array<
       result.push({
         role: 'assistant',
         content: msg.content || '',
+        // Moonshot: pass the assistant message back as returned, reasoning included, in tool-call loops.
+        ...(msg.reasoning_content ? { reasoning_content: msg.reasoning_content } : {}),
         tool_calls: msg.tool_calls.map(tc => ({
           id: tc.id,
           type: 'function',
@@ -102,6 +136,7 @@ type MoonshotStreamEvent = {
   choices?: Array<{
     delta?: {
       content?: string | null
+      reasoning_content?: string | null
       tool_calls?: Array<{
         index?: number
         id?: string
@@ -116,13 +151,14 @@ type MoonshotStreamEvent = {
 async function readMoonshotStream(
   response: Response,
   onToken: (token: string) => void,
-): Promise<{ text: string; toolCalls?: AIToolCall[]; stopReason?: string }> {
+): Promise<{ text: string; toolCalls?: AIToolCall[]; stopReason?: string; reasoningContent?: string }> {
   const reader = response.body?.getReader()
   if (!reader) return { text: '' }
 
   const decoder = new TextDecoder()
   let buffer = ''
   let text = ''
+  let reasoning = ''
   const streamedCalls = new Map<number, { id: string; name: string; arguments: string }>()
   let stopReason: string | undefined
 
@@ -138,6 +174,8 @@ async function readMoonshotStream(
     const choice = event.choices?.[0]
     const delta = choice?.delta
     if (choice?.finish_reason) stopReason = choice.finish_reason
+    // Reasoning is kept for the next request, never streamed into the visible answer.
+    if (delta?.reasoning_content) reasoning += delta.reasoning_content
     if (delta?.content) {
       text += delta.content
       onToken(delta.content)
@@ -166,17 +204,12 @@ async function readMoonshotStream(
     reader.releaseLock()
   }
 
-  const toolCalls = [...streamedCalls.values()]
-    .map(call => ({
-      id: call.id,
-      name: call.name,
-      input: (() => {
-        try { return JSON.parse(call.arguments || '{}') as Record<string, unknown> } catch { return {} }
-      })(),
-    }))
+  const truncated = TRUNCATED_FINISH_REASONS.has(stopReason ?? '')
+  const toolCalls: AIToolCall[] = [...streamedCalls.values()]
     .filter(call => call.id && call.name)
+    .map(call => ({ id: call.id, name: call.name, ...parseToolArguments(call.arguments, truncated) }))
 
-  return { text, toolCalls: toolCalls.length ? toolCalls : undefined, stopReason }
+  return { text, toolCalls: toolCalls.length ? toolCalls : undefined, stopReason, reasoningContent: reasoning || undefined }
 }
 
 export const moonshotProvider: AIProvider = {
@@ -198,7 +231,7 @@ export const moonshotProvider: AIProvider = {
     const body: Record<string, unknown> = {
       model,
       messages: toMoonshotMessages(request.systemPrompt, request.messages),
-      max_tokens: request.maxTokens ?? 4096,
+      max_tokens: request.maxTokens ?? MOONSHOT_DEFAULT_MAX_TOKENS,
       stream: !!request.onToken,
     }
     
@@ -224,7 +257,7 @@ export const moonshotProvider: AIProvider = {
     if (request.onToken) {
       // Streaming response
       const streamed = await readMoonshotStream(response, request.onToken)
-      return { text: streamed.text, provider: 'moonshot', model, toolCalls: streamed.toolCalls, stopReason: streamed.stopReason || 'stop' }
+      return { text: streamed.text, provider: 'moonshot', model, toolCalls: streamed.toolCalls, stopReason: streamed.stopReason || 'stop', reasoningContent: streamed.reasoningContent }
     }
     
     // Non-streaming response
@@ -232,6 +265,7 @@ export const moonshotProvider: AIProvider = {
       choices?: Array<{
         message?: {
           content?: string | null
+          reasoning_content?: string | null
           tool_calls?: Array<{
             id: string
             type: 'function'
@@ -246,25 +280,19 @@ export const moonshotProvider: AIProvider = {
     if (data.error?.message) throw new Error(data.error.message)
     
     const message = data.choices?.[0]?.message
-    const rawToolCalls = message?.tool_calls ?? []
-    const toolCalls: AIToolCall[] = rawToolCalls.map(tc => ({
-      id: tc.id,
-      name: tc.function?.name || '',
-      input: (() => {
-        try {
-          return JSON.parse(tc.function?.arguments || '{}') as Record<string, unknown>
-        } catch {
-          return {}
-        }
-      })(),
-    })).filter(tc => tc.id && tc.name)
-    
+    const stopReason = data.choices?.[0]?.finish_reason
+    const truncated = TRUNCATED_FINISH_REASONS.has(stopReason ?? '')
+    const toolCalls: AIToolCall[] = (message?.tool_calls ?? [])
+      .filter(tc => tc.id && tc.function?.name)
+      .map(tc => ({ id: tc.id, name: tc.function.name, ...parseToolArguments(tc.function.arguments, truncated) }))
+
     return {
       text: message?.content ?? '',
       provider: 'moonshot',
       model,
       toolCalls: toolCalls.length ? toolCalls : undefined,
-      stopReason: data.choices?.[0]?.finish_reason,
+      stopReason,
+      reasoningContent: message?.reasoning_content || undefined,
     }
   },
   
@@ -274,22 +302,19 @@ export const moonshotProvider: AIProvider = {
       throw new Error('Invalid Moonshot API key format. Expected sk-...')
     }
     
-    // Test with a minimal completion
-    const response = await fetch(`${MOONSHOT_BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model: DEFAULT_MOONSHOT_MODEL,
-        messages: [{ role: 'user', content: 'Hi' }],
-        max_tokens: 1,
-      }),
+    // GET /models checks the key without spending tokens (a 1-token completion still bills a
+    // thinking model) and says whether the selectable models are enabled for this key.
+    const response = await fetch(`${MOONSHOT_BASE_URL}/models`, {
+      headers: { Authorization: `Bearer ${key}` },
     })
-    
+
     if (!response.ok) {
       throw new Error(await moonshotError(response))
+    }
+    const data = await response.json().catch(() => null) as { data?: Array<{ id?: string }> } | null
+    const available = new Set((data?.data ?? []).map(m => m.id))
+    if (available.size && !MOONSHOT_MODELS.some(m => available.has(m.id))) {
+      throw new Error(`Moonshot key works, but none of ForgeClaw's Kimi models are enabled for it. Available: ${[...available].slice(0, 8).join(', ')}`)
     }
   },
 }

@@ -154,7 +154,7 @@ import { isToolFailureOutput } from './lib/toolOutcome'
 import { createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
 import { outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
-import { DEFAULT_MOONSHOT_MODEL } from './lib/ai/providers/moonshotProvider'
+import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
 import { corpusRepository } from './lib/corpus'
 import { parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
@@ -216,11 +216,11 @@ import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
-import { baselineToolNames, NO_TOOLS_NOTICE, SHELL_EXEC_GUIDANCE } from './lib/toolExposure'
+import { baselineToolNames, HOSTED_TOOL_PROVIDERS, NO_TOOLS_NOTICE, repeatedCallLimit, SHELL_EXEC_GUIDANCE, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
-// Global loop detection tracking
-let globalRecentToolCalls: string[] = []
+/** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
+const TRUNCATED_ATTEMPT = '[truncated-arguments]'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -528,7 +528,7 @@ function readMoonshotKey(): string {
   return moonshotProvider.isConfigured(key) ? key : ''
 }
 function readMoonshotModel(): string {
-  return safeGetItem('fm_moonshot_model') || DEFAULT_MOONSHOT_MODEL
+  return resolveMoonshotModel(safeGetItem('fm_moonshot_model'))
 }
 
 // Render message text — splits on fenced code blocks and styles them
@@ -1377,7 +1377,8 @@ function App() {
     // Progressive tool disclosure: filter tools based on task
     const keywords: Record<string, string[]> = {
       'github_read_file': ['read', 'show', 'view', 'file', 'get'],
-      'github_write_file': ['write', 'edit', 'create', 'fix', 'update', 'add'],
+      // Build/deploy verbs too: "build me a site and deploy it" otherwise got no way to write a file.
+      'github_write_file': ['write', 'edit', 'create', 'fix', 'update', 'add', 'build', 'deploy', 'publish', 'implement', 'scaffold', 'commit', 'push'],
       'shell_exec': ['run', 'execute', 'test', 'build', 'command', 'shell'],
       'github_search_code': ['search', 'find', 'grep', 'lookup'],
       'github_repo_state': ['state', 'status', 'head', 'branch'],
@@ -1395,18 +1396,19 @@ function App() {
     // can emit code-token soup when a large tool protocol is injected for a
     // request that does not need tools.
     const deepSeekDuoDefault = isDeepSeekProvider(activeProvider)
-    // Anthropic explicitly chosen: don't route to DeepSeek, but still offer general tools.
-    // Excluding Anthropic here only stops the DeepSeek hand-off ("Use deepseek_reason for this complex
-    // task"); its tools now come from the block below and baselineToolNames().
-    const isAnthropicOnly = activeProvider === 'anthropic' && !deepSeekDuoDefault
-    const complexReasoningTask = !imageUrl && !isAnthropicOnly && shouldDispatchComplexTaskToDeepSeek(promptText)
+    // A hosted tool-calling model (Claude or Kimi) explicitly chosen: it is the reasoning engine, so
+    // don't route to DeepSeek, but still offer general tools. This used to check 'anthropic' only, so
+    // Kimi on any "analyze/review/debug" prompt was told to hand the task to the slow DeepSeek workflow
+    // and was given deepseek_reason on every coding task.
+    const isHostedReasoner = HOSTED_TOOL_PROVIDERS.has(activeProvider) && !deepSeekDuoDefault
+    const complexReasoningTask = !imageUrl && !isHostedReasoner && shouldDispatchComplexTaskToDeepSeek(promptText)
     const coreToolNames = (codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
       : deepSeekDuoDefault || complexReasoningTask ? ['deepseek_reason'] : [])
-      // Claude never delegates to the slow DeepSeek workflow, coding task or not.
-      .filter(name => !(isAnthropicOnly && (name === 'deepseek_reason' || name === 'ask_deepseek')))
-    // Anthropic gets general tools (shell, repo state) but never deepseek_reason.
-    if (isAnthropicOnly && !codingTask) {
+      // Claude and Kimi never delegate to the slow DeepSeek workflow, coding task or not.
+      .filter(name => !(isHostedReasoner && (name === 'deepseek_reason' || name === 'ask_deepseek')))
+    // Hosted reasoners get general tools (shell, repo state) but never deepseek_reason.
+    if (isHostedReasoner && !codingTask) {
       coreToolNames.push('github_repo_state', 'shell_exec', 'github_read_file', 'github_search_code')
     }
     if (imageUrl) coreToolNames.push('analyze_image')
@@ -1423,7 +1425,7 @@ function App() {
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
-      : isAnthropicOnly
+      : isHostedReasoner
         ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}`
       : needsManualTools
         ? complexReasoningTask
@@ -1647,6 +1649,9 @@ function App() {
       let generatedImageUrl: string | undefined
       let directImageCompleted = false
       const toolRetryCounts = new Map<string, number>()
+      // Loop detection is per run. It was module-level and never cleared, so the same harmless call
+      // (e.g. github_repo_state {}) made once in each of three separate requests got blocked as a loop.
+      const recentToolCalls: string[] = []
       const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
@@ -1730,18 +1735,25 @@ function App() {
 
         // Tool calls → executeTool owns Guardian enforcement and side effects.
         const iterResults: ToolResult[] = []
-        // Loop detection: track recent tool calls across ALL iterations
-        if (!globalRecentToolCalls) globalRecentToolCalls = []
-        const MAX_REPEATED_CALLS = 3
+        // Loop detection: track recent tool calls across all iterations of this run
 
         for (const call of result.toolCalls) {
   // Check for loop
+  // A call whose arguments were cut off or malformed never runs; the model is told to retry smaller.
+  if (call.parseError) {
+    const output = truncatedToolCallResult(call.name, call.parseError)
+    iterResults.push({ toolCallId: call.id, name: call.name, output, isError: true })
+    // toolAttempts must stay index-aligned with the results; any later success of this tool resolves it.
+    toolAttempts.push({ name: call.name, input: TRUNCATED_ATTEMPT })
+    setActivityLog(prev => [...prev.slice(-99), { id: `act_${call.id}_${Date.now()}`, timestamp: Date.now(), tool: call.name, input: call.input, status: 'error', output: output.slice(0, 300) }])
+    continue
+  }
   const callKey = `${call.name}:${JSON.stringify(call.input)}`
-  globalRecentToolCalls.push(callKey)
-  if (globalRecentToolCalls.length > 20) globalRecentToolCalls.shift()
-  
-  const repeats = globalRecentToolCalls.filter(k => k === callKey).length
-  if (repeats >= MAX_REPEATED_CALLS) {
+  recentToolCalls.push(callKey)
+  if (recentToolCalls.length > 20) recentToolCalls.shift()
+
+  const repeats = recentToolCalls.filter(k => k === callKey).length
+  if (repeats >= repeatedCallLimit(call.name)) {
     console.warn('[GUARDIAN] Detected tool call loop:', callKey)
     logError('guardian:loop', `Detected repeated tool call loop: ${callKey}`, 'Task paused to prevent infinite loop')
     iterResults.push({
@@ -1751,6 +1763,8 @@ function App() {
       isError: true,
       reasoningStepId: 'guardian_block'
     })
+    // Keep toolAttempts index-aligned with the results (hasUnresolvedToolFailure pairs them by index).
+    toolAttempts.push({ name: call.name, input: JSON.stringify(call.input, Object.keys(call.input).sort()) })
     continue
   }
           const actEntryId = `act_${call.id}_${Date.now()}`
@@ -1827,6 +1841,8 @@ function App() {
           role: 'assistant',
           content: result.text || '',
           tool_calls: result.toolCalls.map(tc => ({ id: tc.id, name: tc.name, input: tc.input })),
+          // Kimi requires its reasoning back on the tool-call turn in multi-step tool loops.
+          ...(result.reasoningContent ? { reasoning_content: result.reasoningContent } : {}),
         })
         for (const r of iterResults) {
           conversationMessages.push({ role: 'tool', content: r.output, tool_call_id: r.toolCallId })
@@ -1860,7 +1876,7 @@ function App() {
           laterIndex > failedIndex &&
           !laterResult.isError &&
           laterResult.name === result.name &&
-          toolAttempts[laterIndex]?.input === failedAttempt?.input
+          (failedAttempt?.input === TRUNCATED_ATTEMPT || toolAttempts[laterIndex]?.input === failedAttempt?.input)
         )
       })
       const effectiveAgentPhase: AgentPhase =
