@@ -19,7 +19,7 @@ Tip: if any GitHub step fails, the error now names the missing scope or permissi
 
 ## A. Kimi tool loop (2 min)
 
-1. Provider: **Moonshot · Kimi**, model **Kimi K2.6**.
+1. Provider: **Moonshot · Kimi**, model **Kimi K2.7 Code**.
 2. Send: `read the README file in the repo and summarize it in 3 bullets`
 3. **PASS if:** Activity shows `github_read_file` ✅; the answer quotes real README content; no
    "STATUS: BLOCKED"; no 400 error about `reasoning_content`.

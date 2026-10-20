@@ -25,7 +25,7 @@ export const MOONSHOT_MODELS = [
   { id: 'kimi-k3', label: 'Kimi K3', contextK: 1024, note: 'Flagship, highest cost' },
 ]
 
-export const DEFAULT_MOONSHOT_MODEL = MOONSHOT_MODELS[0].id // K2.6 default for this API account
+export const DEFAULT_MOONSHOT_MODEL = MOONSHOT_MODELS[1].id // K2.7 Code: the owner's model
 
 /**
  * Kimi models always think, and reasoning tokens count toward max_tokens. Moonshot recommends
