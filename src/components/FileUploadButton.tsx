@@ -2,6 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
+import { downscaleImageDataUrl } from '../lib/imageInput'
 
 interface FileUploadButtonProps {
   onFileSelect: (file: File, content: string) => void
@@ -38,6 +39,8 @@ export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonPro
           reader.onloadend = () => resolve(reader.result as string)
           reader.readAsDataURL(file)
         })
+        // Phone photos are scaled to the size the vision models actually use.
+        content = await downscaleImageDataUrl(content)
       } else if (file.type === 'application/pdf') {
         // For PDFs, note that we can't easily extract text client-side
         content = `[PDF: ${file.name} — ${(file.size / 1024).toFixed(1)}KB]`
