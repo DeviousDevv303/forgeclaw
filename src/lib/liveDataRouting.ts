@@ -15,6 +15,7 @@
  */
 
 import type { ExplicitToolCall } from './codingAgentRuntime'
+import { extractPlace, isWeatherQuestion, requestedDay } from './weather'
 
 const MAX_QUESTION_CHARS = 240
 
@@ -53,6 +54,12 @@ export function buildLiveSearchQuery(text: string, now: Date = new Date()): stri
 /** A web_search call for a live-data question, or null to leave the prompt on the normal path. */
 export function routeLiveDataQuestion(text: string, now: Date = new Date()): ExplicitToolCall | null {
   if (!isLiveDataQuestion(text)) return null
+  // Weather gets a real forecast (weather.ts); search snippets only carry links, not the numbers.
+  const place = isWeatherQuestion(text) ? extractPlace(text) : ''
+  if (place) {
+    const day = requestedDay(text)
+    return { name: 'weather_forecast', input: { place, ...(day !== null ? { day: String(day) } : {}) }, notes: ['weather question answered by the Open-Meteo forecast'] }
+  }
   const query = buildLiveSearchQuery(text, now)
   if (!query) return null
   return {

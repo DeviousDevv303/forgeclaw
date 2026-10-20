@@ -680,7 +680,14 @@ function App() {
   const [activityView, setActivityView] = useState<ActivityView>('log')
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = safeGetItem('forgemind_history')
-    return safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage)
+    // A reply still "running" when the page closed can never finish: its request died with the page. Only a
+    // persisted DeepSeek run is re-attached (resumeOrphanedDeepSeekRun); every other one is marked
+    // interrupted instead of showing "Still working" forever.
+    const resumable = loadActiveDeepSeekRun()?.messageId
+    return safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage).map(m =>
+      m.streaming && m.id !== resumable
+        ? { ...m, streaming: false, agentPhase: 'BLOCKED', content: `${m.content ? `${m.content}\n\n` : ''}⚠ Interrupted: ForgeClaw was closed or reloaded before this finished. Send it again to retry.` }
+        : m)
   })
   const [input, setInput] = useState('')
   // Shown briefly when Enter is pressed while a request is still running (the send is ignored).
@@ -1412,6 +1419,7 @@ function App() {
       'analyze_image': ['analyze', 'image', 'photo', 'picture', 'vision'],
       // Not a bare 'review': that would offer it for "review my workflows".
       'review_code': ['code review', 'review this code', 'review my code'],
+      'weather_forecast': ['weather', 'forecast', 'temperature', 'rain', 'snow', 'how hot', 'how cold'],
     }
 
     const messageLower = (promptText || '').toLowerCase()

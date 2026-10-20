@@ -39,6 +39,7 @@ import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publi
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
+import { weatherForecast } from './weather'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -506,6 +507,18 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
 
 
+  {
+    name: 'weather_forecast',
+    description: 'Real weather forecast for a place (Open-Meteo: temperatures in °F, rain chance, wind), today and the next days. Use this for any weather question instead of web_search.',
+    parameters: {
+      type: 'object',
+      properties: {
+        place: { type: 'string', description: 'City, e.g. "Oklahoma City" or "Denver, CO" (nicknames like OKC work)' },
+        day: { type: 'number', description: 'Day to lead with: 0 = today, 1 = tomorrow (optional)' },
+      },
+      required: ['place'],
+    },
+  },
   {
     name: 'review_code',
     description: 'Review code on GitHub Actions (DeepSeek-Coder 6.7B, a few minutes) and return the review. Up to 12,000 characters of code.',
@@ -1700,6 +1713,12 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         return formatImageAnalysis(result)
       }
 
+
+      case 'weather_forecast': {
+        // Free, keyless, browser-allowed: works for the owner and for free-mode visitors alike.
+        const day = input.day === undefined || input.day === null || input.day === '' ? null : Number(input.day)
+        return await weatherForecast({ place: String(input.place || ''), day: Number.isFinite(day as number) ? day : null, signal: ctx.signal })
+      }
 
       case 'review_code': {
         if (!token) throw new Error('No GitHub token configured. review_code runs as a GitHub Actions job and needs gh_token with Actions: write.')
