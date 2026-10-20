@@ -6,7 +6,7 @@ const WF = 'https://api.github.com/repos/DeviousDevv303/forgeclaw'
 const SITE = 'https://api.github.com/repos/me/app'
 type Call = { method: string; url: string; body?: Record<string, unknown> }
 
-function fake(opts: { conclusion?: string; mirrorFiles?: Array<{ path: string; b64: string }> } = {}) {
+function fake(opts: { conclusion?: string; mirrorFiles?: Array<{ path: string; b64: string }>; treeTruncated?: boolean } = {}) {
   const calls: Call[] = []
   let clock = 1_000_000
   let polls = 0
@@ -28,7 +28,7 @@ function fake(opts: { conclusion?: string; mirrorFiles?: Array<{ path: string; b
         { path: 'builds/other-run/index.html', type: 'blob', sha: 'x' },
         { path: 'builds/inv-1', type: 'tree', sha: 't' },
         ...mirror.map((f, i) => ({ path: `builds/inv-1/${f.path}`, type: 'blob', sha: `b${i}` })),
-      ] })
+      ], truncated: opts.treeTruncated ?? false })
     }
     const blob = /\/git\/blobs\/b(\d+)$/.exec(url)
     if (blob && url.startsWith(WF)) return Response.json({ content: `${mirror[Number(blob[1])].b64}\n`, encoding: 'base64' })
@@ -71,6 +71,12 @@ describe('buildAndPublishSite', () => {
   it('publishes nothing when the build failed, and points at the logs', async () => {
     const f = fake({ conclusion: 'failure' })
     await expect(buildAndPublishSite(f.request, f.input)).rejects.toThrow(/build run #12 concluded "failure"; nothing was published\. Logs: https:\/\/github\.com\/DeviousDevv303\/forgeclaw\/actions\/runs\/77/)
+    expect(f.calls.some(c => c.url.startsWith(SITE))).toBe(false)
+  })
+
+  it('publishes nothing when the mirror listing is truncated and shows none of the files', async () => {
+    const f = fake({ mirrorFiles: [], treeTruncated: true })
+    await expect(buildAndPublishSite(f.request, f.input)).rejects.toThrow(/truncated listing .* nothing was published/)
     expect(f.calls.some(c => c.url.startsWith(SITE))).toBe(false)
   })
 

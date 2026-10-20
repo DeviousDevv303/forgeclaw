@@ -12,15 +12,17 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render } from '@testing-library/react';
 import { NeuralNetworkBackground } from './NeuralNetworkBackground';
-import { drawCube3D } from './cube3d';
+import { drawRubik3D } from './cube3d';
 
 // Watch what the renderer hands to the 3D cube drawer (rotation, explode, flash)
 // while still drawing for real.
 vi.mock('./cube3d', async (importOriginal) => {
   const mod = await importOriginal<typeof import('./cube3d')>();
-  return { ...mod, drawCube3D: vi.fn(mod.drawCube3D) };
+  return { ...mod, drawCube3D: vi.fn(mod.drawCube3D), drawRubik3D: vi.fn(mod.drawRubik3D) };
 });
-const cubeCalls = () => vi.mocked(drawCube3D).mock.calls;
+// The animated cubes are drawn by drawRubik3D since the real-turns change;
+// its (state, look) arguments sit in the same positions the tests assert on.
+const cubeCalls = () => vi.mocked(drawRubik3D).mock.calls;
 import { IDLE_NEURAL_STATE } from '../hooks/useNeuralState';
 
 // ---- Canvas + RAF mocks ----------------------------------------------------
@@ -150,7 +152,7 @@ describe('NeuralNetworkBackground', () => {
       const { unmount } = render(React.createElement(NeuralNetworkBackground, { state: { ...IDLE_NEURAL_STATE, phase }, messageCount: 0, activeTab: 'chat' }))
       const seen: number[] = []
       for (let i = 0; i < 6; i++) {
-        vi.mocked(drawCube3D).mockClear()
+        vi.mocked(drawRubik3D).mockClear()
         const cbs = rafCallbacks.splice(0)
         clock += 50
         for (const cb of cbs) cb(clock)
@@ -178,7 +180,7 @@ describe('NeuralNetworkBackground', () => {
       // Every cube's angle per frame. Which cube is mid-turn depends on its node id, so check them all.
       const frames: string[][] = []
       for (let i = 0; i < 6; i++) {
-        vi.mocked(drawCube3D).mockClear()
+        vi.mocked(drawRubik3D).mockClear()
         const cbs = rafCallbacks.splice(0)
         clock += 50
         for (const cb of cbs) cb(clock)
@@ -196,7 +198,7 @@ describe('NeuralNetworkBackground', () => {
   it('flashes the cubes green when the core reports success', () => {
     render(React.createElement(NeuralNetworkBackground, { state: IDLE_NEURAL_STATE, messageCount: 0, activeTab: 'chat' }))
     window.dispatchEvent(new CustomEvent('forgeclaw:state', { detail: { state: 'success', activity: 0.3, intensity: 6, source: 'agent', timestamp: Date.now(), emotion: 'satisfied', energy: 20 } }))
-    vi.mocked(drawCube3D).mockClear()
+    vi.mocked(drawRubik3D).mockClear()
     for (let i = 0; i < 3; i++) { const cbs = rafCallbacks.splice(0); clock += 16; for (const cb of cbs) cb(clock) }
     expect(cubeCalls().some(c => c[5].flash?.color.g === 255 && c[5].flash.color.r === 0)).toBe(true)
   })
@@ -204,13 +206,13 @@ describe('NeuralNetworkBackground', () => {
   it('cubes follow the reactive core: pieces explode on an error event from window', () => {
     render(React.createElement(NeuralNetworkBackground, { state: IDLE_NEURAL_STATE, messageCount: 0, activeTab: 'chat' }))
     const frame = () => { const cbs = rafCallbacks.splice(0); clock += 16; for (const cb of cbs) cb(clock) }
-    frame(); vi.mocked(drawCube3D).mockClear(); frame()
+    frame(); vi.mocked(drawRubik3D).mockClear(); frame()
     expect(cubeCalls().length).toBeGreaterThan(0)
     expect(cubeCalls().every(c => c[4].explode === 0)).toBe(true)
     window.dispatchEvent(new CustomEvent('forgeclaw:state', { detail: { state: 'error', activity: 1, intensity: 7, source: 'shell', timestamp: Date.now(), emotion: 'angry', energy: 90 } }))
     const t0 = Date.now()
     vi.spyOn(Date, 'now').mockReturnValue(t0 + 300) // mid-explosion
-    vi.mocked(drawCube3D).mockClear(); frame()
+    vi.mocked(drawRubik3D).mockClear(); frame()
     expect(cubeCalls().some(c => c[4].explode > 0.5)).toBe(true)
     expect(cubeCalls().some(c => c[5].glowColor.r === 255 && c[5].glowColor.b === 68)).toBe(true)
     vi.mocked(Date.now).mockRestore()
@@ -218,7 +220,7 @@ describe('NeuralNetworkBackground', () => {
 
   it('views the cubes from above (white top showing), like the big cube', () => {
     render(React.createElement(NeuralNetworkBackground, { state: IDLE_NEURAL_STATE, messageCount: 0, activeTab: 'chat' }))
-    vi.mocked(drawCube3D).mockClear()
+    vi.mocked(drawRubik3D).mockClear()
     const cbs = rafCallbacks.splice(0); clock += 16; for (const cb of cbs) cb(clock)
     expect(cubeCalls().length).toBeGreaterThan(0)
     expect(cubeCalls().every(c => c[4].rotation.x < 0)).toBe(true)
@@ -229,7 +231,7 @@ describe('NeuralNetworkBackground', () => {
     const t0 = Date.now()
     window.dispatchEvent(new CustomEvent('forgeclaw:state', { detail: { state: 'running', activity: 0.8, intensity: 4, source: 'git', timestamp: t0, emotion: 'excited', energy: 40, gesture: 'wave' } }))
     vi.spyOn(Date, 'now').mockReturnValue(t0 + 250)
-    vi.mocked(drawCube3D).mockClear()
+    vi.mocked(drawRubik3D).mockClear()
     const cbs = rafCallbacks.splice(0); clock += 16; for (const cb of cbs) cb(clock)
     const flashes = cubeCalls().filter(c => c[5].flash?.color.b === 255).length
     expect(flashes).toBeGreaterThan(0)
