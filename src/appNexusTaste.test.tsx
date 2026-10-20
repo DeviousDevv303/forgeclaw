@@ -58,3 +58,19 @@ describe('NEXUS taste is built in', () => {
     vi.unstubAllEnvs()
   })
 })
+
+describe('taste reactions look like the reply thumbs', () => {
+  it('a chosen reaction is blue, not orange', async () => {
+    const t = Date.now()
+    localStorage.setItem('forgemind_history', JSON.stringify([
+      { id: '1', role: 'user', content: 'hi', timestamp: t - 2000 },
+      { id: '2', role: 'assistant', content: '', imageUrl: 'data:image/png;base64,iVBORw0KGgo=', timestamp: t - 1000, agentPhase: 'COMPLETE' },
+    ]))
+    const { default: App } = await import('./App')
+    render(<App />)
+    const up = await screen.findByTitle('Taste: up')
+    fireEvent.click(up)
+    await waitFor(() => expect((screen.getByTitle('Taste: up') as HTMLElement).style.background).toBe('rgb(37, 99, 235)'))
+    expect((screen.getByTitle('Taste: up') as HTMLElement).outerHTML).not.toMatch(/f97316|249, 115, 22/i)
+  })
+})
