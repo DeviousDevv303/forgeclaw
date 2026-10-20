@@ -9,28 +9,28 @@ const range = (f: (t: number) => number, from = 10_000, to = 12_000, step = 7) =
 }
 
 describe('living cubes: the behavior table', () => {
-  it('idle: slow drift, breathing glow, occasional lazy quarter turn', () => {
+  it('idle: slow drift, breathing glow, no angle offset (the lazy turn is a real layer turn now)', () => {
     const l = cubeLook(CALM_SOUL, 0, 0, 3)
     expect(l.spin).toBeLessThan(0.3)
     expect(range(t => cubeLook(CALM_SOUL, t, 0, 3).glow, 0, 5_000).span).toBeGreaterThan(0.1)
     const turn = range(t => cubeLook(CALM_SOUL, t, 0, 3).angleOffset, 0, 9_000, 20)
-    expect(turn.hi).toBeCloseTo(Math.PI / 2, 1)
+    expect(turn.hi).toBe(0)
     expect(cubeLook(CALM_SOUL, 0, 0, 3).jitterPx).toBe(0)
   })
 
-  it('AI thinking: rapid micro-rotations, pulsing glow, slight jitter', () => {
+  it('AI thinking: rapid micro-rotations, pulsing glow, no jitter (real turns replaced the shake)', () => {
     const micro = range(t => cubeLook(soul('curious'), t, 0, 1).angleOffset, 10_000, 10_500, 3)
     expect(micro.span).toBeGreaterThan(0.08)
     expect(micro.hi).toBeLessThan(0.1)
     expect(range(t => cubeLook(soul('curious'), t, 0, 1).glow).span).toBeGreaterThan(0.1)
-    expect(cubeLook(soul('curious'), 10_000, 0, 1).jitterPx).toBeGreaterThan(0)
+    expect(cubeLook(soul('curious'), 10_000, 0, 1).jitterPx).toBe(0)
   })
 
-  it('shell running: frantic scrambling, shaking, intense glow', () => {
+  it('shell running: frantic spin and intense glow; scrambling is real turns, not sprites or shaking', () => {
     const l = cubeLook(soul('frantic'), 10_100, 0, 1)
-    expect(l.scrambled).toBe(true)
+    expect(l.scrambled).toBe(false)
     expect(l.spin).toBeGreaterThan(4)
-    expect(l.jitterPx).toBeGreaterThan(2)
+    expect(l.jitterPx).toBe(0)
     expect(l.glow).toBeGreaterThan(0.6)
   })
 

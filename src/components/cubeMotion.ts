@@ -6,10 +6,41 @@
 
 import type { NeuralPhase } from '../hooks/useNeuralState'
 import type { CoreEmotion, CoreGesture } from '../core/forgeclawReactiveCore'
+import type { Move } from './rubikModel'
 
-/** How long the "solve" moment lasts after MISSION_COMPLETE. */
-export const SOLVE_MS = 1200
+/** How long the "solve" moment lasts after MISSION_COMPLETE.
+ *  Raised from 1200: solving now plays up to MAX_SCRAMBLE real layer turns
+ *  at TURN_MS.solving (20 x 90 ms = 1800 ms), which 1200 ms cut short. */
+export const SOLVE_MS = 2000
 const QUARTER = Math.PI / 2
+
+/** Duration of one quarter-turn per turning mode (ms). */
+export const TURN_MS: Record<'calm' | 'working' | 'frantic' | 'solving', number> = { calm: 700, working: 280, frantic: 150, solving: 90 }
+
+/** Most moves a cube scrambles before it plays its history back to solved. */
+export const MAX_SCRAMBLE = 20
+
+/**
+ * Which turning mode a cube is in. Solving overrides everything; a blocked
+ * phase freezes the cube; working phases (or an inquisitive emotion) turn at
+ * working speed; calm turns lazily; anything else idles.
+ */
+export function turnMode(phase: NeuralPhase, emotion: CoreEmotion, solving: boolean): 'idle' | 'calm' | 'working' | 'frantic' | 'solving' | 'frozen' {
+  if (solving) return 'solving'
+  if (phase === 'blocked') return 'frozen'
+  if (emotion === 'frantic') return 'frantic'
+  if (phase === 'planning' || phase === 'executing' || phase === 'streaming' || phase === 'verifying'
+    || emotion === 'curious' || emotion === 'excited') return 'working'
+  if (emotion === 'calm') return 'calm'
+  return 'idle'
+}
+
+/** Eased angle of an in-flight turn at progress p in 0..1 (ease-in-out, signed by dir). */
+export function turnAngle(move: Move, p: number): number {
+  const t = Math.min(1, Math.max(0, p))
+  const eased = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+  return eased * move.dir * QUARTER
+}
 
 /** Spin speed in radians/second. Blocked freezes; streaming follows token velocity. */
 export function cubeSpinRate(phase: NeuralPhase, tokenVelocity: number, toolLit: boolean): number {
@@ -68,8 +99,6 @@ export const CELEBRATE_STAGGER_MS = 50
 export const CELEBRATE_MS = 1000
 export const EXPLODE_MS = 800
 export const FLASH_MS = 900
-const LAZY_TURN_EVERY_S = 9
-const LAZY_TURN_S = 0.8
 
 export interface SoulSignal {
   emotion: CoreEmotion
@@ -132,26 +161,26 @@ export function cubeLook(soul: SoulSignal, nowMs: number, order: number, nodeId:
 
   switch (soul.emotion) {
     case 'calm': {
-      // Gentle breathing glow and an occasional lazy quarter turn.
-      const phase = (t + nodeId * 1.37) % LAZY_TURN_EVERY_S
-      const turn = phase < LAZY_TURN_S ? easeInOut(phase / LAZY_TURN_S) * (Math.PI / 2) : 0
-      look = { ...look, glow: 0.12 + 0.08 * Math.sin(t * 1.6 + nodeId), angleOffset: turn }
+      // Gentle breathing glow. The occasional lazy quarter turn is a real
+      // layer turn now (turnMode 'calm' in the wiring), not an angle offset.
+      look = { ...look, glow: 0.12 + 0.08 * Math.sin(t * 1.6 + nodeId) }
       break
     }
     case 'curious':
       // AI thinking: rapid micro-rotations, pulsing glow, slight jitter.
-      look = { ...look, spin: 1.2, angleOffset: Math.sin(t * 25 + nodeId) * 0.06, glow: (0.35 + 0.15 * Math.sin(t * 6)) * energyGlow, jitterPx: 0.6 }
+      look = { ...look, spin: 1.2, angleOffset: Math.sin(t * 25 + nodeId) * 0.06, glow: (0.35 + 0.15 * Math.sin(t * 6)) * energyGlow, jitterPx: 0 }
       break
     case 'anticipatory':
       // User typing: excited wobble.
       look = { ...look, spin: 0.3, angleOffset: Math.sin(t * 7 + nodeId * 0.5) * 0.18, scale: 1 + 0.05 * Math.sin(t * 7 + nodeId), glow: 0.3 * energyGlow }
       break
     case 'excited':
-      look = { ...look, spin: 2.2, glow: 0.5 * energyGlow, jitterPx: 0.8 }
+      look = { ...look, spin: 2.2, glow: 0.5 * energyGlow, jitterPx: 0 }
       break
     case 'frantic':
-      // Shell running: frantic scrambling, shaking, intense glow.
-      look = { ...look, spin: 4.5, glow: 0.9 * energyGlow, jitterPx: 3 * (0.3 + e), scrambled: true }
+      // Shell running: intense glow and fast spin; the scrambling is real
+      // layer turns now (turnMode 'frantic'), not sprite flipping or shaking.
+      look = { ...look, spin: 4.5, glow: 0.9 * energyGlow, jitterPx: 0, scrambled: false }
       break
     case 'satisfied': {
       const p = window01(nowMs, soul.emotionAt, FLASH_MS)
