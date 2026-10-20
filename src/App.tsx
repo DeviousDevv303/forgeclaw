@@ -2175,9 +2175,16 @@ function App() {
     return (
       <>
         <span style={{ color: idleColor, fontSize: '10px', fontFamily: 'monospace' }}>{t('chat.taste')}</span>
-        {(['up', 'down', 'fire'] as TasteSignal[]).map(signal => (
-          <button key={signal} onClick={() => void handleTasteFeedback(msg.id, signal)} title={t('chat.tasteTitle', { signal: t(signal === 'fire' ? 'taste.fire' : signal === 'up' ? 'taste.up' : 'taste.down') })} style={{ ...actionButtonStyle, color: msg.tasteFeedback === signal ? '#f97316' : idleColor, border: `1px solid ${border}` }}>{signal === 'fire' ? '🔥' : signal === 'up' ? '👍' : '👎'}</button>
-        ))}
+        {(['up', 'down', 'fire'] as TasteSignal[]).map(signal => {
+          // Same look as the reply's thumbs: outlined at rest, blue when chosen (it was orange on the orange bubble).
+          const chosen = msg.tasteFeedback === signal
+          const thumb = signal === 'up' ? 'M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z' : 'M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L10.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z'
+          return (
+            <button key={signal} onClick={() => void handleTasteFeedback(msg.id, signal)} title={t('chat.tasteTitle', { signal: t(signal === 'fire' ? 'taste.fire' : signal === 'up' ? 'taste.up' : 'taste.down') })} style={{ background: chosen ? '#2563eb' : 'transparent', border: chosen ? '1px solid #2563eb' : `1px solid ${border}`, borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', lineHeight: 1, fontSize: '13px', transition: 'all 0.15s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              {signal === 'fire' ? '🔥' : <svg width="13" height="13" viewBox="0 0 24 24" fill={chosen ? '#fff' : idleColor}><path d={thumb} /></svg>}
+            </button>
+          )
+        })}
       </>
     )
   }
