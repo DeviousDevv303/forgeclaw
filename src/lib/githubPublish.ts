@@ -90,12 +90,32 @@ export function validatePublishInput(input: PublishSiteInput): { branch: string;
   return { branch, files }
 }
 
+/**
+ * Explain a failed GitHub call precisely enough to fix the token: GitHub reports the scopes a classic
+ * token has (x-oauth-scopes) and needs (x-accepted-oauth-scopes), and the permission a fine-grained or
+ * app token needs (x-accepted-github-permissions). Before this, every 403/404 said only "check access".
+ */
+export function describeTokenProblem(res: Response): string {
+  if (res.status === 401) return ' (the token was rejected: expired, revoked or malformed; replace it in settings)'
+  if (res.status !== 403 && res.status !== 404) return ''
+  if (res.headers.get('x-ratelimit-remaining') === '0') {
+    const reset = Number(res.headers.get('x-ratelimit-reset'))
+    return ` (GitHub API rate limit reached${Number.isFinite(reset) && reset > 0 ? `; resets at ${new Date(reset * 1000).toISOString()}` : ''})`
+  }
+  const has = res.headers.get('x-oauth-scopes')
+  const needsScopes = res.headers.get('x-accepted-oauth-scopes')
+  const needsPermission = res.headers.get('x-accepted-github-permissions')
+  const parts: string[] = []
+  if (needsPermission) parts.push(`this call needs the fine-grained permission ${needsPermission}`)
+  if (needsScopes) parts.push(`this call needs the scope ${needsScopes}`)
+  if (has !== null) parts.push(`the token has scopes: ${has || '(none)'}`)
+  if (!parts.length) parts.push('check that the token can write to this repository: a classic token needs the repo scope; a fine-grained token needs Administration, Contents and Pages: Read and write on the repository')
+  return ` (${parts.join('; ')})`
+}
+
 async function githubError(res: Response, step: string): Promise<Error> {
   const body = await res.json().catch(() => ({})) as { message?: string }
-  const hint = res.status === 403 || res.status === 404
-    ? ' (check that the token has repo/contents write access to this repository)'
-    : ''
-  return new Error(`${step} failed: GitHub ${res.status}${body.message ? ` ${body.message}` : ''}${hint}`)
+  return new Error(`${step} failed: GitHub ${res.status}${body.message ? ` ${body.message}` : ''}${describeTokenProblem(res)}`)
 }
 
 async function json<T>(request: GithubRequest, url: string, step: string, init?: RequestInit): Promise<T> {
