@@ -14,9 +14,10 @@ const requiredMarkers = [
   'creative_retry_attempted = False',
   'retry_result = run_inference(model_used, retry_messages, max_new_tokens=512)',
   'output_cleanup_applied=',
-  "PRIMARY_MODEL = 'deepseek-ai/deepseek-llm-7b-chat'",
+  "PRIMARY_MODEL = 'Qwen/Qwen3-8B'",
   'if model_id == PRIMARY_MODEL:',
-  'system-role messages are not compatible with this model',
+  'needs the GGUF engine and it is unavailable',
+  'system-role messages are not compatible with',
 ]
 for (const marker of requiredMarkers) {
   if (!workflow.includes(marker)) {

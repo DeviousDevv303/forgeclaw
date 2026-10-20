@@ -45,6 +45,7 @@ describe('deepseek-16b.yml wiring', () => {
 
   it('records which engine produced the answer in result_meta.txt', () => {
     expect(workflow).toContain('engine=llama.cpp GGUF')
-    expect(workflow).toContain('engine=transformers float16 (slow fallback)')
+    // The primary (Qwen3-8B) has no float16 path; a failure is answered by the named fallback model.
+    expect(workflow).toContain('engine=transformers float16 (slow fallback: {FALLBACK_MODEL})')
   })
 })

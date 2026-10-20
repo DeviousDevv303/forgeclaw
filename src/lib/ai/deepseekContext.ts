@@ -7,9 +7,11 @@ export interface DeepSeekTaskPayload {
   context?: string
 }
 
-const MAX_CONTEXT_CHARS = 12_000
+// Sized for the 8K-token Qwen3-8B window (about 4 chars per token): room for deep-research evidence
+// (6 sources) plus the task and answer. The workflow trims the middle if a prompt still does not fit.
+const MAX_CONTEXT_CHARS = 22_000
 const MAX_CORPUS_CHARS = 3_000
-const MAX_VERIFIED_TOOL_CHARS = 8_000
+const MAX_VERIFIED_TOOL_CHARS = 16_000
 
 /**
  * Source-backed reference facts for project-architecture questions. These describe
@@ -20,7 +22,7 @@ export const FORGECLAW_ARCHITECTURE_CONTEXT = [
   'ForgeClaw architecture facts (checked-in runtime configuration; static design facts, not live repository-state evidence):',
   `- DEFAULT_PROVIDER is \`${DEFAULT_PROVIDER}\`: the DeepSeek GitHub Actions workflow is the default reasoning runtime and needs no API key. Moonshot/Kimi, Anthropic and local llama.cpp are explicit selectable alternatives.`,
   '- When the user selects the DeepSeek provider, the provider router deterministically dispatches `deepseek_reason`. A repository-state request can first dispatch `github_repo_state` when that tool is available.',
-  `- The GitHub Actions workflow named \`DeepSeek 16B\` runs the public \`${DEEPSEEK_PRIMARY_CHECKPOINT}\` model on a CPU-only runner, normally as a 4-bit GGUF (Q4_K_M) through llama.cpp, with the full float16 model through transformers as a slower fallback, and \`${DEEPSEEK_FALLBACK_CHECKPOINT}\` only if the primary cannot run. A short answer usually takes a few minutes. The workflow name is legacy; no 16B model runs.`,
+  `- The GitHub Actions workflow named \`DeepSeek 16B\` runs the public \`${DEEPSEEK_PRIMARY_CHECKPOINT}\` model on a CPU-only runner as a 4-bit GGUF (Q4_K_M) through llama.cpp, and \`${DEEPSEEK_FALLBACK_CHECKPOINT}\` only if the primary cannot run. A short answer usually takes a few minutes. The workflow and provider names are legacy; no 16B model runs.`,
   '- The App executes actual tool calls through the ForgeTools dispatcher and appends returned tool output to the next turn. DeepSeek text is not proof that an action happened; only a real dispatcher result is. A result marked [TOOL ERROR], [GUARDIAN BLOCK], or [GUARDIAN REJECTED] is not evidence of successful execution.',
   '- There is no browser-local model fallback. If the DeepSeek workflow fails, surface the verified failure and do not invent a replacement answer.',
   '- Current repository contents, branch, commit, workflow status, and other live facts must come from an actual successful GitHub tool result; do not infer them from these static architecture notes.',

@@ -1,9 +1,12 @@
-"""Fast CPU engine for the DeepSeek workflow (deepseek-16b.yml): llama.cpp running a 4-bit GGUF
-quantization of the SAME model the workflow already uses (deepseek-ai/deepseek-llm-7b-chat).
+"""CPU engine for the DeepSeek workflow (deepseek-16b.yml): llama.cpp running the official 4-bit GGUF
+of the primary model, Qwen/Qwen3-8B (Apache-2.0).
 
-Why: the transformers path loads the 7B model as float16 on a CPU, which has no fast half-precision
-math, and measured about 1-2 tokens per second (349-704 s per answer on recent runs). A 4-bit GGUF in
-llama.cpp is built for CPUs.
+2026-10-20 upgrade from deepseek-ai/deepseek-llm-7b-chat, measured on 4 CPU threads with the pinned
+llama-cpp-python: the 7B chat model answered a two-step time question wrong (9:45 PM for 18:05) and
+looped on one CSS selector until it ran out of tokens on a one-page site; Qwen3-8B answered 18:05 in
+129 tokens and wrote the complete page in 628, at 3.3-4.1 tok/s against 4.9-5.5. Its float16 weights
+(16 GB) do not fit the runner, so there is no float16 path for it: if this engine fails, the workflow
+uses the small labelled fallback model instead.
 
 Importing this module has no side effects and needs neither llama_cpp nor torch, so the pure logic
 (file choice, prompt shape, fitting, time-capped generation) is unit-tested without them.
@@ -14,11 +17,13 @@ from __future__ import annotations
 
 import time
 
-GGUF_REPO = "TheBloke/deepseek-llm-7B-chat-GGUF"
+GGUF_REPO = "Qwen/Qwen3-8B-GGUF"
 QUANT = "q4_k_m"
-N_CTX = 4096          # DeepSeek-LLM 7B context window
+# Qwen3-8B supports 32K; 8K keeps prefill time and the KV cache (~1.2 GB) reasonable on 4 CPUs while
+# fitting deep-research evidence (about 5K tokens) plus the answer.
+N_CTX = 8192
 N_THREADS = 4         # the runner has 4 vCPUs
-STOP = ["\n\nUser:"]  # stop a hallucinated next turn; EOS already ends a normal answer
+STOP = ["<|im_end|>", "<|im_start|>"]  # end of the assistant turn; stop a hallucinated next turn
 
 
 def pick_gguf_file(files, quant=QUANT):
@@ -29,10 +34,10 @@ def pick_gguf_file(files, quant=QUANT):
 
 
 def build_prompt(system_text, user_text):
-    """DeepSeek-LLM chat shape. The model card warns system-role messages are incompatible, so the
-    system text rides inside one user turn, exactly as the transformers path does. llama.cpp adds BOS."""
-    body = f"ForgeClaw instructions and context:\n{system_text}\n\n{user_text}"
-    return f"User: {body}\n\nAssistant:"
+    """Qwen3 ChatML. The empty <think></think> block is Qwen's documented switch for non-thinking mode:
+    on a CPU at ~4 tok/s a long hidden reasoning trace would cost minutes per answer."""
+    system = f"<|im_start|>system\n{system_text}<|im_end|>\n" if system_text.strip() else ""
+    return f"{system}<|im_start|>user\n{user_text}<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
 
 def fit_text(text, count_tokens, budget):

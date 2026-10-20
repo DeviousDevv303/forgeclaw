@@ -42,6 +42,11 @@ on:
         description: Correlation identifier
         required: true
         type: string
+      profile:
+        description: "Output profile: chat (default) or site (one complete single-file HTML page)"
+        required: false
+        default: chat
+        type: string
 
 permissions:
   contents: write
@@ -59,7 +64,8 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Fast engine: a 4-bit GGUF (about 4 GB) of the same DeepSeek 7B chat model, run by llama.cpp.
+      # Engine: the official 4-bit GGUF of Qwen/Qwen3-8B (about 5 GB, Apache-2.0), run by llama.cpp
+      # (see .github/scripts/deepseek_gguf.py for the 2026-10-20 benchmark behind the upgrade).
       # The cache is restored here and saved only after the file is confirmed present, so a run that fell
       # back to the slow engine can never poison the key with an empty directory. The old 14 GB float16
       # cache is deliberately not restored (it cost 2-4 minutes per run); the slow fallback downloads on demand.
@@ -68,7 +74,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/forgeclaw-gguf
-          key: deepseek-gguf-v1-${{ runner.os }}
+          key: deepseek-gguf-v2-qwen3-8b-${{ runner.os }}
 
       - name: Install inference dependencies
         run: |
@@ -76,13 +82,14 @@ jobs:
           pip install transformers accelerate
           # Prebuilt CPU wheel (no compiling). If it is unavailable the run continues on the slow engine.
           pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
-            || echo "::warning::llama-cpp-python wheel unavailable; DeepSeek will use the slow transformers engine"
+            || echo "::warning::llama-cpp-python wheel unavailable; the small fallback model will answer (marked DEGRADED)"
 
       - name: Run DeepSeek
         env:
           TASK: ${{ inputs.task }}
           CONTEXT: ${{ inputs.context }}
           INVOCATION_ID: ${{ inputs.invocation_id }}
+          PROFILE: ${{ inputs.profile }}
         run: |
           python - <<'PY'
           import os
@@ -100,14 +107,18 @@ jobs:
           import deepseek_gguf
           from transformers import AutoModelForCausalLM, AutoTokenizer
 
-          # Use DeepSeek's general conversational checkpoint for the primary
-          # reasoner; the code-specialized Coder model repeatedly refused safe
-          # creative requests even after a same-model retry.
-          # The fallback remains a smaller DeepSeek Instruct checkpoint, used
-          # only when the primary cannot run on this CPU runner.
-          PRIMARY_MODEL = 'deepseek-ai/deepseek-llm-7b-chat'
+          # Primary: Qwen3-8B as a 4-bit GGUF in llama.cpp (2026-10-20 upgrade from deepseek-llm-7b-chat,
+          # which failed a two-step reasoning check and looped on HTML; see deepseek_gguf.py). The
+          # workflow name and the DeepSeek provider label are legacy. The fallback remains the small
+          # DeepSeek Instruct checkpoint, used only when the primary cannot run on this CPU runner.
+          PRIMARY_MODEL = 'Qwen/Qwen3-8B'
           FALLBACK_MODEL = 'deepseek-ai/deepseek-coder-1.3b-instruct'
 
+          # 'site' (ForgeClaw's DeepSeek website chain): one long, complete HTML document, so a larger
+          # output budget, a longer time cap and a repetition penalty against the selector loops seen
+          # on 2026-10-20. Anything else is the normal chat profile.
+          SITE = os.environ.get('PROFILE', 'chat').strip().lower() == 'site'
+          MAX_NEW_TOKENS = 3000 if SITE else 768
           task = os.environ['TASK'].strip()
           context = os.environ.get('CONTEXT', '').strip()
           invocation_id = os.environ['INVOCATION_ID']
@@ -183,6 +194,21 @@ jobs:
               },
               {'role': 'user', 'content': user_content},
           ]
+          if SITE:
+              # The website chain needs exactly one HTML document: no tool protocol, no chat framing.
+              messages = [
+                  {
+                      'role': 'system',
+                      'content': (
+                          'You are an expert front-end developer. Reply with exactly one complete HTML5 document '
+                          'that starts with <!DOCTYPE html> and ends with </html>. Put all CSS in one <style> block '
+                          'and any JavaScript in one <script> block; use no external files, frameworks or images. '
+                          'Keep the CSS short and never repeat a selector. Write real, specific text for the request. '
+                          'Output nothing before or after the document.'
+                      ),
+                  },
+                  {'role': 'user', 'content': task},
+              ]
 
           def is_creative_task(task_text):
               folded = task_text.casefold()
@@ -225,7 +251,7 @@ jobs:
 
           # ---- fast engine: llama.cpp + 4-bit GGUF of the same primary model -------------------------
           GGUF_DIR = os.path.expanduser('~/.cache/forgeclaw-gguf')
-          FAST_TIME_BUDGET_S = 420  # a partial answer is returned (and flagged) rather than waiting longer
+          FAST_TIME_BUDGET_S = 900 if SITE else 420  # a partial answer is returned (and flagged) rather than waiting longer
           fast = {'llm': None, 'failed': False, 'file': None, 'load_s': 0.0, 'tokens': 0, 'gen_s': 0.0,
                   'timed_out': False, 'trimmed': False, 'version': None, 'error': None}
 
@@ -259,6 +285,7 @@ jobs:
               prompt, trimmed = deepseek_gguf.fit_text(
                   prompt, lambda text: len(llm.tokenize(text.encode('utf-8'), add_bos=False)), budget)
               stream = llm.create_completion(prompt, max_tokens=max_new_tokens, temperature=0.6, top_p=0.9,
+                                             repeat_penalty=1.1 if SITE else 1.0,
                                              stop=deepseek_gguf.STOP, stream=True)
               text, tokens, seconds, timed_out = deepseek_gguf.generate(stream, max_new_tokens, FAST_TIME_BUDGET_S)
               fast['tokens'] += tokens
@@ -268,7 +295,7 @@ jobs:
               print(f'Fast engine: {tokens} tokens in {seconds}s (timed_out={timed_out}, trimmed={trimmed})')
               return text
 
-          def run_inference(model_id, active_messages=None, max_new_tokens=768):
+          def run_inference(model_id, active_messages=None, max_new_tokens=MAX_NEW_TOKENS):
               active_messages = active_messages or messages
               if model_id == PRIMARY_MODEL:
                   llm = fast_engine()
@@ -277,7 +304,10 @@ jobs:
                           return run_fast(llm, active_messages, max_new_tokens)
                       except Exception as error:  # noqa: BLE001
                           fast.update(failed=True, error=f'generation: {type(error).__name__}: {error}'[:300])
-                          print(f'Fast engine failed during generation ({fast["error"]}); using the transformers engine.')
+                          print(f'Fast engine failed during generation ({fast["error"]}).')
+                  # The primary's float16 weights (16 GB) do not fit this 16 GB runner, so there is no
+                  # transformers path for it; raising hands the request to the labelled fallback model.
+                  raise RuntimeError(f'{PRIMARY_MODEL} needs the GGUF engine and it is unavailable: {fast["error"] or "not attempted"}')
               loaded = loaded_models.get(model_id)
               if loaded is None:
                   tokenizer = AutoTokenizer.from_pretrained(model_id)
@@ -290,10 +320,9 @@ jobs:
                   loaded_models[model_id] = (tokenizer, model)
               else:
                   tokenizer, model = loaded
-              if model_id == PRIMARY_MODEL:
-                  # The official DeepSeek-LLM 7B Chat model card warns that
-                  # system-role messages are not compatible with this model.
-                  # Preserve the separation in plain text but send one user turn.
+              if model_id == FALLBACK_MODEL:
+                  # DeepSeek model cards warn that system-role messages are not compatible with
+                  # these checkpoints. Preserve the separation in plain text but send one user turn.
                   system_text = '\n\n'.join(
                       message['content'] for message in active_messages
                       if message['role'] == 'system'
@@ -354,7 +383,7 @@ jobs:
 
           creative_retry_attempted = False
           creative_retry_succeeded = False
-          needs_creative_retry = is_creative_task(task) and (
+          needs_creative_retry = not SITE and is_creative_task(task) and (
               is_generic_scope_refusal(result)
               or (is_presentation_task(task) and not has_presentation_structure(result))
           )
@@ -431,7 +460,7 @@ jobs:
                       f'prompt_trimmed={str(fast["trimmed"]).lower()}\n'
                       f'llama_cpp_python={fast["version"]}\n'
                       if fast['llm'] is not None and not fast['failed'] and model_used == PRIMARY_MODEL else
-                      'engine=transformers float16 (slow fallback)\n'
+                      f'engine=transformers float16 (slow fallback: {FALLBACK_MODEL})\n'
                       f'fast_engine_error={fast["error"] or "not attempted"}\n'
                   )
               )
@@ -491,4 +520,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/forgeclaw-gguf
-          key: deepseek-gguf-v1-${{ runner.os }}
+          key: deepseek-gguf-v2-qwen3-8b-${{ runner.os }}

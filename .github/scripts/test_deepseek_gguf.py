@@ -20,11 +20,18 @@ class PickFile(unittest.TestCase):
 
 
 class Prompt(unittest.TestCase):
-    def test_single_user_turn_with_system_text_inside(self):
+    def test_qwen_chatml_with_thinking_switched_off(self):
         p = g.build_prompt("SYS", "Task: hi")
-        self.assertTrue(p.startswith("User: ForgeClaw instructions and context:\nSYS"))
-        self.assertTrue(p.endswith("Task: hi\n\nAssistant:"))
-        self.assertNotIn("System:", p)
+        self.assertTrue(p.startswith("<|im_start|>system\nSYS<|im_end|>\n<|im_start|>user\nTask: hi<|im_end|>\n"))
+        self.assertTrue(p.endswith("<|im_start|>assistant\n<think>\n\n</think>\n\n"))
+
+    def test_no_empty_system_turn(self):
+        self.assertTrue(g.build_prompt("  ", "hi").startswith("<|im_start|>user\nhi"))
+
+    def test_primary_is_the_official_qwen3_8b_gguf(self):
+        self.assertEqual(g.GGUF_REPO, "Qwen/Qwen3-8B-GGUF")
+        self.assertEqual(g.pick_gguf_file(["Qwen3-8B-Q4_K_M.gguf", "Qwen3-8B-Q8_0.gguf"]), "Qwen3-8B-Q4_K_M.gguf")
+        self.assertIn("<|im_end|>", g.STOP)
 
 
 class Fit(unittest.TestCase):
@@ -81,7 +88,7 @@ class Load(unittest.TestCase):
         )
         self.assertEqual(name, "m.Q4_K_M.gguf")
         self.assertEqual(calls["llama"]["model_path"], "/tmp/dir/m.Q4_K_M.gguf")
-        self.assertEqual(calls["llama"]["n_ctx"], 4096)
+        self.assertEqual(calls["llama"]["n_ctx"], 8192)
 
     def test_raises_when_no_matching_file_so_the_caller_falls_back(self):
         with self.assertRaises(RuntimeError):
