@@ -137,9 +137,9 @@ describe('Moonshot provider', () => {
   })
 
   it('migrates a retired saved model to the default', () => {
-    expect(resolveMoonshotModel('kimi-k2.5')).toBe('kimi-k2.6')
-    expect(resolveMoonshotModel('moonshot-v1-8k')).toBe('kimi-k2.6')
-    expect(resolveMoonshotModel(null)).toBe('kimi-k2.6')
+    expect(resolveMoonshotModel('kimi-k2.5')).toBe('kimi-k2.7-code')
+    expect(resolveMoonshotModel('moonshot-v1-8k')).toBe('kimi-k2.7-code')
+    expect(resolveMoonshotModel(null)).toBe('kimi-k2.7-code')
     expect(resolveMoonshotModel('kimi-k3')).toBe('kimi-k3')
   })
 

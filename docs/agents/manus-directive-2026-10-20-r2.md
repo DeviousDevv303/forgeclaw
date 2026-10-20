@@ -87,7 +87,7 @@ This replaces the task list in `manus-handoff-2026-10-20.md`; its rules (section
 
 - **Steps that need the app UI and keys** (A–F, H–J, L1): Cristian runs them; you record the results.
   - Give him one step at a time with its PASS rule, and fill the table yourself.
-  - **L1** (Kimi K2.6 with a picture) is the first live test of Kimi image input. If Kimi returns an error about images, record the exact error text. Don't retry with other models.
+  - **L1** (Kimi K2.7 Code with a picture) is the first live test of Kimi image input. If Kimi returns an error about images, record the exact error text. Don't retry with other models.
 - **Steps you can run yourself:** G, and the Actions half of E and F.
 - **Deliverable:** the filled Results table as a comment on PR #171.
 
