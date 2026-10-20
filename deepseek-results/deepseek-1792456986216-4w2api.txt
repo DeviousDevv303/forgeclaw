@@ -1,0 +1,7 @@
+Please note that ForgeClaw is unable to provide live repository facts or perform direct tool authority actions. The following response is based on the static architecture facts and the provided context.
+
+Task:
+
+```tool_call
+{"name": "github_read_file", "arguments": {"path": "src/lib/forgeTools.ts"}}
+```

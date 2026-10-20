@@ -1,0 +1,16 @@
+invocation_id=deepseek-1792456986216-4w2api
+model=deepseek-ai/deepseek-llm-7b-chat
+role=primary checkpoint
+degraded=false
+creative_retry_attempted=false
+creative_retry_succeeded=false
+output_cleanup_applied=true
+tool_call_tail_dropped=true
+elapsed_seconds=97.7
+engine=llama.cpp GGUF Q4_K_M (TheBloke/deepseek-llm-7B-chat-GGUF/deepseek-llm-7b-chat.Q4_K_M.gguf) of deepseek-ai/deepseek-llm-7b-chat
+engine_load_seconds=2.4
+generated_tokens=313
+generation_seconds=95.3
+stopped_by_time_budget=false
+prompt_trimmed=false
+llama_cpp_python=0.3.36
