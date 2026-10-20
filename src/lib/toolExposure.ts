@@ -45,7 +45,7 @@ export const SHELL_EXEC_GUIDANCE =
   'nothing persists between calls; each job is limited to 10 minutes. Chain related steps into one command with &&.'
 
 /** Tools a model legitimately calls repeatedly with the same input while it waits on a run. */
-const POLLING_TOOLS: ReadonlySet<string> = new Set(['github_get_run_status', 'github_get_run_logs', 'github_repo_state'])
+const POLLING_TOOLS: ReadonlySet<string> = new Set(['github_get_run_status', 'github_get_run_logs', 'github_repo_state', 'github_pages_status'])
 
 /** How many identical calls in one run count as a loop. */
 export function repeatedCallLimit(toolName: string): number {
@@ -67,9 +67,10 @@ export function truncatedToolCallResult(toolName: string, reason: string): strin
 export const SITE_DEPLOY_GUIDANCE =
   'Website deployment: (1) unless the user named an existing repository, call github_create_repo with a short name; ' +
   '(2) write the complete static site (index.html plus CSS/JS/assets, relative links) and call github_publish_site ONCE with every file, ' +
-  'owner and repo from step 1; never publish into forgeclaw; (3) call github_pages_status until status is built for the published commit ' +
-  '(the first build takes about a minute; errored means read the error and republish); (4) only then report the live URL. ' +
-  'Static files only: there is no build step on Pages, so do not rely on npm install or a bundler.'
+  'owner and repo from step 1; never publish into forgeclaw; (3) call github_pages_status with commit and wait_seconds 180 until status is built ' +
+  'for the published commit (errored means read the error and republish); (4) only then report the live URL. ' +
+  'Prefer plain static files. Only if the site truly needs a build step (React, Vite, npm packages): publish the SOURCE with ' +
+  'github_publish_site enable_pages false to branch "source", then call github_build_site, then verify with github_pages_status.'
 
 /** Repositories one run may create; a prompt-injected loop cannot fill the account with public repos. */
 export const MAX_REPO_CREATIONS_PER_RUN = 2
@@ -97,3 +98,10 @@ export function toolCallRefusal(name: string, offered: ReadonlySet<string>, rout
   }
   return null
 }
+
+/** How a hosted model runs deep research, so it gathers real sources before answering and cites them. */
+export const RESEARCH_GUIDANCE =
+  'Deep research: plan 3-6 distinct search queries that cover different angles (definitions, recent data, opposing views, ' +
+  'primary sources), call deep_research once with them, and write the answer only from the returned sources, citing [n] after each claim. ' +
+  'If the evidence is thin or one-sided, say so, and call deep_research once more with sharper queries. End with a numbered Sources list. ' +
+  'Never cite anything that deep_research did not return.'

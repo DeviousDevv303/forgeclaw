@@ -10,7 +10,12 @@ import { CANONICAL_IDENTITY } from './canonicalIdentity'
 
 export type GithubRequest = (url: string, init?: RequestInit) => Promise<Response>
 
-export interface PublishFile { path: string; content: string }
+export interface PublishFile {
+  path: string
+  content: string
+  /** 'base64' for binary files (images, fonts from a build); default utf-8 text. */
+  encoding?: 'utf-8' | 'base64'
+}
 
 export interface PublishSiteInput {
   owner: string
@@ -20,6 +25,10 @@ export interface PublishSiteInput {
   message: string
   /** Defaults to gh-pages. Never the repository's default branch. */
   branch?: string
+  /** false for a source branch that is built rather than served (no index.html needed, Pages untouched). */
+  enablePages?: boolean
+  /** Larger limits for build output; agent-written sites use the defaults. */
+  limits?: { maxFiles: number; maxBytes: number }
 }
 
 export interface PublishSiteResult {
@@ -31,12 +40,14 @@ export interface PublishSiteResult {
   files: string[]
   pagesUrl: string
   /** What happened to the Pages configuration. */
-  pages: 'enabled' | 'already-serving' | 'serving-other-source'
+  pages: 'enabled' | 'already-serving' | 'serving-other-source' | 'not-requested'
   pagesSource?: string
 }
 
 export const PUBLISH_MAX_FILES = 100
 export const PUBLISH_MAX_TOTAL_BYTES = 2_000_000
+/** Limits for a built site (bundles, images); still well inside GitHub's per-blob and Pages limits. */
+export const BUILD_PUBLISH_LIMITS = { maxFiles: 500, maxBytes: 25_000_000 }
 export const DEFAULT_PUBLISH_BRANCH = 'gh-pages'
 /**
  * Trailer on every publish commit. An existing branch is only advanced when its head carries it, so an
@@ -75,7 +86,9 @@ export function validatePublishInput(input: PublishSiteInput): { branch: string;
   if (!/^[A-Za-z0-9._/-]{1,100}$/.test(branch) || branch.includes('..')) throw new Error(`invalid branch name: ${input.branch}`)
   if (['main', 'master'].includes(branch.toLowerCase())) throw new Error(`refusing to publish to ${branch}; use a site branch such as gh-pages`)
   if (!Array.isArray(input.files) || input.files.length === 0) throw new Error('files must be a non-empty array of {path, content}')
-  if (input.files.length > PUBLISH_MAX_FILES) throw new Error(`at most ${PUBLISH_MAX_FILES} files per publish`)
+  const maxFiles = input.limits?.maxFiles ?? PUBLISH_MAX_FILES
+  const maxBytes = input.limits?.maxBytes ?? PUBLISH_MAX_TOTAL_BYTES
+  if (input.files.length > maxFiles) throw new Error(`at most ${maxFiles} files per publish`)
   const seen = new Set<string>()
   let total = 0
   const files = input.files.map(file => {
@@ -83,10 +96,11 @@ export function validatePublishInput(input: PublishSiteInput): { branch: string;
     if (typeof file.content !== 'string') throw new Error(`content of ${path} must be a string`)
     if (seen.has(path)) throw new Error(`duplicate path ${path}`)
     seen.add(path)
-    total += new TextEncoder().encode(file.content).length
-    return { path, content: file.content }
+    const encoding = file.encoding === 'base64' ? 'base64' as const : 'utf-8' as const
+    total += encoding === 'base64' ? Math.floor(file.content.replace(/\s/g, '').length * 3 / 4) : new TextEncoder().encode(file.content).length
+    return { path, content: file.content, encoding }
   })
-  if (total > PUBLISH_MAX_TOTAL_BYTES) throw new Error(`site is ${total} bytes; the limit per publish is ${PUBLISH_MAX_TOTAL_BYTES}`)
+  if (total > maxBytes) throw new Error(`site is ${total} bytes; the limit per publish is ${maxBytes}`)
   return { branch, files }
 }
 
@@ -152,18 +166,26 @@ export async function publishSite(request: GithubRequest, input: PublishSiteInpu
     throw await githubError(refRes, `reading branch ${branch}`)
   }
 
-  if (!beforeSha) {
+  const enablePages = input.enablePages !== false
+  if (!beforeSha && enablePages) {
     if (!files.some(f => f.path.toLowerCase() === 'index.html')) throw new Error(`a new site branch needs an index.html at its root; none of the ${files.length} file(s) is index.html`)
     // Pages runs Jekyll by default, which silently drops _-prefixed folders (_next/, _assets/).
     if (!files.some(f => f.path === '.nojekyll')) files.push({ path: '.nojekyll', content: '' })
   }
 
+  // Text goes inline in the tree; binary needs a base64 blob first (inline tree content is UTF-8 only).
+  const entries: Array<Record<string, string>> = []
+  for (const f of files) {
+    if (f.encoding === 'base64') {
+      const blob = await json<{ sha: string }>(request, `${base}/git/blobs`, `uploading ${f.path}`, { method: 'POST', headers, body: JSON.stringify({ content: f.content, encoding: 'base64' }) })
+      entries.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.sha })
+    } else {
+      entries.push({ path: f.path, mode: '100644', type: 'blob', content: f.content })
+    }
+  }
   const tree = await json<{ sha: string }>(request, `${base}/git/trees`, 'creating the file tree', {
     method: 'POST', headers,
-    body: JSON.stringify({
-      ...(baseTree ? { base_tree: baseTree } : {}),
-      tree: files.map(f => ({ path: f.path, mode: '100644', type: 'blob', content: f.content })),
-    }),
+    body: JSON.stringify({ ...(baseTree ? { base_tree: baseTree } : {}), tree: entries }),
   })
   const commit = await json<{ sha: string }>(request, `${base}/git/commits`, 'creating the commit', {
     method: 'POST', headers,
@@ -177,6 +199,9 @@ export async function publishSite(request: GithubRequest, input: PublishSiteInpu
   }
 
   const pagesUrl = `https://${owner.toLowerCase()}.github.io/${repo}/`
+  if (!enablePages) {
+    return { commitSha: commit.sha, beforeSha, branch, createdBranch: !beforeSha, files: files.map(f => f.path), pagesUrl, pages: 'not-requested' }
+  }
   const pagesRes = await request(`${base}/pages`, { headers })
   if (pagesRes.ok) {
     const site = await pagesRes.json() as { html_url?: string; source?: { branch?: string; path?: string } }
@@ -231,4 +256,44 @@ export async function createRepo(request: GithubRequest, input: CreateRepoInput)
   if (!res.ok) throw await githubError(res, 'creating the repository')
   const repo = await res.json() as { name: string; html_url: string; default_branch?: string; owner?: { login?: string } }
   return { owner: repo.owner?.login || '', repo: repo.name, url: repo.html_url, defaultBranch: repo.default_branch || 'main' }
+}
+
+export interface WaitOptions {
+  /** Only a build of this commit counts (a publish is verified by its own build, not an older one). */
+  commit?: string
+  timeoutMs?: number
+  intervalMs?: number
+  signal?: AbortSignal
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
+}
+
+export const PAGES_WAIT_MAX_MS = 300_000
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Run aborted', 'AbortError')); return }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, ms)
+    const onAbort = () => { clearTimeout(timer); reject(new DOMException('Run aborted', 'AbortError')) }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/**
+ * Poll the latest Pages build until it is built or errored for the wanted commit, or the wait ends.
+ * The model used to poll github_pages_status back-to-back, burning its repeat limit in seconds while
+ * the first build (about a minute) was still queued.
+ */
+export async function waitForPagesBuild(request: GithubRequest, owner: string, repo: string, token: string, options: WaitOptions = {}): Promise<PagesStatus & { waitedMs: number; final: boolean }> {
+  const timeoutMs = Math.min(Math.max(options.timeoutMs ?? 0, 0), PAGES_WAIT_MAX_MS)
+  const interval = options.intervalMs ?? 10_000
+  const sleep = options.sleep ?? abortableSleep
+  const started = Date.now()
+  for (;;) {
+    const status = await pagesStatus(request, owner, repo, token)
+    const forCommit = !options.commit || !status.commit || status.commit.startsWith(options.commit) || options.commit.startsWith(status.commit)
+    const final = forCommit && (status.status === 'built' || status.status === 'errored')
+    const waitedMs = Date.now() - started
+    if (final || waitedMs + interval > timeoutMs) return { ...status, waitedMs, final }
+    await sleep(interval, options.signal)
+  }
 }

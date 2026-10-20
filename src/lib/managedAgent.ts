@@ -24,6 +24,7 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'github_write_file',
   'github_publish_site',
   'github_create_repo',
+  'github_build_site',
   'github_create_issue',
   'github_run_workflow',
   'shell_exec',
@@ -50,6 +51,7 @@ export const CODING_TOOL_ORDER: readonly string[] = [
   // Site deployment: one-commit publish to a Pages branch, its repo, and build verification.
   'github_create_repo',
   'github_publish_site',
+  'github_build_site',
   'github_pages_status',
   'github_create_issue',
   'github_run_workflow',
@@ -61,6 +63,7 @@ export const CODING_TOOL_ORDER: readonly string[] = [
   // its tool list had no shell_exec).
   'shell_exec',
   'web_search',
+  'deep_research',
   'coding_task_update',
 ]
 

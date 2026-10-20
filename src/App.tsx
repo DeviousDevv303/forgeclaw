@@ -216,7 +216,7 @@ import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
-import { baselineToolNames, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
@@ -1340,6 +1340,8 @@ function App() {
         timestamp: Date.now(), source: 'local' as const,
       }])
       emitFailure({ source: 'forgemind', severity: 'warning', message: 'Guardian blocked this task.', context: { taskId } })
+      // NEXUS learns from every outcome, refusals included (still an unapproved candidate).
+      void recordLearning({ channel: promptOrigin(promptText) === 'voice' ? 'voice' : 'chat', input: promptText, result: 'Task blocked by Guardian admission before any model or tool ran.', outcome: 'blocked', actor: 'user', origin: promptOrigin(promptText) })
       return
     }
 
@@ -1384,6 +1386,8 @@ function App() {
       // Substring match, so no bare 'site' (it is inside "opposite", "visited").
       'github_publish_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'publish', 'github pages', 'gh-pages'],
       'github_pages_status': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'publish', 'github pages', 'gh-pages'],
+      'deep_research': ['research', 'investigate', 'sources', 'look into', 'find out', 'compare', 'latest', 'literature', 'study', 'studies', 'evidence', 'report on'],
+      'github_build_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'react', 'vite', 'npm', 'bundle'],
       'github_create_repo': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'new repo', 'new repository', 'create repo', 'create a repo'],
       'github_repo_state': ['state', 'status', 'head', 'branch'],
       'generate_image': ['generate', 'image', 'logo', 'illustration', 'picture', 'artwork'],
@@ -1430,7 +1434,7 @@ function App() {
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
-        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}`
+        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}`
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
@@ -1749,6 +1753,7 @@ function App() {
   if (call.parseError) {
     const output = truncatedToolCallResult(call.name, call.parseError)
     iterResults.push({ toolCallId: call.id, name: call.name, output, isError: true })
+    void recordLearning({ channel: 'tool', input: `${call.name} (arguments cut off or invalid)`, result: output, outcome: 'failed', toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
     // toolAttempts must stay index-aligned with the results; any later success of this tool resolves it.
     toolAttempts.push({ name: call.name, input: TRUNCATED_ATTEMPT })
     setActivityLog(prev => [...prev.slice(-99), { id: `act_${call.id}_${Date.now()}`, timestamp: Date.now(), tool: call.name, input: call.input, status: 'error', output: output.slice(0, 300) }])
@@ -1758,6 +1763,7 @@ function App() {
   const refusal = toolCallRefusal(call.name, offeredToolNames, routerIssued, priorRepoCreations)
   if (refusal) {
     iterResults.push({ toolCallId: call.id, name: call.name, output: refusal, isError: true, reasoningStepId: 'guardian_block' })
+    void recordLearning({ channel: 'tool', input: `${call.name} ${JSON.stringify(call.input)}`, result: refusal, outcome: 'blocked', toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
     toolAttempts.push({ name: call.name, input: JSON.stringify(call.input, Object.keys(call.input).sort()) })
     setActivityLog(prev => [...prev.slice(-99), { id: `act_${call.id}_${Date.now()}`, timestamp: Date.now(), tool: call.name, input: call.input, status: 'error', output: refusal.slice(0, 300) }])
     continue
@@ -1777,6 +1783,7 @@ function App() {
       isError: true,
       reasoningStepId: 'guardian_block'
     })
+    void recordLearning({ channel: 'tool', input: callKey, result: 'Blocked: repeated tool call loop.', outcome: 'blocked', toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
     // Keep toolAttempts index-aligned with the results (hasUnresolvedToolFailure pairs them by index).
     toolAttempts.push({ name: call.name, input: JSON.stringify(call.input, Object.keys(call.input).sort()) })
     continue
@@ -1960,6 +1967,8 @@ function App() {
       setRequestStatus('error')
       setLastRequestError(msg)
       emitFailure({ source: 'forgemind', severity: 'error', message: rawMsg, context: { provider: activeProvider, promptLength: promptText.length } })
+      // A failed run is the most useful thing NEXUS can learn from; it used to be recorded nowhere.
+      void recordLearning({ channel: promptOrigin(promptText) === 'voice' ? 'voice' : 'chat', input: promptText, result: `Run failed: ${rawMsg}`, outcome: 'failed', actor: 'user', origin: promptOrigin(promptText) })
       const failedToolResults = runToolResults.length ? runToolResults : undefined
       if (cloudMsgId) {
         setMessages(prev => prev.map(m => {

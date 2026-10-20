@@ -1,0 +1,157 @@
+# ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+# Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+name: Site Build
+
+# run-name carries the caller's correlation ID (workflow_dispatch returns no run ID).
+run-name: Site build ${{ inputs.invocation_id }}
+
+# Builds a site that needs a build step (npm, a bundler) from a PUBLIC source repository/branch.
+# Two jobs, so model-written build code never runs next to a write credential:
+#   build  - contents: read, no persisted credential; runs the build command and uploads the output.
+#   mirror - contents: write, runs no model-written code; copies the output to builds/<id>/ on the
+#            site-builds branch, where ForgeClaw (src/lib/siteBuild.ts) reads it and publishes it to the
+#            site repository with the operator's token. Artifact zips are not reliably downloadable
+#            from the browser, so this mirror is the delivery path (same pattern as deepseek-results).
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: 'Public site repository, owner/name'
+        required: true
+        type: string
+      source_ref:
+        description: 'Branch with the site source'
+        required: true
+        default: source
+        type: string
+      build_command:
+        description: 'Build command, run in the repository root'
+        required: true
+        default: 'npm ci && npm run build'
+        type: string
+      output_dir:
+        description: 'Directory the build writes the static site to'
+        required: true
+        default: dist
+        type: string
+      invocation_id:
+        description: 'Caller correlation ID'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Validate inputs
+        env:
+          SOURCE_REPO: ${{ inputs.source_repo }}
+          SOURCE_REF: ${{ inputs.source_ref }}
+          OUTPUT_DIR: ${{ inputs.output_dir }}
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: |
+          fail() { echo "::error title=site-build::$1"; exit 1; }
+          printf '%s' "$INVOCATION_ID" | grep -Eqx '[A-Za-z0-9._-]{1,120}' || fail 'invocation_id must match [A-Za-z0-9._-]{1,120}'
+          printf '%s' "$SOURCE_REPO" | grep -Eqx '[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}' || fail 'source_repo must be owner/name'
+          printf '%s' "$SOURCE_REF" | grep -Eqx '[A-Za-z0-9._/-]{1,100}' || fail 'source_ref has invalid characters'
+          case "$SOURCE_REF" in *..*) fail 'source_ref may not contain ..';; esac
+          printf '%s' "$OUTPUT_DIR" | grep -Eqx '[A-Za-z0-9._/-]{1,100}' || fail 'output_dir has invalid characters'
+          case "/$OUTPUT_DIR/" in */../*|*//*) fail 'output_dir must be a plain relative directory';; esac
+          case "$OUTPUT_DIR" in /*) fail 'output_dir must be relative';; esac
+          if [ "${SOURCE_REPO,,}" = "${GITHUB_REPOSITORY,,}" ]; then fail 'refusing to build this repository'; fi
+
+      - name: Check out site source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.source_repo }}
+          ref: ${{ inputs.source_ref }}
+          path: site
+          # The build command below is model-written; it must find no credential in .git/config.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build
+        working-directory: site
+        env:
+          BUILD_COMMAND: ${{ inputs.build_command }}
+          OUTPUT_DIR: ${{ inputs.output_dir }}
+        run: |
+          set +e
+          bash -c "$BUILD_COMMAND"
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then echo "::error title=site-build::build command exited $code"; exit "$code"; fi
+          if [ ! -d "$OUTPUT_DIR" ]; then echo "::error title=site-build::build produced no $OUTPUT_DIR directory"; exit 1; fi
+          if [ ! -f "$OUTPUT_DIR/index.html" ]; then echo "::error title=site-build::$OUTPUT_DIR has no index.html"; exit 1; fi
+          if find "$OUTPUT_DIR" -type l | grep -q .; then echo "::error title=site-build::$OUTPUT_DIR contains symlinks"; exit 1; fi
+          files=$(find "$OUTPUT_DIR" -type f | wc -l)
+          bytes=$(du -sb "$OUTPUT_DIR" | cut -f1)
+          echo "build output: $files files, $bytes bytes"
+          if [ "$files" -gt 500 ]; then echo "::error title=site-build::$files files; the limit is 500"; exit 1; fi
+          if [ "$bytes" -gt 25000000 ]; then echo "::error title=site-build::$bytes bytes; the limit is 25000000"; exit 1; fi
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-build-${{ inputs.invocation_id }}
+          path: site/${{ inputs.output_dir }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  mirror:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Download build output
+        uses: actions/download-artifact@v4
+        with:
+          name: site-build-${{ inputs.invocation_id }}
+          path: ${{ runner.temp }}/site-output
+
+      - name: Publish to the site-builds mirror branch
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          OUTPUT: ${{ runner.temp }}/site-output
+        run: |
+          set -euo pipefail
+          git config user.name 'ForgeClaw Site Build'
+          git config user.email 'forgeclaw-site-build@local'
+          git fetch origin site-builds || true
+          WT="$RUNNER_TEMP/site-builds-worktree"
+          if git show-ref --verify --quiet refs/remotes/origin/site-builds; then
+            git worktree add "$WT" origin/site-builds
+            git -C "$WT" checkout -B site-builds
+          else
+            git worktree add --detach "$WT" HEAD
+            git -C "$WT" checkout --orphan site-builds
+            git -C "$WT" rm -rf . >/dev/null 2>&1 || true
+          fi
+          # Output lives only under builds/<id>/; nothing at the branch root, so no workflow file can land there.
+          rm -rf "$WT/builds/$INVOCATION_ID"
+          mkdir -p "$WT/builds/$INVOCATION_ID"
+          cp -R "$OUTPUT"/. "$WT/builds/$INVOCATION_ID/"
+          git -C "$WT" add "builds/$INVOCATION_ID"
+          git -C "$WT" commit -m "site-build: $INVOCATION_ID"
+          for attempt in 1 2 3 4; do
+            if git -C "$WT" push origin HEAD:site-builds; then break; fi
+            if [ "$attempt" = 4 ]; then echo "::error title=site-build::mirror push failed after 4 attempts"; exit 1; fi
+            git -C "$WT" fetch origin site-builds
+            git -C "$WT" rebase origin/site-builds
+            sleep $((attempt * 2))
+          done

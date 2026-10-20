@@ -356,6 +356,7 @@ export function hasSuccessfulRepositoryEvidence(
     'github_verify_commit',
     // A website job may never read a file; its publish commit and Pages build are the evidence.
     'github_publish_site',
+    'github_build_site',
     'github_pages_status',
   ])
   return results.some(result => evidenceTools.has(result.name) && !result.isError)

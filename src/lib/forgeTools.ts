@@ -31,7 +31,9 @@ import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './ima
 import { TasteProviderClient } from './ai/providers/tasteProvider'
 import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
 import { journalRecord, type RunJournal } from './runRollback'
-import { createRepo, pagesStatus, publishSite, type GithubRequest, type PublishFile } from './githubPublish'
+import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type GithubRequest, type PublishFile } from './githubPublish'
+import { buildAndPublishSite } from './siteBuild'
+import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
 
 /** Models send files as an array or as a JSON string of one; anything else is rejected by the publisher. */
 function parsePublishFiles(raw: unknown): PublishFile[] {
@@ -206,7 +208,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'deepseek_reason',
-    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained; the workflow currently runs deepseek-ai/deepseek-llm-7b-chat as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.',
+    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained; the workflow currently runs Qwen/Qwen3-8B (4-bit GGUF, CPU) as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.',
     parameters: {
       type: 'object',
       properties: {
@@ -220,7 +222,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'ask_deepseek',
-    description: 'Ask the existing DeepSeek reasoning workflow directly. No routing delay; deepseek-ai/deepseek-llm-7b-chat is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.',
+    description: 'Ask the existing DeepSeek reasoning workflow directly. No routing delay; Qwen/Qwen3-8B is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.',
     parameters: {
       type: 'object',
       properties: {
@@ -519,6 +521,19 @@ export const FORGE_TOOLS: ToolDef[] = [
       required: ['sha'],
     },
   },
+  {
+    name: 'deep_research',
+    description: 'Deep web research: runs up to 6 searches server-side, fetches the result pages, extracts their main text and returns numbered evidence excerpts with URLs (2-6 minutes). Use for questions that need several current sources; answer only from the returned sources and cite them as [n]. For a quick fact use web_search instead.',
+    parameters: {
+      type: 'object',
+      properties: {
+        question:    { type: 'string', description: 'The research question' },
+        queries:     { type: 'array', description: '3-6 distinct search queries covering different angles of the question', items: { type: 'string' } },
+        max_sources: { type: 'number', description: 'Sources to fetch, 1-15, default 8' },
+      },
+      required: ['question'],
+    },
+  },
   // ── Site deployment (githubPublish.ts) ──────────────────────────────────────
   {
     name: 'github_create_repo',
@@ -544,18 +559,37 @@ export const FORGE_TOOLS: ToolDef[] = [
         files:   { type: 'array', description: 'Files to write, each {path, content}. Paths are relative, e.g. index.html, css/style.css. Max 100 files, 2 MB.', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
         message: { type: 'string', description: 'Commit message' },
         branch:  { type: 'string', description: 'Site branch, default gh-pages' },
+        enable_pages: { type: 'boolean', description: 'Default true. Use false to store SOURCE code on a branch such as "source" for github_build_site (no index.html needed, Pages untouched).' },
       },
       required: ['repo', 'files', 'message'],
     },
   },
   {
     name: 'github_pages_status',
-    description: 'Read the GitHub Pages site URL and the latest build status (queued, building, built, errored) and its commit. A publish is verified only when status is built for the published commit.',
+    description: 'Read the GitHub Pages site URL and the latest build status (queued, building, built, errored) and its commit. A publish is verified only when status is built for the published commit. Pass commit and wait_seconds to wait for that build instead of polling.',
     parameters: {
       type: 'object',
       properties: {
-        owner: { type: 'string', description: 'Repository owner' },
-        repo:  { type: 'string', description: 'Repository name' },
+        owner:        { type: 'string', description: 'Repository owner' },
+        repo:         { type: 'string', description: 'Repository name' },
+        commit:       { type: 'string', description: 'The published commit SHA to wait for' },
+        wait_seconds: { type: 'number', description: 'Wait up to this long (max 300) for the build to finish. Default 0: read once.' },
+      },
+      required: ['repo'],
+    },
+  },
+  {
+    name: 'github_build_site',
+    description: 'Build a site that needs a build step (npm, Vite, React, a bundler) and publish the output to GitHub Pages. First store the source with github_publish_site (enable_pages false, branch "source") in a public repository; this runs the build in an isolated GitHub Actions job, then publishes the output directory in one commit to gh-pages. Takes 2-6 minutes. Then verify with github_pages_status.',
+    parameters: {
+      type: 'object',
+      properties: {
+        owner:          { type: 'string', description: 'Site repository owner' },
+        repo:           { type: 'string', description: 'Site repository name (public; not forgeclaw)' },
+        source_branch:  { type: 'string', description: 'Branch holding the source, default "source"' },
+        build_command:  { type: 'string', description: 'Default "npm ci && npm run build". Must create the output directory with an index.html.' },
+        output_dir:     { type: 'string', description: 'Build output directory, default "dist" (Vite). Create React App uses "build".' },
+        publish_branch: { type: 'string', description: 'Pages branch, default gh-pages' },
       },
       required: ['repo'],
     },
@@ -956,6 +990,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
               context,
               nexus_learning: nexusLearn ? 'true' : 'false',
               invocation_id: invocationId,
+              // 'site': long single-file HTML output (deepseek-16b.yml site profile). Omitted otherwise.
+              ...(input.profile === 'site' ? { profile: 'site' } : {}),
             },
           }),
         } as const
@@ -1792,6 +1828,18 @@ case 'spawn_agent': {
         return `✓ Coding agent state persisted — status: ${next.taskStatus}, repo: ${next.owner}/${next.repo}@${next.branch}, HEAD: ${next.headShaShort || '(unknown)'}, updated: ${next.updatedAt}`
       }
 
+      // ── Deep research ────────────────────────────────────────────────────────
+      case 'deep_research': {
+        if (!token) throw new Error('No GitHub token configured. deep_research runs as a GitHub Actions job and needs gh_token with Actions: write.')
+        // The workflow lives in ForgeClaw's own repository regardless of any owner/repo in the call.
+        const { report, runUrl } = await runDeepResearch(githubRequest, {
+          owner: ctx.ghOwner, repo: ctx.ghRepo, token,
+          question: String(input.question || ''), queries: normalizeQueries(input.queries),
+          maxSources: Number(input.max_sources) || undefined, signal: ctx.signal,
+        })
+        return formatResearchResult(report, runUrl)
+      }
+
       // ── Site deployment ──────────────────────────────────────────────────────
       case 'github_create_repo': {
         const created = await createRepo(githubRequest, { token, name: String(input.name || ''), description: input.description as string | undefined, private: input.private === true })
@@ -1812,13 +1860,15 @@ case 'spawn_agent': {
           verification: state.verificationResults[state.verificationResults.length - 1],
           branch: (input.branch as string | undefined) || 'gh-pages',
         })
-        const result = await publishSite(githubRequest, { owner, repo, token, files: parsePublishFiles(input.files), message, branch: input.branch as string | undefined })
+        const result = await publishSite(githubRequest, { owner, repo, token, files: parsePublishFiles(input.files), message, branch: input.branch as string | undefined, enablePages: input.enable_pages !== false })
         if (result.beforeSha) {
           journalRecord(ctx.journal, { kind: 'branch_advanced', branch: result.branch, beforeSha: result.beforeSha, afterSha: result.commitSha, label: `github_publish_site ${owner}/${repo}` })
         } else {
           journalRecord(ctx.journal, { kind: 'branch_created', branch: result.branch, label: `github_publish_site ${owner}/${repo}` })
         }
-        const pagesLine = result.pages === 'enabled'
+        const pagesLine = result.pages === 'not-requested'
+          ? 'Pages not changed (source branch); next: github_build_site with this branch as source_branch'
+          : result.pages === 'enabled'
           ? `Pages enabled for ${result.branch}; the first build takes about 1 minute`
           : result.pages === 'already-serving'
             ? `Pages already serves ${result.branch}; a new build starts automatically`
@@ -1827,8 +1877,26 @@ case 'spawn_agent': {
       }
 
       case 'github_pages_status': {
-        const status = await pagesStatus(githubRequest, owner, repo, token)
-        return `Pages ${owner}/${repo}: ${status.status}${status.commit ? ` (commit ${status.commit.slice(0, 7)})` : ''}${status.error ? `\n  error: ${status.error}` : ''}\n  site: ${status.url || '(no Pages site)'}${status.updatedAt ? `\n  updated: ${status.updatedAt}` : ''}`
+        const waitMs = Math.min(Math.max(Number(input.wait_seconds) || 0, 0) * 1000, PAGES_WAIT_MAX_MS)
+        const status = await waitForPagesBuild(githubRequest, owner, repo, token, { commit: (input.commit as string | undefined)?.trim() || undefined, timeoutMs: waitMs, signal: ctx.signal })
+        const pending = waitMs > 0 && !status.final ? `\n  still ${status.status} after ${Math.round(status.waitedMs / 1000)}s; call again to keep waiting` : ''
+        return `Pages ${owner}/${repo}: ${status.status}${status.commit ? ` (commit ${status.commit.slice(0, 7)})` : ''}${status.error ? `\n  error: ${status.error}` : ''}\n  site: ${status.url || '(no Pages site)'}${status.updatedAt ? `\n  updated: ${status.updatedAt}` : ''}${pending}`
+      }
+
+      case 'github_build_site': {
+        const built = await buildAndPublishSite(githubRequest, {
+          workflowOwner: ctx.ghOwner, workflowRepo: ctx.ghRepo, owner, repo, token,
+          sourceBranch: input.source_branch as string | undefined,
+          buildCommand: input.build_command as string | undefined,
+          outputDir: input.output_dir as string | undefined,
+          publishBranch: input.publish_branch as string | undefined,
+          signal: ctx.signal,
+        })
+        const p = built.publish
+        journalRecord(ctx.journal, p.beforeSha
+          ? { kind: 'branch_advanced', branch: p.branch, beforeSha: p.beforeSha, afterSha: p.commitSha, label: `github_build_site ${owner}/${repo}` }
+          : { kind: 'branch_created', branch: p.branch, label: `github_build_site ${owner}/${repo}` })
+        return `✓ Built ${owner}/${repo} in run #${built.run.run_number} and published ${built.files} file(s) to ${p.branch} in one commit\n  build: ${built.run.html_url}\n  commit: ${p.commitSha}\n  site: ${p.pagesUrl} (Pages ${p.pages})\n  verify: github_pages_status with commit ${p.commitSha.slice(0, 7)} and wait_seconds 180`
       }
 
       default:

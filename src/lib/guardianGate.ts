@@ -21,10 +21,10 @@ const ALWAYS_COSIGN = new Set([
 // Nunez on 2026-10-20 ("fully autonomous" site deployment): publishing a static site to a non-default
 // branch of a repository other than ForgeClaw, and creating the repository it lives in. The publisher
 // itself refuses the default branch, workflow paths and the ForgeClaw repository (githubPublish.ts).
-const OPERATOR_AUTONOMOUS = new Set(['shell_exec', 'github_publish_site', 'github_create_repo'])
+const OPERATOR_AUTONOMOUS = new Set(['shell_exec', 'github_publish_site', 'github_create_repo', 'github_build_site'])
 
 // Co-signed under full-cosign only (operator-shell runs them freely; see OPERATOR_AUTONOMOUS).
-const FULL_COSIGN_ONLY = new Set(['github_publish_site', 'github_create_repo'])
+const FULL_COSIGN_ONLY = new Set(['github_publish_site', 'github_create_repo', 'github_build_site'])
 
 // HTTP methods that modify state
 const DESTRUCTIVE_HTTP_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])

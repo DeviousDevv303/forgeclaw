@@ -123,5 +123,19 @@ describe('Kimi is a first-class hosted reasoner', () => {
     await waitFor(() => expect(screen.getByText(/The README title is ForgeClaw\./)).toBeTruthy(), { timeout: 8000 })
     expect(screen.queryByText(/A requested tool execution failed and was not successfully resolved/)).toBeNull()
   }, 15_000)
+
+  it('records a failed run in NEXUS as an unapproved candidate (failures used to be recorded nowhere)', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => String(input) === KIMI_URL
+      ? Response.json({ error: { message: 'Your account is suspended' } }, { status: 403 })
+      : new Response('{}', { status: 404 }))
+    await send('review the repo workflows', 1)
+    await waitFor(() => {
+      const candidates = Object.keys(localStorage).filter(k => k.startsWith('forgeclaw_nexus_candidate_v1:')).map(k => localStorage.getItem(k) || '')
+      const failed = candidates.find(c => c.includes('Run failed: Moonshot 403: Your account is suspended'))
+      expect(failed).toBeTruthy()
+      expect(failed).toContain('outcome=failed')
+      expect(failed).not.toContain('"admissionStatus":"approved"')
+    }, { timeout: 8000 })
+  }, 15_000)
 })
 
