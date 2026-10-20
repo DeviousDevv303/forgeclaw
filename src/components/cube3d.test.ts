@@ -48,6 +48,22 @@ describe('drawRubik3D', () => {
     expect(black(mid.fills)).toBeGreaterThan(black(rest.fills))
   })
 
+  it('draws no hidden insides: at rest every body has a sticker; mid-turn only the faces at the cut are added', () => {
+    const tilted = { x: -0.55, y: 0.7, z: 0 }
+    const rest = mockCtx()
+    drawRubik3D(rest.ctx, 100, 100, 48, { cubies: solvedCubies(), turning: null, rotation: tilted, explode: 0 }, LOOK)
+    const black = (fills: Array<{ style: unknown }>) => fills.filter(f => f.style === '#111111').length
+    const stickers = (fills: Array<{ style: unknown }>) => fills.filter(f => FACE_COLORS.includes(f.style as string)).length
+    // Three faces of nine stickers show, on one black body per visible side; nothing else is drawn.
+    expect(stickers(rest.fills)).toBe(27)
+    expect(black(rest.fills)).toBe(3)
+    const mid = mockCtx()
+    drawRubik3D(mid.ctx, 100, 100, 48, { cubies: solvedCubies(), turning: { move: { axis: 'y', layer: -1, dir: 1 }, angle: Math.PI / 4 }, rotation: tilted, explode: 0 }, LOOK)
+    // Mid-turn every cubie face has its own body; the cut adds at most the 9 inner faces on each side.
+    expect(black(mid.fills) - stickers(mid.fills)).toBeGreaterThan(0)
+    expect(black(mid.fills) - stickers(mid.fills)).toBeLessThanOrEqual(18)
+  })
+
   it('never throws for explode across 0..1, with or without a turn in flight', () => {
     const move: Move = { axis: 'y', layer: 0, dir: -1 }
     for (const explode of [0, 0.25, 0.5, 0.75, 1]) {

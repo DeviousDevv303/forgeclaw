@@ -14,7 +14,7 @@
  * Pure canvas paths: no roundRect (missing on Chrome/WebView < 99, Safari < 16).
  */
 
-import type { Axis, Cubie, Move, Normal } from './rubikModel'
+import type { Cubie, Move, Normal } from './rubikModel'
 
 export type FaceKey = 'U' | 'D' | 'F' | 'B' | 'L' | 'R'
 export type CubeFaces = Record<FaceKey, string[]>
@@ -239,20 +239,34 @@ const RUBIK_FACE_DEFS: Array<{ key: Normal; n: V3; u: V3; v: V3 }> = [
   { key: 'nx', n: [-1, 0, 0], u: [0, 1, 0], v: [0, 0, 1] },
 ]
 
-/** Float rotation about one axis (right-hand rule); matches rubikModel's integer turns at ±π/2. */
-function rotateAxisAngle([x, y, z]: V3, axis: Axis, angle: number): V3 {
-  const cos = Math.cos(angle)
-  const sin = Math.sin(angle)
-  switch (axis) {
-    case 'x': return [x, y * cos - z * sin, y * sin + z * cos]
-    case 'y': return [x * cos + z * sin, y, -x * sin + z * cos]
-    case 'z': return [x * cos - y * sin, x * sin + y * cos, z]
+// Per-call trig, set once per drawRubik3D call, so placing a point allocates nothing.
+// Turn: float rotation about one axis (right-hand rule); matches rubikModel's integer turns at ±π/2.
+let tAxis = 0, tCos = 1, tSin = 0
+let rCx = 1, rSx = 0, rCy = 1, rSy = 0, rCz = 1, rSz = 0
+let pX = 0, pY = 0, pZ = 0
+
+/** Turn (when `turned`) then whole-cube rotation, same axis order as rotate(); result in pX/pY/pZ. */
+function placePoint(x: number, y: number, z: number, turned: boolean): void {
+  if (turned) {
+    if (tAxis === 0) { const y2 = y * tCos - z * tSin; z = y * tSin + z * tCos; y = y2 }
+    else if (tAxis === 1) { const x2 = x * tCos + z * tSin; z = -x * tSin + z * tCos; x = x2 }
+    else { const x2 = x * tCos - y * tSin; y = x * tSin + y * tCos; x = x2 }
   }
+  const x1 = x * rCy - z * rSy
+  const z1 = x * rSy + z * rCy
+  const y1 = y * rCx - z1 * rSx
+  pZ = y * rSx + z1 * rCx
+  pX = x1 * rCz - y1 * rSz
+  pY = x1 * rSz + y1 * rCz
 }
 
 interface RubikFaceDraw { pts: P2[]; depth: number; light: number; color: string | null }
 const rubikPool: RubikFaceDraw[] = []
 const rubikVisible: RubikFaceDraw[] = []
+const insetPts: P2[] = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }]
+// Corner signs (u, v) in drawing order around the face.
+const CORNER_U = [1, 1, -1, -1]
+const CORNER_V = [1, -1, -1, 1]
 
 /** Draw one real Rubik's cube. Glow goes behind; faces back-to-front; flash on top. */
 export function drawRubik3D(
@@ -273,61 +287,86 @@ export function drawRubik3D(
 
   const s = size / 2
   const persp = 4 // same camera as projectCube
-  const project = (p: V3): P2 => {
-    const k = persp / (persp - p[2])
-    return { x: cx + p[0] * s * k, y: cy + p[1] * s * k }
-  }
   const rot = state.rotation
+  rCx = Math.cos(rot.x); rSx = Math.sin(rot.x); rCy = Math.cos(rot.y); rSy = Math.sin(rot.y); rCz = Math.cos(rot.z); rSz = Math.sin(rot.z)
   const turning = state.turning
-  const turnAxisIdx = turning ? (turning.move.axis === 'x' ? 0 : turning.move.axis === 'y' ? 1 : 2) : 0
+  const turnLayer = turning ? turning.move.layer : 0
+  tAxis = turning ? (turning.move.axis === 'x' ? 0 : turning.move.axis === 'y' ? 1 : 2) : 0
+  tCos = turning ? Math.cos(turning.angle) : 1
+  tSin = turning ? Math.sin(turning.angle) : 0
+  const exploding = state.explode >= 0.05
   const HALF = 1 / 3 // cubie side is 2/3 in -1..1 cube space
+  const spread = 2 / 3 + state.explode * 0.5
 
   rubikVisible.length = 0
   let cursor = 0
   for (const cubie of state.cubies) {
-    const inLayer = turning !== null && cubie.pos[turnAxisIdx] === turning.move.layer
-    const spread = 2 / 3 + state.explode * 0.5
-    const center: V3 = [cubie.pos[0] * spread, cubie.pos[1] * spread, cubie.pos[2] * spread]
-    const place = (p: V3): V3 => {
-      const turned = inLayer && turning ? rotateAxisAngle(p, turning.move.axis, turning.angle) : p
-      return rotate(turned, rot.x, rot.y, rot.z)
-    }
+    const p = cubie.pos
+    const inLayer = turning !== null && p[tAxis] === turnLayer
     for (const def of RUBIK_FACE_DEFS) {
-      const n = place(def.n)
-      if (n[2] <= 0.02) continue // back-facing
-      const fc: V3 = [center[0] + def.n[0] * HALF, center[1] + def.n[1] * HALF, center[2] + def.n[2] * HALF]
-      const corners: V3[] = [
-        [fc[0] + def.u[0] * HALF + def.v[0] * HALF, fc[1] + def.u[1] * HALF + def.v[1] * HALF, fc[2] + def.u[2] * HALF + def.v[2] * HALF],
-        [fc[0] + def.u[0] * HALF - def.v[0] * HALF, fc[1] + def.u[1] * HALF - def.v[1] * HALF, fc[2] + def.u[2] * HALF - def.v[2] * HALF],
-        [fc[0] - def.u[0] * HALF - def.v[0] * HALF, fc[1] - def.u[1] * HALF - def.v[1] * HALF, fc[2] - def.u[2] * HALF - def.v[2] * HALF],
-        [fc[0] - def.u[0] * HALF + def.v[0] * HALF, fc[1] - def.u[1] * HALF + def.v[1] * HALF, fc[2] - def.u[2] * HALF + def.v[2] * HALF],
-      ]
-      const placed = corners.map(place)
+      const color = cubie.stickers[def.key] ?? null
+      // A face without a sticker is the cube's black inside: always covered by a neighbouring cubie,
+      // except across the cut of a turning layer (and while the cubies fly apart).
+      if (color === null && !exploding) {
+        if (!turning || def.n[tAxis] === 0) continue
+        if (!inLayer && !(Math.abs(p[tAxis] - turnLayer) === 1 && Math.sign(def.n[tAxis]) === Math.sign(turnLayer - p[tAxis]))) continue
+      }
+      placePoint(def.n[0], def.n[1], def.n[2], inLayer)
+      const nz = pZ
+      if (nz <= 0.02) continue // back-facing
+      const fx = p[0] * spread + def.n[0] * HALF
+      const fy = p[1] * spread + def.n[1] * HALF
+      const fz = p[2] * spread + def.n[2] * HALF
       let face = rubikPool[cursor]
       if (!face) {
         face = { pts: [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }], depth: 0, light: 1, color: null }
         rubikPool[cursor] = face
       }
       cursor++
+      let depth = 0
       for (let i = 0; i < 4; i++) {
-        const p = project(placed[i])
-        face.pts[i].x = p.x
-        face.pts[i].y = p.y
+        const a = CORNER_U[i] * HALF, b = CORNER_V[i] * HALF
+        placePoint(fx + def.u[0] * a + def.v[0] * b, fy + def.u[1] * a + def.v[1] * b, fz + def.u[2] * a + def.v[2] * b, inLayer)
+        const k = persp / (persp - pZ)
+        face.pts[i].x = cx + pX * s * k
+        face.pts[i].y = cy + pY * s * k
+        depth += pZ
       }
-      face.depth = placed.reduce((sum, p) => sum + p[2], 0) / 4
-      face.light = 0.45 + 0.55 * Math.min(1, n[2])
-      face.color = cubie.stickers[def.key] ?? null
+      face.depth = depth / 4
+      face.light = 0.45 + 0.55 * Math.min(1, nz)
+      face.color = color
       rubikVisible.push(face)
     }
   }
 
   rubikVisible.sort((a, b) => a.depth - b.depth)
-  const insetPts: P2[] = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }]
+  // At rest the cube is convex and each side is flat: one black body per visible side (as drawCube3D)
+  // instead of one per cubie face. Mid-turn or exploding, every cubie face gets its own body.
+  const restBody = !turning && !exploding
+  if (restBody) {
+    const extent = spread + HALF
+    for (const def of RUBIK_FACE_DEFS) {
+      placePoint(def.n[0], def.n[1], def.n[2], false)
+      if (pZ <= 0.02) continue
+      for (let i = 0; i < 4; i++) {
+        const a = CORNER_U[i] * extent, b = CORNER_V[i] * extent
+        placePoint(def.n[0] * extent + def.u[0] * a + def.v[0] * b, def.n[1] * extent + def.u[1] * a + def.v[1] * b, def.n[2] * extent + def.u[2] * a + def.v[2] * b, false)
+        const k = persp / (persp - pZ)
+        insetPts[i].x = cx + pX * s * k
+        insetPts[i].y = cy + pY * s * k
+      }
+      quad(ctx, insetPts)
+      ctx.fillStyle = '#111111'
+      ctx.fill()
+    }
+  }
   for (const face of rubikVisible) {
-    // Black plastic body.
-    quad(ctx, face.pts)
-    ctx.fillStyle = '#111111'
-    ctx.fill()
+    if (!restBody) {
+      // Black plastic body.
+      quad(ctx, face.pts)
+      ctx.fillStyle = '#111111'
+      ctx.fill()
+    }
     if (face.color !== null) {
       // Sticker, inset 0.06 of the face toward its centroid (like projectCube's gap).
       const mx = (face.pts[0].x + face.pts[1].x + face.pts[2].x + face.pts[3].x) / 4
