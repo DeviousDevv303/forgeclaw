@@ -242,16 +242,6 @@ export const EN = {
   'severity.error': 'error',
   'severity.critical': 'critical',
 
-  'tasteStatus.checking': 'CHECKING',
-  'tasteStatus.online': 'ONLINE',
-  'tasteStatus.offline': 'OFFLINE',
-  'tasteStatus.description': 'Optional aesthetic extraction and feedback service. Chat remains available when Taste is offline.',
-  'tasteStatus.endpointAria': 'NEXUS Taste endpoint',
-  'tasteStatus.saveCheck': 'SAVE / CHECK',
-  'tasteStatus.probing': 'Probing GET /health…',
-  'tasteStatus.unavailable': 'NEXUS Taste is unavailable',
-  'tasteStatus.healthPassed': 'health check passed',
-
   'trace.title': 'Reasoning Trace',
   'trace.public': 'PUBLIC TRACE',
   'trace.ready': 'Operational trace ready',
@@ -664,16 +654,6 @@ const ES: Record<Key, string> = {
   'severity.warning': 'advertencia',
   'severity.error': 'error',
   'severity.critical': 'crítico',
-
-  'tasteStatus.checking': 'VERIFICANDO',
-  'tasteStatus.online': 'EN LÍNEA',
-  'tasteStatus.offline': 'SIN CONEXIÓN',
-  'tasteStatus.description': 'Servicio opcional de extracción estética y comentarios. El chat sigue disponible cuando Taste no está en línea.',
-  'tasteStatus.endpointAria': 'Endpoint de NEXUS Taste',
-  'tasteStatus.saveCheck': 'GUARDAR / VERIFICAR',
-  'tasteStatus.probing': 'Probando GET /health…',
-  'tasteStatus.unavailable': 'NEXUS Taste no está disponible',
-  'tasteStatus.healthPassed': 'la verificación de estado pasó',
 
   'trace.title': 'Traza de razonamiento',
   'trace.public': 'TRAZA PÚBLICA',

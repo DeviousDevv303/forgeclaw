@@ -28,7 +28,7 @@ import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
-import { TasteProviderClient } from './ai/providers/tasteProvider'
+import { tasteForImagePrompt } from './nexusTaste'
 import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
 import { journalRecord, type RunJournal } from './runRollback'
 import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type GithubRequest, type PublishFile } from './githubPublish'
@@ -39,6 +39,7 @@ import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publi
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
+import { weatherForecast } from './weather'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -506,6 +507,18 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
 
 
+  {
+    name: 'weather_forecast',
+    description: 'Real weather forecast for a place (Open-Meteo: temperatures in °F, rain chance, wind), today and the next days. Use this for any weather question instead of web_search.',
+    parameters: {
+      type: 'object',
+      properties: {
+        place: { type: 'string', description: 'City, e.g. "Oklahoma City" or "Denver, CO" (nicknames like OKC work)' },
+        day: { type: 'number', description: 'Day to lead with: 0 = today, 1 = tomorrow (optional)' },
+      },
+      required: ['place'],
+    },
+  },
   {
     name: 'review_code',
     description: 'Review code on GitHub Actions (DeepSeek-Coder 6.7B, a few minutes) and return the review. Up to 12,000 characters of code.',
@@ -1650,13 +1663,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         if (model !== 'sd15' && (width > 512 || height > 512)) throw new Error(`Image model '${model}' is only verified up to 512x512.`)
         if (!token) throw new Error('No GitHub token configured.')
 
-        let tastePrompt = ''
-        try {
-          const taste = await new TasteProviderClient().profile('generation')
-          if (!taste.fallback_active && taste.profile) tastePrompt = Object.values(taste.profile).join(', ')
-        } catch {
-          // Taste is additive and optional; image generation keeps its normal path.
-        }
+        // The owner's own taste (nexusTaste.ts, learned from his reactions) steers the prompt; empty until it has enough to say.
+        const tastePrompt = tasteForImagePrompt()
         const improved = suggestImprovedPrompt(tastePrompt ? `${prompt}, ${tastePrompt}` : prompt, style)
         const invocationId = `sd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const dispatchStartedAt = Date.now()
@@ -1700,6 +1708,12 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         return formatImageAnalysis(result)
       }
 
+
+      case 'weather_forecast': {
+        // Free, keyless, browser-allowed: works for the owner and for free-mode visitors alike.
+        const day = input.day === undefined || input.day === null || input.day === '' ? null : Number(input.day)
+        return await weatherForecast({ place: String(input.place || ''), day: Number.isFinite(day as number) ? day : null, signal: ctx.signal })
+      }
 
       case 'review_code': {
         if (!token) throw new Error('No GitHub token configured. review_code runs as a GitHub Actions job and needs gh_token with Actions: write.')

@@ -174,8 +174,7 @@ import {
 } from './lib/agentCore'
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
-import { TasteProviderClient, type TasteSignal } from './lib/ai/providers/tasteProvider'
-import { TasteStatusPanel } from './components/TasteStatusPanel'
+import { imageTasteSample, recordTaste, type TasteSignal } from './lib/nexusTaste'
 import { useForgeOps } from './hooks/useForgeOps'
 import { useNeuralState } from './hooks/useNeuralState'
 import { useForgeCore } from './hooks/useForgeCore'
@@ -226,7 +225,6 @@ interface Message {
   phases?: Record<string, string>
   showReasoning?: boolean
   feedback?: 'up' | 'down'
-  tasteImageId?: string
   tasteFeedback?: TasteSignal
   reasoning?: ReasoningChainType
   toolResults?: ToolResult[]   // agentic tool calls this message made
@@ -539,7 +537,8 @@ function renderMessageContent(text: string, onCopy: (code: string) => void, copi
         </div>
       )
     }
-    return <span key={i} style={{ whiteSpace: 'pre-wrap' }}>{part}</span>
+    // Long URLs and paths wrap inside the bubble instead of running past its edge; links are tappable.
+    return <span key={i} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{renderWithLinks(part)}</span>
   })
 }
 
@@ -563,7 +562,7 @@ function renderWithLinks(text: string): React.ReactNode[] {
     const href  = m[2] ?? m[3]
     nodes.push(
       <a key={m.index} href={href} target="_blank" rel="noopener noreferrer"
-        style={{ color: '#38bdf8', textDecoration: 'underline', textDecorationColor: 'rgba(56,189,248,0.4)', wordBreak: 'break-all' }}>
+        style={{ color: '#38bdf8', textDecoration: 'underline', textDecorationColor: 'rgba(56,189,248,0.4)', overflowWrap: 'anywhere' }}>
         {label}
       </a>
     )
@@ -680,7 +679,14 @@ function App() {
   const [activityView, setActivityView] = useState<ActivityView>('log')
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = safeGetItem('forgemind_history')
-    return safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage)
+    // A reply still "running" when the page closed can never finish: its request died with the page. Only a
+    // persisted DeepSeek run is re-attached (resumeOrphanedDeepSeekRun); every other one is marked
+    // interrupted instead of showing "Still working" forever.
+    const resumable = loadActiveDeepSeekRun()?.messageId
+    return safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage).map(m =>
+      m.streaming && m.id !== resumable
+        ? { ...m, streaming: false, agentPhase: 'BLOCKED', content: `${m.content ? `${m.content}\n\n` : ''}⚠ Interrupted: ForgeClaw was closed or reloaded before this finished. Send it again to retry.` }
+        : m)
   })
   const [input, setInput] = useState('')
   // Shown briefly when Enter is pressed while a request is still running (the send is ignored).
@@ -742,8 +748,6 @@ function App() {
   // Resolve through the shared auth path so an operator-provided .env seed and the
   // localStorage PAT are both honoured here, not just in the GitHub tool helpers.
   const [ghToken, setGhToken] = useState(() => resolveGithubToken())
-  const tasteAbortRef = useRef<AbortController | null>(null)
-  useEffect(() => () => { tasteAbortRef.current?.abort() }, [])
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
   // No built-in address: the bundle is public, so a default would publish the owner's email to every
   // visitor and send a visitor's error log to the owner. Each browser sets its own in Settings.
@@ -1168,16 +1172,6 @@ function App() {
       ? `Analyze attachment: ${options.attachmentName}`
       : displayContent
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
-    if (imageUrl) {
-      tasteAbortRef.current?.abort()
-      const tasteAbort = new AbortController()
-      tasteAbortRef.current = tasteAbort
-      const tasteClient = new TasteProviderClient()
-      void tasteClient.extractAndWait(imageUrl, undefined, undefined, tasteAbort.signal).then(result => {
-        if (result.status !== 'complete' || !result.image_id) return
-        setMessages(prev => prev.map(message => message.id === userMsg.id ? { ...message, tasteImageId: result.image_id } : message))
-      }).catch(() => { /* Taste is optional; a slow or offline service never blocks chat. */ })
-    }
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : ''
     const currentProviderLabel = isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : 'sk-ant-...'
@@ -1412,6 +1406,7 @@ function App() {
       'analyze_image': ['analyze', 'image', 'photo', 'picture', 'vision'],
       // Not a bare 'review': that would offer it for "review my workflows".
       'review_code': ['code review', 'review this code', 'review my code'],
+      'weather_forecast': ['weather', 'forecast', 'temperature', 'rain', 'snow', 'how hot', 'how cold'],
     }
 
     const messageLower = (promptText || '').toLowerCase()
@@ -2174,11 +2169,24 @@ function App() {
     emitFailure({ source: 'forgemind', severity: 'info', message: `Feedback saved: ${type === 'up' ? 'helpful' : 'not helpful'}`, context: { messageId: id, type } })
     setMessages(prev => prev.map(m => m.id === id ? { ...m, feedback: type } : m))
   }
+  /** 🔥 👍 👎 on a picture (the owner's own, or one ForgeClaw generated): NEXUS learns how he likes things to look. */
+  const renderTasteButtons = (msg: Message, idleColor: string, border: string): React.ReactNode => {
+    if (!msg.imageUrl || isPublicVisitor(ghToken)) return null
+    return (
+      <>
+        <span style={{ color: idleColor, fontSize: '10px', fontFamily: 'monospace' }}>{t('chat.taste')}</span>
+        {(['up', 'down', 'fire'] as TasteSignal[]).map(signal => (
+          <button key={signal} onClick={() => void handleTasteFeedback(msg.id, signal)} title={t('chat.tasteTitle', { signal: t(signal === 'fire' ? 'taste.fire' : signal === 'up' ? 'taste.up' : 'taste.down') })} style={{ ...actionButtonStyle, color: msg.tasteFeedback === signal ? '#f97316' : idleColor, border: `1px solid ${border}` }}>{signal === 'fire' ? '🔥' : signal === 'up' ? '👍' : '👎'}</button>
+        ))}
+      </>
+    )
+  }
   const handleTasteFeedback = async (id: string, signal: TasteSignal) => {
     const message = messages.find(item => item.id === id)
-    if (!message?.tasteImageId) return
+    if (!message?.imageUrl) return
     try {
-      await new TasteProviderClient().feedback(message.tasteImageId, signal)
+      // Measured here in the browser and learned by NEXUS (nexusTaste.ts): no service, port or key.
+      recordTaste(signal, await imageTasteSample(message.imageUrl))
       setMessages(prev => prev.map(item => item.id === id ? { ...item, tasteFeedback: signal } : item))
     } catch (error) {
       emitFailure({ source: 'forgemind', severity: 'warning', message: `Taste feedback failed: ${error instanceof Error ? error.message : String(error)}` })
@@ -2424,12 +2432,12 @@ function App() {
         </button>
       )}
       {/* Header */}
-      <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0a0a0a' }}>
+      <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px clamp(10px, 3vw, 20px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px 12px', background: '#0a0a0a' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button onClick={() => setActiveTab('settings')} style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: 0 }}>⚙</button>
           <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>FORGECLAW</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px 12px', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0, flex: '1 1 auto' }}>
           {/* Language selector */}
           <select aria-label={t('lang.selectorLabel')} title={t('lang.selectorLabel')} value={selectedLanguage} onChange={e => setSelectedLanguage(e.target.value)} style={{ background: '#111', color: '#f97316', border: '1px solid #222', borderRadius: '4px', padding: '4px 8px', fontSize: '10px', fontFamily: 'monospace', outline: 'none' }}>
             {Object.entries(LANGUAGE_NAMES).map(([code, name]) => <option key={code} value={code} style={{ background: '#111' }}>{name}</option>)}
@@ -2463,7 +2471,7 @@ function App() {
                 }}
               >WA</span>
             </div>
-            <div style={{ fontSize: '11px' }}>{getStatusIndicator()}</div>
+            <div style={{ fontSize: '11px', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getStatusIndicator()}</div>
           </div>
           <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>{t('header.wipe')}</button>
           <button onClick={handleExportCorpus} style={headerBtnStyle}>{t('header.export')}</button>
@@ -2471,7 +2479,7 @@ function App() {
       </header>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0' }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0', overflowX: 'auto', scrollbarWidth: 'none' }}>
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id
           const isAlert = tab.id === 'activity' && unresolvedCount > 0
@@ -2485,7 +2493,9 @@ function App() {
                 border: 'none',
                 borderBottom: isActive ? '2px solid #f97316' : '2px solid transparent',
                 color: isActive ? '#f97316' : (isAlert ? '#eab308' : '#555'),
-                padding: '10px 16px',
+                padding: '10px clamp(9px, 2.6vw, 16px)',
+                flexShrink: 0,
+                whiteSpace: 'nowrap',
                 cursor: 'pointer',
                 fontSize: '9px',
                 fontWeight: 'bold',
@@ -2499,8 +2509,8 @@ function App() {
               {tab.badge && (
                 <span style={{
                   position: 'absolute',
-                  top: '6px',
-                  right: '6px',
+                  top: '2px',
+                  right: '0',
                   background: '#ef4444',
                   color: '#fff',
                   fontSize: '7px',
@@ -2804,7 +2814,6 @@ function App() {
                 </div>
               </div>
 
-              <TasteStatusPanel />
               {!isPublicVisitor(ghToken) && <SculptKeyPanel />}
               {/* GitHub Token */}              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -3050,7 +3059,7 @@ function App() {
                         </div>
                       )}
                       {/* Message bubble — clean response only */}
-                      <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined }}>
+                      <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined, minWidth: 0, boxSizing: 'border-box', overflowWrap: 'anywhere' }}>
                         {msg.imageUrl && (
                           <img src={msg.imageUrl} alt={t('chat.uploadedAlt')} style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
                         )}
@@ -3078,19 +3087,13 @@ function App() {
                             <button onClick={() => handleFeedback(msg.id, 'down')} title={t('chat.notHelpful')} style={{ background: msg.feedback === 'down' ? '#991b1b' : 'transparent', border: msg.feedback === 'down' ? '1px solid #991b1b' : '1px solid #333', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', lineHeight: 1, transition: 'all 0.15s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                               <svg width="13" height="13" viewBox="0 0 24 24" fill={msg.feedback === 'down' ? '#fff' : '#aaa'}><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L10.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
                             </button>
+                            {renderTasteButtons(msg, '#666', '#222')}
                           </div>
                         )}
                         {msg.role === 'user' && (
                           <div style={{ marginTop: '8px', display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={{ ...actionButtonStyle, color: '#000', border: '1px solid rgba(0,0,0,0.3)' }}>{copiedId === msg.id ? '✓' : t('chat.copy')}</button>
-                            {msg.tasteImageId && (
-                              <>
-                                <span style={{ color: '#333', fontSize: '10px', fontFamily: 'monospace' }}>{t('chat.taste')}</span>
-                                {(['up', 'down', 'fire'] as TasteSignal[]).map(signal => (
-                                  <button key={signal} onClick={() => void handleTasteFeedback(msg.id, signal)} title={t('chat.tasteTitle', { signal: t(signal === 'fire' ? 'taste.fire' : signal === 'up' ? 'taste.up' : 'taste.down') })} style={{ ...actionButtonStyle, color: msg.tasteFeedback === signal ? '#f97316' : '#333', border: '1px solid rgba(0,0,0,0.3)' }}>{signal === 'fire' ? '🔥' : signal === 'up' ? '👍' : '👎'}</button>
-                                ))}
-                              </>
-                            )}
+                            {renderTasteButtons(msg, '#333', 'rgba(0,0,0,0.3)')}
                           </div>
                         )}
                       </div>
@@ -3121,7 +3124,7 @@ function App() {
             />
             
               {/* ── Autonomy mode toggle ── */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: pendingCoSigns.length ? '8px' : '0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: pendingCoSigns.length ? '8px' : '0' }}>
                 <button
                   onClick={() => setGuardianPosture(p => p === 'operator-shell' ? 'full-cosign' : p === 'full-cosign' ? 'autonomous' : 'operator-shell')}
                   style={{
@@ -3130,12 +3133,12 @@ function App() {
                     color: guardianPosture !== 'autonomous' ? '#86efac' : '#22c55e',
                     borderRadius: '5px', padding: '4px 10px', fontSize: '9px',
                     fontWeight: 'bold', cursor: 'pointer', letterSpacing: '1.5px',
-                    textTransform: 'uppercase', fontFamily: 'monospace',
+                    textTransform: 'uppercase', fontFamily: 'monospace', whiteSpace: 'nowrap', flexShrink: 0,
                   }}
                 >
                   {guardianPosture === 'full-cosign' ? t('guardian.fullCosign') : guardianPosture === 'operator-shell' ? t('guardian.operatorShell') : t('guardian.autonomous')}
                 </button>
-                <span style={{ color: '#3a5c3a', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>
+                <span style={{ color: '#3a5c3a', fontSize: '9px', fontFamily: 'monospace', letterSpacing: '0.5px', minWidth: 0, flex: '1 1 140px' }}>
                   {guardianPosture === 'full-cosign'
                     ? t('guardian.fullCosignDesc')
                     : guardianPosture === 'operator-shell'
@@ -3491,6 +3494,7 @@ function App() {
         @keyframes micPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); } 50% { box-shadow: 0 0 0 5px rgba(239,68,68,0); } }
         @keyframes micRing { 0% { box-shadow: 0 0 0 0 rgba(57,255,20,0.35); } 70% { box-shadow: 0 0 0 18px rgba(57,255,20,0); } 100% { box-shadow: 0 0 0 0 rgba(57,255,20,0); } }
         .pulse-text { animation: pulse 1.5s infinite; }
+        textarea::placeholder { text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: #0a0a0a; }
         ::-webkit-scrollbar-thumb { background: #222; border-radius: 2px; }

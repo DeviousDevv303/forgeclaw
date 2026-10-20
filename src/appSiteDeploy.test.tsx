@@ -79,7 +79,9 @@ describe('autonomous site deployment with Kimi', () => {
     const treePosts = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith('/git/trees') && (init as RequestInit).method === 'POST')
     expect(treePosts).toHaveLength(1)
     expect(JSON.parse(String((treePosts[0][1] as RequestInit).body)).tree.map((t: { path: string }) => t.path)).toEqual(['index.html', 'style.css', '.nojekyll'])
-    await waitFor(() => expect(screen.getByText(/Live at https:\/\/me\.github\.io\/bakery-site\//)).toBeTruthy(), { timeout: 8000 })
+    // The URL is a tappable link now, so the sentence spans a text node and a link: check the visible text.
+    await waitFor(() => expect(document.body.textContent).toMatch(/Live at https:\/\/me\.github\.io\/bakery-site\//), { timeout: 8000 })
+    expect((screen.getByRole('link', { name: 'https://me.github.io/bakery-site/' }) as HTMLAnchorElement).href).toBe('https://me.github.io/bakery-site/')
     expect(screen.queryByText(/STATUS: BLOCKED/)).toBeNull()
     // A co-sign request would park the run (no 4th Kimi call); none of the results is a Guardian block.
     expect(last.some(content => content.startsWith('[GUARDIAN'))).toBe(false)
