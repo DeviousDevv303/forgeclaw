@@ -15,6 +15,10 @@ on:
       invocation_id:
         description: 'Unique ID'
         required: true
+      mirror:
+        description: "Publish the review to the browsable review-results branch ('false' to skip)"
+        required: false
+        default: 'true'
 
 run-name: Code Review ${{ inputs.invocation_id }}
 
@@ -67,3 +71,33 @@ jobs:
         with:
           path: ~/.cache/forgeclaw-review-gguf
           key: review-gguf-v1-${{ runner.os }}
+
+  # Publishes the review where the app can read it (artifact zips are not readable from the browser).
+  # Write access lives only here; this job runs no model code. Failures are published too.
+  mirror:
+    needs: review
+    if: ${{ always() && inputs.mirror != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # Checkout first: it cleans the workspace, which would delete a result downloaded before it.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: code-review-${{ inputs.invocation_id }}
+          path: result
+      - name: Publish the review
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export GIT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          bash .github/scripts/review_mirror.sh "https://github.com/$REPO.git" "$INVOCATION_ID" result "$REVIEW_RESULT"
