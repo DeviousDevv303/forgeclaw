@@ -1,0 +1,16 @@
+invocation_id=deepseek-1792469001447-mhn0ew
+model=Qwen/Qwen3-8B
+role=primary checkpoint
+degraded=false
+creative_retry_attempted=false
+creative_retry_succeeded=false
+output_cleanup_applied=true
+tool_call_tail_dropped=false
+elapsed_seconds=157.2
+engine=llama.cpp GGUF Q4_K_M (Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf) of Qwen/Qwen3-8B
+engine_load_seconds=42.4
+generated_tokens=430
+generation_seconds=114.8
+stopped_by_time_budget=false
+prompt_trimmed=false
+llama_cpp_python=0.3.36
