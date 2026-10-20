@@ -15,8 +15,8 @@ export function isPublicVisitor(ghToken: string, relayUrl = PUBLIC_RELAY_URL): b
 }
 
 export const PUBLIC_MODE_NOTICE =
-  'Public mode: your messages run on ForgeClaw\'s public GitHub Actions model (Qwen3-8B, a few minutes per answer). ' +
-  'Do not enter private information. Add your own GitHub token or Kimi/Claude key in Settings for full tools.'
+  'Free mode: answers come from ForgeClaw\'s own model and take a few minutes. Your conversations and any errors are shared ' +
+  'with the ForgeClaw developer to improve it, so please do not enter private information.'
 
 export interface PublicReasoningOptions {
   relayUrl?: string

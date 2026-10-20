@@ -217,8 +217,14 @@ import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
 import { NexusLearningPanel } from './components/NexusLearningPanel'
+const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { isPublicVisitor, PUBLIC_MODE_NOTICE } from './lib/publicRelay'
+import { SculptKeyPanel } from './components/SculptKeyPanel'
+import { VisitorLearningImport } from './components/VisitorLearningImport'
+import { startErrorReporting } from './lib/errorReporting'
+import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
+import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { baselineToolNames, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
@@ -1004,6 +1010,10 @@ function App() {
   useEffect(() => { safeSetItem('fm_anthropic_workspace_id', anthropicWorkspaceId) }, [anthropicWorkspaceId])
   useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
   useEffect(() => { safeSetItem('fm_moonshot_model', moonshotModel) }, [moonshotModel])
+  // Every user's error log goes to the developer through the relay (errorReporting.ts); no setup needed.
+  const reportModeRef = useRef<'owner' | 'visitor'>('visitor')
+  useEffect(() => { reportModeRef.current = ghToken?.trim() ? 'owner' : 'visitor' }, [ghToken])
+  useEffect(() => startErrorReporting(() => reportModeRef.current), [])
   useEffect(() => { safeSetItem('fm_corpus_webhook', corpusWebhookUrl) }, [corpusWebhookUrl])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
@@ -1312,6 +1322,8 @@ function App() {
     // Operator-typed tool/shell commands are dispatched without a model turn,
     // so a missing LLM key must not block them.
     const directDispatchOnly = !imageUrl && !hasAttachment && (
+      // /sculpt and /patch use no chat provider, so they run without a provider key.
+      parseSculptCommand(promptText) !== null ||
       isExplicitToolRequest(promptText) ||
       (isExplicitShellRequest(promptText) && extractExplicitShellCommand(promptText) !== null)
     )
@@ -1432,7 +1444,9 @@ function App() {
     if (imageUrl) coreToolNames.push('analyze_image')
     coreToolNames.push(...baselineToolNames(activeProvider))
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
-    const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
+    // Self-modification tools are offered only while the owner's self-sculpt key is unlocked.
+    const sculptUnlocked = isSculptUnlocked()
+    const finalTools = [...new Set([...relevantTools, ...coreToolDefs])].filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
 
     const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding', finalTools)) : finalTools
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
@@ -1444,7 +1458,7 @@ function App() {
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
-        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${SELF_SCULPT_GUIDANCE}` : ''}`
+        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
@@ -1526,6 +1540,31 @@ function App() {
             guardianPosture,
             requestGuardianApproval,
           }),
+      }
+
+      // /sculpt and /patch: provider-independent self-sculpt (sculptCommand.ts). Each step runs through
+      // executeTool, so Guardian co-sign, the run journal and the self-sculpt key all still apply.
+      const sculptCommand = parseSculptCommand(promptText)
+      if (sculptCommand) {
+        const outcome = sculptCommand.kind === 'usage'
+          ? { ok: false, text: sculptCommand.message, steps: [] as Array<{ tool: string; output: string }> }
+          : await runSculptCommand(sculptCommand, async call => {
+              const actId = `act_${call.id}`
+              setActivityLog(prev => [...prev.slice(-99), { id: actId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
+              const output = await executeTool(call, toolCtx)
+              setActivityLog(prev => prev.map(entry => entry.id === actId ? { ...entry, output: output.slice(0, 300), status: isToolFailureOutput(output) ? 'error' : 'done' } : entry))
+              void recordLearning({ channel: 'tool', input: `${call.name} ${JSON.stringify(call.input).slice(0, 500)}`, result: output, outcome: outcomeFromToolOutput(output), toolName: call.name, actor: 'operator', origin: promptOrigin(promptText) })
+              return output
+            })
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        setMessages(prev => prev.map(message => message.id === msgId
+          ? { ...message, content: outcome.text, streaming: false, agentPhase: outcome.ok ? 'COMPLETE' : 'BLOCKED', toolResults: outcome.steps.map((s, i) => ({ toolCallId: `sculpt-cmd-${i}`, name: s.tool, output: s.output, isError: isToolFailureOutput(s.output) })) }
+          : message))
+        setRequestStatus(outcome.ok ? 'success' : 'blocked')
+        setLastRequestError(outcome.ok ? '' : outcome.text)
+        setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+        resolveTask(taskId)
+        return
       }
 
       // A short, explicit operator command such as `pwd` must not depend on a
@@ -2757,6 +2796,7 @@ function App() {
               </div>
 
               <TasteStatusPanel />
+              {!isPublicVisitor(ghToken) && <SculptKeyPanel />}
               {/* GitHub Token */}              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <label style={{ color: '#f97316', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', fontFamily: 'monospace' }}>
@@ -3424,7 +3464,12 @@ function App() {
         )}
 
         {/* ── NEXUS Recursive Learning (replaced the MIC tab; voice input stays on the chat bar) ── */}
-        {activeTab === 'nexus' && <NexusLearningPanel />}
+        {activeTab === 'nexus' && (
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+            <NexusLearningPanel />
+            {!isPublicVisitor(ghToken) && <VisitorLearningImport />}
+          </div>
+        )}
 
 
       </main>

@@ -144,7 +144,7 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
   })
 
   it('blocks self-sculpt changes to protected paths and unsafe branches', async () => {
-    const context = { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw', guardianPosture: 'autonomous' as const }
+    const context = { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw', guardianPosture: 'autonomous' as const, sculptUnlocked: true }
     const protectedPath = await executeTool({
       id: 'sculpt-protected',
       name: 'sculpt_self',

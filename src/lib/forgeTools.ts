@@ -36,6 +36,7 @@ import { buildAndPublishSite } from './siteBuild'
 import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
 import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
 import { PUBLIC_RELAY_URL, runPublicReasoning } from './publicRelay'
+import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
  * Wait for a self-modification run (self-sculpt or shell-repair) and report what really happened:
@@ -113,6 +114,8 @@ export interface ToolContext {
   ghRepo: string
   /** Public relay for visitors without a GitHub token (src/lib/publicRelay.ts); empty for the owner. */
   publicRelayUrl?: string
+  /** Whether the self-sculpt key is unlocked; defaults to the live check in sculptKey.ts. */
+  sculptUnlocked?: boolean
   sessionId?: string
   waPhoneNumberId?: string
   waAccessToken?: string
@@ -713,6 +716,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
   }
   const normalizedCall = name === call.name && input === call.input ? call : { ...call, name, input }
   if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted before tool execution.'
+  // Self-modification needs the owner's self-sculpt key, whatever the provider or posture (sculptKey.ts).
+  if (SCULPT_TOOLS.has(name) && !(ctx.sculptUnlocked ?? isSculptUnlocked())) return SCULPT_LOCKED_MESSAGE
   const posture: GuardianPosture = ctx.guardianPosture
     ?? (ctx.tier1Active !== undefined ? postureFromTier1Active(ctx.tier1Active) : DEFAULT_GUARDIAN_POSTURE)
   if (requiresCoSign(normalizedCall, posture)) {

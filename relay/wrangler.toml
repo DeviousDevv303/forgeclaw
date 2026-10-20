@@ -14,3 +14,16 @@ MAX_CONCURRENT = "3"
 # [[kv_namespaces]]
 # binding = "RATE"
 # id = "<paste id>"
+
+# Visitor conversations (for NEXUS) and error reports from every user.
+# Create it with: npx wrangler kv namespace create LEARN
+# [[kv_namespaces]]
+# binding = "LEARN"
+# id = "<paste id>"
+
+# Secrets (never in this file): npx wrangler secret put <NAME>
+#   GITHUB_TOKEN    fine-grained, forgeclaw only, Actions: Read and write
+#   OWNER_KEY       a long random phrase; paste the same into ForgeClaw → NEXUS → relay owner key
+#   RESEND_API_KEY  from resend.com (free); error reports are emailed to REPORT_EMAIL
+#   REPORT_EMAIL    the address you signed up to Resend with
+

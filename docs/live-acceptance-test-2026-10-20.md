@@ -92,6 +92,25 @@ slower; later runs restore it from cache. The run's `result_meta.txt` should say
 3. **PASS if** `candidates` went up (the refusal was learned as an unapproved candidate) and
    `approved` did **not** change (nothing is admitted without your authorization).
 
+## J. Self-sculpt key and provider-independent self-sculpt (10-15 min)
+
+1. SETTINGS → **Self-sculpt key** → choose a phrase of 12+ characters → SET KEY. Status shows `unlocked`.
+2. Click **LOCK**. In chat send `/sculpt src/lib/elapsed.ts add a JSDoc comment above each exported function`.
+   **PASS if** the reply is "Self-sculpt is locked …" and nothing runs.
+3. Unlock with your key. Select **any** provider (or remove your Kimi/Claude key) and send the same `/sculpt`.
+   **PASS if** Activity shows `github_read_file` → `deepseek_reason` (Qwen, several minutes) → `sculpt_self`
+   → the reply links a pull request on a `sculpt/…` branch. Open it: only `src/lib/elapsed.ts` changed,
+   indentation intact. Close it if you don't want it.
+4. With Kimi selected and unlocked: `sculpt yourself: tidy src/lib/elapsed.ts`. **PASS if** Kimi reads the
+   file and calls `sculpt_self` or `shell_patch`, and the reply links a PR.
+
+## K. Free mode for friends and family (after the relay is deployed, 5 min)
+
+1. Open the site on a phone or private window (nothing configured). **PASS if** the yellow "Free mode" note
+   shows, a question gets an answer in a few minutes, and SETTINGS shows no self-sculpt key panel.
+2. In your own browser, NEXUS → paste the relay owner key → **IMPORT TO NEXUS**. **PASS if** the visitor's
+   question shows up as a candidate. **ERROR REPORTS** lists reports; one also arrives at your email.
+
 ## Results
 
 | Step | PASS/FAIL | Evidence (URL / run / commit) |
@@ -105,3 +124,5 @@ slower; later runs restore it from cache. The run's `result_meta.txt` should say
 | G | | |
 | H | | |
 | I | | |
+| J | | |
+| K | | |

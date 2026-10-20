@@ -8,7 +8,13 @@ Cloudflare Worker (`worker.js`, free tier is enough) that can do exactly two thi
   browsable results mirror **off**.
 - `GET /v1/reason/<id>`: read that run's result from its artifact.
 
-It cannot write to the repository or run any other workflow or tool.
+- `POST /v1/errors`: every ForgeClaw user's browser (yours too) sends its error log here
+  automatically. Secrets are stripped, the report is stored, and it is **emailed to you** via Resend.
+- `GET /v1/learning` and `GET /v1/errors` (owner only, needs `OWNER_KEY`): export the stored visitor
+  conversations (import them into NEXUS from the NEXUS tab) and error reports.
+
+It cannot write to the repository or run any other workflow or tool. Visitors never see your session:
+your keys, tools, NEXUS and chats live only in your browser.
 
 **Limits** (all set in `wrangler.toml`):
 - **Allowed origins:** only the sites listed in `ALLOWED_ORIGINS` can call it.
@@ -31,7 +37,11 @@ visitors not to enter private information.
    cd relay
    npx wrangler@4 login
    npx wrangler@4 kv namespace create RATE      # paste the printed id into wrangler.toml, uncomment the block
+   npx wrangler@4 kv namespace create LEARN     # same: paste the id into the LEARN block
    npx wrangler@4 secret put GITHUB_TOKEN       # paste the token from step 1
+   npx wrangler@4 secret put OWNER_KEY          # any long phrase only you know (for NEXUS import)
+   npx wrangler@4 secret put RESEND_API_KEY     # free key from https://resend.com (sign up with your email)
+   npx wrangler@4 secret put REPORT_EMAIL       # the email you signed up to Resend with
    npx wrangler@4 deploy                        # prints https://forgeclaw-relay.<you>.workers.dev
    ```
    If your site is served from a custom `.io` domain, add it to `ALLOWED_ORIGINS` (comma-separated)
@@ -39,6 +49,12 @@ visitors not to enter private information.
 3. **Point the site at it.** GitHub → forgeclaw → Settings → Secrets and variables → Actions →
    **Variables** → New variable `FORGECLAW_PUBLIC_RELAY_URL` = the workers.dev URL from step 2.
 4. **Redeploy the site.** Actions → *Deploy to GitHub Pages* → Run workflow (or push to main).
+
+5. **In your ForgeClaw (owner browser):** NEXUS tab → *Visitors · learning & error reports* → paste the
+   same `OWNER_KEY` → **IMPORT TO NEXUS** pulls visitor conversations in as unapproved candidates;
+   **ERROR REPORTS** shows what every user hit (the same reports arrive by email).
+
+Friends and family need **nothing**: no account, no key, no setup. They open the link and type.
 
 ## Check it
 

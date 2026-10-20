@@ -157,5 +157,38 @@ describe('Kimi is a first-class hosted reasoner', () => {
     expect(screen.getByText('My Logic Is Undeniable')).toBeTruthy()
     expect(screen.getByText(/Learning is not authority/)).toBeTruthy()
   }, 15_000)
+
+  it('runs /sculpt without any chat provider: no Kimi key needed and Kimi is never called', async () => {
+    localStorage.removeItem('fm_moonshot_key')
+    const { default: App } = await import('./App')
+    render(<App />)
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: '/sculpt src/lib/elapsed.ts add doc comments' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    // Locked (no key set in this browser): refused before anything runs.
+    await waitFor(() => expect(screen.getByText(/Self-sculpt is locked/)).toBeTruthy(), { timeout: 8000 })
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === KIMI_URL)).toBe(false)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/dispatches'))).toBe(false)
+    expect(screen.queryByText(/API key or endpoint required/)).toBeNull()
+  }, 15_000)
+
+  it('never offers self-sculpt tools to the model while the key is locked, and says how to unlock', async () => {
+    const [body] = await send('sculpt yourself: improve src/lib/elapsed.ts', 1)
+    const names = (body.tools ?? []).map(tool => tool.function.name)
+    expect(names).not.toContain('sculpt_self')
+    expect(names).not.toContain('shell_patch')
+    expect(body.messages[0].content).toContain('Self-sculpt is LOCKED')
+  }, 15_000)
+
+  it('offers self-sculpt tools once the owner unlocks the key', async () => {
+    const { setSculptKey } = await import('./lib/sculptKey')
+    await setSculptKey('owner only passphrase for tests')
+    const [body] = await send('sculpt yourself: improve src/lib/elapsed.ts', 1)
+    const names = (body.tools ?? []).map(tool => tool.function.name)
+    expect(names).toContain('sculpt_self')
+    expect(names).toContain('shell_patch')
+    expect(body.messages[0].content).toContain('Self-improvement of ForgeClaw')
+    sessionStorage.clear()
+  }, 20_000)
 })
 

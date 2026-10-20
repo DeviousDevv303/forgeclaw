@@ -22,7 +22,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const PATCH = 'diff --git a/src/x.ts b/src/x.ts\n--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1 +1 @@\n-a\n+b\n'
 
 function ctxWith(journal: ReturnType<typeof createRunJournal>): ToolContext {
-  return { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', requestGuardianApproval: async () => true, journal }
+  return { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', requestGuardianApproval: async () => true, journal, sculptUnlocked: true }
 }
 const call = (input: Record<string, unknown>) => ({ id: '1', name: 'shell_patch', input })
 
