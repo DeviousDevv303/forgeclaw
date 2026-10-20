@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createRepo, pagesStatus, publishSite, validatePublishPath, type GithubRequest } from './githubPublish'
+import { createRepo, describeTokenProblem, pagesStatus, publishSite, validatePublishPath, type GithubRequest } from './githubPublish'
 
 type Call = { method: string; url: string; body?: Record<string, unknown> }
 
@@ -150,5 +150,30 @@ describe('createRepo', () => {
   })
   it.each(['', 'a b', '../x', 'x/y'])('rejects invalid name %s', async name => {
     await expect(createRepo(async () => new Response(), { token: 't', name })).rejects.toThrow(/invalid repository name/)
+  })
+})
+
+
+describe('describeTokenProblem', () => {
+  const res = (status: number, headers: Record<string, string> = {}) => new Response('{}', { status, headers })
+  it('names the missing classic scope and what the token has', () => {
+    expect(describeTokenProblem(res(404, { 'x-oauth-scopes': 'public_repo', 'x-accepted-oauth-scopes': 'repo' })))
+      .toBe(' (this call needs the scope repo; the token has scopes: public_repo)')
+  })
+  it('names the fine-grained permission GitHub asks for', () => {
+    expect(describeTokenProblem(res(403, { 'x-accepted-github-permissions': 'pages=write' }))).toContain('fine-grained permission pages=write')
+  })
+  it('says rate limit instead of blaming the token', () => {
+    expect(describeTokenProblem(res(403, { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1792460000' }))).toMatch(/rate limit reached; resets at 2026-/)
+  })
+  it('explains a rejected token, and gives a concrete checklist when GitHub sends no hints', () => {
+    expect(describeTokenProblem(res(401))).toMatch(/expired, revoked or malformed/)
+    expect(describeTokenProblem(res(403))).toMatch(/Administration, Contents and Pages/)
+    expect(describeTokenProblem(res(500))).toBe('')
+  })
+  it('reaches the publish error', async () => {
+    const request: GithubRequest = async () => res(404, { 'x-oauth-scopes': '', 'x-accepted-oauth-scopes': 'repo' })
+    await expect(publishSite(request, { owner: 'me', repo: 'site', token: 't', message: 'm', files: [{ path: 'index.html', content: 'x' }] }))
+      .rejects.toThrow('reading the repository failed: GitHub 404 (this call needs the scope repo; the token has scopes: (none))')
   })
 })

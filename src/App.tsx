@@ -216,7 +216,16 @@ import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
-import { baselineToolNames, HOSTED_TOOL_PROVIDERS, NO_TOOLS_NOTICE, repeatedCallLimit, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, truncatedToolCallResult } from './lib/toolExposure'
+import { NexusLearningPanel } from './components/NexusLearningPanel'
+const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
+import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
+import { isPublicVisitor, PUBLIC_MODE_NOTICE } from './lib/publicRelay'
+import { SculptKeyPanel } from './components/SculptKeyPanel'
+import { VisitorLearningImport } from './components/VisitorLearningImport'
+import { startErrorReporting } from './lib/errorReporting'
+import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
+import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
+import { baselineToolNames, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
@@ -608,7 +617,7 @@ const CORPUS_MAX = 10_000
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
-type Tab = 'forgemind' | 'activity' | 'voice' | 'agents' | 'settings'
+type Tab = 'forgemind' | 'activity' | 'nexus' | 'agents' | 'settings'
 type ActivityView = 'log' | 'failures'
 
 function startRunJournal(): RunJournal {
@@ -760,10 +769,16 @@ function App() {
   const tasteAbortRef = useRef<AbortController | null>(null)
   useEffect(() => () => { tasteAbortRef.current?.abort() }, [])
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
-  const [errorLogEmail, setErrorLogEmail] = useState(() => safeGetItem('forgeclaw_error_log_email') || 'towerslutz@gmail.com')
+  // No built-in address: the bundle is public, so a default would publish the owner's email to every
+  // visitor and send a visitor's error log to the owner. Each browser sets its own in Settings.
+  const [errorLogEmail, setErrorLogEmail] = useState(() => safeGetItem('forgeclaw_error_log_email') || '')
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
 
   const sendErrorLogs = async (silent = false) => {
+    if (!errorLogEmail.trim()) {
+      if (!silent) alert('Set an error-log email address in Settings first.')
+      return false
+    }
     const logText = formatErrorLogForEmail()
     const count = getErrorLog().length
     if (count === 0) {
@@ -942,7 +957,6 @@ function App() {
   }, [])
 
   const [listening, setListening] = useState(false)
-  const [voiceTranscript, setVoiceTranscript] = useState('')
   const [chatListening, setChatListening] = useState(false)
   const [voiceInputError, setVoiceInputError] = useState('')
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
@@ -950,7 +964,6 @@ function App() {
   const chatVoiceBaseRef = useRef('')
   const voiceListeningRef = useRef(false)
   const chatListeningRef = useRef(false)
-  const voiceTranscriptRef = useRef('')
   const chatVoiceSpokenRef = useRef('')
   // Last spoken text that fed a prompt, so the learning log can tell voice prompts from typed ones.
   const voiceOriginRef = useRef('')
@@ -997,6 +1010,10 @@ function App() {
   useEffect(() => { safeSetItem('fm_anthropic_workspace_id', anthropicWorkspaceId) }, [anthropicWorkspaceId])
   useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
   useEffect(() => { safeSetItem('fm_moonshot_model', moonshotModel) }, [moonshotModel])
+  // Every user's error log goes to the developer through the relay (errorReporting.ts); no setup needed.
+  const reportModeRef = useRef<'owner' | 'visitor'>('visitor')
+  useEffect(() => { reportModeRef.current = ghToken?.trim() ? 'owner' : 'visitor' }, [ghToken])
+  useEffect(() => startErrorReporting(() => reportModeRef.current), [])
   useEffect(() => { safeSetItem('fm_corpus_webhook', corpusWebhookUrl) }, [corpusWebhookUrl])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
@@ -1147,7 +1164,8 @@ function App() {
     // message instead of dispatching DeepSeek (which will fail) and falling back
     // to an unverified local fallback.
     const deepSeekProvider = isDeepSeekProvider(activeProvider)
-    if (deepSeekProvider && !ghToken?.trim()) {
+    // A public visitor (no token, relay configured) reaches the model through the relay instead.
+    if (deepSeekProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '')) {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: 'assistant',
@@ -1304,6 +1322,8 @@ function App() {
     // Operator-typed tool/shell commands are dispatched without a model turn,
     // so a missing LLM key must not block them.
     const directDispatchOnly = !imageUrl && !hasAttachment && (
+      // /sculpt and /patch use no chat provider, so they run without a provider key.
+      parseSculptCommand(promptText) !== null ||
       isExplicitToolRequest(promptText) ||
       (isExplicitShellRequest(promptText) && extractExplicitShellCommand(promptText) !== null)
     )
@@ -1340,6 +1360,8 @@ function App() {
         timestamp: Date.now(), source: 'local' as const,
       }])
       emitFailure({ source: 'forgemind', severity: 'warning', message: 'Guardian blocked this task.', context: { taskId } })
+      // NEXUS learns from every outcome, refusals included (still an unapproved candidate).
+      void recordLearning({ channel: promptOrigin(promptText) === 'voice' ? 'voice' : 'chat', input: promptText, result: 'Task blocked by Guardian admission before any model or tool ran.', outcome: 'blocked', actor: 'user', origin: promptOrigin(promptText) })
       return
     }
 
@@ -1384,6 +1406,10 @@ function App() {
       // Substring match, so no bare 'site' (it is inside "opposite", "visited").
       'github_publish_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'publish', 'github pages', 'gh-pages'],
       'github_pages_status': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'publish', 'github pages', 'gh-pages'],
+      'sculpt_self': ['sculpt', 'self-improve', 'self improve', 'improve yourself', 'upgrade yourself', 'modify yourself', 'self-modify', 'self modify', 'evolve', 'your own code', 'your code'],
+      'shell_patch': ['sculpt', 'self-improve', 'self improve', 'improve yourself', 'upgrade yourself', 'modify yourself', 'self-modify', 'self modify', 'evolve', 'your own code', 'your code', 'patch', 'diff'],
+      'deep_research': ['research', 'investigate', 'sources', 'look into', 'find out', 'compare', 'latest', 'literature', 'study', 'studies', 'evidence', 'report on'],
+      'github_build_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'react', 'vite', 'npm', 'bundle'],
       'github_create_repo': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'new repo', 'new repository', 'create repo', 'create a repo'],
       'github_repo_state': ['state', 'status', 'head', 'branch'],
       'generate_image': ['generate', 'image', 'logo', 'illustration', 'picture', 'artwork'],
@@ -1418,7 +1444,9 @@ function App() {
     if (imageUrl) coreToolNames.push('analyze_image')
     coreToolNames.push(...baselineToolNames(activeProvider))
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
-    const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
+    // Self-modification tools are offered only while the owner's self-sculpt key is unlocked.
+    const sculptUnlocked = isSculptUnlocked()
+    const finalTools = [...new Set([...relevantTools, ...coreToolDefs])].filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
 
     const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding', finalTools)) : finalTools
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
@@ -1430,7 +1458,7 @@ function App() {
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
-        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}`
+        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
@@ -1438,10 +1466,13 @@ function App() {
         : '\n\nPRIMARY REASONING POLICY\nAnswer the user directly and clearly. Do not emit tool syntax, code, token IDs, or internal runtime instructions.'
     const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
     
+    // NEXUS recursive learning: recurring failures of the tools offered now, as counted evidence.
+    const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(500)), runtimeTools.map(tool => tool.name))
+    const lessonedSystemPrompt = nexusLessons ? `${baseSystemPrompt}\n\n${nexusLessons}` : baseSystemPrompt
     const finalSystemPrompt = relevant.length > 0
-      ? baseSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
+      ? lessonedSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
         relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
-      : baseSystemPrompt
+      : lessonedSystemPrompt
     
     // Native function calling is not required: the router injects a compact
     // manual protocol when runtimeTools are present and the App loop parses it.
@@ -1509,6 +1540,31 @@ function App() {
             guardianPosture,
             requestGuardianApproval,
           }),
+      }
+
+      // /sculpt and /patch: provider-independent self-sculpt (sculptCommand.ts). Each step runs through
+      // executeTool, so Guardian co-sign, the run journal and the self-sculpt key all still apply.
+      const sculptCommand = parseSculptCommand(promptText)
+      if (sculptCommand) {
+        const outcome = sculptCommand.kind === 'usage'
+          ? { ok: false, text: sculptCommand.message, steps: [] as Array<{ tool: string; output: string }> }
+          : await runSculptCommand(sculptCommand, async call => {
+              const actId = `act_${call.id}`
+              setActivityLog(prev => [...prev.slice(-99), { id: actId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
+              const output = await executeTool(call, toolCtx)
+              setActivityLog(prev => prev.map(entry => entry.id === actId ? { ...entry, output: output.slice(0, 300), status: isToolFailureOutput(output) ? 'error' : 'done' } : entry))
+              void recordLearning({ channel: 'tool', input: `${call.name} ${JSON.stringify(call.input).slice(0, 500)}`, result: output, outcome: outcomeFromToolOutput(output), toolName: call.name, actor: 'operator', origin: promptOrigin(promptText) })
+              return output
+            })
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        setMessages(prev => prev.map(message => message.id === msgId
+          ? { ...message, content: outcome.text, streaming: false, agentPhase: outcome.ok ? 'COMPLETE' : 'BLOCKED', toolResults: outcome.steps.map((s, i) => ({ toolCallId: `sculpt-cmd-${i}`, name: s.tool, output: s.output, isError: isToolFailureOutput(s.output) })) }
+          : message))
+        setRequestStatus(outcome.ok ? 'success' : 'blocked')
+        setLastRequestError(outcome.ok ? '' : outcome.text)
+        setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+        resolveTask(taskId)
+        return
       }
 
       // A short, explicit operator command such as `pwd` must not depend on a
@@ -1740,6 +1796,8 @@ function App() {
         // Tool calls → executeTool owns Guardian enforcement and side effects.
         const iterResults: ToolResult[] = []
         // Loop detection: track recent tool calls across all iterations of this run
+        const offeredToolNames = new Set((noMoreTools ? [] : runtimeTools).map(tool => tool.name))
+        const routerIssued = isRouterIssued(result.stopReason)
 
         for (const call of result.toolCalls) {
   // Check for loop
@@ -1747,9 +1805,19 @@ function App() {
   if (call.parseError) {
     const output = truncatedToolCallResult(call.name, call.parseError)
     iterResults.push({ toolCallId: call.id, name: call.name, output, isError: true })
+    void recordLearning({ channel: 'tool', input: `${call.name} (arguments cut off or invalid)`, result: output, outcome: 'failed', toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
     // toolAttempts must stay index-aligned with the results; any later success of this tool resolves it.
     toolAttempts.push({ name: call.name, input: TRUNCATED_ATTEMPT })
     setActivityLog(prev => [...prev.slice(-99), { id: `act_${call.id}_${Date.now()}`, timestamp: Date.now(), tool: call.name, input: call.input, status: 'error', output: output.slice(0, 300) }])
+    continue
+  }
+  const priorRepoCreations = [...allToolResults, ...iterResults].filter(r => r.name === 'github_create_repo' && !r.isError).length
+  const refusal = toolCallRefusal(call.name, offeredToolNames, routerIssued, priorRepoCreations)
+  if (refusal) {
+    iterResults.push({ toolCallId: call.id, name: call.name, output: refusal, isError: true, reasoningStepId: 'guardian_block' })
+    void recordLearning({ channel: 'tool', input: `${call.name} ${JSON.stringify(call.input)}`, result: refusal, outcome: 'blocked', toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
+    toolAttempts.push({ name: call.name, input: JSON.stringify(call.input, Object.keys(call.input).sort()) })
+    setActivityLog(prev => [...prev.slice(-99), { id: `act_${call.id}_${Date.now()}`, timestamp: Date.now(), tool: call.name, input: call.input, status: 'error', output: refusal.slice(0, 300) }])
     continue
   }
   const callKey = `${call.name}:${JSON.stringify(call.input)}`
@@ -1767,6 +1835,7 @@ function App() {
       isError: true,
       reasoningStepId: 'guardian_block'
     })
+    void recordLearning({ channel: 'tool', input: callKey, result: 'Blocked: repeated tool call loop.', outcome: 'blocked', toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
     // Keep toolAttempts index-aligned with the results (hasUnresolvedToolFailure pairs them by index).
     toolAttempts.push({ name: call.name, input: JSON.stringify(call.input, Object.keys(call.input).sort()) })
     continue
@@ -1950,6 +2019,8 @@ function App() {
       setRequestStatus('error')
       setLastRequestError(msg)
       emitFailure({ source: 'forgemind', severity: 'error', message: rawMsg, context: { provider: activeProvider, promptLength: promptText.length } })
+      // A failed run is the most useful thing NEXUS can learn from; it used to be recorded nowhere.
+      void recordLearning({ channel: promptOrigin(promptText) === 'voice' ? 'voice' : 'chat', input: promptText, result: `Run failed: ${rawMsg}`, outcome: 'failed', actor: 'user', origin: promptOrigin(promptText) })
       const failedToolResults = runToolResults.length ? runToolResults : undefined
       if (cloudMsgId) {
         setMessages(prev => prev.map(m => {
@@ -2292,40 +2363,6 @@ function App() {
     setChatListening(false)
   }
 
-  const sendVoiceTranscriptToChat = (sendNow = false) => {
-    const text = voiceTranscript.trim()
-    if (!text) return
-    stopVoiceRecognition()
-    voiceOriginRef.current = text
-    setActiveTab('forgemind')
-    if (sendNow) {
-      setInput('')
-      void sendPrompt(text)
-      return
-    }
-    setInput(text)
-    window.requestAnimationFrame(() => {
-      promptInputRef.current?.focus()
-      promptInputRef.current?.setSelectionRange(text.length, text.length)
-    })
-  }
-
-  const toggleVoiceMic = () => {
-    if (listening) { stopVoiceRecognition(); return }
-    setVoiceInputError('')
-    speech.stop() // starting a voice message ends any read-aloud
-    if (chatListening) stopChatVoiceRecognition()
-    voiceListeningRef.current = true
-    startRecognition((text) => {
-      voiceTranscriptRef.current = text
-      setVoiceTranscript(text)
-    }, setListening, recognitionRef, {
-      onFailure: setVoiceInputError,
-      keepAliveRef: voiceListeningRef,
-      transcriptRef: voiceTranscriptRef,
-    })
-  }
-
   const toggleChatVoicePrompt = () => {
     if (chatListening) { stopChatVoiceRecognition(); return }
     setVoiceInputError('')
@@ -2348,22 +2385,6 @@ function App() {
 
   const handleTabClick = (tabId: Tab) => {
     setActiveTab(tabId)
-    if (tabId === 'voice' && !listening) {
-      setVoiceInputError('')
-      speech.stop() // opening the voice tab starts the mic, which ends any read-aloud
-      voiceTranscriptRef.current = ''
-      setVoiceTranscript('')
-      if (chatListening) stopChatVoiceRecognition()
-      voiceListeningRef.current = true
-      void startRecognition((text) => {
-        voiceTranscriptRef.current = text
-        setVoiceTranscript(text)
-      }, setListening, recognitionRef, {
-        onFailure: setVoiceInputError,
-        keepAliveRef: voiceListeningRef,
-        transcriptRef: voiceTranscriptRef,
-      })
-    }
   }
 
   const getStatusIndicator = () => {
@@ -2377,7 +2398,7 @@ function App() {
   const TABS: { id: Tab; label: string; badge?: string }[] = [
     { id: 'forgemind',   label: t('tab.forge') },
     { id: 'agents',      label: t('tab.agents') },
-    { id: 'voice',       label: t('tab.mic') },
+    { id: 'nexus',       label: t('tab.nexus') },
     { id: 'activity',    label: t('tab.activity'), badge: unresolvedCount > 0 ? String(unresolvedCount) : activityLog.some(e => e.status === 'running') ? '•' : undefined },
     { id: 'settings',    label: t('tab.settings') },
   ]
@@ -2775,6 +2796,7 @@ function App() {
               </div>
 
               <TasteStatusPanel />
+              {!isPublicVisitor(ghToken) && <SculptKeyPanel />}
               {/* GitHub Token */}              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <label style={{ color: '#f97316', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', fontFamily: 'monospace' }}>
@@ -2955,6 +2977,9 @@ function App() {
         {activeTab === 'forgemind' && (
           <>
             <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
+              {isPublicVisitor(ghToken) && (
+                <div role="note" style={{ border: '1px solid #3a2a05', background: '#120d02', color: '#eab308', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{PUBLIC_MODE_NOTICE}</div>
+              )}
               {/* Persisted coding task — visible so a reload reads as a resume. */}
               <CodingAgentStatePanel state={codingAgentState} resumed={Boolean(agentResumedState)} onChange={setCodingAgentState} />
               <LiveExecution
@@ -3438,102 +3463,13 @@ function App() {
           </div>
         )}
 
-        {/* ── Voice Tab ── */}
-        {activeTab === 'voice' && (() => {
-          const lastAI = [...messages].reverse().find(m => m.role === 'assistant' && !m.streaming && m.content)
-          return (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0', background: '#080808', overflowY: 'auto' }}>
-
-              {/* ── READ ALOUD section ── */}
-              <div style={{ display: 'none', padding: '20px 20px 0', borderBottom: '1px solid #111' }}>
-                <div style={{ fontSize: '10px', color: '#f97316', letterSpacing: '2px', fontFamily: 'monospace', marginBottom: '10px', fontWeight: 'bold' }}>{t('mic.readAloud')}</div>
-                {lastAI ? (
-                  <div style={{ background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '12px 14px', marginBottom: '12px' }}>
-                    <div style={{ fontFamily: "'Courier New', monospace", fontSize: '13px', color: '#bbb', lineHeight: '1.6', maxHeight: '120px', overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                      {lastAI.content.slice(0, 400)}{lastAI.content.length > 400 ? '…' : ''}
-                    </div>
-                    <div style={{ marginTop: '10px', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                      <button
-                        onClick={() => handleSpeak(lastAI.id, lastAI.content)}
-                        style={{
-                          background: speakingId === lastAI.id ? '#1a1a1a' : '#f97316',
-                          color: speakingId === lastAI.id ? '#ef4444' : '#000',
-                          border: speakingId === lastAI.id ? '1px solid #ef4444' : 'none',
-                          padding: '8px 22px', borderRadius: '6px', fontWeight: 'bold',
-                          cursor: 'pointer', fontSize: '12px', fontFamily: 'monospace', letterSpacing: '2px',
-                        }}
-                      >
-                        {speakingId === lastAI.id ? t('mic.stopSpeaking') : t('mic.speak')}
-                      </button>
-                      {speakingId === lastAI.id && (
-                        <span style={{ color: '#ef4444', fontSize: '10px', fontFamily: 'monospace', animation: 'pulse 1.2s infinite' }}>{t('mic.speaking')}</span>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ color: '#2a2a2a', fontSize: '11px', fontFamily: 'monospace', paddingBottom: '16px' }}>{t('mic.noResponse')}</div>
-                )}
-              </div>
-
-              {/* ── SPEECH INPUT section ── */}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '24px', padding: '28px 20px' }}>
-                <div style={{ fontSize: '10px', color: '#39ff14', letterSpacing: '3px', fontFamily: 'monospace', alignSelf: 'flex-start', fontWeight: 'bold' }}>{t('mic.prompt')}</div>
-
-                <button
-                  onClick={toggleVoiceMic}
-                  style={{
-                    width: '142px', height: '142px', borderRadius: '50%',
-                    background: listening ? '#061a0b' : '#0f0f0f',
-                    border: listening ? '2px solid #39ff14' : '2px solid #2a2a2a',
-                    color: listening ? '#39ff14' : '#777',
-                    cursor: 'pointer', fontSize: '28px', display: 'flex', alignItems: 'center',
-                    justifyContent: 'center', transition: 'all 0.2s',
-                    animation: listening ? 'micRing 1.2s ease-in-out infinite' : 'none',
-                    boxShadow: listening ? '0 0 34px rgba(57,255,20,0.22)' : 'none',
-                    fontFamily: 'monospace',
-                    fontWeight: 'bold',
-                    letterSpacing: '2px',
-                  }}
-                  title={listening ? t('mic.tapStop') : t('mic.tapStart')}
-                >
-                  {listening ? t('chat.rec') : t('chat.mic')}
-                </button>
-
-                <span style={{ color: listening ? '#39ff14' : '#333', fontSize: '10px', letterSpacing: '3px', fontFamily: 'monospace', textTransform: 'uppercase' }}>
-                  {listening ? t('mic.recording') : t('mic.tapOrTab')}
-                </span>
-
-                <div style={{ width: '100%', maxWidth: '600px', marginTop: '-12px', color: voiceInputError ? '#ef4444' : listening ? '#39ff14' : '#555', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', lineHeight: 1.5, textAlign: 'center', textTransform: 'uppercase' }}>
-                  {voiceInputError || (listening ? t('mic.armed') : t('mic.hint'))}
-                </div>
-
-                <div style={{ width: '100%', maxWidth: '600px', minHeight: '150px', background: '#0d0d0d', border: `1px solid ${listening ? '#1f5f2b' : '#1e1e1e'}`, borderRadius: '10px', padding: '16px', fontFamily: "'Courier New', monospace", fontSize: '14px', color: '#c8c8c8', lineHeight: '1.7', whiteSpace: 'pre-wrap', wordBreak: 'break-word', boxShadow: listening ? '0 0 24px rgba(57,255,20,0.08)' : 'none' }}>
-                  {voiceTranscript || <span style={{ color: '#2a2a2a' }}>{t('mic.transcriptPlaceholder')}</span>}
-                </div>
-
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button onClick={() => { voiceTranscriptRef.current = ''; setVoiceTranscript('') }} style={{ background: 'none', border: '1px solid #2a2a2a', color: '#555', padding: '7px 18px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px' }}>
-                    {t('mic.clear')}
-                  </button>
-                  <button
-                    onClick={() => sendVoiceTranscriptToChat(false)}
-                    disabled={!voiceTranscript.trim()}
-                    style={{ background: voiceTranscript.trim() ? '#f97316' : '#1a1a1a', color: voiceTranscript.trim() ? '#000' : '#333', padding: '7px 18px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}
-                  >
-                    {t('mic.putInChat')}
-                  </button>
-                  <button
-                    onClick={() => sendVoiceTranscriptToChat(true)}
-                    disabled={!voiceTranscript.trim() || loading}
-                    style={{ background: voiceTranscript.trim() && !loading ? '#39ff14' : '#1a1a1a', color: voiceTranscript.trim() && !loading ? '#031005' : '#333', padding: '7px 18px', borderRadius: '6px', border: 'none', cursor: voiceTranscript.trim() && !loading ? 'pointer' : 'not-allowed', fontSize: '11px', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}
-                  >
-                    {t('mic.sendPrompt')}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )
-        })()}
+        {/* ── NEXUS Recursive Learning (replaced the MIC tab; voice input stays on the chat bar) ── */}
+        {activeTab === 'nexus' && (
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+            <NexusLearningPanel />
+            {!isPublicVisitor(ghToken) && <VisitorLearningImport />}
+          </div>
+        )}
 
 
       </main>

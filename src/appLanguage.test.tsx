@@ -20,7 +20,7 @@ async function mountApp() {
   return render(<App />)
 }
 const selector = () => screen.getByLabelText(/^(Language|Idioma)$/) as HTMLSelectElement
-const tabs = () => ['FORGE', 'AGENTS', 'MIC', 'ACTIVITY', 'SETTINGS']
+const tabs = () => ['FORGE', 'AGENTS', 'NEXUS', 'ACTIVITY', 'SETTINGS']
 
 describe('language selector in the header', () => {
   it('opens in English, switches the whole chrome to Spanish, and switches back', async () => {
@@ -31,7 +31,7 @@ describe('language selector in the header', () => {
     expect(selector().value).toBe('en')
 
     fireEvent.change(selector(), { target: { value: 'es' } })
-    for (const label of ['FORJA', 'AGENTES', 'MIC', 'ACTIVIDAD', 'AJUSTES']) expect(screen.getByRole('button', { name: label })).toBeTruthy()
+    for (const label of ['FORJA', 'AGENTES', 'NEXUS', 'ACTIVIDAD', 'AJUSTES']) expect(screen.getByRole('button', { name: label })).toBeTruthy()
     expect(screen.getByPlaceholderText(/Pregunta lo que quieras/)).toBeTruthy()
     expect(screen.getByRole('button', { name: 'ENVIAR' })).toBeTruthy()
     expect(screen.getByText('Sistema iniciado. Esperando instrucciones...')).toBeTruthy()
@@ -55,8 +55,9 @@ describe('language selector in the header', () => {
     expect(screen.getByText('ESTADO DEL OPERADOR')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'ACTIVIDAD' }))
     expect(screen.getByText('AÚN NO HAY ACTIVIDAD')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'MIC' }))
-    expect(screen.getByText('LEER EN VOZ ALTA')).toBeTruthy()
+    // The MIC tab became the NEXUS Recursive Learning page (2026-10-20); voice input stays on the chat bar.
+    fireEvent.click(screen.getByRole('button', { name: 'NEXUS' }))
+    expect(screen.getByText('My Logic Is Undeniable')).toBeTruthy()
   })
 
   it('remembers Spanish after a reload', async () => {

@@ -17,7 +17,7 @@ class MemoryStorage implements Storage {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 
 function ctxWith(journal: ReturnType<typeof createRunJournal>): ToolContext {
-  return { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', requestGuardianApproval: async () => true, journal }
+  return { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', requestGuardianApproval: async () => true, journal, sculptUnlocked: true }
 }
 
 describe('write tools record rollback information', () => {

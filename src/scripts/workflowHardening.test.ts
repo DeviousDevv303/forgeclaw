@@ -185,7 +185,11 @@ describe('runner pinning', () => {
     for (const file of files) {
       const runners = read(`.github/workflows/${file}`).match(/^\s*runs-on:.*$/gm) ?? []
       expect(runners.length, file).toBeGreaterThan(0)
-      for (const line of runners) expect(line.trim(), file).toBe('runs-on: ubuntu-24.04')
+      // deepseek-16b.yml may opt into a GPU larger runner via a repository variable; its default stays pinned.
+      const allowed = file === 'deepseek-16b.yml'
+        ? ['runs-on: ubuntu-24.04', "runs-on: ${{ vars.FORGECLAW_GPU_RUNNER || 'ubuntu-24.04' }}"]
+        : ['runs-on: ubuntu-24.04']
+      for (const line of runners) expect(allowed, file).toContain(line.trim())
     }
   })
 })

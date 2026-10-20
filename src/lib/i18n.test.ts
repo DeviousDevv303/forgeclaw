@@ -37,7 +37,7 @@ const sources = walk('src').map(path => readFileSync(path, 'utf8')).join('\n')
 
 // Spanish strings that are legitimately identical to English (brand terms, technical tokens, cognates).
 const SAME_IN_SPANISH = new Set<Key>([
-  'tab.mic', 'chat.mic', 'severity.info', 'severity.error', 'diag.ok', 'activity.ok', 'activity.local',
+  'tab.nexus', 'chat.mic', 'severity.info', 'severity.error', 'diag.ok', 'activity.ok', 'activity.local',
   'activity.errors', 'wa.chat', 'wa.error', 'monitor.error', 'event.error', 'agentState.head',
   'agentState.repo', 'live.phase.PLAN', 'wa.clear', 'state.set', 'header.wipe',
 ].filter(k => (EN as Record<string, string>)[k] === (DICTIONARIES.es as Record<string, string>)[k]) as Key[])

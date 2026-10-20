@@ -1,6 +1,7 @@
 """Runs the REAL embedded script from deepseek-16b.yml against stub torch / transformers / llama_cpp
-modules, to pin the engine-selection behaviour: fast engine when available, honest metadata, and a
-fall back to the slow engine (never a silent wrong answer) on every failure mode.
+modules, to pin the engine-selection behaviour: the GGUF engine for the primary (Qwen/Qwen3-8B) when
+available, honest metadata, and on every failure mode the small labelled fallback model (the primary's
+float16 weights do not fit the runner, so there is no float16 primary path) - never a silent wrong answer.
 
 Run with: python -B -m unittest discover -s .github/scripts -p 'test_*.py'
 """
@@ -58,6 +59,9 @@ class Llama:
             raise RuntimeError('boom mid-generation')
         if os.environ.get('STUB_EMPTY_PRIMARY'):
             return
+        if os.environ.get('STUB_CODE'):
+            yield {'choices': [{'text': os.environ['STUB_CODE']}]}
+            return
         for word in ['FAST', ' ANSWER']:
             yield {'choices': [{'text': word}]}
 """,
@@ -110,20 +114,24 @@ class EngineSelection(unittest.TestCase):
         self.assertIn("generated_tokens=2", meta)
         self.assertIn("stopped_by_time_budget=false", meta)
         self.assertIn("llama_cpp_python=9.9.9-stub", meta)
-        self.assertIn("model=deepseek-ai/deepseek-llm-7b-chat", meta)
+        self.assertIn("model=Qwen/Qwen3-8B", meta)
         self.assertIn("degraded=false", meta)
 
-    def test_missing_fast_engine_falls_back_to_transformers_and_says_why(self):
+    def test_missing_fast_engine_uses_the_labelled_fallback_model_and_says_why(self):
         proc, result, meta = run(drop_stubs=("llama_cpp.py",))
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(result, "SLOW ANSWER")
-        self.assertIn("engine=transformers float16 (slow fallback)", meta)
+        self.assertIn("SLOW ANSWER", result)
+        self.assertIn("DEGRADED ANSWER", result)
+        self.assertIn("model=deepseek-ai/deepseek-coder-1.3b-instruct", meta)
+        self.assertIn("engine=transformers float16 (slow fallback: deepseek-ai/deepseek-coder-1.3b-instruct)", meta)
         self.assertIn("fast_engine_error=ModuleNotFoundError", meta)
+        self.assertIn("needs the GGUF engine", proc.stdout)
 
     def test_fast_failure_mid_generation_falls_back_not_crashes(self):
         proc, result, meta = run({"STUB_FAST_BOOM": "1"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(result, "SLOW ANSWER")
+        self.assertIn("SLOW ANSWER", result)
+        self.assertIn("DEGRADED ANSWER", result)
         self.assertIn("slow fallback", meta)
         self.assertIn("boom mid-generation", meta)
 
@@ -135,10 +143,28 @@ class EngineSelection(unittest.TestCase):
         self.assertIn("empty response", meta)
         self.assertIn("model=deepseek-ai/deepseek-coder-1.3b-instruct", meta)
 
-    def test_forced_slow_engine_is_not_reported_as_a_failure(self):
+    def test_forced_slow_engine_uses_the_fallback_model_honestly(self):
         proc, result, meta = run({"DEEPSEEK_ENGINE": "hf"})
-        self.assertEqual(result, "SLOW ANSWER")
+        self.assertIn("SLOW ANSWER", result)
+        self.assertIn("degraded=true", meta)
         self.assertIn("fast_engine_error=not attempted", meta)
+
+    def test_code_profile_keeps_indentation_verbatim(self):
+        code = "```ts\nexport function f() {\n  if (x) {\n    return 1\n  }\n}\n```"
+        proc, result, meta = run({"PROFILE": "code", "TASK": "edit", "STUB_CODE": code})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(result, code)
+        self.assertIn("output_cleanup_applied=false", meta)
+
+    def test_site_profile_raises_the_output_budget_and_skips_the_tool_protocol(self):
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("MAX_NEW_TOKENS = 3000 if LONG_OUTPUT else 768", workflow)
+        self.assertIn("FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 420", workflow)
+        self.assertIn("LONG_OUTPUT = SITE or CODE", workflow)
+        self.assertIn("repeat_penalty=1.1 if SITE else 1.0", workflow)
+        proc, result, meta = run({"PROFILE": "site", "TASK": "Write a complete single-file website"})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(result, "FAST ANSWER")
 
     def test_the_slow_engine_is_time_bounded(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")

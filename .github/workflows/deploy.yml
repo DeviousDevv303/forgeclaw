@@ -26,6 +26,8 @@ jobs:
         run: npm run build
         env:
           GITHUB_PAGES: 'true'
+          # Public visitor relay (relay/README.md). Unset: visitors need their own keys, as before.
+          VITE_PUBLIC_RELAY_URL: ${{ vars.FORGECLAW_PUBLIC_RELAY_URL }}
       - uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

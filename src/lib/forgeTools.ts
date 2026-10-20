@@ -31,7 +31,29 @@ import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './ima
 import { TasteProviderClient } from './ai/providers/tasteProvider'
 import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
 import { journalRecord, type RunJournal } from './runRollback'
-import { createRepo, pagesStatus, publishSite, type GithubRequest, type PublishFile } from './githubPublish'
+import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type GithubRequest, type PublishFile } from './githubPublish'
+import { buildAndPublishSite } from './siteBuild'
+import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
+import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
+import { PUBLIC_RELAY_URL, runPublicReasoning } from './publicRelay'
+import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
+
+/**
+ * Wait for a self-modification run (self-sculpt or shell-repair) and report what really happened:
+ * the pull request it opened, a run that changed nothing, or the failing run. A dispatch alone used to
+ * be reported as done, although the build check or the protected-path policy could still reject it.
+ */
+async function reportProposalRun(request: GithubRequest, input: { owner: string; repo: string; token: string; workflow: string; needle: string; since: number; branch: string; label: string; signal?: AbortSignal }): Promise<string> {
+  const run = await waitForCorrelatedRun(request, { ...input, maxWaitMs: PROPOSAL_MAX_WAIT_MS })
+  if (run.conclusion !== 'success') {
+    throw new Error(`${input.label} run #${run.run_number} concluded "${run.conclusion}": nothing was proposed (protected path, patch that does not apply, or a failing build). Logs: ${run.html_url}`)
+  }
+  const pr = await findPullRequest(request, input.owner, input.repo, input.token, input.branch)
+  if (!pr) return `✓ ${input.label} run #${run.run_number} succeeded but made no change (the content was identical), so no pull request was opened. Run: ${run.html_url}`
+  return `✓ ${input.label}: build-validated and proposed as pull request #${pr.number} on ${input.branch} (not merged; review it).\n  pr: ${pr.html_url}\n  run: ${run.html_url}`
+}
+
+const PROPOSAL_MAX_WAIT_MS = 25 * 60 * 1000
 
 /** Models send files as an array or as a JSON string of one; anything else is rejected by the publisher. */
 function parsePublishFiles(raw: unknown): PublishFile[] {
@@ -90,6 +112,10 @@ export interface ToolContext {
   ghToken: string
   ghOwner: string
   ghRepo: string
+  /** Public relay for visitors without a GitHub token (src/lib/publicRelay.ts); empty for the owner. */
+  publicRelayUrl?: string
+  /** Whether the self-sculpt key is unlocked; defaults to the live check in sculptKey.ts. */
+  sculptUnlocked?: boolean
   sessionId?: string
   waPhoneNumberId?: string
   waAccessToken?: string
@@ -206,7 +232,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'deepseek_reason',
-    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained; the workflow currently runs deepseek-ai/deepseek-llm-7b-chat as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.',
+    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained; the workflow currently runs Qwen/Qwen3-8B (4-bit GGUF, CPU) as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.',
     parameters: {
       type: 'object',
       properties: {
@@ -220,7 +246,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'ask_deepseek',
-    description: 'Ask the existing DeepSeek reasoning workflow directly. No routing delay; deepseek-ai/deepseek-llm-7b-chat is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.',
+    description: 'Ask the existing DeepSeek reasoning workflow directly. No routing delay; Qwen/Qwen3-8B is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.',
     parameters: {
       type: 'object',
       properties: {
@@ -233,21 +259,21 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'sculpt_self',
-    description: 'Propose a self-modification by dispatching the guarded self-sculpt workflow. Changes are build-validated, committed to a sculpt/* feature branch, and opened as a pull request; Guardian, workflow, and package-control paths are rejected.',
+    description: 'Improve ForgeClaw itself: replace ONE file (up to 60,000 characters) through the guarded self-sculpt workflow, which rejects protected paths, build-validates the change, pushes a sculpt/* branch and opens a pull request for human review (never merged automatically). Read the current file first with github_read_file and send the COMPLETE new content. For a small change to a large file use shell_patch instead. Waits for the run and returns the pull request URL or the failing run.',
     parameters: {
       type: 'object',
       properties: {
         file_path: { type: 'string', description: 'Repository-relative file path to update' },
         content: { type: 'string', description: 'Complete replacement file content' },
-        reason: { type: 'string', description: 'Reason for the proposed change' },
-        branch: { type: 'string', description: 'New feature branch name' },
+        reason: { type: 'string', description: 'One-line reason for the change, at most 240 characters' },
+        branch: { type: 'string', description: 'Optional new branch sculpt/<name>; generated when omitted' },
       },
-      required: ['file_path', 'content', 'reason', 'branch'],
+      required: ['file_path', 'content', 'reason'],
     },
   },
   {
     name: 'shell_patch',
-    description: 'Propose a code change as a unified diff by dispatching the guarded shell-repair workflow. The workflow checks the diff against the protected-path policy (symlinks are refused), build-validates it, pushes it to a branch the tool names itself (forge/repair/*), and opens a pull request for human review; nothing is merged. Requires Guardian co-sign. The result only confirms the workflow was STARTED: the change is not applied or verified until its run and pull request exist.',
+    description: 'Improve ForgeClaw with a unified diff (any size of file, several files at once) through the guarded shell-repair workflow, which checks the protected-path policy (symlinks refused), applies the diff with git, build-validates it, pushes a forge/repair/* branch it names itself and opens a pull request for human review; nothing is merged. Requires Guardian co-sign. Waits for the run and returns the pull request URL or the failing run.',
     parameters: {
       type: 'object',
       properties: {
@@ -519,6 +545,19 @@ export const FORGE_TOOLS: ToolDef[] = [
       required: ['sha'],
     },
   },
+  {
+    name: 'deep_research',
+    description: 'Deep web research: runs up to 6 searches server-side, fetches the result pages, extracts their main text and returns numbered evidence excerpts with URLs (2-6 minutes). Use for questions that need several current sources; answer only from the returned sources and cite them as [n]. For a quick fact use web_search instead.',
+    parameters: {
+      type: 'object',
+      properties: {
+        question:    { type: 'string', description: 'The research question' },
+        queries:     { type: 'array', description: '3-6 distinct search queries covering different angles of the question', items: { type: 'string' } },
+        max_sources: { type: 'number', description: 'Sources to fetch, 1-15, default 8' },
+      },
+      required: ['question'],
+    },
+  },
   // ── Site deployment (githubPublish.ts) ──────────────────────────────────────
   {
     name: 'github_create_repo',
@@ -544,18 +583,37 @@ export const FORGE_TOOLS: ToolDef[] = [
         files:   { type: 'array', description: 'Files to write, each {path, content}. Paths are relative, e.g. index.html, css/style.css. Max 100 files, 2 MB.', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
         message: { type: 'string', description: 'Commit message' },
         branch:  { type: 'string', description: 'Site branch, default gh-pages' },
+        enable_pages: { type: 'boolean', description: 'Default true. Use false to store SOURCE code on a branch such as "source" for github_build_site (no index.html needed, Pages untouched).' },
       },
       required: ['repo', 'files', 'message'],
     },
   },
   {
     name: 'github_pages_status',
-    description: 'Read the GitHub Pages site URL and the latest build status (queued, building, built, errored) and its commit. A publish is verified only when status is built for the published commit.',
+    description: 'Read the GitHub Pages site URL and the latest build status (queued, building, built, errored) and its commit. A publish is verified only when status is built for the published commit. Pass commit and wait_seconds to wait for that build instead of polling.',
     parameters: {
       type: 'object',
       properties: {
-        owner: { type: 'string', description: 'Repository owner' },
-        repo:  { type: 'string', description: 'Repository name' },
+        owner:        { type: 'string', description: 'Repository owner' },
+        repo:         { type: 'string', description: 'Repository name' },
+        commit:       { type: 'string', description: 'The published commit SHA to wait for' },
+        wait_seconds: { type: 'number', description: 'Wait up to this long (max 300) for the build to finish. Default 0: read once.' },
+      },
+      required: ['repo'],
+    },
+  },
+  {
+    name: 'github_build_site',
+    description: 'Build a site that needs a build step (npm, Vite, React, a bundler) and publish the output to GitHub Pages. First store the source with github_publish_site (enable_pages false, branch "source") in a public repository; this runs the build in an isolated GitHub Actions job, then publishes the output directory in one commit to gh-pages. Takes 2-6 minutes. Then verify with github_pages_status.',
+    parameters: {
+      type: 'object',
+      properties: {
+        owner:          { type: 'string', description: 'Site repository owner' },
+        repo:           { type: 'string', description: 'Site repository name (public; not forgeclaw)' },
+        source_branch:  { type: 'string', description: 'Branch holding the source, default "source"' },
+        build_command:  { type: 'string', description: 'Default "npm ci && npm run build". Must create the output directory with an index.html.' },
+        output_dir:     { type: 'string', description: 'Build output directory, default "dist" (Vite). Create React App uses "build".' },
+        publish_branch: { type: 'string', description: 'Pages branch, default gh-pages' },
       },
       required: ['repo'],
     },
@@ -598,6 +656,7 @@ export function loadToolContext(): ToolContext {
     ghToken:         resolveGithubToken(),
     ghOwner:         safeGetItem('fc_gh_owner') || CANONICAL_IDENTITY.owner,
     ghRepo:          safeGetItem('fc_gh_repo')  || CANONICAL_IDENTITY.repository,
+    publicRelayUrl:  PUBLIC_RELAY_URL || undefined,
     waPhoneNumberId: wa.phoneNumberId,
     waAccessToken:   wa.accessToken,
     waRecipient:     wa.recipientNumber,
@@ -657,6 +716,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
   }
   const normalizedCall = name === call.name && input === call.input ? call : { ...call, name, input }
   if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted before tool execution.'
+  // Self-modification needs the owner's self-sculpt key, whatever the provider or posture (sculptKey.ts).
+  if (SCULPT_TOOLS.has(name) && !(ctx.sculptUnlocked ?? isSculptUnlocked())) return SCULPT_LOCKED_MESSAGE
   const posture: GuardianPosture = ctx.guardianPosture
     ?? (ctx.tier1Active !== undefined ? postureFromTier1Active(ctx.tier1Active) : DEFAULT_GUARDIAN_POSTURE)
   if (requiresCoSign(normalizedCall, posture)) {
@@ -917,7 +978,6 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           return formatDeepSeekResultText(resumeInvocationId, owner, repo, ref, 'Resumed after app background', completed.run.html_url, completed.result)
         }
         if (!task) throw new Error('DeepSeek task is required.')
-        if (!token) throw new Error('No GitHub token configured.')
         // GitHub workflow_dispatch inputs have size limits (~64KB total).
         // Base64 image data (data:image/...) blows past this with a 422.
         // Strip it before dispatch — the DeepSeek workflow can't process images.
@@ -925,6 +985,14 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const stripImages = (text: string) => text.replace(IMAGE_DATA_PATTERN, '[image omitted: not supported via DeepSeek workflow dispatch]')
         task = stripImages(task)
         context = stripImages(context)
+        // Public visitor (no token in this browser, relay configured for this build): the owner's relay runs
+        // the chat model; the owner's token, tools and NEXUS are never involved.
+        if (!token && ctx.publicRelayUrl) {
+          const answer = await runPublicReasoning(`${task}${context ? `\n\nContext:\n${context}` : ''}`.slice(0, 4000), { relayUrl: ctx.publicRelayUrl, signal: ctx.signal })
+          if (isEmptyDeepSeekResponse(answer.result)) return `[TOOL ERROR] The public model run ${answer.invocationId} produced an empty response.`
+          return formatDeepSeekResultText(answer.invocationId, owner, repo, 'main', `Stages: dispatch=public-relay; result-retrieval=relay-artifact; checkpoint=${answer.model || 'unknown'}`, '(public relay run)', answer.result)
+        }
+        if (!token) throw new Error('No GitHub token configured.')
         // Defense-in-depth: drop context that shares no significant words with the task.
         // Stale context (e.g. 18h-old SHA Q&A) confuses DeepSeek into answering the wrong question.
         if (context && task) {
@@ -956,6 +1024,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
               context,
               nexus_learning: nexusLearn ? 'true' : 'false',
               invocation_id: invocationId,
+              // 'site' (one HTML page) / 'code' (one edited source file): long-output profiles of deepseek-16b.yml.
+              ...(input.profile === 'site' || input.profile === 'code' ? { profile: input.profile } : {}),
             },
           }),
         } as const
@@ -1006,8 +1076,9 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const filePath = typeof input.file_path === 'string' ? input.file_path.trim() : ''
         const content = typeof input.content === 'string' ? input.content : ''
         const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
-        const branch = typeof input.branch === 'string' ? input.branch.trim() : ''
-        if (!filePath || !reason || !branch) throw new Error('file_path, content, reason, and branch are required.')
+        let branch = typeof input.branch === 'string' ? input.branch.trim() : ''
+        if (!filePath || !reason) throw new Error('file_path, content and reason are required.')
+        if (!branch) branch = `sculpt/${filePath.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'change'}-${Date.now().toString(36)}`
         if (content.length > 60_000) throw new Error('Self-sculpt content exceeds the 60KB workflow-input limit.')
         const protectedPath = filePath === 'package.json' || filePath === 'package-lock.json' || filePath === 'src/lib/guardianGate.ts' || filePath === 'src/lib/forgeTools.ts' || filePath === '.github/workflows' || filePath.startsWith('.github/workflows/')
         if (!/^[A-Za-z0-9._/-]+$/.test(filePath) || filePath.startsWith('/') || filePath.startsWith('.') || filePath.includes('..') || filePath === 'foundation/codex' || filePath.startsWith('foundation/codex/') || protectedPath) {
@@ -1034,7 +1105,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         if (!res.ok) throw new Error(`Self-sculpt dispatch failed: ${res.status}`)
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'self-sculpt.yml', needle: branch, since: sculptSince, label: `sculpt_self ${branch}` })
         if (!sculptBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch, label: `sculpt_self ${branch}` })
-        return `✓ Self-sculpt ${invocationId} dispatched for ${filePath}; branch ${branch} will be pushed and a pull request opened for review.`
+        if (input.wait === false) return `✓ Self-sculpt ${invocationId} DISPATCHED, NOT VERIFIED for ${filePath}; look for the run "Self Sculpt ${branch}".`
+        return await reportProposalRun(githubRequest, { owner, repo, token, workflow: 'self-sculpt.yml', needle: branch, since: sculptSince, branch, label: `Self-sculpt of ${filePath}`, signal: ctx.signal })
       }
 
       // ── Shell patch: guarded shell-repair workflow (branch + pull request proposal) ──
@@ -1075,7 +1147,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // Run-name is "Shell repair <invocation id>", so the id finds exactly this run.
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, label: `shell_patch ${repairBranch}` })
         if (!repairBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch: repairBranch, label: `shell_patch ${repairBranch}` })
-        return `✓ Shell-patch ${invocationId} DISPATCHED, NOT VERIFIED. The workflow must still apply the diff, pass the protected-path, symlink and build checks, and only then push ${repairBranch} and open a pull request. Look for the run named "Shell repair ${invocationId}".`
+        if (input.wait === false) return `✓ Shell-patch ${invocationId} DISPATCHED, NOT VERIFIED. Look for the run named "Shell repair ${invocationId}".`
+        return await reportProposalRun(githubRequest, { owner, repo, token, workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, branch: repairBranch, label: `Shell-patch ${invocationId}`, signal: ctx.signal })
       }
 
       // ── HTTP fetch ───────────────────────────────────────────────────────────
@@ -1792,6 +1865,18 @@ case 'spawn_agent': {
         return `✓ Coding agent state persisted — status: ${next.taskStatus}, repo: ${next.owner}/${next.repo}@${next.branch}, HEAD: ${next.headShaShort || '(unknown)'}, updated: ${next.updatedAt}`
       }
 
+      // ── Deep research ────────────────────────────────────────────────────────
+      case 'deep_research': {
+        if (!token) throw new Error('No GitHub token configured. deep_research runs as a GitHub Actions job and needs gh_token with Actions: write.')
+        // The workflow lives in ForgeClaw's own repository regardless of any owner/repo in the call.
+        const { report, runUrl } = await runDeepResearch(githubRequest, {
+          owner: ctx.ghOwner, repo: ctx.ghRepo, token,
+          question: String(input.question || ''), queries: normalizeQueries(input.queries),
+          maxSources: Number(input.max_sources) || undefined, signal: ctx.signal,
+        })
+        return formatResearchResult(report, runUrl)
+      }
+
       // ── Site deployment ──────────────────────────────────────────────────────
       case 'github_create_repo': {
         const created = await createRepo(githubRequest, { token, name: String(input.name || ''), description: input.description as string | undefined, private: input.private === true })
@@ -1812,13 +1897,15 @@ case 'spawn_agent': {
           verification: state.verificationResults[state.verificationResults.length - 1],
           branch: (input.branch as string | undefined) || 'gh-pages',
         })
-        const result = await publishSite(githubRequest, { owner, repo, token, files: parsePublishFiles(input.files), message, branch: input.branch as string | undefined })
+        const result = await publishSite(githubRequest, { owner, repo, token, files: parsePublishFiles(input.files), message, branch: input.branch as string | undefined, enablePages: input.enable_pages !== false })
         if (result.beforeSha) {
           journalRecord(ctx.journal, { kind: 'branch_advanced', branch: result.branch, beforeSha: result.beforeSha, afterSha: result.commitSha, label: `github_publish_site ${owner}/${repo}` })
         } else {
           journalRecord(ctx.journal, { kind: 'branch_created', branch: result.branch, label: `github_publish_site ${owner}/${repo}` })
         }
-        const pagesLine = result.pages === 'enabled'
+        const pagesLine = result.pages === 'not-requested'
+          ? 'Pages not changed (source branch); next: github_build_site with this branch as source_branch'
+          : result.pages === 'enabled'
           ? `Pages enabled for ${result.branch}; the first build takes about 1 minute`
           : result.pages === 'already-serving'
             ? `Pages already serves ${result.branch}; a new build starts automatically`
@@ -1827,8 +1914,26 @@ case 'spawn_agent': {
       }
 
       case 'github_pages_status': {
-        const status = await pagesStatus(githubRequest, owner, repo, token)
-        return `Pages ${owner}/${repo}: ${status.status}${status.commit ? ` (commit ${status.commit.slice(0, 7)})` : ''}${status.error ? `\n  error: ${status.error}` : ''}\n  site: ${status.url || '(no Pages site)'}${status.updatedAt ? `\n  updated: ${status.updatedAt}` : ''}`
+        const waitMs = Math.min(Math.max(Number(input.wait_seconds) || 0, 0) * 1000, PAGES_WAIT_MAX_MS)
+        const status = await waitForPagesBuild(githubRequest, owner, repo, token, { commit: (input.commit as string | undefined)?.trim() || undefined, timeoutMs: waitMs, signal: ctx.signal })
+        const pending = waitMs > 0 && !status.final ? `\n  still ${status.status} after ${Math.round(status.waitedMs / 1000)}s; call again to keep waiting` : ''
+        return `Pages ${owner}/${repo}: ${status.status}${status.commit ? ` (commit ${status.commit.slice(0, 7)})` : ''}${status.error ? `\n  error: ${status.error}` : ''}\n  site: ${status.url || '(no Pages site)'}${status.updatedAt ? `\n  updated: ${status.updatedAt}` : ''}${pending}`
+      }
+
+      case 'github_build_site': {
+        const built = await buildAndPublishSite(githubRequest, {
+          workflowOwner: ctx.ghOwner, workflowRepo: ctx.ghRepo, owner, repo, token,
+          sourceBranch: input.source_branch as string | undefined,
+          buildCommand: input.build_command as string | undefined,
+          outputDir: input.output_dir as string | undefined,
+          publishBranch: input.publish_branch as string | undefined,
+          signal: ctx.signal,
+        })
+        const p = built.publish
+        journalRecord(ctx.journal, p.beforeSha
+          ? { kind: 'branch_advanced', branch: p.branch, beforeSha: p.beforeSha, afterSha: p.commitSha, label: `github_build_site ${owner}/${repo}` }
+          : { kind: 'branch_created', branch: p.branch, label: `github_build_site ${owner}/${repo}` })
+        return `✓ Built ${owner}/${repo} in run #${built.run.run_number} and published ${built.files} file(s) to ${p.branch} in one commit\n  build: ${built.run.html_url}\n  commit: ${p.commitSha}\n  site: ${p.pagesUrl} (Pages ${p.pages})\n  verify: github_pages_status with commit ${p.commitSha.slice(0, 7)} and wait_seconds 180`
       }
 
       default:

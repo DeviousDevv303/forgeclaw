@@ -30,6 +30,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           QUERY: ${{ inputs.query }}
           INVOCATION_ID: ${{ inputs.invocation_id }}
+          REPO: ${{ github.repository }}
         run: |
           # Inputs reach the script only through env, never through ${{ }} or source interpolation.
           if ! printf '%s' "$INVOCATION_ID" | grep -Eqx '[A-Za-z0-9._-]{1,120}'; then
@@ -38,9 +39,13 @@ jobs:
           fi
 
           # Server-side code search: no CORS issues, proper rate limit handling.
+          # Always scoped to this repository: the job token can only read its own repository, and an
+          # unscoped query searched all of GitHub. GitHub ORs repeated repo: qualifiers, so any
+          # repo:/org:/user: qualifier in the query is removed first; otherwise it would widen the scope.
           # For GET, gh sends -f/-F fields as URL-encoded query parameters.
+          SCOPED_QUERY="$(printf '%s' "$QUERY" | sed -E 's/(^|[[:space:]])-?(repo|org|user):[^[:space:]]+//Ig') repo:$REPO"
           set +e
-          gh api -X GET search/code -f q="$QUERY" -F per_page=10 > response.json 2> error.txt
+          gh api -X GET search/code -f q="$SCOPED_QUERY" -F per_page=10 > response.json 2> error.txt
           status=$?
           set -e
 

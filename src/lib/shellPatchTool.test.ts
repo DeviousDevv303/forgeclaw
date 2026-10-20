@@ -22,7 +22,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const PATCH = 'diff --git a/src/x.ts b/src/x.ts\n--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1 +1 @@\n-a\n+b\n'
 
 function ctxWith(journal: ReturnType<typeof createRunJournal>): ToolContext {
-  return { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', requestGuardianApproval: async () => true, journal }
+  return { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', requestGuardianApproval: async () => true, journal, sculptUnlocked: true }
 }
 const call = (input: Record<string, unknown>) => ({ id: '1', name: 'shell_patch', input })
 
@@ -33,7 +33,8 @@ describe('shell_patch', () => {
   it('dispatches shell-repair.yml with a tool-generated branch and invocation id', async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => init?.method === 'POST' ? new Response(null, { status: 204 }) : json({ url }, 404))
     vi.stubGlobal('fetch', fetchMock)
-    const out = await executeTool(call({ patch: PATCH, reason: 'fix typo' }), ctxWith(createRunJournal()))
+    // wait:false is dispatch-only and must say so; the default waits (tests below).
+    const out = await executeTool(call({ patch: PATCH, reason: 'fix typo', wait: false }), ctxWith(createRunJournal()))
     const dispatch = fetchMock.mock.calls.find(([url]) => String(url).includes('/shell-repair.yml/dispatches'))!
     const body = JSON.parse((dispatch[1] as RequestInit).body as string)
     expect(body.ref).toBe('main')
@@ -109,11 +110,55 @@ describe('shell_patch gating and exposure', () => {
     expect(requiresCoSign({ id: '1', name: 'github_run_workflow', input: {} }, 'operator-shell')).toBe(true)
   })
 
-  it('is exposed as a tool but granted to no coding capability', () => {
+  // 2026-10-20, Cristian Nunez: "self sculpt 100% operational via deepseek shell commands and all providers".
+  // shell_patch and sculpt_self are now granted to the write-capable coding capability; they stay out of
+  // read-only agents, still need co-sign under every posture but 'autonomous', and only ever open a PR.
+  it('is granted to the coding capability only, never to read-only agents', () => {
     expect(FORGE_TOOLS.some(t => t.name === 'shell_patch')).toBe(true)
-    expect(CODING_TOOL_ORDER).not.toContain('shell_patch')
-    for (const capability of ['coding-readonly', 'coding'] as const) {
-      expect(toolsForCapability(capability, FORGE_TOOLS).map(t => t.name)).not.toContain('shell_patch')
+    for (const name of ['shell_patch', 'sculpt_self']) {
+      expect(CODING_TOOL_ORDER).toContain(name)
+      expect(toolsForCapability('coding', FORGE_TOOLS).map(t => t.name)).toContain(name)
+      expect(toolsForCapability('coding-readonly', FORGE_TOOLS).map(t => t.name)).not.toContain(name)
+      expect(requiresCoSign({ id: '1', name, input: {} }, 'operator-shell')).toBe(true)
     }
   })
+
+  describe('waits for the run and reports what really happened', () => {
+    function github(conclusion: string, prs: unknown[]) {
+      let dispatched: { inputs: { invocation_id: string } } | undefined
+      let polls = 0
+      return vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/dispatches')) { dispatched = JSON.parse(String(init!.body)); return new Response(null, { status: 204 }) }
+        if (String(url).includes('/git/ref/heads/')) return json({}, 404)
+        const run = (status: string) => ({ id: 5, run_number: 42, name: 'Shell repair', display_title: `Shell repair ${dispatched?.inputs.invocation_id}`, event: 'workflow_dispatch', head_branch: 'main', status, conclusion: status === 'completed' ? conclusion : null, created_at: new Date().toISOString(), html_url: 'https://github.com/o/r/actions/runs/5' })
+        if (String(url).includes('/shell-repair.yml/runs')) return json({ workflow_runs: [run('in_progress')] })
+        if (String(url).endsWith('/actions/runs/5')) return json(run(++polls > 1 ? 'completed' : 'in_progress'))
+        if (String(url).includes('/pulls?head=')) return json(prs)
+        return json({}, 404)
+      })
+    }
+    beforeEach(() => { vi.useFakeTimers() })
+    afterEach(() => { vi.useRealTimers() })
+    // The tool polls every few seconds; drive the fake clock until it settles.
+    async function settle(promise: Promise<string>): Promise<string> {
+      for (let i = 0; i < 30; i++) await vi.advanceTimersByTimeAsync(5_000)
+      return promise
+    }
+
+    it('returns the pull request the run opened', async () => {
+      vi.stubGlobal('fetch', github('success', [{ number: 77, html_url: 'https://github.com/o/r/pull/77' }]))
+      const out = await settle(executeTool(call({ patch: PATCH, reason: 'fix typo' }), ctxWith(createRunJournal())))
+      expect(out).toMatch(/^✓ Shell-patch .*: build-validated and proposed as pull request #77/)
+      expect(out).toContain('pr: https://github.com/o/r/pull/77')
+      expect(out).toContain('(not merged; review it)')
+    })
+
+    it('reports a failing run as a failure with its logs, never as a proposal', async () => {
+      vi.stubGlobal('fetch', github('failure', []))
+      const out = await settle(executeTool(call({ patch: PATCH, reason: 'fix typo' }), ctxWith(createRunJournal())))
+      expect(out).toMatch(/^\[TOOL ERROR\] Shell-patch .* run #42 concluded "failure": nothing was proposed/)
+      expect(out).toContain('Logs: https://github.com/o/r/actions/runs/5')
+    })
+  })
 })
+

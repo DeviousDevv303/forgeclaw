@@ -89,7 +89,7 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(result.candidate.admissionStatus).toBe('candidate')
     expect(result.candidate.runtime).toBe('github-actions')
     // Defaults to the checkpoint the workflow actually runs (deepseekCheckpoints.ts, tied to the workflow by a test).
-    expect(result.candidate.model).toBe('deepseek-ai/deepseek-llm-7b-chat')
+    expect(result.candidate.model).toBe('Qwen/Qwen3-8B')
     expect(result.candidate.input).toContain('[DEEPSEEK_TASK] Explain routing')
     expect(result.candidate.generatedResult).toContain('[DEEPSEEK_RESULT]')
   })
