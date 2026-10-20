@@ -1473,6 +1473,8 @@ function App() {
     const sculptUnlocked = isSculptUnlocked()
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
       .filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
+      // Claude and Kimi already see an attached picture; a caption saying "picture" must not hand them the slow Actions vision job.
+      .filter(tool => !(imageUrl && isHostedReasoner && tool.name === 'analyze_image'))
 
     const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding', finalTools)) : finalTools
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)

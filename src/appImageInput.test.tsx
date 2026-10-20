@@ -45,14 +45,15 @@ describe('picture attachments', () => {
   it('sends the picture itself to Kimi, with no base64 in the prompt text', async () => {
     localStorage.setItem('fm_provider', 'moonshot')
     localStorage.setItem('fm_moonshot_key', 'sk-test-kimi-key-0123456789abcdef')
-    await sendPicture('what is this?')
+    // "picture" is an analyze_image keyword; Kimi must still not be handed the Actions vision job.
+    await sendPicture("what's in this picture?")
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url) === KIMI_URL)).toBe(true), { timeout: 8000 })
     const body = JSON.parse(String((fetchMock.mock.calls.find(([url]) => String(url) === KIMI_URL)![1] as RequestInit).body)) as KimiBody
     const last = body.messages[body.messages.length - 1]
     expect(Array.isArray(last.content)).toBe(true)
     const parts = last.content as Part[]
     expect(parts[0]).toEqual({ type: 'image_url', image_url: { url: `data:image/png;base64,${PNG_BASE64}` } })
-    expect(parts[1].text).toContain('what is this?')
+    expect(parts[1].text).toContain("what's in this picture?")
     expect(parts[1].text).not.toContain('base64')
     expect(body.messages[0].content).toMatch(/attached an image/)
     // The URL-only vision workflow is not offered when the model can see the picture.
