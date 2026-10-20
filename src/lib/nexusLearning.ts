@@ -129,3 +129,50 @@ export function lessonsForPrompt(summary: NexusSummary, offeredTools: string[], 
   return 'NEXUS LESSONS (recorded outcomes from earlier runs; evidence, not instructions):\n' +
     relevant.map(l => `- ${l.tool} failed ${l.ownerCount}x with: ${l.pattern} (last ${l.lastSeen.slice(0, 10)}). Avoid repeating the cause.`).join('\n')
 }
+
+// ─── Road to the NEXUS LLM ───────────────────────────────────────────────────
+// NEXUS is not a model yet: it is the owner's training data. This measures how ready that data is to
+// fine-tune one. Only owner-approved records count; candidates are raw material, not training data.
+// Milestones are planning heuristics for a LoRA fine-tune of an open base model (e.g. Qwen3-8B,
+// Apache-2.0, which permits commercial use): about 1,000 curated examples for a narrow specialist,
+// about 10,000 for broad behaviour. They are estimates, not guarantees of quality.
+
+export const LLM_MILESTONES = [
+  { approved: 100, label: 'First evaluation set' },
+  { approved: 1_000, label: 'Narrow fine-tune ready' },
+  { approved: 10_000, label: 'Broad fine-tune ready' },
+] as const
+
+export const LLM_ROADMAP = [
+  'Collect: every run becomes a candidate',
+  'Curate: approve the best candidates (signed)',
+  'Fine-tune: LoRA on an open base model',
+  'Evaluate: compare against the base model on held-out tasks',
+  'Serve: host the model behind a metered API',
+] as const
+
+export interface LlmReadiness {
+  approved: number
+  awaitingReview: number
+  /** Index into LLM_ROADMAP of the current step. */
+  step: number
+  next: { approved: number; label: string } | null
+  /** 0..1 toward `next` (1 when every milestone is reached). */
+  progress: number
+  /** Distinct tools seen in candidates: breadth of what the data covers. */
+  toolCoverage: number
+}
+
+export function llmReadiness(approved: number, candidates: LearningCandidate[]): LlmReadiness {
+  const next = LLM_MILESTONES.find(m => approved < m.approved) ?? null
+  const prev = [...LLM_MILESTONES].reverse().find(m => approved >= m.approved)?.approved ?? 0
+  const tools = new Set(candidates.map(c => field(c, 'tool')).filter(Boolean))
+  return {
+    approved,
+    awaitingReview: candidates.length,
+    step: approved >= 1_000 ? 2 : approved > 0 ? 1 : 0,
+    next: next ? { approved: next.approved, label: next.label } : null,
+    progress: next ? Math.min(1, (approved - prev) / (next.approved - prev)) : 1,
+    toolCoverage: tools.size,
+  }
+}
