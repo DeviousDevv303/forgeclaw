@@ -117,7 +117,7 @@ Updated 2026-10-20. "Works" means it ran successfully end to end on GitHub Actio
 | Image generation | `generate_image` / `generate-image.yml` | Works (28 of 30 on 2026-10-19). |
 | Shell commands | `shell_exec` / `shell-exec.yml` | Works. Runs report the command's own exit code. |
 | GitHub repo read/write, issues, runs, logs | `github_*` tools | Works with a GitHub token. |
-| Code search proxy | `search-proxy.yml` | The workflow runs. The last two live attempts hit GitHub's code-search rate limit (HTTP 429), so scoping is not verified live yet. |
+| Code search proxy | `search-proxy.yml` | Works: run 39465089415, all 10 results scoped to DeviousDevv303/forgeclaw. |
 | Code review | `review_code` / `code-review.yml` | Only dispatches; the result does not reach the chat yet (scheduled). |
 | Browser automation | `browser-automation.yml` | Fixed 2026-10-19, not verified live. Not a chat tool. |
 | Gmail, Calendar, WhatsApp | `gmail_*`, `calendar_*`, `send_whatsapp` | Need your own OAuth/API credentials in Settings; not verified here. |

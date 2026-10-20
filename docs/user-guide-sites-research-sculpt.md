@@ -66,6 +66,18 @@ Open the PR and review the change. It should change only the requested file; the
 
 For that provider-driven phrasing, expect Kimi to read the file and call `sculpt_self` or `shell_patch`; the reply should link the resulting PR. Keep the self-sculpt key unlocked only for work you intend to authorize.
 
+## 5. Send a picture
+
+Attach a picture with 📎 and ask about it, for example "what is this?". With **Kimi** or **Claude**, the model sees the picture itself and answers right away. With **DeepSeek 16B**, Activity shows `analyze_image`. The **Analyze Image** Actions run takes a few minutes, and the answer ends with "(Looked at by Qwen/Qwen2-VL-2B-Instruct · run …)".
+
+For that analysis, the picture is stored on the private `vision-inputs` branch, then removed from the branch's tip once the analysis finishes. It stays in that branch's history until the branch is deleted.
+
+Free mode can't read pictures yet, and says so instead of guessing.
+
+## 6. Free mode for friends and family
+
+Visitors with nothing configured use ForgeClaw's own model through the owner's relay, and answers take a few minutes. Questions about recent events run live web research first, and the answer cites `[n]` sources. Conversations and errors are shared with the developer, as the yellow note on screen says. Visitors don't see the owner's keys, tools, chats or the NEXUS tab.
+
 ## Known limits
 
 - **CPU inference is slow.** The workflow/provider label remains “DeepSeek 16B” for continuity, but the current primary workflow model is Qwen/Qwen3-8B in a 4-bit GGUF on a CPU runner, at approximately **3–4 tokens per second**. A first run may also wait for the model cache to be populated. Allow several minutes; website-generation acceptance runs have been estimated at roughly 12–20 minutes.

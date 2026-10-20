@@ -3,16 +3,17 @@
 // ─── Self-sculpt key ─────────────────────────────────────────────────────────
 // Self-modification (sculpt_self, shell_patch, /sculpt, /patch) is locked until the operator unlocks it
 // with a key only they know. The key is never stored: this browser keeps a PBKDF2-SHA-256 hash with a
-// random salt, and an unlock lasts for this tab session up to UNLOCK_TTL_MS.
+// random salt. Once the owner unlocks, self-sculpt stays unlocked in this browser until they lock it
+// again — no timed expiry (owner's explicit choice, Cristian 2026-10-20: his account, his key).
 //
-// What this protects: someone using the owner's device (or a shared session) cannot start
-// self-modification. Visitors cannot sculpt in any case: dispatching the sculpt workflows needs a
-// GitHub token with write access, and the public relay only runs the chat model.
+// What this protects: self-modification cannot start on any browser where the owner has not entered
+// the key — a visitor's browser, a fresh profile, a device he has not unlocked. Visitors cannot sculpt
+// in any case: dispatching the sculpt workflows needs a GitHub token with write access, and the public
+// relay only runs the chat model.
 
 const STORE_KEY = 'fc_sculpt_key_v1'
-const UNLOCK_KEY = 'fc_sculpt_unlocked_until'
+const UNLOCK_KEY = 'fc_sculpt_unlocked_v1'
 export const SCULPT_KEY_MIN_LENGTH = 12
-export const UNLOCK_TTL_MS = 2 * 60 * 60 * 1000
 const ITERATIONS = 310_000
 
 interface StoredKey { salt: string; hash: string; iterations: number }
@@ -52,7 +53,7 @@ export async function setSculptKey(passphrase: string, currentPassphrase?: strin
   const salt = crypto.getRandomValues(new Uint8Array(16))
   const stored: StoredKey = { salt: toHex(salt), hash: await derive(passphrase, salt, ITERATIONS), iterations: ITERATIONS }
   localStorage.setItem(STORE_KEY, JSON.stringify(stored))
-  unlockFor(UNLOCK_TTL_MS)
+  markUnlocked()
 }
 
 export async function verifySculptKey(passphrase: string): Promise<boolean> {
@@ -61,24 +62,25 @@ export async function verifySculptKey(passphrase: string): Promise<boolean> {
   return same(await derive(passphrase, fromHex(stored.salt), stored.iterations || ITERATIONS), stored.hash)
 }
 
-function unlockFor(ms: number, now = Date.now()) {
-  try { sessionStorage.setItem(UNLOCK_KEY, String(now + ms)) } catch { /* storage unavailable: stays locked */ }
+function markUnlocked() {
+  try { localStorage.setItem(UNLOCK_KEY, '1') } catch { /* storage unavailable: stays locked */ }
 }
 
 export async function unlockSculpt(passphrase: string): Promise<boolean> {
   if (!await verifySculptKey(passphrase)) return false
-  unlockFor(UNLOCK_TTL_MS)
+  markUnlocked()
   return true
 }
 
 export function lockSculpt(): void {
-  try { sessionStorage.removeItem(UNLOCK_KEY) } catch { /* nothing to clear */ }
+  try { localStorage.removeItem(UNLOCK_KEY) } catch { /* nothing to clear */ }
 }
 
-/** True only while an unlock from the correct key is in force in this tab. */
-export function isSculptUnlocked(now = Date.now()): boolean {
+/** True while the owner has self-sculpt unlocked in this browser — persists across tabs and
+ * restarts until lockSculpt() (or a key change) locks it again. */
+export function isSculptUnlocked(): boolean {
   if (!hasSculptKey()) return false
-  try { return Number(sessionStorage.getItem(UNLOCK_KEY) || 0) > now } catch { return false }
+  try { return localStorage.getItem(UNLOCK_KEY) === '1' } catch { return false }
 }
 
 export const SCULPT_LOCKED_MESSAGE =

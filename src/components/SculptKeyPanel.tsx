@@ -21,9 +21,9 @@ export function SculptKeyPanel() {
     try {
       if (!configured || changing) {
         await setSculptKey(key, changing ? current : undefined)
-        done('Self-sculpt key saved. Self-sculpt is unlocked for 2 hours in this tab.')
+        done('Self-sculpt key saved. Self-sculpt stays unlocked in this browser until you lock it.')
       } else if (await unlockSculpt(key)) {
-        done('Unlocked for 2 hours in this tab.')
+        done('Unlocked. It stays unlocked in this browser until you lock it.')
       } else {
         setKey('')
         setStatus('Wrong key. Self-sculpt stays locked.')

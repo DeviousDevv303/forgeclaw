@@ -53,6 +53,8 @@ describe('public visitor mode', () => {
     for (const [, init] of fetchMock.mock.calls) expect(JSON.stringify((init as RequestInit | undefined)?.headers ?? {})).not.toMatch(/Authorization/i)
     // Nothing personal to the owner is shown to a visitor.
     expect(document.body.textContent).not.toContain("Cristian's Computer")
+    // NEXUS is the owner's private training data: no tab for a visitor.
+    expect(screen.queryByRole('button', { name: /^NEXUS$/ })).toBeNull()
   }, 20_000)
 
   it('gives a visitor live web results: research through the relay, then an answer from those sources', async () => {
@@ -71,6 +73,7 @@ describe('public visitor mode', () => {
     localStorage.setItem('gh_token', 'ghp_owner_token_for_test_only_000000000000')
     await ask('explain recursion to a ten year old')
     expect(screen.queryByRole('note')).toBeNull()
+    expect(screen.getByRole('button', { name: /^NEXUS$/ })).toBeTruthy()
     await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/deepseek-16b.yml/dispatches'))).toBe(true), { timeout: 8000 })
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith(RELAY))).toBe(false)
   }, 20_000)
