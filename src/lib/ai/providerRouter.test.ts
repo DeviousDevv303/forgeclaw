@@ -25,8 +25,12 @@ describe('provider router', () => {
     }
     expect(await taskFor('es')).toMatch(/\n\nReply language: Respond in Spanish \(Latin American/)
     expect(await taskFor('zh')).toMatch(/Reply language: Respond in Chinese/)
-    expect(await taskFor('en')).toBe('Explain the architecture of the repository.')
-    expect(await taskFor(undefined)).toBe('Explain the architecture of the repository.')
+    // English adds no language line; every task carries today's date (currentInfo.ts).
+    for (const lang of ['en', undefined]) {
+      const task = await taskFor(lang)
+      expect(task).toMatch(/^Explain the architecture of the repository\.\n\nToday's date is /)
+      expect(task).not.toContain('Reply language')
+    }
   })
 
   it('bootstraps the DeepSeek workflow before prose for a complex request', async () => {

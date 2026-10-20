@@ -11,6 +11,7 @@ import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { buildDeepSeekTaskPayload, extractOriginalDeepSeekTask } from './deepseekContext'
 import { stripReasoningArtifacts } from './responseFilter'
 import { withResponseLanguage } from '../responseLanguage'
+import { currentDateNote, needsCurrentInfo } from '../currentInfo'
 import { extractRewrittenFile, readFileBody, sculptTarget, sculptTask } from './deepseekSculpt'
 import { extractSiteHtml, isSiteDeployRequest, parseCreatedRepo, parsePublishedCommit, siteGenerationTask, siteRepoName } from './deepseekSite'
 
@@ -98,7 +99,9 @@ export function isResearchRequest(text: string): boolean {
 
 function shouldBootstrapResearch(request: AIRequest, providerId: ProviderId): boolean {
   if (!isDeepSeekProvider(providerId) || !request.tools?.some(t => t.name === 'deep_research') || hasToolResult(request, 'deep_research')) return false
-  return isResearchRequest(latestUserTask(request))
+  const text = latestUserTask(request)
+  // "What's the latest in X" needs sources too: the model's own knowledge stops at its training cutoff.
+  return isResearchRequest(text) || needsCurrentInfo(text)
 }
 
 /** The research step's result for this turn, if it ran. */
@@ -196,7 +199,8 @@ function buildDeepSeekToolInput(request: AIRequest): { task: string; context?: s
   const verified = turn.filter(m => m.role === 'tool' && m.tool_call_id && !/^\s*(?:\[TOOL ERROR\]|\[GUARDIAN (?:BLOCKED?|REJECTED)\])/i.test(m.content)).map(m => `${names.get(m.tool_call_id!) || 'tool'} result:\n${m.content}`).join('\n\n')
   // The workflow never sees request.systemPrompt, so the selected UI language rides in the task.
   const payload = buildDeepSeekTaskPayload(task, verified)
-  return { ...payload, task: withResponseLanguage(payload.task, request.responseLanguage) }
+  // The date rides in the task too, so the model knows how old its own knowledge is.
+  return { ...payload, task: `${withResponseLanguage(payload.task, request.responseLanguage)}\n\n${currentDateNote()}` }
 }
 
 export async function sendViaRouter(request: AIRequest, apiKey: string, providerId: ProviderId = DEFAULT_PROVIDER): Promise<{ success: true; response: AIResponse } | { success: false; error: AIError }> {

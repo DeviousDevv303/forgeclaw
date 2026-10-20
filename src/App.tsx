@@ -225,6 +225,7 @@ import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { startErrorReporting } from './lib/errorReporting'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
+import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
 import { baselineToolNames, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
@@ -1442,11 +1443,16 @@ function App() {
       coreToolNames.push('github_repo_state', 'shell_exec', 'github_read_file', 'github_search_code')
     }
     if (imageUrl) coreToolNames.push('analyze_image')
+    // Questions about what is current get gathered sources, whatever the wording (currentInfo.ts).
+    if (needsCurrentInfo(promptText)) coreToolNames.push('deep_research')
     coreToolNames.push(...baselineToolNames(activeProvider))
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     // Self-modification tools are offered only while the owner's self-sculpt key is unlocked.
     const sculptUnlocked = isSculptUnlocked()
-    const finalTools = [...new Set([...relevantTools, ...coreToolDefs])].filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
+    const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
+      .filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
+      // deep_research runs as an owner-token GitHub job; a public visitor has no token, so it is not offered.
+      .filter(tool => !(tool.name === 'deep_research' && isPublicVisitor(ghToken)))
 
     const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding', finalTools)) : finalTools
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
@@ -1464,7 +1470,7 @@ function App() {
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
           : '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for tasks that require delegated reasoning, then formulate the final response from the tool result.'
         : '\n\nPRIMARY REASONING POLICY\nAnswer the user directly and clearly. Do not emit tool syntax, code, token IDs, or internal runtime instructions.'
-    const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
+    const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nCURRENT DATE\n${currentDateNote()}${needsCurrentInfo(promptText) && finalTools.some(t => t.name === 'deep_research') ? ' This question is about what is current: call deep_research first and answer from its sources.' : ''}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
     
     // NEXUS recursive learning: recurring failures of the tools offered now, as counted evidence.
     const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(500)), runtimeTools.map(tool => tool.name))
