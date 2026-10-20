@@ -98,8 +98,10 @@ export { CANONICAL_IDENTITY }
 export function isCodingTaskRequest(prompt: string, options?: { hasAttachment?: boolean }): boolean {
   if (options?.hasAttachment) return false
   const t = prompt.toLowerCase()
-  const hasTarget = /\b(repo|repository|codebase|forgeclaw|source|file|files|branch|commit|head|github)\b/.test(t)
-  const hasAction = /\b(check|inspect|read|fix|implement|add|change|modify|update|refactor|test|build|lint|commit|push|verify|debug|repair|write|create|feedback)\b/.test(t)
+  // Website targets and deploy actions: "build me a portfolio site and deploy it to GitHub Pages"
+  // previously matched neither list, so it ran as plain chat with no repository tools.
+  const hasTarget = /\b(repo|repository|codebase|forgeclaw|source|file|files|branch|commit|head|github|website|site|webpage|landing page|github pages|gh-pages|html|css)\b/.test(t)
+  const hasAction = /\b(check|inspect|read|fix|implement|add|change|modify|update|refactor|test|build|lint|commit|push|verify|debug|repair|write|create|feedback|make|deploy|publish|ship|scaffold|launch)\b/.test(t)
   return hasTarget && hasAction
 }
 
@@ -352,6 +354,9 @@ export function hasSuccessfulRepositoryEvidence(
     'github_list_files',
     'github_search_code',
     'github_verify_commit',
+    // A website job may never read a file; its publish commit and Pages build are the evidence.
+    'github_publish_site',
+    'github_pages_status',
   ])
   return results.some(result => evidenceTools.has(result.name) && !result.isError)
 }

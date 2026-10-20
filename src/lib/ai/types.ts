@@ -21,6 +21,8 @@ export interface AIMessage {
   image_url?: string
   tool_call_id?: string
   tool_calls?: AIToolCall[]
+  /** Kimi thinking output from the turn that made tool_calls; Moonshot needs it sent back in tool-call loops. */
+  reasoning_content?: string
 }
 
 export interface AIToolDef {
@@ -33,6 +35,8 @@ export interface AIToolCall {
   id: string
   name: string
   input: Record<string, unknown>
+  /** Set when the model's arguments were not valid JSON or were cut off by the output limit; the call must not run. */
+  parseError?: string
 }
 
 export interface SecondarySynthesisAttempt {
@@ -58,6 +62,8 @@ export interface AIResponse {
   model: string
   toolCalls?: AIToolCall[]
   stopReason?: string
+  /** Provider reasoning text (Kimi reasoning_content). Never shown as the answer. */
+  reasoningContent?: string
   diagnostics?: {
     primaryReasoning?: PrimaryReasoningDiagnostic
     secondarySynthesis?: SecondarySynthesisDiagnostic

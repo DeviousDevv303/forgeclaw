@@ -43,3 +43,30 @@ export const SHELL_EXEC_GUIDANCE =
   'node_modules is not installed (run `npm ci` first in the same command, e.g. `npm ci && npx vitest run src/lib`); ' +
   'git history is one commit deep (run `git fetch --unshallow` first if you need it); there are no git credentials, so it cannot push; ' +
   'nothing persists between calls; each job is limited to 10 minutes. Chain related steps into one command with &&.'
+
+/** Tools a model legitimately calls repeatedly with the same input while it waits on a run. */
+const POLLING_TOOLS: ReadonlySet<string> = new Set(['github_get_run_status', 'github_get_run_logs', 'github_repo_state'])
+
+/** How many identical calls in one run count as a loop. */
+export function repeatedCallLimit(toolName: string): number {
+  return POLLING_TOOLS.has(toolName) ? 8 : 3
+}
+
+/**
+ * Tool result for a call whose arguments were cut off by the output limit or were not valid JSON.
+ * The call is not executed: before this, Kimi's truncated github_write_file ran with input {} and
+ * failed with an unrelated "path" error, and the model retried the same oversized call.
+ */
+export function truncatedToolCallResult(toolName: string, reason: string): string {
+  return `[TOOL ERROR] ${toolName} was not executed: ${reason}. ` +
+    'Retry with smaller output: write one file per call, keep each file under about 300 lines, ' +
+    'and split a large file into a small first version plus follow-up edits.'
+}
+
+/** How a hosted model builds and ships a static site, so it does not commit file-by-file or into ForgeClaw. */
+export const SITE_DEPLOY_GUIDANCE =
+  'Website deployment: (1) unless the user named an existing repository, call github_create_repo with a short name; ' +
+  '(2) write the complete static site (index.html plus CSS/JS/assets, relative links) and call github_publish_site ONCE with every file, ' +
+  'owner and repo from step 1; never publish into forgeclaw; (3) call github_pages_status until status is built for the published commit ' +
+  '(the first build takes about a minute; errored means read the error and republish); (4) only then report the live URL. ' +
+  'Static files only: there is no build step on Pages, so do not rely on npm install or a bundler.'

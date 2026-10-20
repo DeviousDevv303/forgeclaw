@@ -1,0 +1,78 @@
+# ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+# Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+name: Code Search Proxy
+
+# run-name carries the caller's correlation ID (workflow_dispatch returns no run ID).
+run-name: Code search ${{ inputs.invocation_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: 'Code search query'
+        required: true
+        type: string
+      invocation_id:
+        description: 'Unique invocation ID for correlation'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Search code via GitHub API
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUERY: ${{ inputs.query }}
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: |
+          # Inputs reach the script only through env, never through ${{ }} or source interpolation.
+          if ! printf '%s' "$INVOCATION_ID" | grep -Eqx '[A-Za-z0-9._-]{1,120}'; then
+            echo "::error title=search-proxy::invocation_id must match [A-Za-z0-9._-]{1,120}"
+            exit 1
+          fi
+
+          # Server-side code search: no CORS issues, proper rate limit handling.
+          # For GET, gh sends -f/-F fields as URL-encoded query parameters.
+          set +e
+          gh api -X GET search/code -f q="$QUERY" -F per_page=10 > response.json 2> error.txt
+          status=$?
+          set -e
+
+          python3 - "$status" <<'PY'
+          import json, os, sys
+
+          status = int(sys.argv[1])
+          out = {"invocation_id": os.environ["INVOCATION_ID"], "query": os.environ["QUERY"]}
+          if status == 0:
+              data = json.load(open("response.json"))
+              out["total_count"] = data["total_count"]
+              out["incomplete_results"] = data.get("incomplete_results", False)
+              out["items"] = [
+                  {"path": i["path"], "repository": i["repository"]["full_name"], "url": i["html_url"]}
+                  for i in data["items"]
+              ]
+          else:
+              out["error"] = open("error.txt").read().strip() or f"gh api exited {status}"
+          with open("result.json", "w") as f:
+              json.dump(out, f)
+          print(json.dumps(out, indent=2))
+          if status != 0:
+              print(f"::error title=search-proxy::code search failed (gh exit {status})")
+              sys.exit(1)
+          PY
+
+      - name: Upload result
+        # Upload on failure too, so the caller gets the error payload rather than a missing artifact.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-${{ inputs.invocation_id }}
+          path: result.json
+          if-no-files-found: ignore
+          retention-days: 1

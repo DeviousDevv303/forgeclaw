@@ -31,6 +31,15 @@ import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './ima
 import { TasteProviderClient } from './ai/providers/tasteProvider'
 import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
 import { journalRecord, type RunJournal } from './runRollback'
+import { createRepo, pagesStatus, publishSite, type GithubRequest, type PublishFile } from './githubPublish'
+
+/** Models send files as an array or as a JSON string of one; anything else is rejected by the publisher. */
+function parsePublishFiles(raw: unknown): PublishFile[] {
+  if (typeof raw === 'string') {
+    try { return JSON.parse(raw) as PublishFile[] } catch { throw new Error('files must be an array of {path, content} (got a string that is not JSON)') }
+  }
+  return raw as PublishFile[]
+}
 
 // These runtime envelopes are for the chat/model boundary only. They must not
 // become part of a user-facing image prompt, where Stable Diffusion may render
@@ -49,6 +58,8 @@ export interface ToolParam {
   type: string
   description: string
   enum?: string[]
+  /** Element schema for type 'array'; some providers reject an array parameter without it. */
+  items?: Record<string, unknown>
 }
 
 export interface ToolDef {
@@ -508,6 +519,47 @@ export const FORGE_TOOLS: ToolDef[] = [
       required: ['sha'],
     },
   },
+  // ── Site deployment (githubPublish.ts) ──────────────────────────────────────
+  {
+    name: 'github_create_repo',
+    description: 'Create a new public GitHub repository under the token owner, initialized with a main branch, to hold a website. Use before github_publish_site when the site needs its own repository. Never use the ForgeClaw repository for a site.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name:        { type: 'string', description: 'Repository name, e.g. bakery-site' },
+        description: { type: 'string', description: 'One-line repository description' },
+        private:     { type: 'boolean', description: 'Default false. GitHub Pages on free plans needs a public repository.' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'github_publish_site',
+    description: 'Publish a static website (HTML/CSS/JS) to GitHub Pages: writes ALL files in ONE commit to a site branch (default gh-pages, never main) and enables Pages for that branch if needed. Returns the commit and the site URL. A new site must include index.html; an existing branch is only updated if ForgeClaw published it. Then call github_pages_status until it reports built for that commit. Prefer this over many github_write_file calls for a site.',
+    parameters: {
+      type: 'object',
+      properties: {
+        owner:   { type: 'string', description: 'Repository owner (from github_create_repo)' },
+        repo:    { type: 'string', description: 'Repository name (not forgeclaw)' },
+        files:   { type: 'array', description: 'Files to write, each {path, content}. Paths are relative, e.g. index.html, css/style.css. Max 100 files, 2 MB.', items: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
+        message: { type: 'string', description: 'Commit message' },
+        branch:  { type: 'string', description: 'Site branch, default gh-pages' },
+      },
+      required: ['repo', 'files', 'message'],
+    },
+  },
+  {
+    name: 'github_pages_status',
+    description: 'Read the GitHub Pages site URL and the latest build status (queued, building, built, errored) and its commit. A publish is verified only when status is built for the published commit.',
+    parameters: {
+      type: 'object',
+      properties: {
+        owner: { type: 'string', description: 'Repository owner' },
+        repo:  { type: 'string', description: 'Repository name' },
+      },
+      required: ['repo'],
+    },
+  },
   {
     name: 'coding_task_update',
     description: 'Persist coding-agent task state so the task can resume after a page reload or session restart. Record the objective, current HEAD, completed and pending steps, verified results, and any blockers.',
@@ -582,7 +634,7 @@ export function formatDeepSeekResultText(
 /** Tools whose effects leave the repository or cannot be recalled; STOP reports them instead of claiming an undo. */
 const SHELL_PATCH_MAX_CHARS = 60_000
 
-const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set(['send_whatsapp', 'gmail_send', 'calendar_create', 'github_create_issue'])
+const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set(['send_whatsapp', 'gmail_send', 'calendar_create', 'github_create_issue', 'github_create_repo'])
 
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
   const output = await executeToolCore(call, ctx)
@@ -620,6 +672,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
   const owner = (input.owner as string) || ctx.ghOwner
   const repo  = (input.repo  as string) || ctx.ghRepo
   const token = ctx.ghToken
+  const githubRequest: GithubRequest = (url, init) => toolFetch(ctx, url, init ?? {})
 
   try {
     switch (name) {
@@ -1737,6 +1790,45 @@ case 'spawn_agent': {
           activity: appendActivity(previous, 'coding_task_update', `${status}${blocker ? ` — blocker: ${blocker}` : ''}`),
         })
         return `✓ Coding agent state persisted — status: ${next.taskStatus}, repo: ${next.owner}/${next.repo}@${next.branch}, HEAD: ${next.headShaShort || '(unknown)'}, updated: ${next.updatedAt}`
+      }
+
+      // ── Site deployment ──────────────────────────────────────────────────────
+      case 'github_create_repo': {
+        const created = await createRepo(githubRequest, { token, name: String(input.name || ''), description: input.description as string | undefined, private: input.private === true })
+        return `✓ Created repository ${created.owner}/${created.repo} (default branch ${created.defaultBranch})\n  url: ${created.url}\n  next: github_publish_site with owner "${created.owner}" and repo "${created.repo}"`
+      }
+
+      case 'github_publish_site': {
+        const requestedMessage = String(input.message || '').trim() || 'Publish site'
+        const state = loadState()
+        // Same attribution contract as github_write_file: the commit names the acting agent and task.
+        const message = buildAttributedCommitMessage({
+          actor: ctx.actor,
+          agentId: FORGECLAW_AGENT_ID,
+          agentLabel: FORGECLAW_AGENT_LABEL,
+          what: requestedMessage,
+          why: requestedMessage,
+          task: state.task,
+          verification: state.verificationResults[state.verificationResults.length - 1],
+          branch: (input.branch as string | undefined) || 'gh-pages',
+        })
+        const result = await publishSite(githubRequest, { owner, repo, token, files: parsePublishFiles(input.files), message, branch: input.branch as string | undefined })
+        if (result.beforeSha) {
+          journalRecord(ctx.journal, { kind: 'branch_advanced', branch: result.branch, beforeSha: result.beforeSha, afterSha: result.commitSha, label: `github_publish_site ${owner}/${repo}` })
+        } else {
+          journalRecord(ctx.journal, { kind: 'branch_created', branch: result.branch, label: `github_publish_site ${owner}/${repo}` })
+        }
+        const pagesLine = result.pages === 'enabled'
+          ? `Pages enabled for ${result.branch}; the first build takes about 1 minute`
+          : result.pages === 'already-serving'
+            ? `Pages already serves ${result.branch}; a new build starts automatically`
+            : `NOT LIVE: Pages serves ${result.pagesSource || 'another source'}, not ${result.branch}. The site was not repointed; change the Pages source in repository settings or publish to that branch.`
+        return `✓ Published ${result.files.length} file(s) to ${owner}/${repo}@${result.branch} in one commit\n  commit: ${result.commitSha}\n  ${pagesLine}\n  site: ${result.pagesUrl}\n  verify: github_pages_status for ${owner}/${repo} until status is built for commit ${result.commitSha.slice(0, 7)}`
+      }
+
+      case 'github_pages_status': {
+        const status = await pagesStatus(githubRequest, owner, repo, token)
+        return `Pages ${owner}/${repo}: ${status.status}${status.commit ? ` (commit ${status.commit.slice(0, 7)})` : ''}${status.error ? `\n  error: ${status.error}` : ''}\n  site: ${status.url || '(no Pages site)'}${status.updatedAt ? `\n  updated: ${status.updatedAt}` : ''}`
       }
 
       default:

@@ -22,6 +22,8 @@ export type AgentCapability = 'chat' | 'coding-readonly' | 'coding'
 /** Tools that change repository state, spend external quota, or execute code. */
 export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'github_write_file',
+  'github_publish_site',
+  'github_create_repo',
   'github_create_issue',
   'github_run_workflow',
   'shell_exec',
@@ -45,6 +47,10 @@ export const CODING_TOOL_ORDER: readonly string[] = [
   'github_search_code',
   'github_verify_commit',
   'github_write_file',
+  // Site deployment: one-commit publish to a Pages branch, its repo, and build verification.
+  'github_create_repo',
+  'github_publish_site',
+  'github_pages_status',
   'github_create_issue',
   'github_run_workflow',
   'github_get_run_status',
