@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LearningCandidate } from './corpus'
 import { buildLearningEvent } from './learningEvents'
-import { failurePattern, lessonsForPrompt, NEXUS_MOTTO, summarizeLearning } from './nexusLearning'
+import { failurePattern, lessonsForPrompt, llmReadiness, NEXUS_MOTTO, summarizeLearning } from './nexusLearning'
 import { visitorCandidate } from './visitorLearning'
 
 let n = 0
@@ -88,5 +88,15 @@ describe('visitor evidence cannot steer NEXUS', () => {
       candidate('deepseek_reason', 'failed', '[TOOL ERROR] model run concluded failure'),
     ])
     expect(lessonsForPrompt(owner, ['deepseek_reason'])).toContain('deepseek_reason failed 2x')
+  })
+})
+
+describe('road to the NEXUS LLM', () => {
+  it('counts only approved records toward the milestones, and is honest about the step', () => {
+    const r0 = llmReadiness(0, [candidate('shell_exec', 'completed', 'ok'), candidate('github_read_file', 'completed', 'ok')])
+    expect(r0).toMatchObject({ approved: 0, awaitingReview: 2, step: 0, next: { approved: 100 }, progress: 0, toolCoverage: 2 })
+    expect(llmReadiness(550, [])).toMatchObject({ step: 1, next: { approved: 1_000, label: 'Narrow fine-tune ready' }, progress: 0.5 })
+    expect(llmReadiness(1_000, [])).toMatchObject({ step: 2, next: { approved: 10_000 }, progress: 0 })
+    expect(llmReadiness(12_000, [])).toMatchObject({ next: null, progress: 1 })
   })
 })

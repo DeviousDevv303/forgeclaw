@@ -2401,7 +2401,8 @@ function App() {
   const TABS: { id: Tab; label: string; badge?: string }[] = [
     { id: 'forgemind',   label: t('tab.forge') },
     { id: 'agents',      label: t('tab.agents') },
-    { id: 'nexus',       label: t('tab.nexus') },
+    // NEXUS is the owner's private training data: never shown to free-mode visitors.
+    ...(isPublicVisitor(ghToken) ? [] : [{ id: 'nexus' as Tab, label: t('tab.nexus') }]),
     { id: 'activity',    label: t('tab.activity'), badge: unresolvedCount > 0 ? String(unresolvedCount) : activityLog.some(e => e.status === 'running') ? '•' : undefined },
     { id: 'settings',    label: t('tab.settings') },
   ]
@@ -3467,10 +3468,10 @@ function App() {
         )}
 
         {/* ── NEXUS Recursive Learning (replaced the MIC tab; voice input stays on the chat bar) ── */}
-        {activeTab === 'nexus' && (
+        {activeTab === 'nexus' && !isPublicVisitor(ghToken) && (
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
             <NexusLearningPanel />
-            {!isPublicVisitor(ghToken) && <VisitorLearningImport />}
+            <VisitorLearningImport />
           </div>
         )}
 

@@ -6,7 +6,7 @@
 // signed authorization (corpusAdmissionAuth.ts), which this page deliberately does not hold.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { corpusRepository, type LearningCandidate } from '../lib/corpus'
-import { NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, summarizeLearning, type Outcome } from '../lib/nexusLearning'
+import { LLM_MILESTONES, LLM_ROADMAP, llmReadiness, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, summarizeLearning, type Outcome } from '../lib/nexusLearning'
 import { useI18n } from '../lib/i18n'
 
 const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
@@ -34,6 +34,7 @@ export function NexusLearningPanel() {
   const summary = useMemo(() => summarizeLearning(candidates), [candidates])
   const shown = useMemo(() => candidates.filter(c => filter === 'all' || outcomeOf(c) === filter).slice(0, 60), [candidates, filter])
   const approved = corpusRepository.getApprovedCount()
+  const road = useMemo(() => llmReadiness(approved, candidates), [approved, candidates])
 
   const reject = async (c: LearningCandidate) => {
     const result = await corpusRepository.rejectCandidate(c.id, 'rejected by the operator on the NEXUS page')
@@ -50,6 +51,24 @@ export function NexusLearningPanel() {
           {NEXUS_PRINCIPLES.map(p => <li key={p}>{p}</li>)}
         </ol>
       </header>
+
+      <section style={{ ...card, borderColor: '#2a1a05' }} aria-label="Road to the NEXUS LLM" data-testid="nexus-llm-road">
+        <div style={heading}>ROAD TO THE NEXUS LLM</div>
+        <div style={{ color: '#eee', fontFamily: mono, fontSize: '13px', marginBottom: '6px' }}>
+          {road.approved.toLocaleString()} approved training example{road.approved === 1 ? '' : 's'}
+          {road.next ? ` · next: ${road.next.label} at ${road.next.approved.toLocaleString()}` : ' · every data milestone reached'}
+        </div>
+        <div style={{ height: '8px', background: '#1a1a1a', borderRadius: '4px', overflow: 'hidden', marginBottom: '8px' }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(road.progress * 100)}>
+          <div style={{ width: `${Math.round(road.progress * 100)}%`, height: '100%', background: '#f97316' }} />
+        </div>
+        <div style={{ color: '#888', fontSize: '11px', lineHeight: 1.6, marginBottom: '8px' }}>
+          {road.awaitingReview.toLocaleString()} candidate(s) awaiting your review · data covers {road.toolCoverage} tool(s) · milestones {LLM_MILESTONES.map(m => m.approved.toLocaleString()).join(' / ')}
+        </div>
+        <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', lineHeight: 1.7 }}>
+          {LLM_ROADMAP.map((step, i) => <li key={step} style={{ color: i < road.step ? '#22c55e' : i === road.step ? '#f97316' : '#555' }}>{step}{i === road.step ? ' ← now' : ''}</li>)}
+        </ol>
+        <div style={{ color: '#555', fontSize: '10px', marginTop: '8px' }}>NEXUS is training data, not a model yet. Only records you approve count; the milestones are estimates for a LoRA fine-tune of an open base model.</div>
+      </section>
 
       <section aria-label="Evidence totals" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px' }}>
         <div style={card}><div style={heading}>{t('nexus.recorded')}</div><div style={{ color: '#eee', fontSize: '22px', fontFamily: mono }}>{summary.total}</div></div>
