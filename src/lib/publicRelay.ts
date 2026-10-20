@@ -7,6 +7,7 @@
 // involved: the relay only runs the chat model and returns its text.
 
 import type { ResearchReport } from './deepResearch'
+import { translate } from './i18n'
 
 export const PUBLIC_RELAY_URL: string = (import.meta.env.VITE_PUBLIC_RELAY_URL as string | undefined)?.trim().replace(/\/+$/, '') ?? ''
 export const PUBLIC_RELAY_MAX_WAIT_MS = 20 * 60 * 1000
@@ -16,9 +17,7 @@ export function isPublicVisitor(ghToken: string, relayUrl = PUBLIC_RELAY_URL): b
   return !!relayUrl && !ghToken.trim()
 }
 
-export const PUBLIC_MODE_NOTICE =
-  'Free mode: answers come from ForgeClaw\'s own model and take a few minutes. Your conversations and any errors are shared ' +
-  'with the ForgeClaw developer to improve it, so please do not enter private information.'
+export const PUBLIC_MODE_NOTICE = translate('en', 'public.notice')
 
 export interface PublicReasoningOptions {
   relayUrl?: string
