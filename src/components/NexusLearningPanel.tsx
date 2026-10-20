@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { corpusRepository, type LearningCandidate } from '../lib/corpus'
 import { LLM_MILESTONES, LLM_ROADMAP, llmReadiness, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, summarizeLearning, type Outcome } from '../lib/nexusLearning'
 import { useI18n } from '../lib/i18n'
+import { decide, loadDecisions, mineHeuristics } from '../lib/nexusHeuristics'
 
 const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
 const mono = "'Courier New', monospace"
@@ -35,6 +36,9 @@ export function NexusLearningPanel() {
   const shown = useMemo(() => candidates.filter(c => filter === 'all' || outcomeOf(c) === filter).slice(0, 60), [candidates, filter])
   const approved = corpusRepository.getApprovedCount()
   const road = useMemo(() => llmReadiness(approved, candidates), [approved, candidates])
+  const [decisions, setDecisions] = useState(() => loadDecisions())
+  const mined = useMemo(() => mineHeuristics(candidates), [candidates])
+  const pending = mined.filter(h => !decisions.approved.includes(h.rule) && !decisions.rejected.includes(h.rule))
 
   const reject = async (c: LearningCandidate) => {
     const result = await corpusRepository.rejectCandidate(c.id, 'rejected by the operator on the NEXUS page')
@@ -80,6 +84,30 @@ export function NexusLearningPanel() {
         ))}
         <div style={card}><div style={heading}>{t('nexus.failureRate')}</div><div style={{ color: summary.failureRate > 0.3 ? '#ef4444' : '#39ff14', fontSize: '22px', fontFamily: mono }}>{Math.round(summary.failureRate * 100)}%</div></div>
         <div style={card}><div style={heading}>{t('nexus.admitted')}</div><div style={{ color: '#eee', fontSize: '22px', fontFamily: mono }}>{approved}</div></div>
+      </section>
+
+      <section style={card} aria-label="Your heuristics" data-testid="nexus-heuristics">
+        <div style={heading}>YOUR HEURISTICS · mined from what you type</div>
+        <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>Rules you state ("always…", "never…", "make sure…", "I want…", "if… then…", or "rule: …") that you repeat, or mark explicitly. Only approved ones are given to every model. Visitors' input is never mined.</div>
+        {decisions.approved.length > 0 && (
+          <ul style={{ margin: '0 0 8px', paddingLeft: '18px', color: '#22c55e', fontSize: '12px', lineHeight: 1.7 }}>
+            {decisions.approved.map(rule => (
+              <li key={rule}>{rule} <button onClick={() => setDecisions(decide(rule, 'forget'))} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>remove</button></li>
+            ))}
+          </ul>
+        )}
+        {pending.length === 0
+          ? <div style={{ color: '#555', fontSize: '12px' }}>{decisions.approved.length ? 'No new heuristics to review.' : 'No heuristics yet. State a rule twice, or start a line with "rule:".'}</div>
+          : pending.slice(0, 12).map(h => (
+              <div key={h.rule} style={{ borderTop: '1px solid #161616', padding: '6px 0', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: '#ddd', fontSize: '12px' }}>{h.rule}</div>
+                  <div style={{ color: '#666', fontSize: '10px', fontFamily: 'monospace' }}>{h.explicit ? 'explicit · ' : ''}said {h.count}× · last {h.lastSeen.slice(0, 10)}</div>
+                </div>
+                <button onClick={() => setDecisions(decide(h.rule, 'approve'))} style={{ background: 'none', border: '1px solid #1a3a1a', color: '#5a5', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>APPROVE</button>
+                <button onClick={() => setDecisions(decide(h.rule, 'reject'))} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>REJECT</button>
+              </div>
+            ))}
       </section>
 
       <section style={card} aria-label="Lessons">

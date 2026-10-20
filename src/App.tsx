@@ -192,6 +192,7 @@ import { ElapsedNote } from './components/ElapsedNote'
 import { NexusLearningPanel } from './components/NexusLearningPanel'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
+import { heuristicsForPrompt } from './lib/nexusHeuristics'
 import { isPublicVisitor, PUBLIC_MODE_NOTICE } from './lib/publicRelay'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
@@ -1471,7 +1472,9 @@ function App() {
     
     // NEXUS recursive learning: recurring failures of the tools offered now, as counted evidence.
     const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(500)), runtimeTools.map(tool => tool.name))
-    const lessonedSystemPrompt = nexusLessons ? `${baseSystemPrompt}\n\n${nexusLessons}` : baseSystemPrompt
+    // The owner's approved heuristics (NEXUS page) apply to every model; visitors' browsers have none.
+    const ownerHeuristics = isPublicVisitor(ghToken) ? '' : heuristicsForPrompt()
+    const lessonedSystemPrompt = [baseSystemPrompt, ownerHeuristics, nexusLessons].filter(Boolean).join('\n\n')
     const finalSystemPrompt = relevant.length > 0
       ? lessonedSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
         relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
