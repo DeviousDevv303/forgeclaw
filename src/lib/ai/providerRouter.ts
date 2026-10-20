@@ -1,4 +1,6 @@
 // ForgeClaw — DeepSeek 16B GitHub Actions is the canonical reasoning runtime.
+import { ATTACHED_IMAGE } from '../imageInput'
+import { VISION_MODEL_LABEL } from '../visionInput'
 import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
 import { anthropicProvider } from './providers/anthropicProvider'
@@ -122,6 +124,21 @@ function toolResultFor(request: AIRequest, toolName: string): string | undefined
 const isFailure = (content: string) => /^\s*\[(?:TOOL ERROR|GUARDIAN)/i.test(content)
 
 /**
+ * DeepSeek picture chain: analyze_image (Qwen2-VL on Actions) -> its answer. The text model never sees
+ * the picture, so it is not asked to answer about one; before this, it summarized the repository instead.
+ */
+function nextImageStep(request: AIRequest, model: string, selected: ProviderId): { success: true; response: AIResponse } | { success: false; error: AIError } | undefined {
+  if (!request.tools?.some(t => t.name === 'analyze_image')) return undefined
+  if (!currentTurnMessages(request).find(m => m.role === 'user')?.image_url) return undefined
+  const analysis = toolResultFor(request, 'analyze_image')
+  if (!analysis) return success({ text: '', provider: selected, model, toolCalls: [{ id: `image-analyze-${Date.now()}`, name: 'analyze_image', input: { image_url: ATTACHED_IMAGE, prompt: latestUserTask(request).slice(0, 2000) } }], stopReason: 'deterministic-image-analysis' })
+  if (isFailure(analysis)) return { success: false, error: classifyError(new Error(`The picture could not be analyzed. ${analysis.replace(/^\s*\[TOOL ERROR\]\s*/i, '').slice(0, 400)}`), selected) }
+  const [header, ...body] = analysis.split('\n')
+  const source = header.replace(/^✓ Image analysis by /, '')
+  return success({ text: `${body.join('\n').trim()}\n\n(Looked at by ${source})`, provider: 'deepseek', model: VISION_MODEL_LABEL, stopReason: 'deepseek-image-complete' })
+}
+
+/**
  * DeepSeek website chain: generate -> create repo -> publish -> wait for Pages -> report. Each step is
  * chosen from this turn's real tool results, so a reload or retry resumes at the first missing step.
  */
@@ -208,6 +225,9 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   const lastUser = [...request.messages].reverse().find(m => m.role === 'user')
   if (lastUser && isImageGenerationRequest(lastUser.content)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `direct-image-${Date.now()}`, name: 'generate_image', input: { prompt: extractImagePrompt(lastUser.content), style: inferImageStyle(extractImagePrompt(lastUser.content)), width: 512, height: 512 } }], stopReason: 'direct-image-intent' })
   const prior = latestCurrentToolResult(request)
+  // A picture comes first: greetings, repository evidence and research would all answer without it.
+  const imageStep = isDeepSeekProvider(selected) ? nextImageStep(request, choice.model, selected) : undefined
+  if (imageStep) return imageStep
   // Simple greetings get a direct response — no GitHub Actions needed
   if (isDeepSeekProvider(selected) && isSimpleMessage(request)) {
     const lang = request.responseLanguage || 'en';

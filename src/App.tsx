@@ -220,7 +220,7 @@ import { NexusLearningPanel } from './components/NexusLearningPanel'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { isPublicVisitor, PUBLIC_MODE_NOTICE } from './lib/publicRelay'
-import { isSendableImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
+import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { startErrorReporting } from './lib/errorReporting'
@@ -1299,7 +1299,11 @@ function App() {
       ? evaluateSimpleArithmetic(promptText)
       : null
     // Only Claude and Kimi receive the picture itself; any other provider would answer without seeing it.
-    if (imageUrl && !HOSTED_TOOL_PROVIDERS.has(activeProvider) && (isDeepSeekProvider(activeProvider) || activeProvider === 'corpus' || isPublicVisitor(ghToken || ''))) {
+    // analyze_image reads the picture from here; it never travels in the prompt text.
+    rememberAttachedImage(imageUrl)
+    // Claude and Kimi see the picture; DeepSeek has it analyzed on Actions (owner token). The corpus
+    // model and free mode have no way to see it, so they say so instead of answering blind.
+    if (imageUrl && !HOSTED_TOOL_PROVIDERS.has(activeProvider) && (activeProvider === 'corpus' || isPublicVisitor(ghToken || ''))) {
       setMessages(prev => [...prev, userMsg, {
         id: `${Date.now() + 1}`,
         role: 'assistant',
@@ -1469,6 +1473,8 @@ function App() {
     const sculptUnlocked = isSculptUnlocked()
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
       .filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
+      // Claude and Kimi already see an attached picture; a caption saying "picture" must not hand them the slow Actions vision job.
+      .filter(tool => !(imageUrl && isHostedReasoner && tool.name === 'analyze_image'))
 
     const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding', finalTools)) : finalTools
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
@@ -1715,7 +1721,7 @@ function App() {
       )
       // Only project the minimum runtime state required for this request. Full
       // task state remains in storage and is surfaced by the UI, not token stream.
-      effectivePrompt = `${promptText}${imageUrl && !isHostedReasoner ? `\n\n[IMAGE_ATTACHMENT]\n${imageUrl}` : ''}\n\n${buildRuntimeRequestContext({
+      effectivePrompt = `${promptText}${imageUrl && !isHostedReasoner ? '\n\n[A picture is attached to this message; analyze_image with image_url "attached" looks at it.]' : ''}\n\n${buildRuntimeRequestContext({
         owner,
         repo,
         taskStatus: codingAgentState.taskStatus,

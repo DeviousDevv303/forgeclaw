@@ -58,6 +58,25 @@ class Echo(unittest.TestCase):
         self.assertEqual(a.strip_prompt_echo("  A red fox.  "), "A red fox.")
 
 
+class LocalImage(unittest.TestCase):
+    def test_reads_an_attached_file_and_enforces_the_cap(self):
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "img")
+            with open(path, "wb") as handle:
+                handle.write(b"\xff\xd8jpeg")
+            self.assertEqual(a.read_local_image(path), b"\xff\xd8jpeg")
+            with open(path, "wb") as handle:
+                handle.write(b"")
+            with self.assertRaises(a.SpecError):
+                a.read_local_image(path)
+            with open(path, "wb") as handle:
+                handle.write(b"x" * (a.MAX_IMAGE_BYTES + 1))
+            with self.assertRaises(a.SpecError):
+                a.read_local_image(path)
+
+
 class Run(unittest.TestCase):
     def test_a_bad_request_exits_2_without_importing_torch(self):
         self.assertEqual(a.run({"IMAGE_URL": "http://insecure/x.png", "PROMPT": "p"}), 2)
@@ -65,6 +84,10 @@ class Run(unittest.TestCase):
     def test_missing_ml_libraries_exit_1_not_a_crash(self):
         # torch / transformers are not installed in the test environment: the failure must be reported, not raised.
         self.assertEqual(a.run({"IMAGE_URL": "https://example.com/a.png", "PROMPT": "p"}), 1)
+
+    def test_an_attached_file_needs_no_url_but_still_bounds_the_prompt(self):
+        self.assertEqual(a.run({"IMAGE_FILE": "/nonexistent", "PROMPT": "x" * (a.MAX_PROMPT_CHARS + 1)}), 2)
+        self.assertEqual(a.run({"IMAGE_FILE": "/nonexistent", "PROMPT": "what is this?"}), 1)
 
 
 if __name__ == "__main__":
