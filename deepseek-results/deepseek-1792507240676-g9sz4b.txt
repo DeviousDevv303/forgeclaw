@@ -1,0 +1,7 @@
+The provided context indicates that the repository "DeviousDevv303/forgeclaw" is a multi-agent governance shell with autonomous GitHub operations, browser automation, and integrity enforcement. The repository is private, and its default branch is "main." The latest commit on the "main" branch was made by "DeviousDevv303" on October 20, 2026, at 03:40:38 UTC. The repository's last push was on October 20, 2026, at 14:33:51 UTC.
+
+The `package.json` file shows that the project uses several dependencies, including `@octokit/rest`, `@supabase/supabase-js`, `react`, `react-dom`, `zustand`, and `jszip`. It also includes the `@mlc-ai/web-llm` package, which is likely used for running large language models in the browser.
+
+The repository has several scripts for tasks such as checking for conflict markers, running tests, and setting up Git hooks. The `check:deepseek-workflow` script is specifically mentioned, which may be related to the DeepSeek workflow.
+
+If you have a specific task or question related to this repository or its contents, please provide more details so I can assist you further.
