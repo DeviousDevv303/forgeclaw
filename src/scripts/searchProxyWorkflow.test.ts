@@ -30,7 +30,7 @@ function run(query: string, invocationId: string, gh: { stdout?: string, stderr?
   const r = spawnSync('bash', ['-e', '-c', stepScript()], {
     cwd: dir, encoding: 'utf8',
     env: {
-      PATH: `${dir}:${process.env.PATH}`, QUERY: query, INVOCATION_ID: invocationId, GH_TOKEN: 'fake',
+      PATH: `${dir}:${process.env.PATH}`, QUERY: query, INVOCATION_ID: invocationId, GH_TOKEN: 'fake', REPO: 'DeviousDevv303/forgeclaw',
       FAKE_GH_STDOUT: gh.stdout ?? '', FAKE_GH_STDERR: gh.stderr ?? '', FAKE_GH_EXIT: String(gh.exit ?? 0),
     },
   })
@@ -58,6 +58,19 @@ describe('search-proxy.yml', () => {
     expect(wf).toContain('if: always()')
   })
 
+  it('always scopes the search to the repository the workflow runs in', () => {
+    expect(wf).toContain('REPO: ${{ github.repository }}')
+    expect(wf).toContain('-f q="$SCOPED_QUERY"')
+  })
+
+  it('removes repo:, org: and user: qualifiers that would widen the scope', () => {
+    for (const query of ['token repo:evil/x', 'token org:evil', 'token USER:evil', 'token -repo:DeviousDevv303/forgeclaw', 'repo:evil/x token']) {
+      const r = run(query, 'inv-s', { stdout: JSON.stringify(hit) })
+      expect(r.code, query).toBe(0)
+      expect(r.argv[5], query).toMatch(/^q=\s*token\s* repo:DeviousDevv303\/forgeclaw$/)
+    }
+  })
+
   it('returns the search result with the correlation ID attached', () => {
     const r = run('useState repo:o/r', 'inv-1', { stdout: JSON.stringify(hit) })
     expect(r.code, r.out).toBe(0)
@@ -65,7 +78,8 @@ describe('search-proxy.yml', () => {
       invocation_id: 'inv-1', query: 'useState repo:o/r', total_count: 1, incomplete_results: false,
       items: [{ path: 'src/a.ts', repository: 'o/r', url: 'https://x/a' }],
     })
-    expect(r.argv).toEqual(['api', '-X', 'GET', 'search/code', '-f', 'q=useState repo:o/r', '-F', 'per_page=10'])
+    // GitHub ORs repeated repo: qualifiers, so the caller's repo:o/r is removed and this repository added.
+    expect(r.argv).toEqual(['api', '-X', 'GET', 'search/code', '-f', 'q=useState repo:DeviousDevv303/forgeclaw', '-F', 'per_page=10'])
   })
 
   it('passes a hostile query through as data, not code', () => {
@@ -73,7 +87,7 @@ describe('search-proxy.yml', () => {
     const r = run(query, 'inv-2', { stdout: JSON.stringify(hit) })
     expect(r.code, r.out).toBe(0)
     expect(r.result.query).toBe(query)
-    expect(r.argv[5]).toBe(`q=${query}`)
+    expect(r.argv[5]).toBe(`q=${query} repo:DeviousDevv303/forgeclaw`)
     expect(existsSync(join(r.dir, 'pwned'))).toBe(false)
     expect(existsSync(join(r.dir, 'pwned2'))).toBe(false)
   })
