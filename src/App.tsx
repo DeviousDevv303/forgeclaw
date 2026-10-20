@@ -185,7 +185,7 @@ import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from 
 import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
 import { FOUNDER_PRINCIPLES, WHY_FORGECLAW_EXISTS } from './lib/founderPrinciples'
 import ColoradoFooter from './components/ColoradoFooter'
-import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
+import { formatUserFacingError, isTransientNetworkError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
 import { NexusLearningPanel } from './components/NexusLearningPanel'
@@ -694,6 +694,9 @@ function App() {
   const busyNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [attachedFile, setAttachedFile] = useState<{ name: string; content: string } | null>(null)
   const [loading, setLoading] = useState(false)
+  /** Set when the page was hidden while a request ran: a phone pauses the page and kills the in-flight request. */
+  const hiddenDuringRunRef = useRef(false)
+  const sendPromptRef = useRef<(promptText: string, imageUrl?: string, options?: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean }) => Promise<void>>(async () => {})
   const activeRunRef = useRef<{ id: string; controller: AbortController; messageId: string; journal?: RunJournal } | null>(null)
   const [testKeyError, setTestKeyError] = useState('')
   // Active execution is deterministic; a saved provider choice is preserved, otherwise Moonshot/Kimi is selected.
@@ -1133,12 +1136,13 @@ function App() {
     return { cleanText: cleanVisibleResponse(answerText), tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; trace: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase; nextAction: string | undefined }
   }
 
-  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string, options: { attachmentName?: string; resumeTask?: boolean } = {}) => {
+  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string, options: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean } = {}) => {
     if (!promptText.trim()) return
     // One request at a time. A second send used to take over activeRunRef without aborting the first,
     // so the first answer was discarded when it arrived and a duplicate workflow run was dispatched.
     // STOP is the way to abandon a running request.
     if (activeRunRef.current) return
+    hiddenDuringRunRef.current = typeof document !== 'undefined' && document.hidden
 
     // DeepSeek-primary providers require a GitHub token. Fail fast with a clear
     // message instead of dispatching DeepSeek (which will fail) and falling back
@@ -2018,6 +2022,18 @@ function App() {
     } catch (err) {
       if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
       const rawMsg = err instanceof Error ? err.message : 'Unknown error'
+      // Leaving the app mid-request kills it on a phone. Instead of showing an error, ask again once when the owner is back.
+      if (hiddenDuringRunRef.current && !options.autoRetried && isTransientNetworkError(rawMsg)) {
+        const dropped = new Set([userMsg.id, cloudMsgId].filter(Boolean) as string[])
+        setMessages(prev => prev.filter(m => !dropped.has(m.id)))
+        const retry = () => { void sendPromptRef.current(promptText, imageUrl, { ...options, autoRetried: true }) }
+        emitFailure({ source: 'forgemind', severity: 'info', message: `Request interrupted while the app was in the background; retrying once on return (${rawMsg})` })
+        if (typeof document !== 'undefined' && document.hidden) {
+          const onVisible = () => { if (document.hidden) return; document.removeEventListener('visibilitychange', onVisible); retry() }
+          document.addEventListener('visibilitychange', onVisible)
+        } else setTimeout(retry, 0)
+        return
+      }
       const msg = formatUserFacingError(rawMsg)
       setRequestStatus('error')
       setLastRequestError(msg)
@@ -2058,6 +2074,13 @@ function App() {
       }
     }
   }, [anthropicApiKey, moonshotApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, guardianPosture, requestGuardianApproval, agentResumedState]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  sendPromptRef.current = sendPrompt
+  useEffect(() => {
+    const onHide = () => { if (document.hidden && activeRunRef.current) hiddenDuringRunRef.current = true }
+    document.addEventListener('visibilitychange', onHide)
+    return () => document.removeEventListener('visibilitychange', onHide)
+  }, [])
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return

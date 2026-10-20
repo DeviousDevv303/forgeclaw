@@ -17,6 +17,17 @@ export function sanitizeChatText(text: string): string {
     .trim()
 }
 
+/** The real cause, short and with anything token-shaped removed, so a generic line never hides what happened. */
+export function errorDetail(rawMessage: string): string {
+  const clean = rawMessage.replace(/\s+/g, ' ').replace(/\b(?:sk-[\w-]{8,}|gh[pousr]_\w{8,}|github_pat_\w{8,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{5,})/g, '[redacted]').trim()
+  return clean.length > 160 ? `${clean.slice(0, 157)}...` : clean
+}
+
+/** A request that died because the connection dropped (typically the phone paused the page): worth one automatic retry. */
+export function isTransientNetworkError(rawMessage: string): boolean {
+  return /network|failed to fetch|load failed|econnrefused|enotfound|etimedout|timeout|timed out|connection (?:reset|closed|lost)|aborted/i.test(rawMessage)
+}
+
 /** Convert technical runtime failures into concise, actionable chat responses. */
 export function formatUserFacingError(rawMessage: string): string {
   const message = rawMessage.trim()
@@ -35,12 +46,12 @@ export function formatUserFacingError(rawMessage: string): string {
     if (toolName) {
       return `Connection failed during ${toolName}. This usually means GitHub's API is rate-limiting or having issues. Wait 30 seconds and try again. If it keeps happening, check the execution panel for details.`
     }
-    return 'I hit a temporary connection problem while processing that request. Please try again in a moment.'
+    return `I hit a temporary connection problem while processing that request (${errorDetail(message)}). Please try again in a moment.`
   }
   if (/guardian|co-sign|approval/i.test(message)) {
     return 'That action is waiting for the required approval. Review the Guardian Gate in the execution panel before trying again.'
   }
-  return 'I couldn’t complete that request because an internal tool failed. The detailed failure is available in the execution panel; please try again.'
+  return `I couldn’t complete that request because an internal tool failed (${errorDetail(message)}). The detailed failure is also in the execution panel; please try again.`
 }
 
 /**
