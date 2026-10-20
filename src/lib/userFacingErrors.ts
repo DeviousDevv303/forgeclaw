@@ -29,6 +29,12 @@ export function formatUserFacingError(rawMessage: string): string {
     return 'GitHub rejected the saved credential, so I couldn’t complete that request. Check the GitHub token in Settings, then try again.'
   }
   if (/network|failed to fetch|econnrefused|enotfound|etimedout|timeout|timed out/i.test(message)) {
+    // Extract tool name if present in the message for a more specific error
+    const toolMatch = message.match(/(github_\w+|shell_exec|deepseek_reason)/i)
+    const toolName = toolMatch ? toolMatch[1] : null
+    if (toolName) {
+      return `Connection failed during ${toolName}. This usually means GitHub's API is rate-limiting or having issues. Wait 30 seconds and try again. If it keeps happening, check the execution panel for details.`
+    }
     return 'I hit a temporary connection problem while processing that request. Please try again in a moment.'
   }
   if (/guardian|co-sign|approval/i.test(message)) {
