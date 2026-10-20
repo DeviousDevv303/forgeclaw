@@ -16,6 +16,15 @@
   - The `code` profile produced a complete file rewrite with indentation preserved.
   - `deep_research.py` fetched 5 live sources.
 
+- **Verified live on Actions after the #165 merge:**
+  - `Deep Research` run 39439011635 succeeded, with 5 sources in 6.7 s.
+  - `Deploy to GitHub Pages` succeeded on `0e4f438`.
+  - `DeepSeek 16B` run 39439006131 succeeded. It answered "17 multiplied by 23 equals 391" with `model=Qwen/Qwen3-8B`, `engine=llama.cpp GGUF Q4_K_M`, `degraded=false`, in 43 s total (the model was cached).
+  - So T1.1, T1.2 and T1.4 are done; only T1.3 (search proxy, after #171 merges) remains.
+- **Found and fixed:** `search-proxy.yml` couldn't be parsed, because of a `${{ }}` inside a comment. The fix and a guarding test are in **PR #171**.
+  - PR #171 also carries Muse's #168, the NEXUS phone layout, which had been merged into a branch that never reached main.
+  - Cristian merges #171, then you re-run T1.3.
+
 ## 2. What exists now (read these, don't rewrite them)
 
 | Feature | Where |
