@@ -4,7 +4,7 @@ import { createRepo, pagesStatus, publishSite, validatePublishPath, type GithubR
 type Call = { method: string; url: string; body?: Record<string, unknown> }
 
 /** In-memory GitHub: one repo with a main branch, optional site branch and optional Pages site. */
-function fakeGithub(opts: { siteBranchSha?: string; pages?: { branch: string } | null; defaultBranch?: string; refPatchStatus?: number } = {}) {
+function fakeGithub(opts: { siteBranchSha?: string; headMessage?: string; pages?: { branch: string } | null; defaultBranch?: string; refPatchStatus?: number } = {}) {
   const calls: Call[] = []
   const request: GithubRequest = async (url, init) => {
     const method = (init?.method || 'GET').toUpperCase()
@@ -15,7 +15,7 @@ function fakeGithub(opts: { siteBranchSha?: string; pages?: { branch: string } |
     if (method === 'GET' && path.startsWith('/git/ref/heads/')) {
       return opts.siteBranchSha ? Response.json({ object: { sha: opts.siteBranchSha } }) : new Response('{}', { status: 404 })
     }
-    if (method === 'GET' && path.startsWith('/git/commits/')) return Response.json({ tree: { sha: 'basetree' } })
+    if (method === 'GET' && path.startsWith('/git/commits/')) return Response.json({ tree: { sha: 'basetree' }, message: opts.headMessage ?? 'Earlier publish\n\nForgeClaw-Site: true' })
     if (method === 'POST' && path === '/git/trees') return Response.json({ sha: 'newtree' })
     if (method === 'POST' && path === '/git/commits') return Response.json({ sha: 'newcommit' })
     if (method === 'PATCH' && path.startsWith('/git/refs/heads/')) return new Response('{}', { status: opts.refPatchStatus ?? 200 })
@@ -44,6 +44,7 @@ describe('publishSite', () => {
     expect(tree.map(t => t.path)).toEqual(['index.html', 'css/style.css', '.nojekyll'])
     expect(writes[0].body!.base_tree).toBeUndefined()
     expect(writes[1].body!.parents).toEqual([])
+    expect(writes[1].body!.message).toBe('Publish site\n\nForgeClaw-Site: true')
     expect(writes[2].body).toEqual({ ref: 'refs/heads/gh-pages', sha: 'newcommit' })
     expect(writes[3].body).toEqual({ source: { branch: 'gh-pages', path: '/' } })
   })
@@ -58,6 +59,12 @@ describe('publishSite', () => {
     expect(gh.calls.find(c => c.url.endsWith('/git/commits'))!.body!.parents).toEqual(['oldhead'])
     expect(gh.calls.find(c => c.method === 'PATCH')!.body).toEqual({ sha: 'newcommit', force: false })
     expect(gh.calls.some(c => c.method === 'POST' && c.url.endsWith('/pages'))).toBe(false)
+  })
+
+  it('never advances an existing branch that ForgeClaw did not publish (another live site)', async () => {
+    const gh = fakeGithub({ siteBranchSha: 'theirs12345', headMessage: 'Deploy my portfolio', pages: { branch: 'gh-pages' } })
+    await expect(publishSite(gh.request, { ...base, files: site })).rejects.toThrow(/already exists and its head theirs1 was not published by ForgeClaw/)
+    expect(gh.calls.filter(c => c.method !== 'GET')).toEqual([])
   })
 
   it('reports, and does not repoint, a Pages site serving another branch', async () => {

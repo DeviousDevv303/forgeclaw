@@ -38,6 +38,11 @@ export interface PublishSiteResult {
 export const PUBLISH_MAX_FILES = 100
 export const PUBLISH_MAX_TOTAL_BYTES = 2_000_000
 export const DEFAULT_PUBLISH_BRANCH = 'gh-pages'
+/**
+ * Trailer on every publish commit. An existing branch is only advanced when its head carries it, so an
+ * autonomous publish can never overwrite a site branch ForgeClaw did not create (another project's live site).
+ */
+export const SITE_COMMIT_TRAILER = 'ForgeClaw-Site: true'
 const API = 'https://api.github.com'
 
 /** Repository-relative, no traversal, nothing that changes the repository's control plane. */
@@ -116,7 +121,13 @@ export async function publishSite(request: GithubRequest, input: PublishSiteInpu
   let baseTree: string | undefined
   if (refRes.ok) {
     beforeSha = ((await refRes.json()) as { object?: { sha?: string } }).object?.sha
-    if (beforeSha) baseTree = (await json<{ tree?: { sha?: string } }>(request, `${base}/git/commits/${beforeSha}`, 'reading the branch head', { headers })).tree?.sha
+    if (beforeSha) {
+      const head = await json<{ tree?: { sha?: string }; message?: string }>(request, `${base}/git/commits/${beforeSha}`, 'reading the branch head', { headers })
+      if (!(head.message || '').includes(SITE_COMMIT_TRAILER)) {
+        throw new Error(`refusing to publish to ${owner}/${repo}@${branch}: that branch already exists and its head ${beforeSha.slice(0, 7)} was not published by ForgeClaw, so it may be another live site. Publish to a new branch or a new repository, or ask the operator.`)
+      }
+      baseTree = head.tree?.sha
+    }
   } else if (refRes.status !== 404) {
     throw await githubError(refRes, `reading branch ${branch}`)
   }
@@ -136,7 +147,7 @@ export async function publishSite(request: GithubRequest, input: PublishSiteInpu
   })
   const commit = await json<{ sha: string }>(request, `${base}/git/commits`, 'creating the commit', {
     method: 'POST', headers,
-    body: JSON.stringify({ message: input.message, tree: tree.sha, parents: beforeSha ? [beforeSha] : [] }),
+    body: JSON.stringify({ message: `${input.message.trim() || 'Publish site'}\n\n${SITE_COMMIT_TRAILER}`, tree: tree.sha, parents: beforeSha ? [beforeSha] : [] }),
   })
   if (beforeSha) {
     // force:false — if someone else moved the branch meanwhile, fail instead of discarding their commit.

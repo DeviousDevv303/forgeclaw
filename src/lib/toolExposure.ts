@@ -62,3 +62,11 @@ export function truncatedToolCallResult(toolName: string, reason: string): strin
     'Retry with smaller output: write one file per call, keep each file under about 300 lines, ' +
     'and split a large file into a small first version plus follow-up edits.'
 }
+
+/** How a hosted model builds and ships a static site, so it does not commit file-by-file or into ForgeClaw. */
+export const SITE_DEPLOY_GUIDANCE =
+  'Website deployment: (1) unless the user named an existing repository, call github_create_repo with a short name; ' +
+  '(2) write the complete static site (index.html plus CSS/JS/assets, relative links) and call github_publish_site ONCE with every file, ' +
+  'owner and repo from step 1; never publish into forgeclaw; (3) call github_pages_status until status is built for the published commit ' +
+  '(the first build takes about a minute; errored means read the error and republish); (4) only then report the live URL. ' +
+  'Static files only: there is no build step on Pages, so do not rely on npm install or a bundler.'

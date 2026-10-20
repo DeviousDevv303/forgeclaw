@@ -118,3 +118,18 @@ describe('protected-branch normalization', () => {
     expect(requiresCoSign(makeCall('github_write_file', { branch: 42 }), 'operator-shell')).toBe(true)
   })
 })
+
+describe('site deployment tools (authorized 2026-10-20: fully autonomous)', () => {
+  for (const name of ['github_publish_site', 'github_create_repo']) {
+    it(`${name} runs without co-sign in the default operator-shell posture`, () => {
+      expect(requiresCoSign(makeCall(name, { repo: 'site' }), DEFAULT_GUARDIAN_POSTURE)).toBe(false)
+    })
+    it(`${name} still needs co-sign under full-cosign`, () => {
+      expect(requiresCoSign(makeCall(name, { repo: 'site' }), 'full-cosign')).toBe(true)
+    })
+  }
+  it('does not loosen anything else in operator-shell', () => {
+    expect(requiresCoSign(makeCall('github_run_workflow'), 'operator-shell')).toBe(true)
+    expect(requiresCoSign(makeCall('github_write_file', { branch: 'main' }), 'operator-shell')).toBe(true)
+  })
+})

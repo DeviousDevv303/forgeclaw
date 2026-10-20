@@ -17,6 +17,15 @@ const ALWAYS_COSIGN = new Set([
   'shell_exec',          // dispatches GitHub Actions runner — real external execution
 ])
 
+// Autonomous in the default operator-shell posture, co-signed under full-cosign. Authorized by Cristian
+// Nunez on 2026-10-20 ("fully autonomous" site deployment): publishing a static site to a non-default
+// branch of a repository other than ForgeClaw, and creating the repository it lives in. The publisher
+// itself refuses the default branch, workflow paths and the ForgeClaw repository (githubPublish.ts).
+const OPERATOR_AUTONOMOUS = new Set(['shell_exec', 'github_publish_site', 'github_create_repo'])
+
+// Co-signed under full-cosign only (operator-shell runs them freely; see OPERATOR_AUTONOMOUS).
+const FULL_COSIGN_ONLY = new Set(['github_publish_site', 'github_create_repo'])
+
 // HTTP methods that modify state
 const DESTRUCTIVE_HTTP_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
@@ -31,9 +40,9 @@ export function extractThinking(text: string): string | null {
 //
 // 'autonomous':     fully autonomous — everything runs without co-sign.
 //                   (legacy tier1Active=false)
-// 'operator-shell': shell_exec is autonomous (operator's shell commands run
-//                   without obstacles); repo writes and other mutating
-//                   operations require co-sign per full-cosign rules.
+// 'operator-shell': shell_exec, github_publish_site and github_create_repo are
+//                   autonomous; other repo writes and mutating operations
+//                   require co-sign per full-cosign rules.
 // 'full-cosign':    everything in ALWAYS_COSIGN requires co-sign, plus
 //                   branch-aware github_write_file and mutating http_fetch.
 //                   (legacy tier1Active=true)
@@ -64,14 +73,15 @@ export function requiresCoSign(call: ToolCall, posture: GuardianPosture | boolea
   if (resolved === 'autonomous') return false  // fully autonomous — no gates
 
   if (resolved === 'operator-shell') {
-    // Operator's shell commands are autonomous — no obstacles.
-    if (call.name === 'shell_exec') return false
+    // Operator's shell commands and site deployment are autonomous — no obstacles.
+    if (OPERATOR_AUTONOMOUS.has(call.name)) return false
     // Everything else follows full-cosign rules below.
   }
 
   // full-cosign (and operator-shell fallthrough for non-shell tools):
   // Always co-sign these
   if (ALWAYS_COSIGN.has(call.name)) return true
+  if (FULL_COSIGN_ONLY.has(call.name)) return true
 
   // Branch-aware: writes to main/master (or unspecified) require co-sign
   if (call.name === 'github_write_file') {

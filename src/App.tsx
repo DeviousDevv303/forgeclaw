@@ -216,7 +216,7 @@ import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
-import { baselineToolNames, HOSTED_TOOL_PROVIDERS, NO_TOOLS_NOTICE, repeatedCallLimit, SHELL_EXEC_GUIDANCE, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, HOSTED_TOOL_PROVIDERS, NO_TOOLS_NOTICE, repeatedCallLimit, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
@@ -1381,6 +1381,10 @@ function App() {
       'github_write_file': ['write', 'edit', 'create', 'fix', 'update', 'add', 'build', 'deploy', 'publish', 'implement', 'scaffold', 'commit', 'push'],
       'shell_exec': ['run', 'execute', 'test', 'build', 'command', 'shell'],
       'github_search_code': ['search', 'find', 'grep', 'lookup'],
+      // Substring match, so no bare 'site' (it is inside "opposite", "visited").
+      'github_publish_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'publish', 'github pages', 'gh-pages'],
+      'github_pages_status': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'publish', 'github pages', 'gh-pages'],
+      'github_create_repo': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'new repo', 'new repository', 'create repo', 'create a repo'],
       'github_repo_state': ['state', 'status', 'head', 'branch'],
       'generate_image': ['generate', 'image', 'logo', 'illustration', 'picture', 'artwork'],
       'analyze_image': ['analyze', 'image', 'photo', 'picture', 'vision'],
@@ -1426,7 +1430,7 @@ function App() {
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
-        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}`
+        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}`
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
