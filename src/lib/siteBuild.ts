@@ -76,6 +76,8 @@ export async function buildAndPublishSite(request: GithubRequest, input: BuildSi
 
   const prefix = `builds/${invocationId}/`
   const tree = await okJson<{ tree?: Array<{ path: string; type: string; sha: string }>; truncated?: boolean }>(request, `${wfBase}/git/trees/${SITE_BUILD_MIRROR_BRANCH}?recursive=1`, 'listing the build output', { headers, cache: 'no-store' })
+  // A truncated listing may be missing files of this build; publishing it would ship a broken site (#169).
+  if (tree.truncated) throw new Error(`build run #${run.run_number} succeeded, but GitHub returned a truncated listing of ${SITE_BUILD_MIRROR_BRANCH}, so the complete output cannot be confirmed; nothing was published. Run: ${run.html_url}`)
   const blobs = (tree.tree ?? []).filter(e => e.type === 'blob' && e.path.startsWith(prefix))
   if (!blobs.length) throw new Error(`build run #${run.run_number} succeeded but ${prefix} on ${SITE_BUILD_MIRROR_BRANCH} is empty${tree.truncated ? ' (tree listing truncated)' : ''}`)
   if (blobs.length > BUILD_PUBLISH_LIMITS.maxFiles) throw new Error(`the build produced ${blobs.length} files; the limit is ${BUILD_PUBLISH_LIMITS.maxFiles}`)
