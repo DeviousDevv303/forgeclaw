@@ -185,8 +185,9 @@ import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from 
 import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
 import { FOUNDER_PRINCIPLES, WHY_FORGECLAW_EXISTS } from './lib/founderPrinciples'
 import ColoradoFooter from './components/ColoradoFooter'
+import { describeScreen } from './lib/screenText'
 import { formatUserFacingError, isTransientNetworkError, sanitizeChatText } from './lib/userFacingErrors'
-import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
+import { useI18n, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
 import { NexusLearningPanel } from './components/NexusLearningPanel'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
@@ -247,65 +248,6 @@ interface StoredFeedback {
   model?: string
   contentPreview: string
   timestamp: string
-}
-
-type SpeechRecognitionEventLike = {
-  resultIndex: number
-  results: {
-    length: number
-    [index: number]: {
-      isFinal: boolean
-      0: { transcript: string }
-    }
-  }
-}
-
-type SpeechRecognitionErrorLike = {
-  error?: string
-}
-
-type SpeechRecognitionInstance = {
-  continuous: boolean
-  interimResults: boolean
-  lang: string
-  onstart: (() => void) | null
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null
-  onerror: ((event: SpeechRecognitionErrorLike) => void) | null
-  onend: (() => void) | null
-  start: () => void
-  stop: () => void
-}
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance
-
-type SpeechRecognitionWindow = Window & {
-  SpeechRecognition?: SpeechRecognitionConstructor
-  webkitSpeechRecognition?: SpeechRecognitionConstructor
-}
-
-function getSpeechRecognitionCtor(): SpeechRecognitionConstructor | undefined {
-  const win = window as SpeechRecognitionWindow
-  return win.SpeechRecognition || win.webkitSpeechRecognition
-}
-
-function getSpeechErrorMessage(error?: string): string {
-  switch (error) {
-    case 'not-allowed':
-    case 'service-not-allowed':
-      return translate(getLang(), 'speech.blocked')
-    case 'audio-capture':
-      return translate(getLang(), 'speech.noMic')
-    case 'network':
-      return translate(getLang(), 'speech.network')
-    case 'no-speech':
-      return translate(getLang(), 'speech.noSpeech')
-    case 'language-not-supported':
-      return translate(getLang(), 'speech.langUnsupported')
-    case 'aborted':
-      return translate(getLang(), 'speech.aborted')
-    default:
-      return translate(getLang(), 'speech.default')
-  }
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -939,15 +881,8 @@ function App() {
     resolve?.(approved)
   }, [])
 
-  const [listening, setListening] = useState(false)
-  const [chatListening, setChatListening] = useState(false)
-  const [voiceInputError, setVoiceInputError] = useState('')
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null)
-  const chatRecognitionRef = useRef<SpeechRecognitionInstance | null>(null)
-  const chatVoiceBaseRef = useRef('')
-  const voiceListeningRef = useRef(false)
-  const chatListeningRef = useRef(false)
-  const chatVoiceSpokenRef = useRef('')
+  const [screenCopied, setScreenCopied] = useState(false)
+  const [screenTextFallback, setScreenTextFallback] = useState('')
   // Last spoken text that fed a prompt, so the learning log can tell voice prompts from typed ones.
   const voiceOriginRef = useRef('')
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -1038,13 +973,6 @@ function App() {
       if (!window.speechSynthesis.speaking) window.speechSynthesis.resume()
     }, 10_000)
     return () => { if (ttsResumeIntervalRef.current) clearInterval(ttsResumeIntervalRef.current) }
-  }, [])
-
-  useEffect(() => () => {
-    voiceListeningRef.current = false
-    chatListeningRef.current = false
-    recognitionRef.current?.stop()
-    chatRecognitionRef.current?.stop()
   }, [])
 
   const promptOrigin = (prompt: string): 'voice' | 'typed' => {
@@ -2092,10 +2020,6 @@ function App() {
       busyNoticeTimerRef.current = setTimeout(() => setBusyNotice(false), 4000)
       return
     }
-    if (chatListening) {
-      stopChatVoiceRecognition()
-    }
-
     let promptText = input
     let imageUrl: string | undefined
     if (attachedFile) {
@@ -2292,7 +2216,6 @@ function App() {
     const pastedText = e.clipboardData.getData('text')
     if (!pastedText) return
 
-    if (chatListening) stopChatVoiceRecognition()
     e.preventDefault()
 
     const target = e.currentTarget
@@ -2308,125 +2231,23 @@ function App() {
     })
   }
 
-  const startRecognition = async (
-    onResult: (text: string) => void,
-    setActive: (active: boolean) => void,
-    targetRef: { current: SpeechRecognitionInstance | null },
-    options: {
-      onFailure?: (message: string) => void
-      keepAliveRef?: { current: boolean }
-      transcriptRef?: { current: string }
-    } = {},
-  ) => {
-    const { onFailure, keepAliveRef, transcriptRef } = options
-    const SR = getSpeechRecognitionCtor()
-    if (!SR) {
-      if (keepAliveRef) keepAliveRef.current = false
-      setActive(false)
-      onFailure?.('Voice prompt is not available in this browser. Use Chrome/Edge, or enable browser speech recognition.')
-      return false
-    }
-    if (!window.isSecureContext && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
-      if (keepAliveRef) keepAliveRef.current = false
-      setActive(false)
-      onFailure?.('Voice prompt needs HTTPS or localhost so the browser can access the microphone.')
-      return false
-    }
-
-    const rec = new SR()
-    rec.continuous = true
-    rec.interimResults = true
-    rec.lang = LOCALE_TAGS[selectedLanguage]
-    let finalSoFar = ''
-    rec.onstart = () => {
-      onFailure?.('')
-      if (keepAliveRef) keepAliveRef.current = true
-      setActive(true)
-    }
-    rec.onresult = (e) => {
-      onFailure?.('')
-      let interim = ''
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const transcript = e.results[i][0].transcript
-        if (e.results[i].isFinal) {
-          if (transcriptRef) {
-            transcriptRef.current = [transcriptRef.current, transcript.trim()].filter(Boolean).join(' ')
-          } else {
-            finalSoFar += `${transcript} `
-          }
-        }
-        else interim += transcript
-      }
-      const committedText = transcriptRef?.current || finalSoFar.trim()
-      onResult([committedText, interim.trim()].filter(Boolean).join(' '))
-    }
-    rec.onerror = (event) => {
-      if (keepAliveRef?.current && event.error === 'no-speech') return
-      const wasManualStop = !keepAliveRef?.current && event.error === 'aborted'
-      if (keepAliveRef) keepAliveRef.current = false
-      setActive(false)
-      targetRef.current = null
-      if (!wasManualStop) onFailure?.(getSpeechErrorMessage(event.error))
-    }
-    rec.onend = () => {
-      targetRef.current = null
-      if (keepAliveRef?.current) {
-        window.setTimeout(() => {
-          if (keepAliveRef.current && !targetRef.current) {
-            void startRecognition(onResult, setActive, targetRef, options)
-          }
-        }, 450)
-        return
-      }
-      setActive(false)
-    }
-    targetRef.current = rec
-    try {
-      rec.start()
-      if (keepAliveRef) keepAliveRef.current = true
-      setActive(true)
-      return true
-    } catch {
-      targetRef.current = null
-      if (keepAliveRef) keepAliveRef.current = false
-      setActive(false)
-      onFailure?.('Voice prompt could not start. Check microphone permission and try again.')
-      return false
-    }
-  }
-
-  const stopVoiceRecognition = () => {
-    voiceListeningRef.current = false
-    recognitionRef.current?.stop()
-    recognitionRef.current = null
-    setListening(false)
-  }
-
-  const stopChatVoiceRecognition = () => {
-    chatListeningRef.current = false
-    chatRecognitionRef.current?.stop()
-    chatRecognitionRef.current = null
-    setChatListening(false)
-  }
-
-  const toggleChatVoicePrompt = () => {
-    if (chatListening) { stopChatVoiceRecognition(); return }
-    setVoiceInputError('')
-    speech.stop() // starting a voice message ends any read-aloud
-    if (listening) stopVoiceRecognition()
-    chatVoiceBaseRef.current = input.trim()
-    chatVoiceSpokenRef.current = ''
-    chatListeningRef.current = true
-    startRecognition((text) => {
-      const spokenText = text.trim()
-      if (spokenText) voiceOriginRef.current = spokenText
-      const basePrompt = chatVoiceBaseRef.current
-      setInput(basePrompt && spokenText ? `${basePrompt} ${spokenText}` : spokenText || basePrompt)
-    }, setChatListening, chatRecognitionRef, {
-      onFailure: setVoiceInputError,
-      keepAliveRef: chatListeningRef,
-      transcriptRef: chatVoiceSpokenRef,
+  /** Everything visible on screen as text (not a picture), copied for troubleshooting; shown for manual copy if the browser blocks it. */
+  const copyScreenText = async () => {
+    const text = describeScreen(document.getElementById('root') ?? document.body, {
+      url: window.location.href.split('#')[0],
+      viewport: `${window.innerWidth}×${window.innerHeight}`,
+      provider: activeProvider,
+      model: normalizedActiveModel,
+      requestStatus,
+      lastError: lastRequestError || undefined,
     })
+    try {
+      await navigator.clipboard.writeText(text)
+      setScreenCopied(true)
+      setTimeout(() => setScreenCopied(false), 2000)
+    } catch {
+      setScreenTextFallback(text)
+    }
   }
 
   const handleTabClick = (tabId: Tab) => {
@@ -3236,20 +3057,6 @@ function App() {
                     <button onClick={() => setAttachedFile(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '14px' }}>×</button>
                   </div>
                 )}
-                {(chatListening || voiceInputError) && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: chatListening ? '#39ff14' : '#ef4444', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '1px', textTransform: 'uppercase' }}>
-                    <span style={{
-                      width: '7px',
-                      height: '7px',
-                      borderRadius: '50%',
-                      background: chatListening ? '#39ff14' : '#ef4444',
-                      boxShadow: chatListening ? '0 0 12px rgba(57,255,20,0.7)' : '0 0 10px rgba(239,68,68,0.45)',
-                      animation: chatListening ? 'pulse 1.2s infinite' : 'none',
-                      flexShrink: 0,
-                    }} />
-                    <span>{chatListening ? t('chat.listening') : voiceInputError}</span>
-                  </div>
-                )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '6px 10px' }}>
                   <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={false} />
                   {/* Connector badge — Manus-style active tool indicator */}
@@ -3271,18 +3078,18 @@ function App() {
                     )}
                   </button>
                   <button
-                    onClick={toggleChatVoicePrompt}
-                    disabled={loading}
-                    title={chatListening ? t('chat.voiceStopTitle') : t('chat.voiceStartTitle')}
-                    aria-label={chatListening ? t('chat.voiceStopTitle') : t('chat.voiceStartAria')}
+                    onClick={() => void copyScreenText()}
+                    title={t('chat.screenTextTitle')}
+                    aria-label={t('chat.screenTextTitle')}
                     style={{
-                      width: '42px',
+                      minWidth: '48px',
                       height: '32px',
+                      padding: '0 6px',
                       borderRadius: '6px',
-                      background: chatListening ? '#061a0b' : '#0d0d0d',
-                      border: `1px solid ${chatListening ? '#39ff14' : '#2a2a2a'}`,
-                      color: chatListening ? '#39ff14' : '#888',
-                      cursor: loading ? 'not-allowed' : 'pointer',
+                      background: screenCopied ? '#0b1f3f' : '#0d0d0d',
+                      border: `1px solid ${screenCopied ? '#2563eb' : '#2a2a2a'}`,
+                      color: screenCopied ? '#93c5fd' : '#888',
+                      cursor: 'pointer',
                       fontSize: '10px',
                       fontFamily: 'monospace',
                       fontWeight: 'bold',
@@ -3290,11 +3097,9 @@ function App() {
                       textTransform: 'uppercase',
                       alignSelf: 'center',
                       flexShrink: 0,
-                      boxShadow: chatListening ? '0 0 18px rgba(57,255,20,0.25)' : 'none',
-                      animation: chatListening ? 'micPulse 1.2s infinite' : 'none',
                     }}
                   >
-                    {chatListening ? t('chat.rec') : t('chat.mic')}
+                    {screenCopied ? t('chat.screenCopied') : t('chat.screenText')}
                   </button>
                   <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder={t('chat.placeholder')} value={input} onChange={e => { setInput(e.target.value); window.forgeCore?.userTyping() }} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
                   {loading ? (
@@ -3303,6 +3108,13 @@ function App() {
                     <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage}>{t('chat.send')}</button>
                   )}
                 </div>
+                {screenTextFallback && (
+                  <div role="dialog" aria-label={t('chat.screenTextTitle')} style={{ padding: '8px 12px', borderTop: '1px solid #222' }}>
+                    <div style={{ color: '#93c5fd', fontSize: '11px', fontFamily: 'monospace', marginBottom: '6px' }}>{t('chat.screenTextManual')}</div>
+                    <textarea readOnly value={screenTextFallback} onFocus={e => e.currentTarget.select()} style={{ width: '100%', boxSizing: 'border-box', height: '140px', background: '#0d0d0d', color: '#e5e5e5', border: '1px solid #2a2a2a', borderRadius: '6px', fontFamily: 'monospace', fontSize: '11px' }} />
+                    <button onClick={() => setScreenTextFallback('')} style={{ marginTop: '6px', background: 'transparent', color: '#888', border: '1px solid #2a2a2a', borderRadius: '5px', padding: '3px 10px', fontFamily: 'monospace', fontSize: '10px', cursor: 'pointer' }}>{t('chat.screenTextClose')}</button>
+                  </div>
+                )}
                 {busyNotice && (
                   <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.busyNotice')}</div>
                 )}
