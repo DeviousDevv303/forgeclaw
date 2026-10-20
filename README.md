@@ -109,7 +109,7 @@ Updated 2026-10-20. "Works" means it ran successfully end to end on GitHub Actio
 | Self-sculpt / shell repair | `sculpt_self`, `shell_patch` | **Works:** runs 39362448179 and 39362463489 opened the intended pull requests. Key gate and `/sculpt` are not verified live. |
 | Website deploy | `github_create_repo`, `github_publish_site`, `github_pages_status` | Not verified live (acceptance step C). |
 | Build-step sites | `github_build_site` / `site-build.yml` | Not verified live (acceptance step D). |
-| Pictures: Claude / Kimi | native image input | Not yet confirmed live with Kimi K2.7 Code. |
+| Pictures: Claude / Kimi | native image input | Verified live 2026-10-20: Kimi K2.7 Code described an uploaded screenshot correctly (read the headline and layout). The first try failed when the browser was left mid-request; the rerun worked. Claude not yet run live. |
 | Pictures: DeepSeek | `analyze_image` / `image-analyze.yml` | The Qwen2-VL model ran on main (run 39319037899, URL input). The attached-picture path is not verified live. |
 | Free mode (visitors) | `relay/` | Needs the relay deployed or redeployed (`relay/README.md`). Not verified live. |
 | Error reports to owner | `relay/` `/v1/errors` + Resend | Needs the relay and a Resend key. Not verified live. |
