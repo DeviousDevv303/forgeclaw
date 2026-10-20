@@ -35,4 +35,9 @@ describe('image input', () => {
     expect(visionUnavailableReply(true)).toMatch(/^Free mode can't read pictures/)
     expect(visionUnavailableReply(false)).toMatch(/Kimi, Anthropic · Claude or DeepSeek 16B/)
   })
+
+  it('answers in Spanish when the app is in Spanish', () => {
+    expect(visionUnavailableReply(true, 'es')).toMatch(/^El modo gratuito todavía no puede leer imágenes/)
+    expect(visionUnavailableReply(false, 'es')).toMatch(/en AJUSTES/)
+  })
 })

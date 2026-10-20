@@ -3,6 +3,8 @@
 // Picture attachments. Claude and Kimi receive the image itself in the user message; the other providers
 // cannot see it, so ForgeClaw says so instead of letting a model answer about a picture it never saw.
 
+import { translate, type Lang } from './i18n'
+
 const VISION_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
 export type VisionMediaType = typeof VISION_MEDIA_TYPES[number]
 
@@ -32,10 +34,8 @@ export function currentAttachedImage(): string | undefined { return attachedImag
 
 export const VISION_POLICY = 'The user attached an image to this message; it is included above. Look at it and answer about what it actually shows. Do not describe ForgeClaw, its tools or this conversation unless the user asks about them. If you cannot see an image, say so plainly instead of guessing.'
 
-export function visionUnavailableReply(publicVisitor: boolean): string {
-  return publicVisitor
-    ? "Free mode can't read pictures yet. Tell me what's in it, or paste its text, and I'll take it from there."
-    : "This provider can't see pictures, so I won't guess what yours shows. Switch the provider to Moonshot · Kimi, Anthropic · Claude or DeepSeek 16B in SETTINGS and send it again."
+export function visionUnavailableReply(publicVisitor: boolean, lang: Lang = 'en'): string {
+  return translate(lang, publicVisitor ? 'vision.unavailableVisitor' : 'vision.unavailableOwner')
 }
 
 /** Scales a picture so its longest edge is at most MAX_IMAGE_EDGE (JPEG). Returns the input unchanged when it is already small or the browser can't decode it. */
