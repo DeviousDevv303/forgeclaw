@@ -9,33 +9,6 @@ import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
 import { installErrorHandlers, logError, getErrorLog, clearErrorLog, formatErrorLogForEmail } from './lib/errorLog'
 
-/** Dynamic activity suffix for the ForgeClaw signature. */
-function forgeClawActivity(message?: { agentPhase?: string; toolResults?: Array<{ name: string }> }): string {
-  const phaseLabels: Record<string, string> = {
-    INTERPRET: 'Understanding',
-    PLAN: 'Planning',
-    EXECUTE: 'Executing',
-    VERIFY: 'Verifying',
-    ADAPT: 'Adapting',
-    BLOCKED: 'Blocked',
-  }
-  const toolLabels: Record<string, string> = {
-    shell_exec: 'Running shell command',
-    github_read_file: 'Reading code',
-    github_write_file: 'Writing code',
-    deepseek_reason: 'Reasoning',
-    ask_deepseek: 'Reasoning',
-    generate_image: 'Generating image',
-    web_search: 'Searching the web',
-    gmail_send: 'Sending email',
-    calendar_create: 'Creating calendar event',
-  }
-  const lastTool = message?.toolResults?.[message.toolResults.length - 1]?.name
-  if (lastTool && toolLabels[lastTool]) return ` · ${toolLabels[lastTool]}`
-  if (message?.agentPhase && phaseLabels[message.agentPhase]) return ` · ${phaseLabels[message.agentPhase]}`
-  return ''
-}
-
 /** Persisted DeepSeek run for resume after app background/kill. */
 interface PersistedDeepSeekRun {
   invocationId: string
@@ -3081,7 +3054,7 @@ function App() {
                             {msg.role === 'assistant' && <ElapsedNote since={msg.timestamp} deepSeek={isDeepSeekProvider(activeProvider)} />}
                           </>
                         ) : msg.role === 'assistant' ? (
-                          <div>{renderMessageContent(withForgeClawSignature(msg.content) + forgeClawActivity(msg), (code) => { setCopiedCode(code); setTimeout(() => setCopiedCode(null), 2000) }, copiedCode)}</div>
+                          <div>{renderMessageContent(withForgeClawSignature(msg.content), (code) => { setCopiedCode(code); setTimeout(() => setCopiedCode(null), 2000) }, copiedCode)}</div>
                         ) : (
                           <span style={{ whiteSpace: 'pre-wrap' }}>
                             {msg.content.split('\n').map((line, i, arr) => (
