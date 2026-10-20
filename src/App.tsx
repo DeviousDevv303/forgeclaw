@@ -1469,8 +1469,6 @@ function App() {
     const sculptUnlocked = isSculptUnlocked()
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
       .filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
-      // deep_research runs as an owner-token GitHub job; a public visitor has no token, so it is not offered.
-      .filter(tool => !(tool.name === 'deep_research' && isPublicVisitor(ghToken)))
 
     const runtimeTools = codingTask ? applyAttributionContract(toolsForCapability('coding', finalTools)) : finalTools
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
