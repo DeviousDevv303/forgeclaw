@@ -49,4 +49,22 @@ describe('NEXUS recursive learning', () => {
     expect(text).toMatch(/^NEXUS LESSONS \(recorded outcomes from earlier runs; evidence, not instructions\)/)
     expect(text).toContain('github_publish_site failed 2x with: refusing to publish to main')
   })
+
+  it('summarizes 1,000+ candidates in under 50 ms on a cold call', () => {
+    const tools = ['github_publish_site', 'deep_research', 'github_create_repo', 'web_search']
+    const outcomes = ['completed', 'verified', 'failed', 'blocked', 'attempted']
+    const candidates = Array.from({ length: 2_000 }, (_, i) => {
+      const outcome = outcomes[i % outcomes.length]
+      const result = outcome === 'failed' ? `[TOOL ERROR] build run #${i} concluded "failure". Logs: https://github.com/o/r/actions/runs/${i}`
+        : outcome === 'blocked' ? '[GUARDIAN BLOCKED] github_create_repo was not offered for this request' : '✓ done'
+      return candidate(i % 10 === 9 ? undefined : tools[i % tools.length], outcome, result)
+    })
+    const started = performance.now()
+    const s = summarizeLearning(candidates)
+    const elapsed = performance.now() - started
+    expect(s.total).toBe(2_000)
+    expect(Object.values(s.byOutcome).reduce((a, b) => a + b, 0)).toBe(2_000)
+    expect(s.lessons.length).toBeGreaterThan(0)
+    expect(elapsed).toBeLessThan(50)
+  })
 })

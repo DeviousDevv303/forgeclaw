@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatResearchResult, normalizeQueries, runDeepResearch, type ResearchReport } from './deepResearch'
+import { formatResearchResult, normalizeQueries, RESEARCH_RESULT_MAX_CHARS, runDeepResearch, type ResearchReport } from './deepResearch'
 import type { GithubRequest } from './githubPublish'
 
 const WF = 'https://api.github.com/repos/DeviousDevv303/forgeclaw'
@@ -64,5 +64,27 @@ describe('formatResearchResult', () => {
   it('accepts queries as an array or a newline/semicolon string', () => {
     expect(normalizeQueries('a; b\nc')).toEqual(['a', 'b', 'c'])
     expect(normalizeQueries(undefined)).toEqual([])
+  })
+  it('keeps a result of exactly RESEARCH_RESULT_MAX_CHARS whole and omits the source that would exceed it', () => {
+    const one = { ...report.sources[0], excerpt: '' }
+    const bare = formatResearchResult({ ...report, failures: [], sources: [one] }, 'https://run').length
+    const atLimit = { ...report, failures: [], sources: [{ ...one, excerpt: 'x'.repeat(RESEARCH_RESULT_MAX_CHARS - bare) }] }
+    const text = formatResearchResult(atLimit, 'https://run')
+    expect(text).toHaveLength(RESEARCH_RESULT_MAX_CHARS)
+    expect(text).not.toContain('omitted for length')
+
+    // One character more and the only source no longer fits: it is reported as omitted, not cut mid-excerpt.
+    const over = formatResearchResult({ ...atLimit, sources: [{ ...one, excerpt: 'x'.repeat(RESEARCH_RESULT_MAX_CHARS - bare + 1) }] }, 'https://run')
+    expect(over).not.toContain('xxxx')
+    expect(over).toContain('(1 more source(s) omitted for length)')
+  })
+  it('fills up to the limit and counts every source after the first that does not fit', () => {
+    const bare = formatResearchResult({ ...report, failures: [], sources: [{ ...report.sources[0], excerpt: '' }] }, 'https://run').length
+    const sources = [1, 2, 3].map(id => ({ ...report.sources[0], id, excerpt: '' }))
+    sources[0].excerpt = 'x'.repeat(RESEARCH_RESULT_MAX_CHARS - bare)
+    const text = formatResearchResult({ ...report, failures: [], sources }, 'https://run')
+    expect(text).toContain('[1] Qwen on CPU')
+    expect(text).not.toContain('[2] ')
+    expect(text).toMatch(/\(2 more source\(s\) omitted for length\)$/)
   })
 })
