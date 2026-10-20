@@ -193,7 +193,7 @@ import { NexusLearningPanel } from './components/NexusLearningPanel'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
-import { isPublicVisitor, PUBLIC_MODE_NOTICE } from './lib/publicRelay'
+import { isPublicVisitor } from './lib/publicRelay'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { VisitorLearningImport } from './components/VisitorLearningImport'
@@ -1281,7 +1281,7 @@ function App() {
       setMessages(prev => [...prev, userMsg, {
         id: `${Date.now() + 1}`,
         role: 'assistant',
-        content: visionUnavailableReply(isPublicVisitor(ghToken || '')),
+        content: visionUnavailableReply(isPublicVisitor(ghToken || ''), selectedLanguage),
         timestamp: Date.now(),
         source: 'local',
         provider: 'ForgeClaw',
@@ -2987,7 +2987,7 @@ function App() {
           <>
             <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
               {isPublicVisitor(ghToken) && (
-                <div role="note" style={{ border: '1px solid #3a2a05', background: '#120d02', color: '#eab308', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{PUBLIC_MODE_NOTICE}</div>
+                <div role="note" style={{ border: '1px solid #3a2a05', background: '#120d02', color: '#eab308', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('public.notice')}</div>
               )}
               {/* Persisted coding task — visible so a reload reads as a resume. */}
               <CodingAgentStatePanel state={codingAgentState} resumed={Boolean(agentResumedState)} onChange={setCodingAgentState} />
