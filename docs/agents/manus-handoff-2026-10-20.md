@@ -1,5 +1,7 @@
 # Handoff directive for Manus — continue ForgeClaw from Claude, 2026-10-20
 
+> **Superseded for tasks** by `manus-directive-2026-10-20-r2.md`. The state and rules below are still accurate history.
+
 **Authority:** Cristian Nunez (owner). This file is the complete state; you don't need the chat.
 **Your role:** finish verification and operational setup support. **Don't redesign anything.**
 
