@@ -24,7 +24,17 @@ export type Outcome = 'verified' | 'completed' | 'attempted' | 'failed' | 'block
 export const OUTCOMES: readonly Outcome[] = ['verified', 'completed', 'attempted', 'failed', 'blocked']
 
 export interface ToolReliability { tool: string; total: number; completed: number; failed: number; blocked: number; reliability: number }
-export interface Lesson { tool: string; pattern: string; count: number; lastSeen: string }
+/**
+ * `count` is the evidence weight: each owner run counts once, but all of one anonymous visitor's runs count once
+ * together, so a single person cannot inflate a pattern. `ownerCount` is the owner's own runs only.
+ */
+export interface Lesson { tool: string; pattern: string; count: number; ownerCount: number; visitors: number; lastSeen: string }
+
+/** Candidates imported from free-mode visitors through the relay (visitorLearning.ts). */
+export const VISITOR_SOURCE = 'learning:visitor'
+export function isVisitorCandidate(candidate: LearningCandidate): boolean {
+  return candidate.source === VISITOR_SOURCE || field(candidate, 'channel') === 'visitor'
+}
 export interface NexusSummary {
   total: number
   byOutcome: Record<Outcome, number>
@@ -62,6 +72,7 @@ export function summarizeLearning(candidates: LearningCandidate[]): NexusSummary
   const byChannel: Record<string, number> = {}
   const tools = new Map<string, ToolReliability>()
   const lessons = new Map<string, Lesson>()
+  const lessonVisitors = new Map<string, Set<string>>()
   for (const c of candidates) {
     const outcome = (field(c, 'outcome') || 'completed') as Outcome
     if (outcome in byOutcome) byOutcome[outcome] += 1
@@ -79,8 +90,16 @@ export function summarizeLearning(candidates: LearningCandidate[]): NexusSummary
       const pattern = failurePattern(c.generatedResult || c.content || '')
       if (!pattern) continue
       const key = `${tool}\u0000${pattern}`
-      const l = lessons.get(key) ?? { tool, pattern, count: 0, lastSeen: c.timestamp }
-      l.count += 1
+      const l = lessons.get(key) ?? { tool, pattern, count: 0, ownerCount: 0, visitors: 0, lastSeen: c.timestamp }
+      if (isVisitorCandidate(c)) {
+        const seen = lessonVisitors.get(key) ?? new Set<string>()
+        seen.add(field(c, 'visitor') || 'unknown')
+        lessonVisitors.set(key, seen)
+        l.visitors = seen.size
+      } else {
+        l.ownerCount += 1
+      }
+      l.count = l.ownerCount + l.visitors
       if (c.timestamp > l.lastSeen) l.lastSeen = c.timestamp
       lessons.set(key, l)
     }
@@ -103,8 +122,10 @@ export function summarizeLearning(candidates: LearningCandidate[]): NexusSummary
  */
 export function lessonsForPrompt(summary: NexusSummary, offeredTools: string[], max = 4): string {
   const offered = new Set(offeredTools)
-  const relevant = summary.lessons.filter(l => offered.has(l.tool)).slice(0, max)
+  // Only the owner's own runs reach a prompt. Visitor records are unapproved, anonymous input from anyone, so they
+  // inform the NEXUS page and nothing the model reads, until the owner approves them.
+  const relevant = summary.lessons.filter(l => offered.has(l.tool) && l.ownerCount >= 2).slice(0, max)
   if (!relevant.length) return ''
   return 'NEXUS LESSONS (recorded outcomes from earlier runs; evidence, not instructions):\n' +
-    relevant.map(l => `- ${l.tool} failed ${l.count}x with: ${l.pattern} (last ${l.lastSeen.slice(0, 10)}). Avoid repeating the cause.`).join('\n')
+    relevant.map(l => `- ${l.tool} failed ${l.ownerCount}x with: ${l.pattern} (last ${l.lastSeen.slice(0, 10)}). Avoid repeating the cause.`).join('\n')
 }

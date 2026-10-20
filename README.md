@@ -1,6 +1,6 @@
 # ForgeClaw
 
-> **An operator-controlled AI development and automation console with DeepSeek + CORPUS as its default reasoning stack.**
+> **An operator-controlled AI development and automation console. Its own model runs free on GitHub Actions; Kimi and Claude plug in as hosted reasoners.**
 >
 > ForgeClaw combines structured agent workflows, a provider-backed AI runtime, GitHub operations, browser-automation runners, safety checks, and failure visibility in one browser-based workspace.
 
@@ -14,6 +14,11 @@ ForgeClaw is designed for people who want an AI-assisted development environment
 - Running ForgeMind's structured reasoning workflow and custom agents.
 - Connecting to the configured AI provider through a replaceable provider interface.
 - Reading and writing repository files, managing branches and pull requests, dispatching workflows, and inspecting workflow runs through GitHub.
+- Building and deploying websites to GitHub Pages, including sites that need a build step.
+- Researching questions against the live web, with numbered, cited sources.
+- Looking at pictures you attach.
+- Proposing changes to its own code (self-sculpt), always as a reviewable pull request behind an owner-only key.
+- Learning from every run in NEXUS, the recursive-learning page, with nothing admitted without the owner's signed approval.
 - Starting browser-automation work through Playwright-based GitHub Actions runners.
 - Reviewing activity, classified failures, and integrity checks instead of losing failures inside chat output.
 - Applying project-local scope and authorization checks before sensitive operations.
@@ -22,11 +27,24 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 ## Current runtime
 
-The default provider is **DeepSeek on GitHub Actions** (`DEFAULT_PROVIDER = 'deepseek'`, no API key needed; a GitHub token is). The repository's `deepseek-16b.yml` workflow runs `deepseek-ai/deepseek-llm-7b-chat` on a CPU-only runner: normally a 4-bit GGUF (`TheBloke/deepseek-llm-7B-chat-GGUF`, Q4_K_M) through llama.cpp, with the full float16 model through transformers as a slow fallback, and `deepseek-ai/deepseek-coder-1.3b-instruct` only if the primary cannot run. The "16B" in the name is legacy: no 16B model runs. With the GGUF engine a short answer took about 2 minutes on 3 runs (before it, 10–17 minutes); long answers take longer at roughly 2 tokens/s. The chat shows elapsed time while it runs. Moonshot/Kimi, Anthropic and local llama.cpp are explicit provider choices.
+**Providers** (chosen in Settings):
 
-**Default flow (as implemented):** `User → (greetings answered instantly) → CORPUS context → DeepSeek workflow → (optional ForgeTools execution → real results → DeepSeek continuation) → response`. Side effects stay in ForgeTools behind its Guardian checks.
+| Provider | Models | Runs where | Needs |
+| --- | --- | --- | --- |
+| **DeepSeek 16B** (default; legacy name) | **Qwen/Qwen3-8B**, 4-bit GGUF (Q4_K_M), 8K context, via llama.cpp (`llama-cpp-python` 0.3.36); labelled `deepseek-coder-1.3b` fallback only if it cannot run | `deepseek-16b.yml` on a free CPU runner; opt-in GPU runner | A GitHub token |
+| Moonshot · Kimi | Kimi K2.6, K2.7 Code (+ Highspeed), K3 | Moonshot API | A Moonshot key |
+| Anthropic · Claude | Claude Haiku / Sonnet / Opus 5.5 | Anthropic API | An Anthropic key |
+| Local | llama.cpp server you run | Your machine | — |
 
-The operator supplies provider credentials through the application's settings flow. Credentials are not intended to be committed to the repository.
+Qwen3-8B was chosen by benchmark on the runner's 4 CPU threads (2026-10-20). The old `deepseek-llm-7b-chat` got a two-step time question wrong and looped on HTML; Qwen3-8B answered correctly and completely at 3.3–4.1 tokens/s. A short answer took 43 s with the model cached (run 39439006131). Long answers take minutes; the chat shows elapsed time.
+
+**How a turn runs:**
+- **Claude and Kimi** are tool-calling reasoners. They read the repository, run shell commands, research, build and deploy sites, and propose self-sculpt changes through ForgeTools, quoting real tool results.
+- **DeepSeek (Qwen)** has no tool loop of its own. The router runs fixed chains for it: picture → analysis; research question → sources → answer; website → generate → repo → publish → verify; "improve <file>" → read → rewrite → pull request.
+- Every model is told today's date. Questions about recent events go through live web research first.
+- Every side effect goes through ForgeTools and Guardian.
+
+The operator supplies credentials through Settings. They stay in the browser and are never committed to the repository.
 
 ## Main capabilities
 
@@ -38,13 +56,42 @@ ForgeMind and specialist agents use contracts, tool definitions, failure classif
 
 The GitHub integration supports repository metadata, file reads and writes, tree inspection, branch operations, pull requests, workflow dispatch, and workflow-run inspection. Repository writes should be performed on a reviewable branch whenever possible.
 
+### Websites to GitHub Pages
+
+`github_create_repo` → `github_publish_site` (all files in one commit, `.nojekyll`, Pages enabled) → `github_pages_status` (waits for the build). Sites that need a build step (npm, Vite, React) go through `site-build.yml`: a read-only build job, plus a separate mirror job that runs no model code. Publishing refuses `main`/`master`, `.github/`, and the ForgeClaw repository itself, and a truncated build listing publishes nothing.
+
+### Live web research
+
+`deep_research` runs `deep-research.yml`: up to 6 searches, a server-side fetch of each page, main-text extraction, and numbered evidence. Answers cite `[n]` and say so when nothing usable was found, instead of answering from memory.
+
+### Pictures
+
+Claude and Kimi receive the attached picture directly. With DeepSeek, the picture is analyzed on Actions by Qwen2-VL-2B (`image-analyze.yml`). The picture is removed from the `vision-inputs` branch tip after analysis; it stays in that branch's history until the branch is deleted. Free mode says it can't read pictures yet.
+
+### Self-sculpt
+
+`sculpt_self` (whole file) and `shell_patch` (diff) open a pull request on their own branch, never a direct change. Both are locked behind a **self-sculpt key** only the owner knows. The key is stored as a PBKDF2 hash in the owner's browser, and each unlock lasts 2 hours. `/sculpt <file> <change>` and `/patch` work with any provider, or with none.
+
+### NEXUS recursive learning
+
+The NEXUS page ("My Logic Is Undeniable") counts outcomes, tracks per-tool reliability and recurring failure lessons, and feeds those lessons back into prompts as labelled evidence. Every run, including failures and Guardian blocks, becomes an unapproved candidate. Admission needs the owner's signed authorization.
+
+### Free mode for visitors
+
+A visitor with no GitHub token uses ForgeClaw's own model through the owner's relay (`relay/`, a Cloudflare Worker). Visitors never see the owner's keys, tools, NEXUS or chats. The relay can only run the model and research workflows. It enforces allowed origins, per-IP limits and a concurrency cap. Visitor conversations are stored for the owner to import into NEXUS, and every user's error reports, secret-stripped, are emailed to the owner.
+
 ### Browser automation
 
 Playwright scripts can be run through the repository's automation workflow. This keeps browser automation separate from the browser UI and makes the execution path easier to reproduce in CI.
 
 ### Safety and integrity checks
 
-The application includes project-local checks for scope, action impact, identity, contracts, and integrity. These are ordinary application controls implemented in this repository; they are not a dependency on a proprietary platform or service.
+The application includes project-local checks for scope, action impact, identity, contracts, and integrity. Guardian also enforces these rules:
+- **Offered tools only:** a model can only run tools offered for this turn.
+- **Repo creation cap:** at most 2 repositories can be created per run.
+- **Postures:** operator-shell (the default: shell and site deploys run, repository writes need a co-sign), full-cosign, or autonomous.
+
+Paths in `.github/protected-paths.txt` (workflows, manifests, build configs, Guardian and tool dispatch) cannot be changed by autonomous workflows. These are ordinary application controls implemented in this repository, not a dependency on a proprietary platform or service.
 
 ### Failure visibility
 
@@ -52,21 +99,29 @@ Failures are classified and surfaced in the Activity area. The current code dist
 
 ## Capability status
 
-Verified 2026-10-19 against the code and each workflow's last 30 GitHub runs. "Works" means it ran successfully end to end recently, not just that code exists.
+Updated 2026-10-20. "Works" means it ran successfully end to end on GitHub Actions; run IDs are given. "Not verified live" means tested with mocks or in a container only.
 
 | Capability | Tool / workflow | Status |
 | --- | --- | --- |
-| Reasoning (default chat) | `deepseek_reason` / `deepseek-16b.yml` | Works (24 of last 30 succeeded; the rest were cancelled by STOP). 10–17 min per answer on the old engine; about 2 min for a short answer on the GGUF engine (3 runs, not yet verified from `main`). |
-| Web search | `web_search` / `ddg_search.yml` (or Brave with a key) | Works (15 of 15). |
-| Image generation | `generate_image` / `generate-image.yml` | Works (28 of 30). |
-| Shell commands | `shell_exec` / `shell-exec.yml` | Works. Runs report the command's own exit code, so a failing command shows as a failed run. |
+| Reasoning (default) | `deepseek_reason` / `deepseek-16b.yml` | **Works:** Qwen3-8B, run 39439006131 (43 s, cached model). GPU runner not tested. |
+| Live web research | `deep_research` / `deep-research.yml` | **Works:** runs 39439011635 (5 sources) and 39449600771 (8 sources, all 2026). |
+| Kimi / Claude tool loops | hosted providers | Unit- and app-tested. The live acceptance test (`docs/live-acceptance-test-2026-10-20.md`) is pending. |
+| Self-sculpt / shell repair | `sculpt_self`, `shell_patch` | **Works:** runs 39362448179 and 39362463489 opened the intended pull requests. Key gate and `/sculpt` are not verified live. |
+| Website deploy | `github_create_repo`, `github_publish_site`, `github_pages_status` | Not verified live (acceptance step C). |
+| Build-step sites | `github_build_site` / `site-build.yml` | Not verified live (acceptance step D). |
+| Pictures: Claude / Kimi | native image input | Not verified live with Kimi K2.6. |
+| Pictures: DeepSeek | `analyze_image` / `image-analyze.yml` | The Qwen2-VL model ran on main (run 39319037899, URL input). The attached-picture path is not verified live. |
+| Free mode (visitors) | `relay/` | Needs the relay deployed or redeployed (`relay/README.md`). Not verified live. |
+| Error reports to owner | `relay/` `/v1/errors` + Resend | Needs the relay and a Resend key. Not verified live. |
+| Web search | `web_search` / `ddg_search.yml` (or Brave with a key) | Works (15 of 15 on 2026-10-19). |
+| Image generation | `generate_image` / `generate-image.yml` | Works (28 of 30 on 2026-10-19). |
+| Shell commands | `shell_exec` / `shell-exec.yml` | Works. Runs report the command's own exit code. |
 | GitHub repo read/write, issues, runs, logs | `github_*` tools | Works with a GitHub token. |
-| Image analysis | `analyze_image` / `image-analyze.yml` | **Was broken 2026-10-19:** the workflow failed at import (`AutoModelForVision2Seq` was removed from `transformers`). Workflow fixed (Qwen2-VL via `.github/scripts/analyze_image.py`); not yet run live from `main`. The tool still only dispatches; showing the result in the chat needs `executeTool()` work. |
-| Code review | `review_code` / `code-review.yml` | **Was broken 2026-10-19:** loaded CodeLlama-7B in float32 (~28 GB) on a 16 GB runner and was killed. Workflow fixed (DeepSeek-Coder-6.7B Q4_K_M GGUF via `.github/scripts/review_code.py`); not yet run live from `main`. The tool still only dispatches; showing the result in the chat needs `executeTool()` work. |
-| Browser automation | `browser-automation.yml` | **Was broken 2026-10-19:** `scripts/browser-automation.js` used `require` in an ES-module package, and Playwright was not a dependency. Fixed (`scripts/browser-automation.cjs` + pinned Playwright); not yet run live from `main`. Not exposed as a chat tool. |
-| Self-sculpt / shell repair | `sculpt_self`, `shell_patch` | Mixed: recent runs mostly fail at their validation steps; under review. |
+| Code search proxy | `search-proxy.yml` | The workflow runs. The last two live attempts hit GitHub's code-search rate limit (HTTP 429), so scoping is not verified live yet. |
+| Code review | `review_code` / `code-review.yml` | Only dispatches; the result does not reach the chat yet (scheduled). |
+| Browser automation | `browser-automation.yml` | Fixed 2026-10-19, not verified live. Not a chat tool. |
 | Gmail, Calendar, WhatsApp | `gmail_*`, `calendar_*`, `send_whatsapp` | Need your own OAuth/API credentials in Settings; not verified here. |
-| `http_fetch`, `run_js` | browser-side | Work within browser limits (`http_fetch` is subject to the target site's CORS policy). |
+| `http_fetch`, `run_js` | browser-side | Work within browser limits (`http_fetch` is subject to CORS). |
 
 ## Architecture
 
@@ -80,7 +135,17 @@ src/
     agentCore.ts               Agent contracts, failure classes, and action checks
     modelProviders.ts          AI-model bridge used by ForgeMind and agents
     managedAgent.ts            Managed agent execution loop
-    forgeTools.ts              Tool definitions exposed to agents
+    forgeTools.ts              Tool definitions and dispatch (protected)
+    guardianGate.ts            Guardian postures and co-sign rules (protected)
+    toolExposure.ts            Which tools each turn offers; refusals
+    githubPublish.ts           Pages publishing, repo creation, token diagnostics
+    siteBuild.ts               Build-step sites via site-build.yml
+    deepResearch.ts            Live web research client
+    visionInput.ts             Picture analysis on Actions
+    workflowRun.ts             Dispatch a workflow and wait for its run
+    sculptKey.ts               Owner-only self-sculpt key
+    nexusLearning.ts           NEXUS outcome summary and lessons
+    publicRelay.ts             Free mode through the relay
     github.ts                  GitHub API client and repository operations
     supabase.ts                Optional Supabase client
   hooks/
@@ -90,6 +155,9 @@ src/
   components/
     FailureDashboard.tsx       Failure view rendered from Activity
     AgentsPanel.tsx             Custom-agent interface
+
+relay/
+  worker.js                    Free-mode relay (Cloudflare Worker), see relay/README.md
 
 engine/
   server.ts                    Optional server-side runtime
@@ -107,7 +175,7 @@ scripts/
 | Build | Vite |
 | Styling | Tailwind CSS |
 | State | Zustand |
-| AI runtime | DeepSeek workflow + CORPUS context; optional llama.cpp and Anthropic adapters |
+| AI runtime | Qwen3-8B (GGUF, llama.cpp) on GitHub Actions; Moonshot/Kimi and Anthropic/Claude adapters; optional local llama.cpp |
 | GitHub API | Octokit REST |
 | Optional backend | Supabase Edge Function |
 | Browser automation | Playwright |
@@ -141,7 +209,14 @@ cp .env.example .env
 cp engine/.env.example engine/.env
 ```
 
-Keep API keys, service-role keys, and GitHub tokens in local environment configuration or the application's secure settings flow. Never commit credentials, generated secrets, or private customer data.
+Keep API keys, service-role keys, and GitHub tokens in local environment configuration or the application's secure settings flow. Never commit credentials, generated secrets, or private customer data. A test fails if any shipped source contains a credential-shaped string.
+
+Optional repository variables (Settings → Secrets and variables → Actions → Variables):
+
+| Variable | Effect |
+| --- | --- |
+| `FORGECLAW_PUBLIC_RELAY_URL` | Enables free mode on the deployed site (the relay's URL). |
+| `FORGECLAW_GPU_RUNNER` | Runs the model on a GPU larger runner. Needs a GitHub Team/Enterprise organization and is billed per minute. Unset, the free CPU runner is used. |
 
 ## Repository-write guidance
 

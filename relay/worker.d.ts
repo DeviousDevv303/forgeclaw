@@ -3,3 +3,5 @@ export function readZipEntries(buffer: ArrayBuffer, wanted: string[]): Promise<R
 declare const worker: { fetch(request: Request, env: Record<string, unknown>): Promise<Response> }
 export default worker
 export function sanitizeErrorEntries(entries: unknown): Array<{ timestamp: number; level: string; source: string; message: string; details?: string }>
+export function canonicalRecord(record: unknown): string
+export function manipulationFlags(...texts: string[]): string[]

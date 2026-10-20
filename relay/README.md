@@ -31,6 +31,13 @@ your keys, tools, NEXUS and chats live only in your browser.
 artifacts on a public repository can be downloaded by signed-in GitHub users. The app tells
 visitors not to enter private information.
 
+**Visitor learning, built so it can't be steered:**
+- **Who writes records:** only the relay, from the run's own result (answer or research outcome). A visitor can't submit or edit one.
+- **Signing:** each record is signed with `OWNER_KEY`. The NEXUS import drops anything whose signature doesn't verify, so nothing altered or forged gets in. Without `OWNER_KEY`, nothing is recorded.
+- **Anonymity and caps:** each visitor gets an anonymous id (an HMAC of their IP; the IP itself is never stored). They're capped at 20 records a day, and the same question in a day is kept once.
+- **Flags:** text that reads like instructions to a model is flagged (`instruction-like`, `many-links`, `encoded-blob`) and shown with ⚠ on the NEXUS page.
+- **In NEXUS:** imported records stay **unapproved**. One visitor counts once, however many runs they send. Visitor records **never reach a model's prompt**: prompts use only the owner's own runs and records the owner approved.
+
 ## Deploy (about 10 minutes, one time)
 
 1. **Create the token.** GitHub → Settings → Developer settings → Fine-grained tokens → Generate:
