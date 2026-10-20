@@ -32,6 +32,13 @@ const RESEARCH_SOURCES = '6'
 const MAX_ERROR_ENTRIES = 30
 const MAX_ERROR_CHARS = 600
 const LEARN_TTL_S = 180 * 24 * 3600
+// Visitor learning is anti-manipulation by construction (see recordLearning): records are written only by the
+// relay from the run's own artifact, signed with OWNER_KEY, capped per anonymous visitor and flagged when they
+// read like instructions to a model.
+const MAX_LEARN_PER_VISITOR_DAY = 20
+const MAX_LEARN_RESULT_CHARS = 4000
+// Wording used to steer a model ("ignore previous instructions", "from now on", "you are now", ...).
+const MANIPULATION_RE = /\b(?:ignore (?:all |any )?(?:previous|prior|above)|disregard (?:the |all )?(?:previous|prior|above|instructions)|from now on|you are now|act as|pretend (?:to be|you)|system prompt|developer mode|jailbreak|always (?:answer|say|respond)|never (?:answer|say|mention|refuse)|remember (?:that|this)|new instructions?|override|do not tell)\b|<\/?(?:system|script|instructions?)\b|\[\/?INST\]/i
 // Anything token-shaped is removed from error reports before they are stored or emailed.
 const SECRET_RE = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-(?:ant-)?[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,}|Bearer\s+[A-Za-z0-9._-]{16,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g
 
@@ -71,6 +78,63 @@ async function overQuota(request, env, bucket = 'ip', limit = Number(env.MAX_PER
   if (used >= limit) return true
   await env.RATE.put(key, String(used + 1), { expirationTtl: 3700 })
   return false
+}
+
+const hex = buffer => [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, '0')).join('')
+async function hmacHex(key, text) {
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  return hex(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(text)))
+}
+async function sha256Hex(text) { return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))) }
+
+/** Stable JSON (sorted keys) of a learning record without its signature: what the owner's app verifies. */
+export function canonicalRecord(record) {
+  const sort = v => Array.isArray(v) ? v.map(sort) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).filter(k => k !== 'sig').sort().map(k => [k, sort(v[k])])) : v
+  return JSON.stringify(sort(record))
+}
+
+/** Which manipulation patterns a text contains (shown to the owner; the record is still imported, unapproved). */
+export function manipulationFlags(...texts) {
+  const flags = []
+  for (const text of texts) {
+    if (MANIPULATION_RE.test(text || '')) { flags.push('instruction-like'); break }
+  }
+  if (texts.some(t => ((t || '').match(/https?:\/\//g) || []).length > 5)) flags.push('many-links')
+  if (texts.some(t => /[A-Za-z0-9+/=]{200,}/.test(t || ''))) flags.push('encoded-blob')
+  return flags
+}
+
+/** Anonymous, stable per-visitor id: HMAC of the client IP with the owner key; the IP itself is never stored. */
+async function visitorId(request, env) {
+  const ip = request.headers.get('CF-Connecting-IP') || 'unknown'
+  return (await hmacHex(env.OWNER_KEY || 'no-owner-key', `visitor:${ip}`)).slice(0, 12)
+}
+
+/** Constant-time string comparison for the owner key. */
+function sameSecret(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false
+  let diff = 0
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  return diff === 0
+}
+
+/**
+ * Note a visitor's request for learning, or decline to. Returns nothing; the record is written later by
+ * recordLearning from the run's own result. Per anonymous visitor: at most MAX_LEARN_PER_VISITOR_DAY records a
+ * day, and the same question twice in a day is kept once, so one person cannot flood or skew NEXUS.
+ */
+async function noteForLearning(request, env, id, kind, text) {
+  if (!env.LEARN || !env.OWNER_KEY) return  // unsigned records would be rejected by the owner's app anyway
+  const visitor = await visitorId(request, env)
+  const day = new Date().toISOString().slice(0, 10)
+  const dupKey = `vdup:${visitor}:${(await sha256Hex(text.toLowerCase().replace(/\s+/g, ' ').trim())).slice(0, 24)}`
+  if (await env.LEARN.get(dupKey)) return
+  const countKey = `vcount:${visitor}:${day}`
+  const used = Number(await env.LEARN.get(countKey)) || 0
+  if (used >= MAX_LEARN_PER_VISITOR_DAY) return
+  await env.LEARN.put(countKey, String(used + 1), { expirationTtl: 2 * 86400 })
+  await env.LEARN.put(dupKey, '1', { expirationTtl: 86400 })
+  await env.LEARN.put(`task:${id}`, JSON.stringify({ kind, task: text, visitor, startedAt: Date.now() }), { expirationTtl: 86400 })
 }
 
 /** Minimal ZIP reader (central directory; stored or deflate entries) for the result artifact. */
@@ -121,8 +185,8 @@ async function startReasoning(request, env, cors) {
     body: JSON.stringify({ ref: 'main', inputs: { task, context, nexus_learning: 'false', invocation_id: id, mirror: 'false' } }),
   })
   if (!res.ok) return json({ error: `the model could not be started (GitHub ${res.status})` }, 502, cors)
-  // Kept until the answer arrives, then stored with it as a NEXUS learning record (see readReasoning).
-  if (env.LEARN) await env.LEARN.put(`task:${id}`, task, { expirationTtl: 86400 })
+  // Noted now; the record is written from the run's own result (see readReasoning).
+  await noteForLearning(request, env, id, 'answer', task)
   return json({ invocation_id: id, status: 'queued' }, 202, cors)
 }
 
@@ -157,6 +221,7 @@ async function startResearch(request, env, cors) {
     body: JSON.stringify({ ref: 'main', inputs: { question, queries: '', max_sources: RESEARCH_SOURCES, invocation_id: id, mirror: 'false' } }),
   })
   if (!res.ok) return json({ error: `web research could not be started (GitHub ${res.status})` }, 502, cors)
+  await noteForLearning(request, env, id, 'research', question)
   return json({ invocation_id: id, status: 'queued' }, 202, cors)
 }
 
@@ -167,9 +232,16 @@ async function readResearch(id, env, cors) {
   if (run.status !== 'completed') return json({ status: run.status }, 200, cors)
   // A run that found no sources fails on purpose but still uploads its report (with the failures), so read it either way.
   const files = await readArtifact(env, run, `research-${id}`, ['research.json'])
-  if (!files?.['research.json']) return json({ status: 'failed', conclusion: run.conclusion || 'no result artifact', run_url: run.html_url }, 200, cors)
+  if (!files?.['research.json']) {
+    await recordLearning(env, id, { outcome: 'failed', result: `[TOOL ERROR] research run concluded ${run.conclusion || 'without a report'}`, model: 'deep-research' })
+    return json({ status: 'failed', conclusion: run.conclusion || 'no result artifact', run_url: run.html_url }, 200, cors)
+  }
   let report
   try { report = JSON.parse(files['research.json']) } catch { return json({ status: 'failed', conclusion: 'unreadable research report', run_url: run.html_url }, 200, cors) }
+  const sources = Array.isArray(report.sources) ? report.sources.length : 0
+  await recordLearning(env, id, sources
+    ? { outcome: 'completed', result: `${sources} source(s): ${report.sources.slice(0, 6).map(s => s.domain || s.url).join(', ')}`, model: 'deep-research', sources }
+    : { outcome: 'failed', result: '[TOOL ERROR] research found no readable sources', model: 'deep-research', sources: 0 })
   return json({ status: 'done', report, run_url: run.html_url }, 200, cors)
 }
 
@@ -178,23 +250,48 @@ async function readReasoning(id, env, cors) {
   const run = await findRun(env, WORKFLOW, id)
   if (!run) return json({ status: 'queued' }, 200, cors)
   if (run.status !== 'completed') return json({ status: run.status }, 200, cors)
-  if (run.conclusion !== 'success') return json({ status: 'failed', conclusion: run.conclusion }, 200, cors)
+  if (run.conclusion !== 'success') {
+    await recordLearning(env, id, { outcome: 'failed', result: `[TOOL ERROR] model run concluded ${run.conclusion}`, model: '' })
+    return json({ status: 'failed', conclusion: run.conclusion }, 200, cors)
+  }
   const files = await readArtifact(env, run, `deepseek-${id}`, ['result.txt', 'result_meta.txt'])
   if (!files) return json({ status: 'failed', conclusion: 'no result artifact' }, 200, cors)
   const model = /^model=(.+)$/m.exec(files['result_meta.txt'] || '')?.[1] || ''
   const result = files['result.txt'] || ''
-  await recordLearning(env, id, result, model)
+  await recordLearning(env, id, { outcome: result.trim() ? 'completed' : 'failed', result: result.trim() || '[TOOL ERROR] empty answer', model })
   return json({ status: 'done', result, model }, 200, cors)
 }
 
-/** Store a visitor conversation once, for the owner to import into NEXUS (unapproved candidates). */
-async function recordLearning(env, id, result, model) {
-  if (!env.LEARN) return
-  const task = await env.LEARN.get(`task:${id}`)
-  if (task === null) return  // already recorded, or expired
-  const ts = new Date().toISOString()
-  await env.LEARN.put(`learn:${ts}:${id}`, JSON.stringify({ id, task, result, model, ts }), { expirationTtl: LEARN_TTL_S })
+/**
+ * Store a visitor run once, for the owner to import into NEXUS as unapproved candidates. Everything in the
+ * record comes from the relay (the noted request and the run's own outcome), never from the visitor's browser,
+ * and the record is signed with OWNER_KEY so the owner's app can reject anything altered or forged.
+ */
+async function recordLearning(env, id, outcome) {
+  if (!env.LEARN || !env.OWNER_KEY) return
+  const raw = await env.LEARN.get(`task:${id}`)
+  if (raw === null) return  // not noted (capped, duplicate), already recorded, or expired
   await env.LEARN.delete(`task:${id}`)
+  let noted
+  try { noted = JSON.parse(raw) } catch { return }
+  const result = String(outcome.result || '').slice(0, MAX_LEARN_RESULT_CHARS)
+  const record = {
+    v: 2,
+    id,
+    kind: noted.kind,
+    tool: noted.kind === 'research' ? 'deep_research' : 'deepseek_reason',
+    task: String(noted.task || ''),
+    result,
+    outcome: outcome.outcome,
+    model: outcome.model || '',
+    seconds: Math.max(0, Math.round((Date.now() - Number(noted.startedAt || Date.now())) / 1000)),
+    ...(typeof outcome.sources === 'number' ? { sources: outcome.sources } : {}),
+    visitor: noted.visitor,
+    flags: manipulationFlags(noted.task, result),
+    ts: new Date().toISOString(),
+  }
+  record.sig = await hmacHex(env.OWNER_KEY, canonicalRecord(record))
+  await env.LEARN.put(`learn:${record.ts}:${id}`, JSON.stringify(record), { expirationTtl: LEARN_TTL_S })
 }
 
 export function sanitizeErrorEntries(entries) {
@@ -245,7 +342,7 @@ async function receiveErrors(request, env, cors) {
 /** Owner-only export of stored visitor conversations or error reports. */
 async function exportRecords(request, env, cors, prefix) {
   const auth = request.headers.get('Authorization') || ''
-  if (!env.OWNER_KEY || auth !== `Bearer ${env.OWNER_KEY}`) return json({ error: 'owner key required' }, 401, cors)
+  if (!env.OWNER_KEY || !sameSecret(auth, `Bearer ${env.OWNER_KEY}`)) return json({ error: 'owner key required' }, 401, cors)
   if (!env.LEARN) return json({ records: [] }, 200, cors)
   const list = await env.LEARN.list({ prefix, limit: 500 })
   const records = []

@@ -4,7 +4,7 @@
 // and read the error reports every user's browser sent. Needs the relay's OWNER_KEY.
 import { useState } from 'react'
 import { corpusRepository } from '../lib/corpus'
-import { buildLearningEvent } from '../lib/learningEvents'
+import { verifyVisitorRecords, visitorCandidate } from '../lib/visitorLearning'
 import { PUBLIC_RELAY_URL } from '../lib/publicRelay'
 
 const KEY = 'fc_relay_owner_key'
@@ -29,14 +29,15 @@ export function VisitorLearningImport() {
   const importLearning = async () => {
     setStatus('Importing…')
     try {
-      const records = await call('/v1/learning') as Array<{ task: string; result: string; model: string }>
-      for (const r of records) {
-        await corpusRepository.appendInteraction({
-          ...buildLearningEvent({ channel: 'chat', input: r.task, result: r.result, outcome: 'completed', runtime: 'public-relay', model: r.model || 'public', actor: 'user' }),
-          source: 'learning:visitor',
-        })
-      }
-      setStatus(`Imported ${records.length} visitor conversation(s) into NEXUS as unapproved candidates (duplicates are merged).`)
+      // Only records the relay signed with this owner key get in (visitorLearning.ts); they stay unapproved
+      // and never reach a prompt until you approve them.
+      const { valid, rejected } = await verifyVisitorRecords(await call('/v1/learning'), ownerKey)
+      for (const r of valid) await corpusRepository.appendInteraction(visitorCandidate(r))
+      const flagged = valid.filter(r => r.flags.length).length
+      const visitors = new Set(valid.map(r => r.visitor)).size
+      setStatus(`Imported ${valid.length} visitor run(s) from ${visitors} anonymous visitor(s) as unapproved candidates (duplicates are merged).` +
+        (flagged ? ` ${flagged} flagged as possible manipulation.` : '') +
+        (rejected ? ` Rejected ${rejected} record(s) with a missing or invalid signature.` : ''))
     } catch (error) { setStatus(error instanceof Error ? error.message : String(error)) }
   }
 

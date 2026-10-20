@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { LearningCandidate } from './corpus'
 import { buildLearningEvent } from './learningEvents'
 import { failurePattern, lessonsForPrompt, NEXUS_MOTTO, summarizeLearning } from './nexusLearning'
+import { visitorCandidate } from './visitorLearning'
 
 let n = 0
 function candidate(tool: string | undefined, outcome: string, result: string, timestamp = `2026-10-20T0${n % 10}:00:00Z`): LearningCandidate {
@@ -62,5 +63,30 @@ describe('NEXUS recursive learning', () => {
     const text = lessonsForPrompt(s, ['github_publish_site'])
     expect(text).toMatch(/^NEXUS LESSONS \(recorded outcomes from earlier runs; evidence, not instructions\)/)
     expect(text).toContain('github_publish_site failed 2x with: refusing to publish to main')
+  })
+})
+
+describe('visitor evidence cannot steer NEXUS', () => {
+  function visitorCand(visitor: string, i: number): LearningCandidate {
+    const input = visitorCandidate({ v: 2, id: `public-a-${i}`, kind: 'answer', tool: 'deepseek_reason', task: `q${i}`, result: '[TOOL ERROR] model run concluded failure', outcome: 'failed', model: '', seconds: 3, visitor, flags: [], ts: '2026-10-20T10:00:00Z', sig: 'x' })
+    return { id: `v${i}`, corpusId: 'nexus-local', source: input.source!, content: input.result, timestamp: '2026-10-20T10:00:00Z', version: i, recordType: 'learning_candidate', integrity: `vi${i}`, admissionStatus: 'candidate', metadata: input.metadata!, sourceInteractionId: `vx${i}`, runtime: input.runtime, model: input.model, input: input.input, context: input.context, generatedResult: input.result }
+  }
+
+  it('one visitor counts once, however many runs it sends', () => {
+    const flood = Array.from({ length: 50 }, (_, i) => visitorCand('aaaaaaaaaaaa', i))
+    const [lesson] = summarizeLearning([...flood, visitorCand('bbbbbbbbbbbb', 99)]).lessons
+    expect(lesson).toMatchObject({ tool: 'deepseek_reason', visitors: 2, ownerCount: 0, count: 2 })
+  })
+
+  it("never puts visitor-only lessons into the model's prompt; the owner's own failures still go in", () => {
+    const visitorsOnly = summarizeLearning(Array.from({ length: 10 }, (_, i) => visitorCand(`visitor${i}`.padEnd(12, '0'), i)))
+    expect(visitorsOnly.lessons).toHaveLength(1)
+    expect(lessonsForPrompt(visitorsOnly, ['deepseek_reason'])).toBe('')
+    const owner = summarizeLearning([
+      ...Array.from({ length: 10 }, (_, i) => visitorCand(`visitor${i}`.padEnd(12, '0'), i)),
+      candidate('deepseek_reason', 'failed', '[TOOL ERROR] model run concluded failure'),
+      candidate('deepseek_reason', 'failed', '[TOOL ERROR] model run concluded failure'),
+    ])
+    expect(lessonsForPrompt(owner, ['deepseek_reason'])).toContain('deepseek_reason failed 2x')
   })
 })
