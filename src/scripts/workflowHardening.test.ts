@@ -215,3 +215,19 @@ describe('shell-repair pull request body', () => {
     expect(result.stdout).toContain('- Landing path: pull request to main; this workflow never merges.')
   })
 })
+
+describe('workflow expression syntax', () => {
+  // 2026-10-20: a comment inside search-proxy.yml's run: block said "never through ${{ }}". GitHub
+  // evaluates expressions even in comments, so the empty expression made the workflow unparseable and
+  // every dispatch failed with HTTP 422 "An expression was expected". File-reading tests never saw it.
+  const workflows = readdirSync('.github/workflows').filter(f => f.endsWith('.yml'))
+  it('has no empty ${{ }} expression and no expression inside a comment', () => {
+    for (const file of workflows) {
+      const lines = read(`.github/workflows/${file}`).split('\n')
+      lines.forEach((line, i) => {
+        expect(/\$\{\{\s*\}\}/.test(line), `${file}:${i + 1} empty expression`).toBe(false)
+        expect(/^\s*#.*\$\{\{/.test(line), `${file}:${i + 1} expression inside a comment`).toBe(false)
+      })
+    }
+  })
+})

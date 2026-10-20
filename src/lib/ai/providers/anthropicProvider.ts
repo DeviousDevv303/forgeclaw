@@ -4,6 +4,7 @@
 // Direct browser-compatible Messages API transport. The API key remains in
 // browser localStorage, matching ForgeClaw's existing provider-key model.
 
+import { isSendableImage, parseImageDataUrl } from '../../imageInput'
 import type { AIMessage, AIProvider, AIRequest, AIResponse, AIToolCall } from '../types'
 
 const ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1/messages'
@@ -29,6 +30,7 @@ export function resolveAnthropicModel(stored: string | null | undefined): string
 
 type AnthropicContentBlock =
   | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } | { type: 'url'; url: string } }
   | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'tool_result'; tool_use_id: string; content: string }
 
@@ -67,6 +69,11 @@ export function toAnthropicMessages(messages: AIMessage[]): AnthropicMessage[] {
       blocks.push({ type: 'tool_result', tool_use_id: message.tool_call_id || '', content: message.content || '(empty result)' })
     } else {
       role = message.role === 'assistant' ? 'assistant' : 'user'
+      // Pictures go only in user turns, before the text that asks about them.
+      if (role === 'user' && isSendableImage(message.image_url)) {
+        const inline = parseImageDataUrl(message.image_url)
+        blocks.push({ type: 'image', source: inline ? { type: 'base64', media_type: inline.mediaType, data: inline.data } : { type: 'url', url: message.image_url } })
+      }
       if (message.content?.trim()) blocks.push({ type: 'text', text: message.content })
       if (message.role === 'assistant') {
         blocks.push(...(message.tool_calls ?? []).map(call => ({

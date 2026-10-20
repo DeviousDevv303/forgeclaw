@@ -1,12 +1,17 @@
 # ForgeClaw public relay
 
 Lets visitors of the public ForgeClaw site use the hosted model (Qwen3-8B in `deepseek-16b.yml`)
-**without your credentials and without anything from your own session**. It is a ~150-line
-Cloudflare Worker (`worker.js`, free tier is enough) that can do exactly two things:
+**without your credentials and without anything from your own session**. It is a ~250-line
+Cloudflare Worker (`worker.js`, free tier is enough). The model and research routes:
 
-- `POST /v1/reason {task}`: dispatch `deepseek-16b.yml` with NEXUS learning **off** and the
-  browsable results mirror **off**.
+- `POST /v1/reason {task, context?}`: dispatch `deepseek-16b.yml` with NEXUS learning **off** and the
+  browsable results mirror **off**. `context` carries gathered web evidence.
 - `GET /v1/reason/<id>`: read that run's result from its artifact.
+- `POST /v1/research {question}`: dispatch `deep-research.yml` (live web search and page reading,
+  6 sources, mirror **off**), so visitors get current answers with citations.
+- `GET /v1/research/<id>`: read that run's report from its artifact.
+
+The logging routes:
 
 - `POST /v1/errors`: every ForgeClaw user's browser (yours too) sends its error log here
   automatically. Secrets are stripped, the report is stored, and it is **emailed to you** via Resend.
@@ -18,9 +23,9 @@ your keys, tools, NEXUS and chats live only in your browser.
 
 **Limits** (all set in `wrangler.toml`):
 - **Allowed origins:** only the sites listed in `ALLOWED_ORIGINS` can call it.
-- **Task size:** 4,000 characters at most.
-- **Per-IP:** 10 runs an hour (`MAX_PER_HOUR`). This needs the `RATE` KV namespace.
-- **Concurrency:** 3 public runs at once (`MAX_CONCURRENT`), so your own runs are never starved.
+- **Size:** task 4,000 characters, context 16,000, research question 500.
+- **Per-IP:** 10 model runs and 10 research runs an hour (`MAX_PER_HOUR`, counted separately). This needs the `RATE` KV namespace.
+- **Concurrency:** 3 public runs at once per workflow (`MAX_CONCURRENT`), so your own runs are never starved.
 
 **Privacy notice shown to visitors:** prompts run in your public repository's Actions, and run
 artifacts on a public repository can be downloaded by signed-in GitHub users. The app tells

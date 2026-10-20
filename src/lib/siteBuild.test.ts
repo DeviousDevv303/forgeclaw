@@ -74,6 +74,17 @@ describe('buildAndPublishSite', () => {
     expect(f.calls.some(c => c.url.startsWith(SITE))).toBe(false)
   })
 
+  it('publishes nothing when the mirror listing is truncated, even if some files are visible (#169)', async () => {
+    const f = fake()
+    const request: GithubRequest = async (url, init) => {
+      const res = await f.request(url, init)
+      if (url.endsWith('/git/trees/site-builds?recursive=1')) return Response.json({ ...(await res.json()), truncated: true })
+      return res
+    }
+    await expect(buildAndPublishSite(request, f.input)).rejects.toThrow(/truncated listing .* nothing was published/)
+    expect(f.calls.some(c => c.url.startsWith(SITE))).toBe(false)
+  })
+
   it('refuses to publish a build into the ForgeClaw repository', async () => {
     const f = fake()
     await expect(buildAndPublishSite(f.request, { ...f.input, owner: 'DeviousDevv303', repo: 'forgeclaw' })).rejects.toThrow(/deployed ForgeClaw app/)

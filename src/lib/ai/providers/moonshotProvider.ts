@@ -8,6 +8,7 @@
 // For GitHub Pages (static hosting, no backend), always use the direct API URL
 // since the key is stored in browser localStorage anyway.
 
+import { isSendableImage } from '../../imageInput'
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
 
 // Always use direct API URL in the browser — the proxy path (/api/moonshot)
@@ -61,7 +62,8 @@ function isConfigured(apiKey: string): boolean {
   return key.startsWith('sk-') && key.length > 20
 }
 
-type MoonshotMessage = { role: string; content: string; tool_calls?: unknown[]; tool_call_id?: string; reasoning_content?: string }
+type MoonshotContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
+type MoonshotMessage = { role: string; content: string | MoonshotContentPart[]; tool_calls?: unknown[]; tool_call_id?: string; reasoning_content?: string }
 
 export function toMoonshotMessages(systemPrompt: string, messages: AIMessage[]): MoonshotMessage[] {
   const result: MoonshotMessage[] = [
@@ -94,6 +96,12 @@ export function toMoonshotMessages(systemPrompt: string, messages: AIMessage[]):
             arguments: JSON.stringify(tc.input || {}),
           },
         })),
+      })
+    } else if (msg.role === 'user' && isSendableImage(msg.image_url)) {
+      // Kimi's vision input: the picture travels in the message as an image_url part.
+      result.push({
+        role: 'user',
+        content: [{ type: 'image_url', image_url: { url: msg.image_url } }, { type: 'text', text: msg.content }],
       })
     } else {
       result.push({

@@ -15,6 +15,11 @@ beforeEach(() => {
   fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     if (url === `${RELAY}/v1/reason` && init?.method === 'POST') return Response.json({ invocation_id: 'public-abc123-0123456789', status: 'queued' }, { status: 202 })
+    if (url === `${RELAY}/v1/research` && init?.method === 'POST') return Response.json({ invocation_id: 'public-res123-0123456789', status: 'queued' }, { status: 202 })
+    if (url === `${RELAY}/v1/research/public-res123-0123456789`) return Response.json({ status: 'done', run_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/1', report: {
+      question: 'q', queries: ['q'], elapsed_seconds: 4, failures: [],
+      sources: [{ id: 1, url: 'https://news.example/ai-2026', domain: 'news.example', title: 'AI in October 2026', date: '2026-10-19', excerpt: 'Release notes from this week.' }],
+    } })
     if (url === `${RELAY}/v1/reason/public-abc123-0123456789`) return Response.json({ status: 'done', result: 'Recursion is when a function calls itself.', model: 'Qwen/Qwen3-8B' })
     return new Response('{}', { status: 404 })
   })
@@ -49,6 +54,18 @@ describe('public visitor mode', () => {
     // Nothing personal to the owner is shown to a visitor.
     expect(document.body.textContent).not.toContain("Cristian's Computer")
   }, 20_000)
+
+  it('gives a visitor live web results: research through the relay, then an answer from those sources', async () => {
+    await ask("what's the latest in tech?")
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url, init]) => String(url) === `${RELAY}/v1/reason` && (init as RequestInit)?.method === 'POST')).toBe(true), { timeout: 15000 })
+    const research = fetchMock.mock.calls.find(([url, init]) => String(url) === `${RELAY}/v1/research` && (init as RequestInit)?.method === 'POST')!
+    expect(JSON.parse(String((research[1] as RequestInit).body)).question).toMatch(/latest in tech/)
+    const reason = JSON.parse(String((fetchMock.mock.calls.find(([url, init]) => String(url) === `${RELAY}/v1/reason` && (init as RequestInit)?.method === 'POST')![1] as RequestInit).body)) as { task: string; context?: string }
+    // The evidence travels as context, so the 4,000-character task limit never cuts it.
+    expect(reason.context).toContain('[1] AI in October 2026')
+    expect(reason.context).toContain('https://news.example/ai-2026')
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('api.github.com'))).toBe(false)
+  }, 30_000)
 
   it('never uses the relay in the owner\'s browser, which has a token', async () => {
     localStorage.setItem('gh_token', 'ghp_owner_token_for_test_only_000000000000')
