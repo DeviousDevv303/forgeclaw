@@ -28,7 +28,7 @@ import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
-import { TasteProviderClient } from './ai/providers/tasteProvider'
+import { tasteForImagePrompt } from './nexusTaste'
 import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
 import { journalRecord, type RunJournal } from './runRollback'
 import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type GithubRequest, type PublishFile } from './githubPublish'
@@ -1663,13 +1663,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         if (model !== 'sd15' && (width > 512 || height > 512)) throw new Error(`Image model '${model}' is only verified up to 512x512.`)
         if (!token) throw new Error('No GitHub token configured.')
 
-        let tastePrompt = ''
-        try {
-          const taste = await new TasteProviderClient().profile('generation')
-          if (!taste.fallback_active && taste.profile) tastePrompt = Object.values(taste.profile).join(', ')
-        } catch {
-          // Taste is additive and optional; image generation keeps its normal path.
-        }
+        // The owner's own taste (nexusTaste.ts, learned from his reactions) steers the prompt; empty until it has enough to say.
+        const tastePrompt = tasteForImagePrompt()
         const improved = suggestImprovedPrompt(tastePrompt ? `${prompt}, ${tastePrompt}` : prompt, style)
         const invocationId = `sd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const dispatchStartedAt = Date.now()

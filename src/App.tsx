@@ -174,8 +174,7 @@ import {
 } from './lib/agentCore'
 import type { ToolFailureClass, RetryDecision } from './lib/agentCore'
 import { getDiscardedPaths } from './lib/agentCore'
-import { TasteProviderClient, type TasteSignal } from './lib/ai/providers/tasteProvider'
-import { TasteStatusPanel } from './components/TasteStatusPanel'
+import { imageTasteSample, recordTaste, type TasteSignal } from './lib/nexusTaste'
 import { useForgeOps } from './hooks/useForgeOps'
 import { useNeuralState } from './hooks/useNeuralState'
 import { useForgeCore } from './hooks/useForgeCore'
@@ -226,7 +225,6 @@ interface Message {
   phases?: Record<string, string>
   showReasoning?: boolean
   feedback?: 'up' | 'down'
-  tasteImageId?: string
   tasteFeedback?: TasteSignal
   reasoning?: ReasoningChainType
   toolResults?: ToolResult[]   // agentic tool calls this message made
@@ -750,8 +748,6 @@ function App() {
   // Resolve through the shared auth path so an operator-provided .env seed and the
   // localStorage PAT are both honoured here, not just in the GitHub tool helpers.
   const [ghToken, setGhToken] = useState(() => resolveGithubToken())
-  const tasteAbortRef = useRef<AbortController | null>(null)
-  useEffect(() => () => { tasteAbortRef.current?.abort() }, [])
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
   // No built-in address: the bundle is public, so a default would publish the owner's email to every
   // visitor and send a visitor's error log to the owner. Each browser sets its own in Settings.
@@ -1176,16 +1172,6 @@ function App() {
       ? `Analyze attachment: ${options.attachmentName}`
       : displayContent
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
-    if (imageUrl) {
-      tasteAbortRef.current?.abort()
-      const tasteAbort = new AbortController()
-      tasteAbortRef.current = tasteAbort
-      const tasteClient = new TasteProviderClient()
-      void tasteClient.extractAndWait(imageUrl, undefined, undefined, tasteAbort.signal).then(result => {
-        if (result.status !== 'complete' || !result.image_id) return
-        setMessages(prev => prev.map(message => message.id === userMsg.id ? { ...message, tasteImageId: result.image_id } : message))
-      }).catch(() => { /* Taste is optional; a slow or offline service never blocks chat. */ })
-    }
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : ''
     const currentProviderLabel = isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : 'sk-ant-...'
@@ -2183,11 +2169,24 @@ function App() {
     emitFailure({ source: 'forgemind', severity: 'info', message: `Feedback saved: ${type === 'up' ? 'helpful' : 'not helpful'}`, context: { messageId: id, type } })
     setMessages(prev => prev.map(m => m.id === id ? { ...m, feedback: type } : m))
   }
+  /** 🔥 👍 👎 on a picture (the owner's own, or one ForgeClaw generated): NEXUS learns how he likes things to look. */
+  const renderTasteButtons = (msg: Message, idleColor: string, border: string): React.ReactNode => {
+    if (!msg.imageUrl || isPublicVisitor(ghToken)) return null
+    return (
+      <>
+        <span style={{ color: idleColor, fontSize: '10px', fontFamily: 'monospace' }}>{t('chat.taste')}</span>
+        {(['up', 'down', 'fire'] as TasteSignal[]).map(signal => (
+          <button key={signal} onClick={() => void handleTasteFeedback(msg.id, signal)} title={t('chat.tasteTitle', { signal: t(signal === 'fire' ? 'taste.fire' : signal === 'up' ? 'taste.up' : 'taste.down') })} style={{ ...actionButtonStyle, color: msg.tasteFeedback === signal ? '#f97316' : idleColor, border: `1px solid ${border}` }}>{signal === 'fire' ? '🔥' : signal === 'up' ? '👍' : '👎'}</button>
+        ))}
+      </>
+    )
+  }
   const handleTasteFeedback = async (id: string, signal: TasteSignal) => {
     const message = messages.find(item => item.id === id)
-    if (!message?.tasteImageId) return
+    if (!message?.imageUrl) return
     try {
-      await new TasteProviderClient().feedback(message.tasteImageId, signal)
+      // Measured here in the browser and learned by NEXUS (nexusTaste.ts): no service, port or key.
+      recordTaste(signal, await imageTasteSample(message.imageUrl))
       setMessages(prev => prev.map(item => item.id === id ? { ...item, tasteFeedback: signal } : item))
     } catch (error) {
       emitFailure({ source: 'forgemind', severity: 'warning', message: `Taste feedback failed: ${error instanceof Error ? error.message : String(error)}` })
@@ -2815,7 +2814,6 @@ function App() {
                 </div>
               </div>
 
-              <TasteStatusPanel />
               {!isPublicVisitor(ghToken) && <SculptKeyPanel />}
               {/* GitHub Token */}              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -3089,19 +3087,13 @@ function App() {
                             <button onClick={() => handleFeedback(msg.id, 'down')} title={t('chat.notHelpful')} style={{ background: msg.feedback === 'down' ? '#991b1b' : 'transparent', border: msg.feedback === 'down' ? '1px solid #991b1b' : '1px solid #333', borderRadius: '5px', padding: '3px 6px', cursor: 'pointer', lineHeight: 1, transition: 'all 0.15s', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                               <svg width="13" height="13" viewBox="0 0 24 24" fill={msg.feedback === 'down' ? '#fff' : '#aaa'}><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L10.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
                             </button>
+                            {renderTasteButtons(msg, '#666', '#222')}
                           </div>
                         )}
                         {msg.role === 'user' && (
                           <div style={{ marginTop: '8px', display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={{ ...actionButtonStyle, color: '#000', border: '1px solid rgba(0,0,0,0.3)' }}>{copiedId === msg.id ? '✓' : t('chat.copy')}</button>
-                            {msg.tasteImageId && (
-                              <>
-                                <span style={{ color: '#333', fontSize: '10px', fontFamily: 'monospace' }}>{t('chat.taste')}</span>
-                                {(['up', 'down', 'fire'] as TasteSignal[]).map(signal => (
-                                  <button key={signal} onClick={() => void handleTasteFeedback(msg.id, signal)} title={t('chat.tasteTitle', { signal: t(signal === 'fire' ? 'taste.fire' : signal === 'up' ? 'taste.up' : 'taste.down') })} style={{ ...actionButtonStyle, color: msg.tasteFeedback === signal ? '#f97316' : '#333', border: '1px solid rgba(0,0,0,0.3)' }}>{signal === 'fire' ? '🔥' : signal === 'up' ? '👍' : '👎'}</button>
-                                ))}
-                              </>
-                            )}
+                            {renderTasteButtons(msg, '#333', 'rgba(0,0,0,0.3)')}
                           </div>
                         )}
                       </div>

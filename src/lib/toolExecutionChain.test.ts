@@ -306,9 +306,9 @@ describe('dispatcher integrity (offline)', () => {
     expect(output).toContain('Image generated (512x512')
     expect(output).toContain(`Invocation: ${invocationId}`)
     expect(output).toContain('Run: https://github.com/DeviousDevv303/forgeclaw/actions/runs/42')
-    // The runtime probes the optional local taste profile and then the
-    // CORS-safe raw mirror before this legacy artifact fixture.
-    expect(fetchMock).toHaveBeenCalledTimes(7)
+    // The CORS-safe raw mirror is tried before this legacy artifact fixture. There is no call to a taste service
+    // any more: taste is built into NEXUS (nexusTaste.ts) and read locally, so this is 6 requests, not 7.
+    expect(fetchMock).toHaveBeenCalledTimes(6)
 
     const { takeGeneratedImage } = await import('./imageArtifact')
     expect(takeGeneratedImage(invocationId)).toMatch(/^data:image\/png;base64,/)

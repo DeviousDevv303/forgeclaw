@@ -9,6 +9,7 @@ import { corpusRepository, type LearningCandidate } from '../lib/corpus'
 import { LLM_MILESTONES, LLM_ROADMAP, llmReadiness, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, summarizeLearning, type Outcome } from '../lib/nexusLearning'
 import { useI18n } from '../lib/i18n'
 import { decide, loadDecisions, mineHeuristics } from '../lib/nexusHeuristics'
+import { describeTaste, loadTaste, MIN_TASTE_EVENTS, resetTaste } from '../lib/nexusTaste'
 
 const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
 const mono = "'Courier New', monospace"
@@ -39,6 +40,8 @@ export function NexusLearningPanel() {
   const [decisions, setDecisions] = useState(() => loadDecisions())
   const mined = useMemo(() => mineHeuristics(candidates), [candidates])
   const pending = mined.filter(h => !decisions.approved.includes(h.rule) && !decisions.rejected.includes(h.rule))
+  const [taste, setTaste] = useState(() => loadTaste())
+  const tasteWords = useMemo(() => describeTaste(taste), [taste])
 
   const reject = async (c: LearningCandidate) => {
     const result = await corpusRepository.rejectCandidate(c.id, 'rejected by the operator on the NEXUS page')
@@ -84,6 +87,25 @@ export function NexusLearningPanel() {
         ))}
         <div style={card}><div style={heading}>{t('nexus.failureRate')}</div><div style={{ color: summary.failureRate > 0.3 ? '#ef4444' : '#39ff14', fontSize: '22px', fontFamily: mono }}>{Math.round(summary.failureRate * 100)}%</div></div>
         <div style={card}><div style={heading}>{t('nexus.admitted')}</div><div style={{ color: '#eee', fontSize: '22px', fontFamily: mono }}>{approved}</div></div>
+      </section>
+
+      <section style={card} aria-label="Your taste" data-testid="nexus-taste">
+        <div style={heading}>YOUR TASTE · learned from your 🔥 👍 👎</div>
+        <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>React to any picture in the chat and NEXUS learns how you like things to look: brightness, contrast, color, warmth. It then steers the images it generates for you. Measured in this browser; nothing to set up or run.</div>
+        <div style={{ color: '#eee', fontFamily: mono, fontSize: '13px', marginBottom: '6px' }}>{taste.liked.n} liked · {taste.disliked.n} disliked{taste.liked.n < MIN_TASTE_EVENTS ? ` · ${MIN_TASTE_EVENTS - taste.liked.n} more liked to start steering` : ''}</div>
+        <div style={{ height: '6px', background: '#1a1a1a', borderRadius: '3px', overflow: 'hidden', marginBottom: '8px' }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(tasteWords.confidence * 100)}>
+          <div style={{ width: `${Math.round(tasteWords.confidence * 100)}%`, height: '100%', background: '#f97316' }} />
+        </div>
+        {tasteWords.traits.length > 0 && <div style={{ color: '#22c55e', fontSize: '12px', marginBottom: '4px' }}>You like: {tasteWords.traits.join(', ')}</div>}
+        {tasteWords.avoid.length > 0 && <div style={{ color: '#ef4444', fontSize: '12px', marginBottom: '4px' }}>You avoid: {tasteWords.avoid.join(', ')}</div>}
+        {Object.keys(taste.palette).length > 0 && (
+          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', margin: '6px 0' }} aria-label="Colors you like">
+            {Object.entries(taste.palette).slice(0, 8).map(([hex]) => <span key={hex} title={hex} style={{ width: '22px', height: '22px', borderRadius: '4px', background: hex, border: '1px solid #222' }} />)}
+          </div>
+        )}
+        {(taste.liked.n > 0 || taste.disliked.n > 0) && (
+          <button onClick={() => setTaste(resetTaste())} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', marginTop: '4px' }}>RESET TASTE</button>
+        )}
       </section>
 
       <section style={card} aria-label="Your heuristics" data-testid="nexus-heuristics">
