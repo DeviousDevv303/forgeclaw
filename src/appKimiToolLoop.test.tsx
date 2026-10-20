@@ -58,6 +58,14 @@ async function send(prompt: string, kimiCalls: number) {
 }
 
 describe('Kimi is a first-class hosted reasoner', () => {
+  it('offers review_code for "review this code", but not for "review my workflows"', async () => {
+    const [withCode] = await send('review this code: function add(a,b){return a-b}', 1)
+    expect((withCode.tools ?? []).map(t => t.function.name)).toContain('review_code')
+    cleanup(); vi.resetModules(); fetchMock.mockClear()
+    const [workflows] = await send('review my workflows for efficiency', 1)
+    expect((workflows.tools ?? []).map(t => t.function.name)).not.toContain('review_code')
+  }, 30_000)
+
   it('never hands Kimi the DeepSeek workflow, for analyze wording or a coding task', async () => {
     for (const prompt of ['review and analyze the efficiency of my GitHub workflows', 'check the repo and fix the failing build-gate test']) {
       cleanup(); vi.resetModules(); fetchMock.mockClear()

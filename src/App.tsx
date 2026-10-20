@@ -1410,6 +1410,8 @@ function App() {
       'github_repo_state': ['state', 'status', 'head', 'branch'],
       'generate_image': ['generate', 'image', 'logo', 'illustration', 'picture', 'artwork'],
       'analyze_image': ['analyze', 'image', 'photo', 'picture', 'vision'],
+      // Not a bare 'review': that would offer it for "review my workflows".
+      'review_code': ['code review', 'review this code', 'review my code'],
     }
 
     const messageLower = (promptText || '').toLowerCase()

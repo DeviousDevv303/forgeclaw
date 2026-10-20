@@ -43,4 +43,15 @@ describe('code-review.yml', () => {
     expect(wf).toContain('name: code-review-${{ inputs.invocation_id }}')
     expect(wf).toContain('if: always()')
   })
+  it('publishes the review from a separate, model-free job with write access; the review job stays read-only', () => {
+    const review = wf.slice(wf.indexOf('\n  review:\n'), wf.indexOf('\n  mirror:\n'))
+    const mirror = wf.slice(wf.indexOf('\n  mirror:\n'))
+    expect(review).not.toContain('contents: write')
+    expect(mirror).toMatch(/permissions:\n {6}contents: write/)
+    expect(mirror).not.toContain('review_code.py')
+    expect(mirror).not.toContain('pip install')
+    expect(mirror).toContain('bash .github/scripts/review_mirror.sh')
+    // Checkout cleans the workspace, so it must come before the downloaded result.
+    expect(mirror.indexOf('actions/checkout')).toBeLessThan(mirror.indexOf('actions/download-artifact'))
+  })
 })

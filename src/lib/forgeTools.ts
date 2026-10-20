@@ -38,6 +38,7 @@ import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
 import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
+import { formatCodeReview, runCodeReview } from './codeReview'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -507,7 +508,7 @@ export const FORGE_TOOLS: ToolDef[] = [
 
   {
     name: 'review_code',
-    description: 'Review code quality via GitHub Actions CodeLlama-7B',
+    description: 'Review code on GitHub Actions (DeepSeek-Coder 6.7B, a few minutes) and return the review. Up to 12,000 characters of code.',
     parameters: {
       type: 'object',
       properties: {
@@ -1701,16 +1702,10 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
 
 
       case 'review_code': {
-        const code = input.code as string
-        const language = (input.language as string) || 'typescript'
-        const invocationId = `review-${Date.now()}`
-        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/code-review.yml/dispatches`, {
-          method: 'POST',
-          headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json' },
-          body: JSON.stringify({ ref: 'main', inputs: { code_content: code, language: language, invocation_id: invocationId } })
-        })
-        if (!res.ok) throw new Error(`GitHub ${res.status}`)
-        return `Code review dispatched: ${invocationId}. Check artifacts in ~3 min.`
+        if (!token) throw new Error('No GitHub token configured. review_code runs as a GitHub Actions job and needs gh_token with Actions: write.')
+        // Used to return "dispatched" and never the review. The workflow lives in ForgeClaw's own repository.
+        const result = await runCodeReview(githubRequest, { owner: ctx.ghOwner, repo: ctx.ghRepo, token, code: String(input.code || ''), language: input.language as string | undefined, signal: ctx.signal })
+        return formatCodeReview(result)
       }
 
 case 'spawn_agent': {
