@@ -1,8 +1,9 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import React, { useEffect, useRef, useCallback } from 'react';
-import { drawCube3D, cubeFacesVariant, MIN_CUBE_PX } from './cube3d';
-import { CALM_SOUL, cubeJitter, cubeLook, cubeScale, cubeShake, cubeSpinRate, nextCubeAngle, solveProgress, type SoulSignal } from './cubeMotion';
+import { drawCube3D, drawRubik3D, cubeFacesVariant, MIN_CUBE_PX } from './cube3d';
+import { applyMove, inverseMove, moveSequence, solvedCubies, type Cubie, type Move } from './rubikModel';
+import { CALM_SOUL, MAX_SCRAMBLE, TURN_MS, cubeJitter, cubeLook, cubeScale, cubeShake, cubeSpinRate, nextCubeAngle, solveProgress, turnAngle, turnMode, type SoulSignal } from './cubeMotion';
 import { STATE_EVENT_NAME, type ForgeClawStateEvent } from '../core/forgeclawReactiveCore';
 import type { NeuralState, NeuralPhase } from '../hooks/useNeuralState';
 
@@ -35,10 +36,17 @@ interface Node {
   toolLit?: boolean;
   /** Current cube spin (Y) in radians (layer 2 only). */
   cubeAngle?: number;
+  /** Real Rubik's state (layer 2 only): cubies plus the turn machine. */
+  rubik?: {
+    cubies: Cubie[];
+    history: Move[];
+    queue: Move[];
+    current: { move: Move; startedAt: number; ms: number; unwind: boolean } | null;
+    unwinding: boolean;
+    nextCalmAt: number;
+  };
 }
 
-/** Scrambled face variants that flicker while the cubes are frantic. */
-const SCRAMBLE_VARIANTS = 4;
 /**
  * Camera above the cube so the white top shows with two sides, like the big cube.
  * Screen y grows downward, so the X tilt is negative (+0.55 showed the yellow bottom).
@@ -721,11 +729,62 @@ export const NeuralNetworkBackground: React.FC<NeuralNetworkBackgroundProps> = (
           node.cubeAngle = nextCubeAngle(node.cubeAngle ?? node.id * 0.37, rate, cubeDt, solve !== null);
           const shake = cubeShake(st.errorLevel, nowTs, node.id);
           const jit = cubeJitter(look.jitterPx, nowTs, node.id);
-          const variant = look.scrambled ? 1 + ((Math.floor(nowTs / 120) + node.id) % SCRAMBLE_VARIANTS) : 0;
           const size = Math.max(radius * toolBoost * 2, MIN_CUBE_PX) * cubeScale(lit, st.phase) * look.scale;
           const blockedTint = st.phase === 'blocked' ? { r: 239, g: 68, b: 68 } : null;
-          drawCube3D(ctx, node.x + shake.dx + jit.dx, node.y + shake.dy + jit.dy, size, {
-            faces: cubeFacesVariant(variant),
+
+          // Real layer turns (rubikModel): while ForgeClaw works the cube
+          // scrambles itself with genuine quarter-turns; when the work
+          // completes it plays its history back and visibly solves itself.
+          if (!node.rubik) {
+            node.rubik = { cubies: solvedCubies(), history: [], queue: moveSequence(node.id, 30), current: null, unwinding: false, nextCalmAt: 0 };
+          }
+          const rk = node.rubik;
+          const finishTurn = () => {
+            const cur = rk.current;
+            if (!cur) return;
+            rk.cubies = applyMove(rk.cubies, cur.move);
+            if (cur.unwind) rk.history.pop(); else rk.history.push(cur.move);
+            if (rk.history.length === 0) rk.unwinding = false;
+            rk.current = null;
+          };
+          const startTurn = (move: Move, ms: number, unwind: boolean) => {
+            rk.current = { move, startedAt: nowTs, ms, unwind };
+            if (unwind) rk.unwinding = true;
+          };
+          const startNextTurn = (ms: number) => {
+            if (rk.unwinding || rk.history.length >= MAX_SCRAMBLE) {
+              // Fully scrambled: play the history back to solved, then scramble again.
+              if (rk.history.length > 0) { startTurn(inverseMove(rk.history[rk.history.length - 1]), ms, true); return; }
+              rk.unwinding = false;
+            }
+            if (rk.queue.length === 0) rk.queue = moveSequence(node.id + rk.history.length, 30);
+            startTurn(rk.queue.shift()!, ms, false);
+          };
+          const mode = turnMode(st.phase, soul.emotion, solve !== null);
+          if (mode === 'frozen') {
+            finishTurn(); // blocked: finish the in-flight turn instantly, then hold
+          } else if (rk.current && nowTs - rk.current.startedAt >= rk.current.ms) {
+            finishTurn();
+          }
+          if (!rk.current && mode !== 'frozen' && mode !== 'idle') {
+            if (mode === 'solving') {
+              if (rk.history.length > 0) startTurn(inverseMove(rk.history[rk.history.length - 1]), TURN_MS.solving, true);
+            } else if (mode === 'working') {
+              startNextTurn(TURN_MS.working);
+            } else if (mode === 'frantic') {
+              startNextTurn(TURN_MS.frantic);
+            } else if (mode === 'calm' && nowTs >= rk.nextCalmAt) {
+              rk.nextCalmAt = nowTs + 9000 + (node.id % 7) * 600;
+              startNextTurn(TURN_MS.calm);
+            }
+          }
+          const turning = rk.current
+            ? { move: rk.current.move, angle: turnAngle(rk.current.move, Math.min(1, (nowTs - rk.current.startedAt) / rk.current.ms)) }
+            : null;
+
+          drawRubik3D(ctx, node.x + shake.dx + jit.dx, node.y + shake.dy + jit.dy, size, {
+            cubies: rk.cubies,
+            turning,
             rotation: { x: CUBE_TILT + Math.sin(time * 0.5 + node.id) * 0.08, y: node.cubeAngle + (frozenCube ? 0 : look.angleOffset), z: 0 },
             explode: look.explode,
           }, {

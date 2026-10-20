@@ -14,6 +14,8 @@
  * Pure canvas paths: no roundRect (missing on Chrome/WebView < 99, Safari < 16).
  */
 
+import type { Axis, Cubie, Move, Normal } from './rubikModel'
+
 export type FaceKey = 'U' | 'D' | 'F' | 'B' | 'L' | 'R'
 export type CubeFaces = Record<FaceKey, string[]>
 
@@ -206,6 +208,144 @@ export function drawCube3D(
       }
     })
   }
+  if (look.flash && look.flash.alpha > 0.01) {
+    const c = look.flash.color
+    ctx.beginPath()
+    ctx.arc(cx, cy, size * 0.75, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(${c.r}, ${c.g}, ${c.b}, ${look.flash.alpha.toFixed(3)})`
+    ctx.fill()
+  }
+}
+
+// ─── Real Rubik's renderer ───────────────────────────────────────────────────
+// Draws the cubies from rubikModel.ts: stickers are data, layers really turn.
+// Same projection, culling, shading, glow and flash as drawCube3D.
+
+export interface RubikState {
+  cubies: Cubie[]
+  /** The layer turning right now and its angle in radians (0..±π/2), or null. */
+  turning: { move: Move; angle: number } | null
+  rotation: { x: number; y: number; z: number }
+  /** 0..1 how far the cubies have flown outward. */
+  explode: number
+}
+
+const RUBIK_FACE_DEFS: Array<{ key: Normal; n: V3; u: V3; v: V3 }> = [
+  { key: 'pz', n: [0, 0, 1], u: [1, 0, 0], v: [0, 1, 0] },
+  { key: 'nz', n: [0, 0, -1], u: [1, 0, 0], v: [0, 1, 0] },
+  { key: 'py', n: [0, 1, 0], u: [1, 0, 0], v: [0, 0, 1] },
+  { key: 'ny', n: [0, -1, 0], u: [1, 0, 0], v: [0, 0, 1] },
+  { key: 'px', n: [1, 0, 0], u: [0, 1, 0], v: [0, 0, 1] },
+  { key: 'nx', n: [-1, 0, 0], u: [0, 1, 0], v: [0, 0, 1] },
+]
+
+/** Float rotation about one axis (right-hand rule); matches rubikModel's integer turns at ±π/2. */
+function rotateAxisAngle([x, y, z]: V3, axis: Axis, angle: number): V3 {
+  const cos = Math.cos(angle)
+  const sin = Math.sin(angle)
+  switch (axis) {
+    case 'x': return [x, y * cos - z * sin, y * sin + z * cos]
+    case 'y': return [x * cos + z * sin, y, -x * sin + z * cos]
+    case 'z': return [x * cos - y * sin, x * sin + y * cos, z]
+  }
+}
+
+interface RubikFaceDraw { pts: P2[]; depth: number; light: number; color: string | null }
+const rubikPool: RubikFaceDraw[] = []
+const rubikVisible: RubikFaceDraw[] = []
+
+/** Draw one real Rubik's cube. Glow goes behind; faces back-to-front; flash on top. */
+export function drawRubik3D(
+  ctx: CanvasRenderingContext2D,
+  cx: number, cy: number, size: number,
+  state: RubikState, look: CubeAppearance,
+): void {
+  if (look.glow > 0.02 && typeof ctx.createRadialGradient === 'function') {
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, size * 1.4)
+    const gc = look.glowColor
+    g.addColorStop(0, `rgba(${gc.r}, ${gc.g}, ${gc.b}, ${(look.glow * 0.45).toFixed(3)})`)
+    g.addColorStop(1, `rgba(${gc.r}, ${gc.g}, ${gc.b}, 0)`)
+    ctx.beginPath()
+    ctx.arc(cx, cy, size * 1.4, 0, Math.PI * 2)
+    ctx.fillStyle = g
+    ctx.fill()
+  }
+
+  const s = size / 2
+  const persp = 4 // same camera as projectCube
+  const project = (p: V3): P2 => {
+    const k = persp / (persp - p[2])
+    return { x: cx + p[0] * s * k, y: cy + p[1] * s * k }
+  }
+  const rot = state.rotation
+  const turning = state.turning
+  const turnAxisIdx = turning ? (turning.move.axis === 'x' ? 0 : turning.move.axis === 'y' ? 1 : 2) : 0
+  const HALF = 1 / 3 // cubie side is 2/3 in -1..1 cube space
+
+  rubikVisible.length = 0
+  let cursor = 0
+  for (const cubie of state.cubies) {
+    const inLayer = turning !== null && cubie.pos[turnAxisIdx] === turning.move.layer
+    const spread = 2 / 3 + state.explode * 0.5
+    const center: V3 = [cubie.pos[0] * spread, cubie.pos[1] * spread, cubie.pos[2] * spread]
+    const place = (p: V3): V3 => {
+      const turned = inLayer && turning ? rotateAxisAngle(p, turning.move.axis, turning.angle) : p
+      return rotate(turned, rot.x, rot.y, rot.z)
+    }
+    for (const def of RUBIK_FACE_DEFS) {
+      const n = place(def.n)
+      if (n[2] <= 0.02) continue // back-facing
+      const fc: V3 = [center[0] + def.n[0] * HALF, center[1] + def.n[1] * HALF, center[2] + def.n[2] * HALF]
+      const corners: V3[] = [
+        [fc[0] + def.u[0] * HALF + def.v[0] * HALF, fc[1] + def.u[1] * HALF + def.v[1] * HALF, fc[2] + def.u[2] * HALF + def.v[2] * HALF],
+        [fc[0] + def.u[0] * HALF - def.v[0] * HALF, fc[1] + def.u[1] * HALF - def.v[1] * HALF, fc[2] + def.u[2] * HALF - def.v[2] * HALF],
+        [fc[0] - def.u[0] * HALF - def.v[0] * HALF, fc[1] - def.u[1] * HALF - def.v[1] * HALF, fc[2] - def.u[2] * HALF - def.v[2] * HALF],
+        [fc[0] - def.u[0] * HALF + def.v[0] * HALF, fc[1] - def.u[1] * HALF + def.v[1] * HALF, fc[2] - def.u[2] * HALF + def.v[2] * HALF],
+      ]
+      const placed = corners.map(place)
+      let face = rubikPool[cursor]
+      if (!face) {
+        face = { pts: [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }], depth: 0, light: 1, color: null }
+        rubikPool[cursor] = face
+      }
+      cursor++
+      for (let i = 0; i < 4; i++) {
+        const p = project(placed[i])
+        face.pts[i].x = p.x
+        face.pts[i].y = p.y
+      }
+      face.depth = placed.reduce((sum, p) => sum + p[2], 0) / 4
+      face.light = 0.45 + 0.55 * Math.min(1, n[2])
+      face.color = cubie.stickers[def.key] ?? null
+      rubikVisible.push(face)
+    }
+  }
+
+  rubikVisible.sort((a, b) => a.depth - b.depth)
+  const insetPts: P2[] = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }]
+  for (const face of rubikVisible) {
+    // Black plastic body.
+    quad(ctx, face.pts)
+    ctx.fillStyle = '#111111'
+    ctx.fill()
+    if (face.color !== null) {
+      // Sticker, inset 0.06 of the face toward its centroid (like projectCube's gap).
+      const mx = (face.pts[0].x + face.pts[1].x + face.pts[2].x + face.pts[3].x) / 4
+      const my = (face.pts[0].y + face.pts[1].y + face.pts[2].y + face.pts[3].y) / 4
+      for (let i = 0; i < 4; i++) {
+        insetPts[i].x = face.pts[i].x + (mx - face.pts[i].x) * 0.06
+        insetPts[i].y = face.pts[i].y + (my - face.pts[i].y) * 0.06
+      }
+      quad(ctx, insetPts)
+      ctx.fillStyle = face.color
+      ctx.fill()
+      if (face.light < 0.999) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${(1 - face.light).toFixed(3)})`
+        ctx.fill()
+      }
+    }
+  }
+
   if (look.flash && look.flash.alpha > 0.01) {
     const c = look.flash.color
     ctx.beginPath()
