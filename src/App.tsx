@@ -216,7 +216,7 @@ import ColoradoFooter from './components/ColoradoFooter'
 import { formatUserFacingError, sanitizeChatText } from './lib/userFacingErrors'
 import { useI18n, translate, getLang, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
-import { baselineToolNames, HOSTED_TOOL_PROVIDERS, NO_TOOLS_NOTICE, repeatedCallLimit, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
@@ -1740,6 +1740,8 @@ function App() {
         // Tool calls → executeTool owns Guardian enforcement and side effects.
         const iterResults: ToolResult[] = []
         // Loop detection: track recent tool calls across all iterations of this run
+        const offeredToolNames = new Set((noMoreTools ? [] : runtimeTools).map(tool => tool.name))
+        const routerIssued = isRouterIssued(result.stopReason)
 
         for (const call of result.toolCalls) {
   // Check for loop
@@ -1750,6 +1752,14 @@ function App() {
     // toolAttempts must stay index-aligned with the results; any later success of this tool resolves it.
     toolAttempts.push({ name: call.name, input: TRUNCATED_ATTEMPT })
     setActivityLog(prev => [...prev.slice(-99), { id: `act_${call.id}_${Date.now()}`, timestamp: Date.now(), tool: call.name, input: call.input, status: 'error', output: output.slice(0, 300) }])
+    continue
+  }
+  const priorRepoCreations = [...allToolResults, ...iterResults].filter(r => r.name === 'github_create_repo' && !r.isError).length
+  const refusal = toolCallRefusal(call.name, offeredToolNames, routerIssued, priorRepoCreations)
+  if (refusal) {
+    iterResults.push({ toolCallId: call.id, name: call.name, output: refusal, isError: true, reasoningStepId: 'guardian_block' })
+    toolAttempts.push({ name: call.name, input: JSON.stringify(call.input, Object.keys(call.input).sort()) })
+    setActivityLog(prev => [...prev.slice(-99), { id: `act_${call.id}_${Date.now()}`, timestamp: Date.now(), tool: call.name, input: call.input, status: 'error', output: refusal.slice(0, 300) }])
     continue
   }
   const callKey = `${call.name}:${JSON.stringify(call.input)}`

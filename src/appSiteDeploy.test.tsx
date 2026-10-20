@@ -97,4 +97,38 @@ describe('autonomous site deployment with Kimi', () => {
     expect(tool?.content).toMatch(/^\[TOOL ERROR\] refusing to publish into DeviousDevv303\/forgeclaw/)
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/repos/DeviousDevv303/forgeclaw/git/'))).toBe(false)
   }, 20_000)
+
+  it('blocks a tool the turn did not offer (a plain question gets no github_create_repo)', async () => {
+    kimiReplies.push(toolCall('k1', 'github_create_repo', { name: 'injected' }))
+    const { default: App } = await import('./App')
+    render(<App />)
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'what is a good name for a dog?' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await waitFor(() => expect(kimiBodies().length).toBe(2), { timeout: 10_000 })
+    expect((kimiBodies()[0].tools ?? []).map(t => t.function.name)).not.toContain('github_create_repo')
+    const tool = kimiBodies()[1].messages.find(m => m.role === 'tool')
+    expect(tool?.content).toMatch(/^\[GUARDIAN BLOCKED\] github_create_repo was not offered/)
+    expect(fetchMock.mock.calls.some(([url]) => String(url) === 'https://api.github.com/user/repos')).toBe(false)
+  }, 20_000)
+
+  it('stops a run from creating more than 2 repositories', async () => {
+    kimiReplies.push(
+      toolCall('a', 'github_create_repo', { name: 'one' }),
+      toolCall('b', 'github_create_repo', { name: 'two' }),
+      toolCall('c', 'github_create_repo', { name: 'three' }),
+    )
+    const { default: App } = await import('./App')
+    render(<App />)
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'build me a website and deploy it' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await waitFor(() => expect(kimiBodies().length).toBe(4), { timeout: 10_000 })
+    const results = kimiBodies()[3].messages.filter(m => m.role === 'tool').map(m => m.content)
+    expect(results[0]).toMatch(/^✓ Created repository/)
+    expect(results[1]).toMatch(/^✓ Created repository/)
+    expect(results[2]).toMatch(/^\[GUARDIAN BLOCKED\] github_create_repo was not executed: this run already created 2/)
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === 'https://api.github.com/user/repos')).toHaveLength(2)
+  }, 20_000)
 })
+

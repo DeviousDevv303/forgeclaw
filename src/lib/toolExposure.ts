@@ -70,3 +70,30 @@ export const SITE_DEPLOY_GUIDANCE =
   'owner and repo from step 1; never publish into forgeclaw; (3) call github_pages_status until status is built for the published commit ' +
   '(the first build takes about a minute; errored means read the error and republish); (4) only then report the live URL. ' +
   'Static files only: there is no build step on Pages, so do not rely on npm install or a bundler.'
+
+/** Repositories one run may create; a prompt-injected loop cannot fill the account with public repos. */
+export const MAX_REPO_CREATIONS_PER_RUN = 2
+
+/** Dispatcher aliases (executeTool normalizes these) that count as the offered tool. */
+const TOOL_ALIASES: Readonly<Record<string, string>> = { generateimage: 'generate_image', deepseekreason: 'deepseek_reason' }
+
+/** True when the router itself issued the calls (deterministic bootstraps), not the model. */
+export function isRouterIssued(stopReason: string | undefined): boolean {
+  return !!stopReason && (stopReason.startsWith('deterministic-') || stopReason === 'direct-image-intent')
+}
+
+/**
+ * Why a model's tool call must not run, or null. A model may only call tools this turn offered it:
+ * text it read (a web page, a file, a tool result) can name any tool, and before this a call to an
+ * unoffered tool, such as github_create_repo on a plain question, still reached the dispatcher.
+ */
+export function toolCallRefusal(name: string, offered: ReadonlySet<string>, routerIssued: boolean, priorRepoCreations: number): string | null {
+  const canonical = TOOL_ALIASES[name] ?? name
+  if (!routerIssued && !offered.has(canonical) && !offered.has(name)) {
+    return `[GUARDIAN BLOCKED] ${name} was not offered for this request, so it was not executed. Use only the tools listed for this turn.`
+  }
+  if (canonical === 'github_create_repo' && priorRepoCreations >= MAX_REPO_CREATIONS_PER_RUN) {
+    return `[GUARDIAN BLOCKED] github_create_repo was not executed: this run already created ${priorRepoCreations} repositories (limit ${MAX_REPO_CREATIONS_PER_RUN}). Publish to one of them.`
+  }
+  return null
+}
