@@ -194,6 +194,7 @@ import { NexusLearningPanel } from './components/NexusLearningPanel'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
+import { browserPlaybooksForPrompt } from './lib/browserLearning'
 import { isPublicVisitor } from './lib/publicRelay'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
@@ -202,7 +203,7 @@ import { startErrorReporting } from './lib/errorReporting'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
-import { baselineToolNames, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, BROWSER_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
@@ -1333,6 +1334,7 @@ function App() {
       'sculpt_self': ['sculpt', 'self-improve', 'self improve', 'improve yourself', 'upgrade yourself', 'modify yourself', 'self-modify', 'self modify', 'evolve', 'your own code', 'your code'],
       'shell_patch': ['sculpt', 'self-improve', 'self improve', 'improve yourself', 'upgrade yourself', 'modify yourself', 'self-modify', 'self modify', 'evolve', 'your own code', 'your code', 'patch', 'diff'],
       'github_merge_pr': ['merge pull', 'merge pr', 'merge #', 'merge the pr', 'merge this pr', 'merge it', 'merge request'],
+      'browser_run': ['browse the', 'browse to', 'browser', 'open http', 'go to http', 'visit http', 'navigate to', 'click on', 'click the', 'fill out', 'fill in the form', 'on the website', 'on that site', 'web page and', 'search on'],
       'deep_research': ['research', 'investigate', 'sources', 'look into', 'find out', 'compare', 'latest', 'literature', 'study', 'studies', 'evidence', 'report on'],
       'github_build_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'react', 'vite', 'npm', 'bundle'],
       'github_create_repo': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'new repo', 'new repository', 'create repo', 'create a repo'],
@@ -1379,6 +1381,8 @@ function App() {
     const sculptUnlocked = isSculptUnlocked()
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
       .filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
+      // The cloud browser runs as the owner's Actions workflow; a free-mode visitor has no token and never gets it.
+      .filter(tool => !(isPublicVisitor(ghToken) && tool.name === 'browser_run'))
       // Claude and Kimi already see an attached picture; a caption saying "picture" must not hand them the slow Actions vision job.
       .filter(tool => !(imageUrl && isHostedReasoner && tool.name === 'analyze_image'))
 
@@ -1394,7 +1398,7 @@ function App() {
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
-        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
+        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'browser_run') ? `\n${BROWSER_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
@@ -1406,7 +1410,8 @@ function App() {
     const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(500)), runtimeTools.map(tool => tool.name))
     // The owner's approved heuristics (NEXUS page) apply to every model; visitors' browsers have none.
     const ownerHeuristics = isPublicVisitor(ghToken) ? '' : heuristicsForPrompt()
-    const lessonedSystemPrompt = [baseSystemPrompt, ownerHeuristics, nexusLessons].filter(Boolean).join('\n\n')
+    const browsingPlaybooks = !isPublicVisitor(ghToken) && runtimeTools.some(tool => tool.name === 'browser_run') ? browserPlaybooksForPrompt(promptText) : ''
+    const lessonedSystemPrompt = [baseSystemPrompt, ownerHeuristics, nexusLessons, browsingPlaybooks].filter(Boolean).join('\n\n')
     const finalSystemPrompt = relevant.length > 0
       ? lessonedSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
         relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')

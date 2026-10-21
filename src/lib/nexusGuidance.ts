@@ -43,7 +43,7 @@ export function nexusGuidanceForDeepSeek(task: string, deps: GuidanceDeps = {}):
   const empty: NexusGuidance = { text: '', heuristics: 0, lessons: 0, records: 0 }
   if (!task.trim()) return empty
   const heuristics = heuristicsForPrompt(deps.decisions ?? loadDecisions())
-  const lessons = lessonsForPrompt(summarizeLearning(deps.candidates ?? corpusRepository.listCandidates(500)), ['deepseek_reason', 'github_repo_state', 'github_read_file', 'github_search_code', 'shell_exec', 'web_search'], 3)
+  const lessons = lessonsForPrompt(summarizeLearning(deps.candidates ?? corpusRepository.listCandidates(500)), ['deepseek_reason', 'github_repo_state', 'github_read_file', 'github_search_code', 'shell_exec', 'web_search', 'browser_run', 'browser_playbook'], 3)
 
   const taskWords = words(task)
   const retrieve = deps.retrieve ?? ((q, n) => corpusRepository.retrieve(q, n))
