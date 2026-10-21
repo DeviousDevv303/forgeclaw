@@ -147,3 +147,13 @@ describe('runBrowserRound', () => {
     await expect(runBrowserRound(request, { ...base, ...g.timing, actions: [{ type: 'goto', url: 'https://example.com' }] })).rejects.toThrow(/result could not be read \(GitHub 404\)/)
   })
 })
+
+describe('the owner never has to supply a URL', () => {
+  it('tells the model to find the real site itself with a search, to say which one it chose, and never to guess a domain', () => {
+    expect(BROWSER_GUIDANCE).toMatch(/do not need the owner to give you a URL/)
+    expect(BROWSER_GUIDANCE).toMatch(/call web_search/)
+    expect(BROWSER_GUIDANCE).toMatch(/official or primary site/)
+    expect(BROWSER_GUIDANCE).toMatch(/tell the owner which URL you chose/)
+    expect(BROWSER_GUIDANCE).toMatch(/Never guess a domain/)
+  })
+})
