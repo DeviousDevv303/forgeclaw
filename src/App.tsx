@@ -203,7 +203,7 @@ import { startErrorReporting } from './lib/errorReporting'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
-import { baselineToolNames, BROWSER_GUIDANCE, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, BROWSER_GUIDANCE, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
@@ -1340,6 +1340,7 @@ function App() {
       'github_build_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'react', 'vite', 'npm', 'bundle'],
       'github_create_repo': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'new repo', 'new repository', 'create repo', 'create a repo'],
       'github_repo_state': ['state', 'status', 'head', 'branch'],
+      'github_pr_info': ['pull request', 'pull/', 'pr #', 'merge status', 'is pr'],
       'generate_image': ['generate', 'image', 'logo', 'illustration', 'picture', 'artwork'],
       'analyze_image': ['analyze', 'image', 'photo', 'picture', 'vision'],
       // Not a bare 'review': that would offer it for "review my workflows".
@@ -1378,6 +1379,8 @@ function App() {
     // Questions about what is current get gathered sources, whatever the wording (currentInfo.ts).
     if (needsCurrentInfo(promptText)) coreToolNames.push('deep_research')
     coreToolNames.push(...baselineToolNames(activeProvider))
+    // A pasted address says what to use: this repository's pages need the GitHub tools, any other page the cloud browser.
+    coreToolNames.push(...toolsForUrls(promptText || '', ghOwner || CANONICAL_IDENTITY.owner, ghRepo || CANONICAL_IDENTITY.repository))
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     // Self-modification tools are offered only while the owner's self-sculpt key is unlocked.
     const sculptUnlocked = isSculptUnlocked()
