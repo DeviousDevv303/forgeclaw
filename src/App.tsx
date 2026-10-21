@@ -476,7 +476,8 @@ function renderMessageContent(text: string, onCopy: (code: string) => void, copi
               {copiedCode === code ? '✓ COPIED' : 'COPY'}
             </button>
           </div>
-          <pre style={{ margin: 0, padding: '12px', overflowX: 'auto', fontSize: '12px', lineHeight: '1.6', color: '#d4d4d4', fontFamily: "'Courier New', monospace", whiteSpace: 'pre' }}>{code}</pre>
+          {/* Upright monospace (not the reply's italic serif and letter spacing), wrapped to the bubble so nothing is cut off on a phone. */}
+          <pre style={{ margin: 0, padding: '10px 12px', fontSize: 'clamp(11px, 3vw, 12.5px)', lineHeight: '1.55', color: '#d4d4d4', fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', 'Courier New', monospace", fontStyle: 'normal', fontWeight: 400, letterSpacing: 'normal', tabSize: 2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textAlign: 'left' }}><code>{code}</code></pre>
         </div>
       )
     }
