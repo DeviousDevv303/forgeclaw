@@ -41,6 +41,7 @@ import { getErrorLog } from './errorLog'
 import { runBrowserRound } from './browserAgent'
 import { recordBrowserLearning } from './browserLearning'
 import { mergePullRequest } from './mergePr'
+import { decodeBase64Utf8, formatFileRead } from './fileRead'
 import { listOpenPullRequests, parsePullNumber, readPullRequest } from './prInfo'
 import { formatGrepMatches, gitGrepCommand, parseGrepOutput } from './codeSearch'
 import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
@@ -193,11 +194,12 @@ export const IMAGE_MODELS = ['sd15', 'sdxl-turbo', 'sd-turbo'] as const
 export const FORGE_TOOLS: ToolDef[] = [
   {
     name: 'github_read_file',
-    description: 'Read the contents of a file from a GitHub repository.',
+    description: 'Read a file from a GitHub repository. A file up to 20,000 characters comes back whole; a larger one comes back one page of whole lines at a time, and the result says which lines it holds and the start_line of the next page.',
     parameters: {
       type: 'object',
       properties: {
         path:  { type: 'string', description: 'File path relative to repo root, e.g. src/App.tsx' },
+        start_line: { type: 'number', description: 'Optional: first line to read (1-based), to read the next page of a large file.' },
         owner: { type: 'string', description: 'GitHub owner (defaults to configured repo owner)' },
         repo:  { type: 'string', description: 'GitHub repo name (defaults to configured repo)' },
       },
@@ -848,8 +850,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         if (!res.ok) throw new Error(`GitHub ${res.status}: ${res.statusText}`)
         const data = await res.json() as { content?: string; encoding?: string; size?: number }
         if (!data.content) throw new Error('No content returned (may be a directory)')
-        const decoded = atob(data.content.replace(/\n/g, ''))
-        return `File: ${path} (${data.size} bytes)\n\`\`\`\n${decoded.slice(0, 8000)}${decoded.length > 8000 ? '\n[truncated]' : ''}\n\`\`\``
+        return formatFileRead(path, data.size, decodeBase64Utf8(data.content), Number(input.start_line) || 1)
       }
 
       // ── GitHub: write file ───────────────────────────────────────────────────

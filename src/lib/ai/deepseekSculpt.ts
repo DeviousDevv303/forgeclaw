@@ -15,12 +15,18 @@ export function sculptTarget(text: string): string | null {
   return PATH_RE.exec(text)?.[1] ?? null
 }
 
+const DEEPSEEK_SCULPT_MAX_CHARS = 8_000
+const TOO_LARGE = 'the file is larger than 8,000 characters, too large for DeepSeek to rewrite whole in its 8K context. Use Kimi or Claude, which can propose a shell_patch diff.'
+
 /** File body from a github_read_file result, or an error when it was truncated or unreadable. */
 export function readFileBody(output: string): { content: string } | { error: string } {
   if (/^\s*\[(?:TOOL ERROR|GUARDIAN)/i.test(output)) return { error: output.slice(0, 300) }
-  if (/\n\[truncated\]\n```\s*$/.test(output)) return { error: 'the file is larger than 8,000 characters, too large for DeepSeek to rewrite whole in its 8K context. Use Kimi or Claude, which can propose a shell_patch diff.' }
+  if (/\n\[truncated\]\n```\s*$/.test(output)) return { error: TOO_LARGE }
   const m = /^File: .*\n```\n([\s\S]*)\n```\s*$/.exec(output)
-  return m ? { content: m[1] } : { error: 'could not read the file content from the tool result' }
+  if (!m) return { error: 'could not read the file content from the tool result' }
+  // Reads now return up to 20,000 characters whole; DeepSeek's 8K context still cannot rewrite that much.
+  if (m[1].length > DEEPSEEK_SCULPT_MAX_CHARS) return { error: TOO_LARGE }
+  return { content: m[1] }
 }
 
 export function sculptTask(request: string, path: string, content: string): string {
