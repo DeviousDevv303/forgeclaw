@@ -153,6 +153,23 @@ describe('shell_patch gating and exposure', () => {
       expect(out).toContain('(not merged; review it)')
     })
 
+    it('says which step failed and that nothing was pushed, from GitHub, not a guess', async () => {
+      const base = github('failure', [])
+      vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith('/actions/runs/5/jobs')) return json({ jobs: [{ steps: [
+          { name: 'Set up job', conclusion: 'success' }, { name: 'Apply patch', conclusion: 'success' },
+          { name: 'Commit and push repair branch', conclusion: 'success' }, { name: 'Create labeled pull request', conclusion: 'failure' },
+        ] }] })
+        return base(url, init)
+      }))
+      const out = await settle(executeTool(call({ patch: PATCH, reason: 'fix typo' }), ctxWith(createRunJournal())))
+      expect(out).toContain('failed at the step "Create labeled pull request"')
+      expect(out).toContain('Apply patch; Commit and push repair branch')
+      expect(out).toMatch(/Branch forge\/repair\/\S+ on GitHub: NOT FOUND, so nothing was persisted/)
+      expect(out).toContain('github_get_run_logs')
+      expect(out).not.toContain('nothing was proposed (protected path')
+    })
+
     it('reports a failing run as a failure with its logs, never as a proposal', async () => {
       vi.stubGlobal('fetch', github('failure', []))
       const out = await settle(executeTool(call({ patch: PATCH, reason: 'fix typo' }), ctxWith(createRunJournal())))

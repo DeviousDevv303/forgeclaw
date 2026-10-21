@@ -50,11 +50,40 @@ import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptK
 async function reportProposalRun(request: GithubRequest, input: { owner: string; repo: string; token: string; workflow: string; needle: string; since: number; branch: string; label: string; signal?: AbortSignal }): Promise<string> {
   const run = await waitForCorrelatedRun(request, { ...input, maxWaitMs: PROPOSAL_MAX_WAIT_MS })
   if (run.conclusion !== 'success') {
+    const facts = await describeFailedRun(request, { ...input, runId: run.id })
+    if (facts) throw new Error(`${input.label} run #${run.run_number} concluded "${run.conclusion}": ${facts} Logs: ${run.html_url}`)
     throw new Error(`${input.label} run #${run.run_number} concluded "${run.conclusion}": nothing was proposed (protected path, patch that does not apply, or a failing build). Logs: ${run.html_url}`)
   }
   const pr = await findPullRequest(request, input.owner, input.repo, input.token, input.branch)
   if (!pr) return `✓ ${input.label} run #${run.run_number} succeeded but made no change (the content was identical), so no pull request was opened. Run: ${run.html_url}`
   return `✓ ${input.label}: build-validated and proposed as pull request #${pr.number} on ${input.branch} (not merged; review it).\n  pr: ${pr.html_url}\n  run: ${run.html_url}`
+}
+
+/**
+ * What a failed self-modification run actually did, from GitHub, not guessed: the failing step, the steps that
+ * passed before it, and whether the branch reached the remote. A step that exits 0 is not proof it did its job
+ * (the commit step once said "No repair changes to publish", exited 0, and pushed nothing), so the branch is checked.
+ * Returns '' when GitHub cannot be asked, and the caller falls back to the generic message.
+ */
+async function describeFailedRun(request: GithubRequest, input: { owner: string; repo: string; token: string; branch: string; runId: number }): Promise<string> {
+  try {
+    const headers = { Authorization: `token ${input.token}`, Accept: 'application/vnd.github+json' }
+    const base = `https://api.github.com/repos/${input.owner}/${input.repo}`
+    const jobsRes = await request(`${base}/actions/runs/${input.runId}/jobs`, { headers })
+    if (!jobsRes.ok) return ''
+    const jobs = ((await jobsRes.json()) as { jobs?: Array<{ steps?: Array<{ name: string; conclusion: string | null }> }> }).jobs ?? []
+    const steps = jobs.flatMap(job => job.steps ?? [])
+    const failed = steps.find(step => step.conclusion === 'failure')
+    if (!failed) return ''
+    const passed = steps.filter(step => step.conclusion === 'success' && !/^(Set up job|Post |Complete job|Run actions\/)/.test(step.name)).map(step => step.name)
+    const refRes = await request(`${base}/git/ref/heads/${encodeURIComponent(input.branch).replace(/%2F/g, '/')}`, { headers })
+    const pushed = refRes.ok
+    return `it failed at the step "${failed.name}". Steps that passed before it: ${passed.length ? passed.join('; ') : '(none)'}. ` +
+      `Branch ${input.branch} on GitHub: ${pushed ? 'EXISTS (pushed)' : 'NOT FOUND, so nothing was persisted'}. ` +
+      'A step that exited 0 is not proof it did what its name says. Read the failing step\'s log with github_get_run_logs, diagnose it, and say what you found; do not claim a branch or pull request that does not exist.'
+  } catch {
+    return ''
+  }
 }
 
 const PROPOSAL_MAX_WAIT_MS = 25 * 60 * 1000
