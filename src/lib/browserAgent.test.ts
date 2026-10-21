@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { createRequire } from 'node:module'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { browserActionsInteractive, checkBrowserUrl, isPrivateAddress, parseBrowserActions, resetBrowserSessions, runBrowserRound, MAX_SESSION_ROUNDS } from './browserAgent'
+import { browserActionsInteractive, formatBrowserRound, ROUND_VIEW_CHARS, checkBrowserUrl, isPrivateAddress, parseBrowserActions, resetBrowserSessions, runBrowserRound, MAX_SESSION_ROUNDS } from './browserAgent'
 import { requiresCoSign } from './guardianGate'
 import { FORGE_TOOLS } from './forgeTools'
 import { toolsForCapability, WRITE_TOOL_NAMES } from './managedAgent'
@@ -155,5 +155,22 @@ describe('the owner never has to supply a URL', () => {
     expect(BROWSER_GUIDANCE).toMatch(/official or primary site/)
     expect(BROWSER_GUIDANCE).toMatch(/tell the owner which URL you chose/)
     expect(BROWSER_GUIDANCE).toMatch(/Never guess a domain/)
+  })
+})
+
+describe('a long page never hides the elements to click', () => {
+  const meta = { sessionId: 's', round: 1, runUrl: 'u', owner: 'o', repo: 'r', invocationId: 'i', sent: 1, kept: 1 }
+  it('cuts only the page text, says so, and keeps every element', () => {
+    const elements = Array.from({ length: 40 }, (_, i) => ({ role: 'link', name: `Product ${i}` }))
+    const out = formatBrowserRound({ ok: true, url: 'https://shop.test', title: 'Shop', text: 'word '.repeat(5_000), elements, steps: [] } as never, meta)
+    expect(out).toContain('[40] link "Product 39"')
+    expect(out).toMatch(/…\[page text cut at \d+ of 25000 characters; scroll to read further\]/)
+    expect(out.length).toBeLessThanOrEqual(ROUND_VIEW_CHARS + 200)
+  })
+  it('a short page is shown whole, with no cut note', () => {
+    const out = formatBrowserRound({ ok: true, url: 'https://a.test', title: 'A', text: 'Hello', elements: [{ role: 'button', name: 'Go' }], steps: [] } as never, meta)
+    expect(out).toContain('Hello')
+    expect(out).toContain('[1] button "Go"')
+    expect(out).not.toContain('cut at')
   })
 })

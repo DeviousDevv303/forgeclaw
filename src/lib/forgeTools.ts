@@ -1898,7 +1898,7 @@ case 'spawn_agent': {
           const fileRes = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/contents/${samplePath}?ref=${encodeURIComponent(branch)}`, { headers })
           if (fileRes.ok) {
             const file = await fileRes.json() as { content?: string }
-            if (file.content) sample = atob(file.content.replace(/\n/g, '')).slice(0, 1200)
+            if (file.content) sample = decodeBase64Utf8(file.content).slice(0, 1200)
           }
         } catch { /* sample is informational only */ }
 
