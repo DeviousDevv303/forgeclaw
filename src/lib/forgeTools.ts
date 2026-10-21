@@ -323,7 +323,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'github_merge_pr',
-    description: 'Merge a pull request of this repository into its default branch (squash). Requires Guardian co-sign under every posture and the self-sculpt key. The tool itself refuses a draft, a pull request with conflicts or one that moved since it was reviewed, any change touching protected paths (.github/, Guardian, build configs: the owner merges those on GitHub), and any pull request whose checks are missing, running or not all green. Never merge anything the owner did not ask you to merge.',
+    description: 'Merge a pull request of this repository into its default branch (squash). Requires Guardian co-sign under every posture and the self-sculpt key. The tool does what a careful reviewer does: refuses a draft, conflicts, a pull request that moved since it was reviewed, and any change touching protected paths (.github/, Guardian, build configs: the owner merges those on GitHub); brings a branch that is behind up to date; WAITS (up to 12 minutes) for the checks on the head it will merge to finish and requires them all green; merges pinned to that head; then watches the default branch\'s own checks for a few minutes and reports them. It can take several minutes. Never merge anything the owner did not ask you to merge.',
     parameters: {
       type: 'object',
       properties: {
