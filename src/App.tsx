@@ -198,6 +198,8 @@ import { browserPlaybooksForPrompt } from './lib/browserLearning'
 import { isPublicVisitor } from './lib/publicRelay'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
+import { ReasoningFrameworkPanel } from './components/ReasoningFrameworkPanel'
+import { loadOwnerScaffold, operatingLoopFor } from './lib/ownerScaffold'
 import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { startErrorReporting } from './lib/errorReporting'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
@@ -267,7 +269,7 @@ const ATTRIBUTED_TOOLS = applyAttributionContract(FORGE_TOOLS)
 // ─── System Prompt ────────────────────────────────────────────────────────────
 // STANDING RULE: The line below must never be removed or modified.
 // It prevents refusals without overriding identity. Do not trim.
-const FORGEMIND_SYSTEM_PROMPT = `IDENTITY
+const FORGEMIND_PROMPT_HEAD = `IDENTITY
 You are ${CANONICAL_IDENTITY.application}, an autonomous execution agent embedded in the ${CANONICAL_IDENTITY.application} shell. Your purpose is to complete the user's objective through planning, tool use, verification, adaptation, and persistence. You are not a conversational assistant unless the task explicitly requires conversation.
 You retain all your normal values, guidelines, and identity as the AI assistant you are.
 
@@ -275,7 +277,9 @@ MISSION
 Your stopping condition is not "I answered."
 Your stopping condition is: "The requested objective has been completed and verified, or execution is blocked by a hard external constraint."
 
-CORE OPERATING LOOP
+`
+// The default operating loop; the owner's own framework (ownerScaffold.ts, kept in the browser) replaces it when set.
+const FORGEMIND_DEFAULT_LOOP = `CORE OPERATING LOOP
 For every task:
 
 1. INTERPRET — Determine the actual objective. Extract constraints, authority boundaries, and success criteria. Identify assumptions.
@@ -290,7 +294,8 @@ For every task:
 
 6. ITERATE — Continue until objective is complete, blocked, or explicitly stopped.
 
-FAILURE HANDLING
+`
+const FORGEMIND_PROMPT_TAIL = `FAILURE HANDLING
 Failure classes: TOOL_FAILURE | AUTH_FAILURE | NETWORK_FAILURE | DEPENDENCY_FAILURE | INVALID_ASSUMPTION | USER_CONSTRAINT | UNKNOWN
 On failure: (1) classify, (2) diagnose root cause, (3) retry with alternative method or strategy.
 
@@ -339,6 +344,8 @@ ANTI-CHAT RULE:
 Default mode is execution. Do not produce long conversational prose unless the task explicitly requests explanation. Results, not narration.
 For code: fenced blocks with language tag (\`\`\`html, \`\`\`js, \`\`\`python, etc.).
 `
+/** The system prompt, with the owner's own reasoning framework in place of the default loop when they have set one. */
+const forgemindSystemPrompt = (scaffold: string): string => FORGEMIND_PROMPT_HEAD + operatingLoopFor(scaffold, FORGEMIND_DEFAULT_LOOP) + FORGEMIND_PROMPT_TAIL
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1428,7 +1435,7 @@ function App() {
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
           : '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for tasks that require delegated reasoning, then formulate the final response from the tool result.'
         : '\n\nPRIMARY REASONING POLICY\nAnswer the user directly and clearly. Do not emit tool syntax, code, token IDs, or internal runtime instructions.'
-    const baseSystemPrompt = `${FORGEMIND_SYSTEM_PROMPT}\n\nCURRENT DATE\n${currentDateNote()}${needsCurrentInfo(promptText) && finalTools.some(t => t.name === 'deep_research') ? ' This question is about what is current: call deep_research first and answer from its sources.' : ''}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
+    const baseSystemPrompt = `${forgemindSystemPrompt(isPublicVisitor(ghToken) ? '' : loadOwnerScaffold())}\n\nCURRENT DATE\n${currentDateNote()}${needsCurrentInfo(promptText) && finalTools.some(t => t.name === 'deep_research') ? ' This question is about what is current: call deep_research first and answer from its sources.' : ''}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
     
     // NEXUS recursive learning: recurring failures of the tools offered now, as counted evidence.
     const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(500)), runtimeTools.map(tool => tool.name))
@@ -1672,6 +1679,8 @@ function App() {
       let resolvedProvider: string = activeProvider
       let resolvedModel = normalizedActiveModel
       let finalText = ''
+      // The model's own reasoning on its last step (Kimi's thinking) becomes the reply's trace.
+      let finalReasoning = ''
       let secondarySynthesisNotice = ''
       let generatedImageUrl: string | undefined
       let directImageCompleted = false
@@ -1736,6 +1745,7 @@ function App() {
         }
         setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'success', lastError: null, lastLatencyMs: latency }))
         const result = routerResult.response
+        if (result.reasoningContent?.trim()) finalReasoning = result.reasoningContent.trim()
         resolvedProvider = result.provider === 'deepseek' ? 'deepseek' : result.provider === 'corpus' ? 'corpus' : result.provider === 'moonshot' ? 'moonshot' : result.provider === 'local' ? 'local' : activeProvider
         if (result.provider === 'deepseek') source = 'cloud'
         resolvedModel = result.model || currentModel
@@ -1963,6 +1973,7 @@ function App() {
       const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${resolvedProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
       const messageTrace = trace
+        ?? (finalReasoning ? finalReasoning.slice(-4000) : undefined)
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase: effectiveAgentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
 
       setMessages(prev => prev.map(m => m.id === msgId
@@ -2714,6 +2725,7 @@ function App() {
               </div>
 
               {!isPublicVisitor(ghToken) && <SculptKeyPanel />}
+              {!isPublicVisitor(ghToken) && <ReasoningFrameworkPanel />}
               {/* GitHub Token */}              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <label style={{ color: '#f97316', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', fontFamily: 'monospace' }}>
