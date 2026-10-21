@@ -205,6 +205,7 @@ import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
 import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
+import { compactToolHistory } from './lib/historyCompaction'
 import { clearKeyVerified, isKeyRejection, isKeyVerified, markKeyVerified } from './lib/keyVerification'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
@@ -1703,7 +1704,9 @@ function App() {
         const routerResult = await sendViaRouter({
           model: currentModel,
           systemPrompt: activeSystemPrompt,
-          messages: conversationMessages,
+          // Claude and Kimi re-read the whole run on every step: older bulky results are cut (historyCompaction.ts).
+          // The DeepSeek router reads earlier results to pick its next step, so its messages stay whole.
+          messages: isHostedReasoner ? compactToolHistory(conversationMessages) : conversationMessages,
           workspaceId: activeProvider === 'anthropic' ? (anthropicWorkspaceId.trim() || undefined) : undefined,
           responseLanguage: selectedLanguage,
           tools: noMoreTools ? undefined : runtimeTools,
