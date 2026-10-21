@@ -1976,6 +1976,9 @@ function App() {
       setRequestStatus('error')
       setLastRequestError(msg)
       emitFailure({ source: 'forgemind', severity: 'error', message: rawMsg, context: { provider: activeProvider, promptLength: promptText.length } })
+      // A failed request ends the run: tell the neural/reactive layer, or it keeps showing 'running' (the neurals kept
+      // working after "temporary connection problem" and nothing was). Cancels and silent retries return before this point.
+      emitForge({ type: 'MISSION_BLOCKED', reason: `Request failed: ${rawMsg.replace(/\s+/g, ' ').slice(0, 140)}` })
       // A failed run is the most useful thing NEXUS can learn from; it used to be recorded nowhere.
       void recordLearning({ channel: promptOrigin(promptText) === 'voice' ? 'voice' : 'chat', input: promptText, result: `Run failed: ${rawMsg}`, outcome: 'failed', actor: 'user', origin: promptOrigin(promptText) })
       const failedToolResults = runToolResults.length ? runToolResults : undefined
