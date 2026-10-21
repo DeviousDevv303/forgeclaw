@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500" role="img" aria-label="ForgeClaw emblem">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#1b1226"/><stop offset="0.6" stop-color="#0c0b12"/><stop offset="1" stop-color="#050508"/>
+    </radialGradient>
+    <linearGradient id="ember" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd27a"/><stop offset="0.5" stop-color="#f97316"/><stop offset="1" stop-color="#c2410c"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7cc4ff"/><stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="500" height="500" rx="96" fill="url(#bg)"/>
+  <!-- lattice: faint nodes and links behind the cube -->
+  <g stroke="#3b82f6" stroke-opacity=".35" stroke-width="2" fill="none">
+    <path d="M70 120 L170 160 M430 110 L330 160 M60 380 L170 340 M440 390 L330 340 M250 40 L250 105 M250 460 L250 400"/>
+  </g>
+  <g fill="#7cc4ff" fill-opacity=".85">
+    <circle cx="70" cy="120" r="6"/><circle cx="430" cy="110" r="6"/><circle cx="60" cy="380" r="6"/><circle cx="440" cy="390" r="6"/><circle cx="250" cy="40" r="6"/><circle cx="250" cy="460" r="6"/>
+  </g>
+  <!-- the cube (isometric), faces in the app's cube colours -->
+  <g transform="translate(250 255)" stroke="#0a0a0f" stroke-width="5" stroke-linejoin="round">
+    <path d="M0 -150 L130 -75 L0 0 L-130 -75 Z" fill="#f5f5f5"/>
+    <path d="M-130 -75 L0 0 L0 150 L-130 75 Z" fill="#34c759"/>
+    <path d="M130 -75 L0 0 L0 150 L130 75 Z" fill="#ff3b30"/>
+    <!-- sticker grid -->
+    <g fill="none" stroke="#0a0a0f" stroke-width="4">
+      <path d="M-43 -100 L87 -25 M43 -125 L-87 -50 M-43 -50 L87 25 M43 -25 L-87 50" transform="translate(0 0)" opacity="0"/>
+      <path d="M-43.3 -100 L86.7 -25 M43.3 -125 L-86.7 -50"/>
+      <path d="M-43.3 -50 L-43.3 100 M-86.7 -25 L-86.7 125" transform="translate(0 -25)"/>
+      <path d="M43.3 -50 L43.3 100 M86.7 -25 L86.7 125" transform="translate(0 -25)"/>
+      <path d="M-130 -25 L0 50 M-130 25 L0 100" />
+      <path d="M130 -25 L0 50 M130 25 L0 100" />
+    </g>
+  </g>
+  <!-- the claw: three ember slashes across the cube -->
+  <g filter="url(#glow)" fill="url(#ember)">
+    <path d="M118 96 C214 168 286 262 330 410 C282 300 206 214 100 150 Z"/>
+    <path d="M178 66 C290 140 372 250 404 396 C350 282 266 190 156 122 Z"/>
+    <path d="M62 150 C150 214 214 296 250 424 C206 326 136 252 44 204 Z"/>
+  </g>
+  <!-- spark where the claw lands -->
+  <g filter="url(#glow)" fill="#ffe9b0"><circle cx="330" cy="410" r="7"/><circle cx="404" cy="396" r="6"/><circle cx="250" cy="424" r="6"/></g>
+  <rect x="6" y="6" width="488" height="488" rx="92" fill="none" stroke="url(#ember)" stroke-opacity=".55" stroke-width="4"/>
+</svg>

@@ -213,6 +213,8 @@ describe('shell-repair pull request body', () => {
     expect(result.stderr).toBe('')
     expect(result.stdout).toContain('- Invocation ID: repair-test')
     expect(result.stdout).toContain('- Landing path: pull request to main; this workflow never merges.')
+    expect(result.stdout).toContain('**ForgeClaw** · autonomous agent')
+    expect(result.stdout).toContain('https://github.com/o/r/raw/main/docs/brand/forgeclaw-avatar.png')
   })
 })
 
@@ -257,5 +259,39 @@ describe('shell-repair publishes edits to existing files', () => {
   })
   it('still skips when nothing changed', () => {
     expect(run(() => {})).toContain('SKIPPED')
+  })
+})
+
+describe('ForgeClaw acts under its own name', () => {
+  // 2026-10-21 (owner): ForgeClaw should have an image and a title as the autonomous agent when it acts on GitHub.
+  // The GitHub App is optional: until FORGECLAW_APP_ID and its key exist, the default token and identity are used.
+  for (const file of ['shell-repair', 'self-sculpt']) {
+    const text = read(`.github/workflows/${file}.yml`)
+    it(`${file}: signs in as the app only when it is configured, and falls back to the default token`, () => {
+      expect(text).toContain('uses: actions/create-github-app-token@v1')
+      expect(text).toMatch(/id: app\n\s+if: vars\.FORGECLAW_APP_ID != ''\n\s+continue-on-error: true/)
+      expect(text.match(/GH_TOKEN: \$\{\{ steps\.app\.outputs\.token \|\| github\.token \}\}/g)?.length).toBe(2)
+      expect(text).not.toMatch(/GH_TOKEN: \$\{\{ github\.token \}\}/)
+    })
+    it(`${file}: commits as the app and titles its pull request with the agent's name`, () => {
+      expect(text).toContain('git config user.name "${APP_SLUG}[bot]"')
+      expect(text).toContain('git config user.email "${APP_ID}+${APP_SLUG}[bot]@users.noreply.github.com"')
+      expect(text).toContain(`--title "[ForgeClaw] ${file === 'shell-repair' ? 'repair' : 'sculpt'}: `)
+    })
+  }
+  it('self-sculpt: the pull request body carries the name and the avatar', () => {
+    const text = read('.github/workflows/self-sculpt.yml')
+    const start = text.indexOf("python - <<'PY'\n", text.indexOf('Open pull request for review'))
+    const code = text.slice(start + "python - <<'PY'\n".length, text.indexOf('          PY\n', start)).replace(/^ {10}/gm, '')
+    const out = spawnSync('python3', ['-c', code], { encoding: 'utf8', env: { ...process.env, SCULPT_REASON: 'tidy', APP_SERVER: 'https://github.com', APP_REPO: 'o/r' } })
+    expect(out.status, out.stderr).toBe(0)
+    const body = readFileSync('/tmp/self-sculpt-pr-body.md', 'utf8')
+    expect(body).toContain('**ForgeClaw** · autonomous agent · self-sculpt proposal')
+    expect(body).toContain('https://github.com/o/r/raw/main/docs/brand/forgeclaw-avatar.png')
+    expect(body).toContain('Reason: tidy')
+  })
+  it('ships the avatar the pull requests point at', () => {
+    expect(existsSync('docs/brand/forgeclaw-avatar.png')).toBe(true)
+    expect(existsSync('docs/brand/forgeclaw-emblem.svg')).toBe(true)
   })
 })
