@@ -49,12 +49,33 @@ function field(candidate: LearningCandidate, key: string): string {
   return candidate.metadata?.[key] ?? new RegExp(`(?:^|; )${key}=([^;]+)`).exec(candidate.context || '')?.[1] ?? ''
 }
 
+const SHELL_FAILED = /^\s*\[TOOL ERROR\]\s*Shell execution failed\.?\s*$/i
+const CAUSE_LINE = /error|fatal|not found|denied|refused|cannot|can't|unable|no such|invalid|set the|missing|failed|not logged/i
+
+/**
+ * Every failed shell_exec starts "[TOOL ERROR] Shell execution failed.", so grouping on that line lumped them all into
+ * one lesson that said nothing ("shell_exec failed 7x with: Shell execution failed."). `gh pr list` then failed the same
+ * way on two days (2026-10-21) with no lesson to stop it. The cause is the program that ran and the line it printed.
+ */
+function shellFailureCause(result: string): string {
+  const command = /^Command:\s*(.*)$/m.exec(result)?.[1] ?? ''
+  const program = command.trim().split(/\s+/).find(word => word !== 'env' && word !== 'sudo' && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) ?? '?'
+  const lines = result.split('\n')
+  const blank = lines.findIndex(line => !line.trim())
+  const output = (blank >= 0 ? lines.slice(blank + 1) : [])
+    .map(line => line.trim())
+    .filter(line => line && !/^(?:===|invocation_id=|start=|end=|exit_code=|\(no command output)/.test(line))
+  const cause = output.find(line => CAUSE_LINE.test(line)) ?? output[0] ?? 'no output'
+  return `${program}: ${cause}`
+}
+
 /**
  * The stable shape of a failure: first line, with run numbers, hashes, URLs, IDs, quoted values and
  * digits removed, so the same failure on different inputs groups together.
  */
 export function failurePattern(result: string): string {
-  const first = result.split('\n').find(line => line.trim()) ?? ''
+  let first = result.split('\n').find(line => line.trim()) ?? ''
+  if (SHELL_FAILED.test(first)) first = shellFailureCause(result)
   return first
     .replace(/^\s*\[(?:TOOL ERROR|GUARDIAN (?:BLOCKED?|REJECTED))\]\s*/i, '')
     .replace(/https?:\/\/\S+/g, '<url>')
