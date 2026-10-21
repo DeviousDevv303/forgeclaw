@@ -1332,6 +1332,7 @@ function App() {
       'github_pages_status': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'publish', 'github pages', 'gh-pages'],
       'sculpt_self': ['sculpt', 'self-improve', 'self improve', 'improve yourself', 'upgrade yourself', 'modify yourself', 'self-modify', 'self modify', 'evolve', 'your own code', 'your code'],
       'shell_patch': ['sculpt', 'self-improve', 'self improve', 'improve yourself', 'upgrade yourself', 'modify yourself', 'self-modify', 'self modify', 'evolve', 'your own code', 'your code', 'patch', 'diff'],
+      'github_merge_pr': ['merge pull', 'merge pr', 'merge #', 'merge the pr', 'merge this pr', 'merge it', 'merge request'],
       'deep_research': ['research', 'investigate', 'sources', 'look into', 'find out', 'compare', 'latest', 'literature', 'study', 'studies', 'evidence', 'report on'],
       'github_build_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'react', 'vite', 'npm', 'bundle'],
       'github_create_repo': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'new repo', 'new repository', 'create repo', 'create a repo'],

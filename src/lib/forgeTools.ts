@@ -36,6 +36,7 @@ import { buildAndPublishSite } from './siteBuild'
 import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
 import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
 import { jobFailureEvidence } from './runDiagnosis'
+import { mergePullRequest } from './mergePr'
 import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
@@ -318,6 +319,19 @@ export const FORGE_TOOLS: ToolDef[] = [
         reason: { type: 'string', description: 'One-line reason for the change, at most 240 characters.' },
       },
       required: ['patch', 'reason'],
+    },
+  },
+  {
+    name: 'github_merge_pr',
+    description: 'Merge a pull request of this repository into its default branch (squash). Requires Guardian co-sign under every posture and the self-sculpt key. The tool itself refuses a draft, a pull request with conflicts or one that moved since it was reviewed, any change touching protected paths (.github/, Guardian, build configs: the owner merges those on GitHub), and any pull request whose checks are missing, running or not all green. Never merge anything the owner did not ask you to merge.',
+    parameters: {
+      type: 'object',
+      properties: {
+        pull_number: { type: 'number', description: 'The pull request number, e.g. 195.' },
+        expected_head_sha: { type: 'string', description: 'Optional: the head commit you reviewed; the merge is refused if the pull request has moved.' },
+        method: { type: 'string', description: 'squash (default), merge or rebase.', enum: ['squash', 'merge', 'rebase'] },
+      },
+      required: ['pull_number'],
     },
   },
   {
@@ -1163,6 +1177,16 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       }
 
       // ── Shell patch: guarded shell-repair workflow (branch + pull request proposal) ──
+      // ── Merge a pull request (co-signed, key-locked, checks and protected paths enforced by the tool) ──
+      case 'github_merge_pr': {
+        if (!token) throw new Error('No GitHub token configured.')
+        const method = input.method === 'merge' || input.method === 'rebase' ? input.method : 'squash'
+        return await mergePullRequest((url, init) => toolFetch(ctx, url, init), {
+          owner, repo, token, pullNumber: Number(input.pull_number),
+          expectedHeadSha: typeof input.expected_head_sha === 'string' && input.expected_head_sha ? input.expected_head_sha : undefined, method,
+        })
+      }
+
       case 'shell_patch': {
         const patch = typeof input.patch === 'string' ? input.patch : ''
         const reason = typeof input.reason === 'string' ? input.reason.trim() : ''

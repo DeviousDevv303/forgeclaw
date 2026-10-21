@@ -87,4 +87,4 @@ export const SCULPT_LOCKED_MESSAGE =
   '[GUARDIAN BLOCKED] Self-sculpt is locked. Unlock it in SETTINGS → Self-sculpt key (only the owner knows it), then ask again.'
 
 /** Self-modification tools gated by the key. */
-export const SCULPT_TOOLS: ReadonlySet<string> = new Set(['sculpt_self', 'shell_patch'])
+export const SCULPT_TOOLS: ReadonlySet<string> = new Set(['sculpt_self', 'shell_patch', 'github_merge_pr'])
