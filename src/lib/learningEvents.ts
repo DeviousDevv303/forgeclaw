@@ -51,6 +51,12 @@ export interface LearningRecorder {
 
 /** Bound on stored text per field; keeps localStorage use predictable. */
 export const MAX_LEARNING_FIELD_CHARS = 4_000
+/**
+ * A tool or shell record only needs to show what ran and how it ended (the failure lessons read its first lines). The whole
+ * output of a file read was being kept twice at 4,000 characters, which filled the browser's storage; chat answers, the
+ * actual training data, keep the full bound.
+ */
+export const MAX_TOOL_RECORD_CHARS = 1_200
 
 /** Classify a tool's own output. Never returns 'verified'. */
 export function outcomeFromToolOutput(output: string): Extract<LearningOutcome, 'completed' | 'blocked' | 'failed'> {
@@ -58,16 +64,17 @@ export function outcomeFromToolOutput(output: string): Extract<LearningOutcome, 
   return isToolFailureOutput(output) ? 'failed' : 'completed'
 }
 
-function clean(text: string): { text: string; redacted: boolean } {
+function clean(text: string, limit = MAX_LEARNING_FIELD_CHARS): { text: string; redacted: boolean } {
   const { output, redactionOccurred } = sanitizeShellOutput(text)
-  const bounded = output.length > MAX_LEARNING_FIELD_CHARS ? output.slice(0, MAX_LEARNING_FIELD_CHARS) : output
+  const bounded = output.length > limit ? output.slice(0, limit) : output
   return { text: bounded, redacted: redactionOccurred || bounded.length !== output.length }
 }
 
 /** Pure: turn an event into the CORPUS input. Channel and outcome are part of the hashed context, so the same text with a different outcome is a different record. */
 export function buildLearningEvent(event: LearningEventInput): CorpusInteractionInput {
-  const input = clean(event.input)
-  const result = clean(event.result)
+  const limit = event.channel === 'tool' || event.channel === 'shell' ? MAX_TOOL_RECORD_CHARS : MAX_LEARNING_FIELD_CHARS
+  const input = clean(event.input, limit)
+  const result = clean(event.result, limit)
   const fields: Record<string, string> = {
     channel: event.channel,
     outcome: event.outcome,
