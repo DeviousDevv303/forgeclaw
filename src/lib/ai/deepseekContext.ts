@@ -1,4 +1,5 @@
 import { corpusRepository, formatCorpusContext } from '../corpus'
+import { nexusGuidanceForDeepSeek } from '../nexusGuidance'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { DEEPSEEK_FALLBACK_CHECKPOINT, DEEPSEEK_PRIMARY_CHECKPOINT } from '../deepseekCheckpoints'
 
@@ -68,6 +69,10 @@ export function buildDeepSeekTaskPayload(rawTask: string, verifiedToolResults = 
 
   if (asksAboutForgeClawArchitecture(task)) sections.push(FORGECLAW_ARCHITECTURE_CONTEXT)
   if (runtimeContext) sections.push(`ForgeClaw runtime envelope (identity/routing hints only; not repository evidence):\n${runtimeContext}`)
+
+  // What the owner has taught NEXUS (approved heuristics, recurring failures, approved knowledge) reaches DeepSeek too.
+  const guidance = nexusGuidanceForDeepSeek(task).text
+  if (guidance) sections.push(guidance)
 
   const CORPUS_FRESHNESS_MS = 60 * 60 * 1000 // 1 hour — stale records poison DeepSeek
   const freshCorpusRecords = corpusRepository.retrieve(task, 3).filter(r => {
