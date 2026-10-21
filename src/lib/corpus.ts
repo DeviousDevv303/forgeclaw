@@ -132,8 +132,24 @@ function readIndex(key: string): string[] {
   }
 }
 
-function writeIndex(key: string, ids: string[]): void {
-  safeSetItem(key, JSON.stringify(ids.slice(-MAX_INDEX_ENTRIES)))
+/** Records NEXUS removes at a time, oldest first, when the browser's storage is full. */
+const PRUNE_BATCH = 3
+
+/**
+ * A write that does not fit used to be swallowed (safeSetItem), so NEXUS quietly stopped recording once the browser's
+ * storage filled (2026-10-21: the newest entry on the NEXUS page was hours old). Now the oldest unapproved entries are removed
+ * to make room, and if nothing more can be removed the failure is raised, so the caller reports it instead of pretending.
+ */
+function setWithRoom(key: string, value: string, makeRoom: () => number): void {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    if (strictSetItem(key, value).ok) return
+    if (makeRoom() === 0) break
+  }
+  throw new Error('NEXUS storage is full and nothing older could be removed to make room')
+}
+
+function writeIndex(key: string, ids: string[], makeRoom: () => number = () => 0): void {
+  setWithRoom(key, JSON.stringify(ids.slice(-MAX_INDEX_ENTRIES)), makeRoom)
 }
 
 function tokenise(value: string): string[] {
@@ -252,10 +268,36 @@ export class CorpusRepository {
   private saveRecord(record: CorpusRecord, candidate = false): void {
     const prefix = candidate ? CANDIDATE_PREFIX : RECORD_PREFIX
     const indexKey = candidate ? CANDIDATE_INDEX_KEY : INDEX_KEY
-    safeSetItem(`${prefix}${record.id}`, JSON.stringify(record))
+    const makeRoom = () => this.pruneUnapproved(PRUNE_BATCH)
+    setWithRoom(`${prefix}${record.id}`, JSON.stringify(record), makeRoom)
     const index = readIndex(indexKey)
     if (!index.includes(record.id)) index.push(record.id)
-    writeIndex(indexKey, index)
+    writeIndex(indexKey, index, makeRoom)
+  }
+
+  /**
+   * Removes up to `count` of the oldest entries that are not knowledge (a candidate and the raw interaction it came from).
+   * Auto-added and signed knowledge is never removed. Returns how many it removed.
+   */
+  private pruneUnapproved(count: number): number {
+    const candidateIds = readIndex(CANDIDATE_INDEX_KEY)
+    const keep: string[] = []
+    const rawGone = new Set<string>()
+    let removed = 0
+    for (const id of candidateIds) {
+      if (removed >= count) { keep.push(id); continue }
+      let candidate: LearningCandidate | null = null
+      try { candidate = JSON.parse(safeGetItem(`${CANDIDATE_PREFIX}${id}`) || 'null') as LearningCandidate | null } catch { /* a corrupt record is removable */ }
+      if (candidate?.admissionStatus === 'approved') { keep.push(id); continue }
+      safeRemoveItem(`${CANDIDATE_PREFIX}${id}`)
+      if (candidate?.sourceInteractionId) { safeRemoveItem(`${RECORD_PREFIX}${candidate.sourceInteractionId}`); rawGone.add(candidate.sourceInteractionId) }
+      removed += 1
+    }
+    if (removed === 0) return 0
+    // The shrunken indexes are smaller than what they replace, so these writes fit.
+    safeSetItem(CANDIDATE_INDEX_KEY, JSON.stringify(keep))
+    if (rawGone.size) safeSetItem(INDEX_KEY, JSON.stringify(readIndex(INDEX_KEY).filter(id => !rawGone.has(id))))
+    return removed
   }
 
   /** Strict variant for admission path — surfaces storage failures instead of swallowing them. */
