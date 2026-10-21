@@ -181,7 +181,9 @@ jobs:
           REPAIR_REASON: ${{ inputs.reason }}
         run: |
           set -euo pipefail
-          if git diff --quiet origin/main...HEAD && test -z "$(git ls-files --others --exclude-standard)"; then
+          # The patch is applied to the working tree and not yet committed, so compare the working tree (not only
+          # the committed history, which is empty here) with main. An edit to an existing file was skipped before.
+          if git diff --quiet origin/main && test -z "$(git ls-files --others --exclude-standard)"; then
             echo 'No repair changes to publish.'
             exit 0
           fi

@@ -31,3 +31,7 @@ dist-ssr
 
 # Claude Code local guard audit log
 .claude/guard-audit.log
+
+# Python bytecode (a test run once committed 11 of these by accident)
+__pycache__/
+*.pyc
