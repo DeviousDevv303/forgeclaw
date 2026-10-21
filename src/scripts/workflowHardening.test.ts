@@ -231,3 +231,31 @@ describe('workflow expression syntax', () => {
     }
   })
 })
+
+describe('shell-repair publishes edits to existing files', () => {
+  // 2026-10-21: a patch that only edited a tracked file (src/App.tsx) was applied and verified, then reported
+  // "No repair changes to publish" because the check compared committed history with main (empty: the patch is
+  // uncommitted), so no branch was pushed and the PR step failed. New files worked, which hid the bug.
+  const workflow = read('.github/workflows/shell-repair.yml')
+  const start = workflow.indexOf('          if git diff --quiet')
+  const block = workflow.slice(start, workflow.indexOf('          git add --all', start)).replace(/^ {10}/gm, '').replace('exit 0', 'echo SKIPPED')
+  const run = (edit: (dir: string) => void) => {
+    const dir = mkdtempSync(join(tmpdir(), 'repair-'))
+    try {
+      const git = (...args: string[]) => execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' })
+      git('init', '-q', '-b', 'main'); writeFileSync(join(dir, 'a.txt'), 'one\n'); git('add', '.'); git('commit', '-qm', 'base')
+      git('update-ref', 'refs/remotes/origin/main', 'HEAD'); git('switch', '-qc', 'repair')
+      edit(dir)
+      return spawnSync('bash', ['-c', `cd ${dir} && ${block}\necho DONE`], { encoding: 'utf8' }).stdout
+    } finally { rmSync(dir, { recursive: true, force: true }) }
+  }
+  it('does not skip a patch that edits an existing file', () => {
+    expect(run(dir => writeFileSync(join(dir, 'a.txt'), 'two\n'))).not.toContain('SKIPPED')
+  })
+  it('does not skip a patch that adds a new file', () => {
+    expect(run(dir => writeFileSync(join(dir, 'b.txt'), 'new\n'))).not.toContain('SKIPPED')
+  })
+  it('still skips when nothing changed', () => {
+    expect(run(() => {})).toContain('SKIPPED')
+  })
+})
