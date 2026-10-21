@@ -126,7 +126,7 @@ import { sendViaRouter, isDeepSeekProvider, testProviderKey, corpusProvider, moo
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { isToolFailureOutput } from './lib/toolOutcome'
 import { createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
-import { outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
+import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
 import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
 import { corpusRepository } from './lib/corpus'
@@ -653,7 +653,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   /** Set when the page was hidden while a request ran: a phone pauses the page and kills the in-flight request. */
   const hiddenDuringRunRef = useRef(false)
-  const sendPromptRef = useRef<(promptText: string, imageUrl?: string, options?: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean }) => Promise<void>>(async () => {})
+  const sendPromptRef = useRef<(promptText: string, imageUrl?: string, options?: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean; parentRunId?: string }) => Promise<void>>(async () => {})
   const activeRunRef = useRef<{ id: string; controller: AbortController; messageId: string; journal?: RunJournal } | null>(null)
   const [testKeyError, setTestKeyError] = useState('')
   // Active execution is deterministic; a saved provider choice is preserved, otherwise Moonshot/Kimi is selected.
@@ -1000,8 +1000,10 @@ function App() {
   }
 
   /** Record one learning event (voice/chat/tool/shell) as an unapproved CORPUS candidate. Best-effort; never blocks the request. */
+  // The run whose events are being recorded (set at the start of sendPrompt, cleared when it ends).
+  const learningRunRef = useRef('')
   const recordLearning = async (event: Omit<LearningEventInput, 'runtime' | 'model'>) => {
-    const stored = await recordLearningEvent({ ...event, runtime: activeProvider, model: normalizedActiveModel })
+    const stored = await recordLearningEvent({ ...event, runId: learningRunRef.current || undefined, runtime: activeProvider, model: normalizedActiveModel })
     if (!stored && event.input.trim()) {
       emitFailure({ source: 'forgemind', severity: 'warning', message: 'CORPUS learning event was not stored (local storage unavailable or full).' })
     }
@@ -1083,13 +1085,16 @@ function App() {
     return { cleanText: cleanVisibleResponse(answerText), tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; trace: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase; nextAction: string | undefined }
   }
 
-  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string, options: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean } = {}) => {
+  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string, options: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean; parentRunId?: string } = {}) => {
     if (!promptText.trim()) return
     // One request at a time. A second send used to take over activeRunRef without aborting the first,
     // so the first answer was discarded when it arrived and a duplicate workflow run was dispatched.
     // STOP is the way to abandon a running request.
     if (activeRunRef.current) return
     hiddenDuringRunRef.current = typeof document !== 'undefined' && document.hidden
+    // Every learning event of this request carries one run id; an automatic retry inherits its parent's.
+    const learningId = learningRunId(options.parentRunId)
+    learningRunRef.current = learningId
 
     // DeepSeek-primary providers require a GitHub token. Fail fast with a clear
     // message instead of dispatching DeepSeek (which will fail) and falling back
@@ -2002,8 +2007,8 @@ function App() {
       if (hiddenDuringRunRef.current && !options.autoRetried && isTransientNetworkError(rawMsg)) {
         const dropped = new Set([userMsg.id, cloudMsgId].filter(Boolean) as string[])
         setMessages(prev => prev.filter(m => !dropped.has(m.id)))
-        const retry = () => { void sendPromptRef.current(promptText, imageUrl, { ...options, autoRetried: true }) }
-        emitFailure({ source: 'forgemind', severity: 'info', message: `Request interrupted while the app was in the background; retrying once on return (${rawMsg})` })
+        const retry = () => { void sendPromptRef.current(promptText, imageUrl, { ...options, autoRetried: true, parentRunId: learningId }) }
+        emitFailure({ source: 'forgemind', severity: 'info', message: `Request interrupted while the app was in the background; retrying once on return as the same run ${learningId} (${rawMsg})` })
         if (typeof document !== 'undefined' && document.hidden) {
           const onVisible = () => { if (document.hidden) return; document.removeEventListener('visibilitychange', onVisible); retry() }
           document.addEventListener('visibilitychange', onVisible)
@@ -2047,6 +2052,7 @@ function App() {
         if (activeProvider === 'moonshot') { clearKeyVerified('moonshot'); setKeyVerifyTick(n => n + 1) }
       }
     } finally {
+      if (learningRunRef.current === learningId) learningRunRef.current = ''
       if (activeRunRef.current?.id === runId) {
         activeRunRef.current = null
         setActiveRunJournal(null)

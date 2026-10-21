@@ -92,6 +92,15 @@ describe('what NEXUS added by itself is visible and removable', () => {
       expect(screen.getByRole('button', { name: 'REMOVE' })).toBeTruthy()
     } finally { seeded.splice(seeded.indexOf(auto), 1) }
   })
+  it('shows the run that produced an entry, and how many runs it was seen in', () => {
+    const seen = { ...auto, id: 'candidate-seen', metadata: { ...auto.metadata, run: 'run-abc-1x2y', runs: 'run-aaa-1111,run-abc-1x2y' } } as unknown as LearningCandidate
+    seeded.push(seen)
+    try {
+      __setLangForTests('en')
+      render(<NexusLearningPanel />)
+      expect(screen.getByText(/run abc-1x2y · seen in 2 runs/)).toBeTruthy()
+    } finally { seeded.splice(seeded.indexOf(seen), 1) }
+  })
 })
 
 describe('your heuristics are active without approval', () => {
