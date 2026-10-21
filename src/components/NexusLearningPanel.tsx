@@ -9,7 +9,7 @@ import { corpusRepository, type LearningCandidate } from '../lib/corpus'
 import { LLM_MILESTONES, LLM_ROADMAP, llmReadiness, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, summarizeLearning, type Outcome } from '../lib/nexusLearning'
 import { useI18n } from '../lib/i18n'
 import { activeHeuristics, decide, loadDecisions, mineHeuristics } from '../lib/nexusHeuristics'
-import { CONVERGED_BY, NEXUS_PHASES } from '../lib/nexusConvergence'
+import { CONVERGED_BY, knowledgeOrigin, NEXUS_PHASES } from '../lib/nexusConvergence'
 import { describeTaste, loadTaste, MIN_TASTE_EVENTS, resetTaste } from '../lib/nexusTaste'
 
 const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
@@ -43,6 +43,8 @@ export function NexusLearningPanel() {
   const active = useMemo(() => activeHeuristics(mined, decisions), [mined, decisions])
   const minedByRule = useMemo(() => new Map(mined.map(h => [h.rule, h])), [mined])
   const converged = useMemo(() => corpusRepository.getConvergedCounts(), [candidates]) // eslint-disable-line react-hooks/exhaustive-deps
+  const [knowledgeTick, setKnowledgeTick] = useState(0)
+  const knowledge = useMemo(() => corpusRepository.listKnowledge(), [candidates, knowledgeTick]) // eslint-disable-line react-hooks/exhaustive-deps
   const phaseCounts: Record<string, number> = {
     assumptions: summary.lessons.length,
     heuristics: active.length,
@@ -152,6 +154,23 @@ export function NexusLearningPanel() {
               </ul>
             </div>
           )}
+      </section>
+
+      <section style={card} aria-label="Knowledge" data-testid="nexus-knowledge">
+        <div style={heading}>KNOWLEDGE · what NEXUS treats as known ({knowledge.length})</div>
+        <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>These entries guide the models and count as training data. Check where each came from and remove anything wrong.</div>
+        {knowledge.length === 0
+          ? <div style={{ color: '#555', fontSize: '12px' }}>Nothing yet.</div>
+          : knowledge.slice(0, 100).map(k => (
+              <div key={k.id} style={{ borderTop: '1px solid #161616', padding: '6px 0', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: k.metadata.admittedBy === CONVERGED_BY ? '#22c55e' : '#eab308', fontSize: '10px', fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{k.timestamp.slice(0, 16).replace('T', ' ')} · {knowledgeOrigin(k)} · {k.source}{k.metadata.model ? ` · ${k.metadata.model}` : ''}</div>
+                  <div style={{ color: '#ccc', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(k.metadata.input || '').slice(0, 160)}</div>
+                  <div style={{ color: '#666', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.content.slice(0, 200)}</div>
+                </div>
+                <button onClick={() => { if (corpusRepository.removeKnowledge(k.id)) { setKnowledgeTick(n => n + 1); refresh() } }} title="Remove this from what NEXUS knows" style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>REMOVE</button>
+              </div>
+            ))}
       </section>
 
       <section style={card} aria-label="Lessons">
