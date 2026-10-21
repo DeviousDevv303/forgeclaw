@@ -41,6 +41,7 @@ import { getErrorLog } from './errorLog'
 import { runBrowserRound } from './browserAgent'
 import { recordBrowserLearning } from './browserLearning'
 import { mergePullRequest } from './mergePr'
+import { listOpenPullRequests, parsePullNumber, readPullRequest } from './prInfo'
 import { formatGrepMatches, gitGrepCommand, parseGrepOutput } from './codeSearch'
 import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
@@ -437,6 +438,20 @@ export const FORGE_TOOLS: ToolDef[] = [
   {
     name: 'error_report',
     description: 'ForgeClaw reads its own errors: the failures NEXUS has recorded and grouped (what recurs, how often, when last) and the repository\'s failed workflow runs of the last 3 days with the error text of each failing job. Read-only; changes nothing. Use it when the owner asks you to check your errors/logs, diagnose yourself, or find what is broken; then write a plan and ask permission before changing anything.',
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'github_pr_info',
+    description: 'Read a pull request of this repository: its state, branches, the files it changes (with additions and deletions), its checks and its description. Read-only. Use it when the owner gives a pull request number or a github.com/.../pull/N URL and asks what it does, whether it is ready, or what you see; the cloud browser cannot see a private repository, so use this instead.',
+    parameters: {
+      type: 'object',
+      properties: { pull_number: { type: 'string', description: 'The pull request number (202), "#202", or its github.com URL.' } },
+      required: ['pull_number'],
+    },
+  },
+  {
+    name: 'github_list_prs',
+    description: 'List the open pull requests of this repository: number, title, author, branches and head commit, oldest first. Read-only. Use it when the owner asks what pull requests are open or tells you to merge them; then read each with github_pr_info and merge with github_merge_pr. Never use gh or curl in shell_exec for this: the shell runner has no GitHub credential.',
     parameters: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -928,6 +943,20 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       case 'error_report': {
         if (!token) throw new Error('No GitHub token configured; the failed-run part of the report needs one.')
         return await buildErrorReport((url, init) => toolFetch(ctx, url, init), { owner, repo, token, candidates: corpusRepository.listCandidates(500), appLog: getErrorLog() })
+      }
+
+      // ── Read a pull request (read-only) ──
+      case 'github_pr_info': {
+        if (!token) throw new Error('No GitHub token configured.')
+        const pullNumber = parsePullNumber(input.pull_number)
+        if (!pullNumber) throw new Error('pull_number must be a pull request number, "#202" or a github.com/.../pull/N URL.')
+        return await readPullRequest((url, init) => toolFetch(ctx, url, init), { owner, repo, token, pullNumber })
+      }
+
+      // ── List open pull requests (read-only) ──
+      case 'github_list_prs': {
+        if (!token) throw new Error('No GitHub token configured.')
+        return await listOpenPullRequests((url, init) => toolFetch(ctx, url, init), { owner, repo, token })
       }
 
       case 'github_get_run_logs': {

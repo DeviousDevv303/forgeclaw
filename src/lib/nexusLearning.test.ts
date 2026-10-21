@@ -100,3 +100,37 @@ describe('road to the NEXUS LLM', () => {
     expect(llmReadiness(12_000, [])).toMatchObject({ next: null, progress: 1 })
   })
 })
+
+describe('a failed shell command is learned by its cause, not by "Shell execution failed"', () => {
+  const shellFailure = (command: string, output: string) => [
+    '[TOOL ERROR] Shell execution failed.', 'Run #162 (id: 39663438839)', 'Invocation: shell-1792611522184-5797db2a',
+    `Command: ${command}`, 'Exit code: 4', 'Conclusion: failure', '', output,
+  ].join('\n')
+  const gh = 'gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable. Example:\n  env:\n    GH_TOKEN: ${{ github.token }}'
+
+  it('names the program and the line that says why', () => {
+    expect(failurePattern(shellFailure('gh pr list --repo o/r --state open', gh)))
+      .toBe('gh: gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable. Example:')
+  })
+  it('groups the same mistake made with different arguments or an env prefix (runs 157, 158, 162, 163)', () => {
+    const a = failurePattern(shellFailure('gh pr list --repo o/r --state open --json number,title', gh))
+    expect(failurePattern(shellFailure('env GH_TOKEN="$GITHUB_TOKEN" gh pr list --repo o/r', gh))).toBe(a)
+    expect(failurePattern(shellFailure('GH_TOKEN=$GITHUB_TOKEN gh pr list', gh))).toBe(a)
+  })
+  it('keeps different causes apart', () => {
+    const jq = failurePattern(shellFailure('curl -sL https://api.github.com/x | jq -r .', 'jq: error (at <stdin>:1): Cannot index string with string "base"'))
+    expect(jq).toMatch(/^curl: jq: error/)
+    expect(jq).not.toBe(failurePattern(shellFailure('gh pr list', gh)))
+    expect(failurePattern(shellFailure('npm test', ''))).toBe('npm: no output')
+  })
+  it('turns the repeated gh mistake into a lesson the next prompt shows', () => {
+    const at = (i: number) => `2026-10-21T19:2${i}:00Z`
+    const candidates = [0, 1, 2, 3].map(i => ({
+      id: `c${i}`, source: 'learning:tool', content: 'shell_exec {"command":"gh pr list"}', generatedResult: shellFailure(`gh pr list --state open ${i}`, gh),
+      timestamp: at(i), context: 'channel=shell; outcome=failed; tool=shell_exec; actor=agent',
+    }))
+    const lessons = lessonsForPrompt(summarizeLearning(candidates as never), ['shell_exec'])
+    expect(lessons).toContain('shell_exec failed 4x with: gh: gh: To use GitHub CLI')
+    expect(lessons).toContain('set the GH_TOKEN environment variable')
+  })
+})
