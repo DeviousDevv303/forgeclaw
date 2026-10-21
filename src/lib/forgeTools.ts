@@ -41,6 +41,7 @@ import { getErrorLog } from './errorLog'
 import { runBrowserRound } from './browserAgent'
 import { recordBrowserLearning } from './browserLearning'
 import { mergePullRequest } from './mergePr'
+import { formatGrepMatches, gitGrepCommand, parseGrepOutput } from './codeSearch'
 import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
@@ -999,8 +1000,18 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           const hits = data.items.map(i => `• ${i.path}`).join('\n')
           return `Found ${data.total_count} matches for "${query}":\n${hits || '(none)'}`
         }
-        // Fallback: use git trees API (repos endpoint, no search rate limit)
-        // to list all files and match against the query client-side.
+        // Fallback 1: search the file CONTENTS with git grep on a runner (codeSearch.ts). The old fallback below only
+        // matched file names and reported "Found 0 matches" as a success while the code was there.
+        const apiReason = searchFailureMessage || (res ? `GitHub ${res.status}` : 'the request did not complete')
+        const grepCommand = gitGrepCommand(query)
+        let grepProblem = grepCommand ? '' : 'query cannot be sent to the runner (empty, too long or has control characters)'
+        if (grepCommand) {
+          const grep = await executeTool({ id: `search-grep-${Date.now()}`, name: 'shell_exec', input: { command: grepCommand, timeout_seconds: 300 } }, ctx)
+          const matches = parseGrepOutput(grep)
+          if (matches) return formatGrepMatches(query, matches, apiReason)
+          grepProblem = grep.split('\n')[0].replace(/^\s*\[(?:TOOL ERROR|GUARDIAN[^\]]*)\]\s*/, '').slice(0, 200)
+        }
+        // Fallback 2: file NAMES only, said plainly; finding nothing this way is not a search result.
         if (searchFailed || (res && !res.ok)) {
           let treesRes: Response
           try {
@@ -1020,7 +1031,10 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
             .filter(t => t.type === 'blob' && t.path.toLowerCase().includes(queryLower))
             .slice(0, 10)
           const hits = matches.map(m => `• ${m.path}`).join('\n')
-          return `Found ${matches.length} matches for "${query}" (via file listing):\n${hits || '(none)'}`
+          if (!matches.length) {
+            throw new Error(`Code search could not search file contents (code-search API: ${apiReason}; runner: ${grepProblem}) and no file NAME contains "${query}". Nothing was found, but nothing was really searched: read the likely files with github_read_file.`)
+          }
+          return `Found ${matches.length} file NAME match(es) for "${query}" (names only; file contents were NOT searched: code-search API: ${apiReason}; runner: ${grepProblem}):\n${hits}`
         }
         // Should not reach here, but handle it
         throw new Error(describeGithubTransportFailure('GitHub code search', new Error('Unknown failure')))
