@@ -162,3 +162,13 @@ export function toolsForUrls(text: string, ownerName: string, repoName: string):
   }
   return [...out]
 }
+
+/**
+ * A message that only continues the previous task: "Resume", "yes, do it", "go ahead and merge them", "try again".
+ * It names no tool, so the tools are chosen from the task it continues (App.tsx). Long or new requests are not.
+ */
+export function isFollowUp(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'")
+  if (!t || t.length > 80) return false
+  return /^(?:ok(?:ay)?|yes|yeah|yep|sure|please|go|do it|go ahead|proceed|continue|resume|retry|try again|again|keep going|carry on|finish(?: it)?|same|next|now)\b/.test(t)
+}

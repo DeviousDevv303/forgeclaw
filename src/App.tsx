@@ -203,7 +203,7 @@ import { startErrorReporting } from './lib/errorReporting'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
-import { baselineToolNames, BROWSER_GUIDANCE, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 import { clearKeyVerified, isKeyRejection, isKeyVerified, markKeyVerified } from './lib/keyVerification'
 
@@ -634,6 +634,9 @@ function App() {
         ? { ...m, streaming: false, agentPhase: 'BLOCKED', content: `${m.content ? `${m.content}\n\n` : ''}⚠ Interrupted: ForgeClaw was closed or reloaded before this finished. Send it again to retry.` }
         : m)
   })
+  // The latest messages for sendPrompt, whose memoized closure would otherwise see the list from its last re-creation.
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
   const [input, setInput] = useState('')
   // Shown briefly when Enter is pressed while a request is still running (the send is ignored).
   const [busyNotice, setBusyNotice] = useState(false)
@@ -1354,8 +1357,15 @@ function App() {
       'weather_forecast': ['weather', 'forecast', 'temperature', 'rain', 'snow', 'how hot', 'how cold'],
     }
 
+    // A follow-up ("Resume", "yes, do it", "go ahead") names no tool; the task it continues does. The owner's last few
+    // messages count too, so the task keeps its tools (2026-10-21: "Resume" of a merge lost github_merge_pr, and
+    // ForgeClaw reported the merge BLOCKED with "no merge tool is exposed in this session").
+    // Only a continuation inherits them: an unrelated next message must not be offered the last task's tools.
+    const recentOwnerText = isFollowUp(promptText || '')
+      ? messagesRef.current.filter(m => m.role === 'user').slice(-3).map(m => m.content).join('\n')
+      : ''
     // Curly apostrophes from a phone keyboard (what’s) must match the straight ones in the keyword lists.
-    const messageLower = (promptText || '').toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'")
+    const messageLower = `${promptText || ''}\n${recentOwnerText}`.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'")
     const relevantTools = FORGE_TOOLS.filter(tool => {
       const toolKeywords = keywords[tool.name] || []
       return toolKeywords.some((kw: string) => messageLower.includes(kw))

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
 import { listOpenPullRequests, parsePullNumber, readPullRequest } from './prInfo'
-import { READ_ONLY_BASELINE_TOOLS, SHELL_EXEC_GUIDANCE, toolsForUrls } from './toolExposure'
+import { isFollowUp, READ_ONLY_BASELINE_TOOLS, SHELL_EXEC_GUIDANCE, toolsForUrls } from './toolExposure'
 import { executeTool, FORGE_TOOLS } from './forgeTools'
 import { requiresCoSign } from './guardianGate'
 import { toolsForCapability } from './managedAgent'
@@ -120,5 +120,14 @@ describe('listing open pull requests (2026-10-21: gh pr list in shell_exec faile
     expect(SHELL_EXEC_GUIDANCE).toMatch(/no GitHub credential/)
     expect(SHELL_EXEC_GUIDANCE).toContain('github_list_prs')
     expect(SHELL_EXEC_GUIDANCE).toMatch(/never propose giving shell-exec.yml write permissions/)
+  })
+})
+
+describe('a follow-up message is recognised', () => {
+  it('continuations are follow-ups', () => {
+    for (const t of ['Resume', 'resume', 'Yes, do it', 'go ahead and merge them', 'Try again', 'ok', 'continue', 'keep going', 'Now merge 205']) expect(isFollowUp(t)).toBe(true)
+  })
+  it('new requests and chat are not', () => {
+    for (const t of ['what is the weather', 'review my workflows', 'Hello there', '', 'yes'.padEnd(90, '.')]) expect(isFollowUp(t)).toBe(false)
   })
 })
