@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
 import { buildLearningEvent } from './learningEvents'
-import { convergencePhase, PLAYBOOK_SOURCE, VISITOR_SOURCE_ID } from './nexusConvergence'
+import { convergencePhase, knowledgeOrigin, PLAYBOOK_SOURCE, VISITOR_SOURCE_ID } from './nexusConvergence'
 import { BROWSER_PLAYBOOK_SOURCE } from './browserLearning'
 import { VISITOR_SOURCE } from './nexusLearning'
 import { corpusRepository, type LearningCandidate } from './corpus'
@@ -68,5 +68,37 @@ describe('Heuristics: the owner\'s rules are active without approval', () => {
     const c = [said('a', 'always verify the exit code'), said('b', 'always verify the exit code')]
     expect(heuristicsForPrompt({ approved: [], rejected: [] }, c)).toContain('- always verify the exit code')
     expect(heuristicsForPrompt({ approved: [], rejected: ['always verify the exit code'] }, c)).toBe('')
+  })
+})
+
+describe('knowledge: listed, labelled by origin, removable', () => {
+  beforeEach(() => localStorage.clear())
+  it('labels each origin', () => {
+    expect(knowledgeOrigin({ timestamp: '2026-10-21T22:00:00Z', metadata: { admittedBy: 'nexus-convergence' } })).toBe('AUTO-ADDED')
+    expect(knowledgeOrigin({ timestamp: '2026-10-02T12:00:00Z', metadata: {} })).toMatch(/^LEGACY · admitted without review/)
+    expect(knowledgeOrigin({ timestamp: '2026-10-20T12:00:00Z', metadata: {} })).toBe('ADMITTED · origin not recorded')
+  })
+  it('lists only knowledge, and removing an auto-added entry keeps it from coming back', async () => {
+    await corpusRepository.appendInteraction(chat('completed'))
+    expect(corpusRepository.listKnowledge()).toEqual([])
+    await corpusRepository.appendInteraction(chat('verified'))
+    const [known] = corpusRepository.listKnowledge()
+    expect(known.metadata.admittedBy).toBe('nexus-convergence')
+    expect(corpusRepository.removeKnowledge(known.id)).toBe(true)
+    expect(corpusRepository.listKnowledge()).toEqual([])
+    expect(corpusRepository.getApprovedCount()).toBe(0)
+    await corpusRepository.appendInteraction(chat('verified'))
+    expect(corpusRepository.listKnowledge()).toEqual([])
+    expect(corpusRepository.removeKnowledge('knowledge-nope')).toBe(false)
+  })
+  it('removes a legacy entry written by the old unsigned path', () => {
+    const legacy = { id: 'knowledge-legacy1', corpusId: 'nexus-local', source: 'forgeclaw', content: 'old answer', timestamp: '2026-10-02T12:00:00.000Z', version: 1, recordType: 'knowledge', integrity: 'legacy1', admissionStatus: 'approved', metadata: { input: 'old question', runtime: 'corpus', model: 'corpus', sourceInteractionId: 'interaction-legacy1' } }
+    localStorage.setItem('forgeclaw_nexus_record_v1:knowledge-legacy1', JSON.stringify(legacy))
+    localStorage.setItem('forgeclaw_nexus_index_v1', JSON.stringify(['knowledge-legacy1']))
+    expect(corpusRepository.listKnowledge().map(k => k.id)).toEqual(['knowledge-legacy1'])
+    expect(knowledgeOrigin(corpusRepository.listKnowledge()[0])).toMatch(/^LEGACY/)
+    expect(corpusRepository.removeKnowledge('knowledge-legacy1')).toBe(true)
+    expect(corpusRepository.getApprovedCount()).toBe(0)
+    expect(localStorage.getItem('forgeclaw_nexus_record_v1:knowledge-legacy1')).toBeNull()
   })
 })

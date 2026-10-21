@@ -133,6 +133,8 @@ function readIndex(key: string): string[] {
 }
 
 /** Records NEXUS removes at a time, oldest first, when the browser's storage is full. */
+// Three, not more: when storage is nearly full, a bigger batch removes far more than the new record needs (25 emptied a store
+// that held only a handful of entries). Each retry re-checks whether the record fits, so a small batch costs only a few loops.
 const PRUNE_BATCH = 3
 
 /**
@@ -335,10 +337,43 @@ export class CorpusRepository {
       if (!raw) continue
       try { out.push(JSON.parse(raw) as LearningCandidate) } catch { /* skip a corrupt record */ }
     }
-    return out.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+    // Newest first. The index is oldest-first and the sort is stable, so reversing first makes records stamped in the same
+    // millisecond come back newest-first too, instead of in whatever order they tied.
+    return out.reverse().sort((a, b) => b.timestamp.localeCompare(a.timestamp))
   }
 
   /** Knowledge the convergence rule admitted, by phase (nexusConvergence.ts). */
+  /**
+   * Everything NEXUS treats as knowledge, newest first, so the owner can see it and remove what is wrong. Until this existed
+   * the page showed only a count: 33 admitted entries of unknown origin (2026-10-21) could not be inspected at all.
+   */
+  listKnowledge(limit = 300): CorpusRecord[] {
+    const out: CorpusRecord[] = []
+    for (const id of readIndex(INDEX_KEY)) {
+      const record = safeRecord(safeGetItem(`${RECORD_PREFIX}${id}`))
+      if (record?.admissionStatus === 'approved') out.push(record)
+    }
+    return out.reverse().sort((a, b) => b.timestamp.localeCompare(a.timestamp)).slice(0, limit)
+  }
+
+  /** Removes a knowledge record. One NEXUS added by itself is also declined, so the same entry is never added again. */
+  removeKnowledge(recordId: string): boolean {
+    const record = safeRecord(safeGetItem(`${RECORD_PREFIX}${recordId}`))
+    if (!record || record.admissionStatus !== 'approved') return false
+    safeRemoveItem(`${RECORD_PREFIX}${recordId}`)
+    writeIndex(INDEX_KEY, readIndex(INDEX_KEY).filter(id => id !== recordId))
+    if (record.metadata.admittedBy === CONVERGED_BY) {
+      const declined = readIndex(DECLINED_KEY)
+      if (!declined.includes(record.integrity)) writeIndex(DECLINED_KEY, [...declined, record.integrity])
+      const candidateKey = `${CANDIDATE_PREFIX}candidate-${record.integrity}`
+      try {
+        const candidate = JSON.parse(safeGetItem(candidateKey) || 'null') as LearningCandidate | null
+        if (candidate) safeSetItem(candidateKey, JSON.stringify({ ...candidate, admissionStatus: 'rejected' }))
+      } catch { /* the knowledge record is gone either way */ }
+    }
+    return true
+  }
+
   getConvergedCounts(): Record<string, number> {
     const counts: Record<string, number> = {}
     for (const id of readIndex(INDEX_KEY)) {

@@ -36,7 +36,7 @@ describe('when the browser\'s storage is full', () => {
     const candidates = corpus.listCandidates(100)
     expect(candidates.length).toBeGreaterThanOrEqual(4)
     expect(candidates.length).toBeLessThan(40)
-    expect(candidates.some(c => c.input === 'question 39')).toBe(true) // the newest is there
+    expect(candidates[0].input).toBe('question 39') // the newest is first, though all 40 were stamped in the same millisecond
     expect(candidates.some(c => c.input === 'question 0')).toBe(false) // the oldest made room
   })
 

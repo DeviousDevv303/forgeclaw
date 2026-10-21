@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeEach, describe, expect, it } from 'vitest'
 
 const repo = resolve(__dirname, '..', '..')
 const work = mkdtempSync(join(tmpdir(), 'pages-patch-'))
@@ -25,10 +25,14 @@ function runPatch(): { code: number; out: string } {
 }
 
 describe('GitHub Pages read-only UI patch', () => {
-  mkdirSync(join(work, 'src'), { recursive: true })
-  mkdirSync(join(work, 'scripts'), { recursive: true })
-  copyFileSync(join(repo, 'src', 'App.tsx'), join(work, 'src', 'App.tsx'))
-  copyFileSync(join(repo, 'scripts', 'patchGithubReadUi.mjs'), join(work, 'scripts', 'patchGithubReadUi.mjs'))
+  // Every test starts from a fresh, unpatched copy. The idempotency test used to rely on the test before it having patched a
+  // shared copy, so it failed whenever the order changed (found by running the suite shuffled, 2026-10-21).
+  beforeEach(() => {
+    mkdirSync(join(work, 'src'), { recursive: true })
+    mkdirSync(join(work, 'scripts'), { recursive: true })
+    copyFileSync(join(repo, 'src', 'App.tsx'), join(work, 'src', 'App.tsx'))
+    copyFileSync(join(repo, 'scripts', 'patchGithubReadUi.mjs'), join(work, 'scripts', 'patchGithubReadUi.mjs'))
+  })
 
   it('applies cleanly to the current App.tsx (every anchor still matches)', () => {
     const { code, out } = runPatch()
@@ -40,6 +44,7 @@ describe('GitHub Pages read-only UI patch', () => {
   })
 
   it('is idempotent on a second run', () => {
+    expect(runPatch().code).toBe(0) // the first run applies it
     const { code, out } = runPatch()
     expect(code).toBe(0)
     expect(out).toMatch(/already present/)

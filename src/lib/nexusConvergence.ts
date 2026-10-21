@@ -46,3 +46,13 @@ export function convergencePhase(input: CorpusInteractionInput): Extract<NexusPh
   if ((channel === 'chat' || channel === 'voice') && field(input, 'actor') === 'user' && outcome === 'verified') return 'first_principles'
   return null
 }
+
+/** Before this date, chat answers given while the provider was "corpus" were admitted with no signature or review (a8276fa, removed by #61). */
+export const UNSIGNED_ADMISSION_UNTIL = '2026-10-14'
+
+/** Where a knowledge record came from, for the NEXUS page. */
+export function knowledgeOrigin(record: { timestamp: string; metadata: Record<string, string> }): string {
+  if (record.metadata.admittedBy === CONVERGED_BY) return 'AUTO-ADDED'
+  if (record.timestamp < UNSIGNED_ADMISSION_UNTIL) return 'LEGACY · admitted without review (Sep 24 – Oct 13)'
+  return 'ADMITTED · origin not recorded'
+}

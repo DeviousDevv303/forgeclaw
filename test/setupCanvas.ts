@@ -98,3 +98,13 @@ if (typeof HTMLCanvasElement !== 'undefined') {
     return new MockCanvasRenderingContext2D();
   } as typeof HTMLCanvasElement.prototype.getContext;
 }
+
+// Unmount every component a test rendered, before its environment is torn down. Testing Library only does this on its own
+// when Vitest globals are on, and they are off here: a component left mounted could still run React work after jsdom was
+// gone, which failed main's Build Gate on 2026-10-21 ("window is not defined", attributed to ThroneBackdrop.test.ts) though
+// every test had passed. Node-environment test files have no window and nothing to unmount.
+if (typeof window !== 'undefined') {
+  const { afterEach } = await import('vitest')
+  const { cleanup } = await import('@testing-library/react')
+  afterEach(() => cleanup())
+}
