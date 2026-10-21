@@ -4,6 +4,7 @@
 /** Elapsed time is hidden below this, so quick replies never flash a timer. */
 export const ELAPSED_NOTE_DELAY_MS = 5_000
 
+// Formats milliseconds as m:ss.
 export function formatElapsed(ms: number): string {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000))
   const minutes = Math.floor(totalSeconds / 60)
