@@ -36,6 +36,7 @@ import { buildAndPublishSite } from './siteBuild'
 import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
 import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
 import { jobFailureEvidence } from './runDiagnosis'
+import { buildErrorReport } from './errorReport'
 import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
@@ -401,6 +402,11 @@ export const FORGE_TOOLS: ToolDef[] = [
       },
       required: ['run_id'],
     },
+  },
+  {
+    name: 'error_report',
+    description: 'ForgeClaw reads its own errors: the failures NEXUS has recorded and grouped (what recurs, how often, when last) and the repository\'s failed workflow runs of the last 3 days with the error text of each failing job. Read-only; changes nothing. Use it when the owner asks you to check your errors/logs, diagnose yourself, or find what is broken; then write a plan and ask permission before changing anything.',
+    parameters: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'github_get_run_logs',
@@ -887,6 +893,12 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       }
 
       // ── GitHub: get run logs (job + step details) ────────────────────────────
+      // ── ForgeClaw's own errors, as evidence (read-only) ──
+      case 'error_report': {
+        if (!token) throw new Error('No GitHub token configured; the failed-run part of the report needs one.')
+        return await buildErrorReport((url, init) => toolFetch(ctx, url, init), { owner, repo, token, candidates: corpusRepository.listCandidates(500) })
+      }
+
       case 'github_get_run_logs': {
         const runId = input.run_id as string
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }

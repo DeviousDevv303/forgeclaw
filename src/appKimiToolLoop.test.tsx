@@ -66,6 +66,16 @@ describe('Kimi is a first-class hosted reasoner', () => {
     expect((workflows.tools ?? []).map(t => t.function.name)).not.toContain('review_code')
   }, 30_000)
 
+  it('offers error_report when asked to check its own errors, with the plan-first guidance, and not for unrelated chat', async () => {
+    const [body] = await send('check your error logs and tell me what is broken', 1)
+    expect((body.tools ?? []).map(t => t.function.name)).toContain('error_report')
+    const system = body.messages.find(m => m.role === 'system')?.content ?? ''
+    expect(system).toMatch(/write a PLAN, not a fix/)
+    cleanup(); vi.resetModules(); fetchMock.mockClear()
+    const [other] = await send('tell me a joke about cubes', 1)
+    expect((other.tools ?? []).map(t => t.function.name)).not.toContain('error_report')
+  }, 30_000)
+
   it('never hands Kimi the DeepSeek workflow, for analyze wording or a coding task', async () => {
     for (const prompt of ['review and analyze the efficiency of my GitHub workflows', 'check the repo and fix the failing build-gate test']) {
       cleanup(); vi.resetModules(); fetchMock.mockClear()

@@ -62,6 +62,7 @@ export const CODING_TOOL_ORDER: readonly string[] = [
   'github_run_workflow',
   'github_get_run_status',
   'github_get_run_logs',
+  'error_report',
   // Run tests/builds and look things up. shell_exec is in WRITE_TOOL_NAMES, so coding-readonly still
   // excludes it; every call goes through executeTool + Guardian. Missing from this list, both were
   // silently dropped from every coding-task turn (2026-10-19: Claude was told to use shell_exec but
