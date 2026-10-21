@@ -133,6 +133,8 @@ function readIndex(key: string): string[] {
 }
 
 /** Records NEXUS removes at a time, oldest first, when the browser's storage is full. */
+// Three, not more: when storage is nearly full, a bigger batch removes far more than the new record needs (25 emptied a store
+// that held only a handful of entries). Each retry re-checks whether the record fits, so a small batch costs only a few loops.
 const PRUNE_BATCH = 3
 
 /**
@@ -335,7 +337,9 @@ export class CorpusRepository {
       if (!raw) continue
       try { out.push(JSON.parse(raw) as LearningCandidate) } catch { /* skip a corrupt record */ }
     }
-    return out.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+    // Newest first. The index is oldest-first and the sort is stable, so reversing first makes records stamped in the same
+    // millisecond come back newest-first too, instead of in whatever order they tied.
+    return out.reverse().sort((a, b) => b.timestamp.localeCompare(a.timestamp))
   }
 
   /** Knowledge the convergence rule admitted, by phase (nexusConvergence.ts). */
