@@ -156,7 +156,8 @@ describe('shell_patch gating and exposure', () => {
     it('says which step failed and that nothing was pushed, from GitHub, not a guess', async () => {
       const base = github('failure', [])
       vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-        if (String(url).endsWith('/actions/runs/5/jobs')) return json({ jobs: [{ steps: [
+        if (String(url).endsWith('/actions/jobs/77/logs')) return new Response("2026-10-21T03:39:48Z No commits between main and forge/repair/x\n2026-10-21T03:39:48Z ##[error]Process completed with exit code 1.")
+        if (String(url).endsWith('/actions/runs/5/jobs')) return json({ jobs: [{ id: 77, conclusion: 'failure', steps: [
           { name: 'Set up job', conclusion: 'success' }, { name: 'Apply patch', conclusion: 'success' },
           { name: 'Commit and push repair branch', conclusion: 'success' }, { name: 'Create labeled pull request', conclusion: 'failure' },
         ] }] })
@@ -166,7 +167,8 @@ describe('shell_patch gating and exposure', () => {
       expect(out).toContain('failed at the step "Create labeled pull request"')
       expect(out).toContain('Apply patch; Commit and push repair branch')
       expect(out).toMatch(/Branch forge\/repair\/\S+ on GitHub: NOT FOUND, so nothing was persisted/)
-      expect(out).toContain('github_get_run_logs')
+      expect(out).toContain('No commits between main and forge/repair/x')
+      expect(out).toContain('Diagnose from this evidence')
       expect(out).not.toContain('nothing was proposed (protected path')
     })
 
