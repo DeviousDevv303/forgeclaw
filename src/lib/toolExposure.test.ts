@@ -29,3 +29,12 @@ describe('shell_exec guidance matches the workflow it describes', () => {
     expect(SHELL_EXEC_GUIDANCE).toContain('limited to 10 minutes')
   })
 })
+
+describe('self-modification guidance', () => {
+  it('tells the model to diagnose failed runs itself and never to trust a step name', async () => {
+    const { SELF_SCULPT_GUIDANCE } = await import('./toolExposure')
+    expect(SELF_SCULPT_GUIDANCE).toMatch(/pre-approved debugging/)
+    expect(SELF_SCULPT_GUIDANCE).toMatch(/instead of asking the owner to choose among options/)
+    expect(SELF_SCULPT_GUIDANCE).toMatch(/step marked success is not proof/)
+  })
+})

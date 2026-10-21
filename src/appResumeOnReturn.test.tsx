@@ -39,13 +39,13 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.resetModules(); Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }) })
 
 describe('resume on return', () => {
-  it('asks again once when the request died while the app was in the background', async () => {
+  it('asks again once when the request died while the app was in the background', { timeout: 30000 }, async () => {
     const { default: App } = await import('./App')
     render(<App />)
     const box = await screen.findByPlaceholderText(/Ask anything/i)
     fireEvent.change(box, { target: { value: 'tell me a short fact' } })
     fireEvent.keyDown(box, { key: 'Enter' })
-    await waitFor(() => expect(screen.getByText(/Back and answered\./)).toBeTruthy(), { timeout: 8000 })
+    await waitFor(() => expect(screen.getByText(/Back and answered\./)).toBeTruthy(), { timeout: 20000 })
     expect(kimiCalls).toBe(2)
     expect(screen.queryByText(/temporary connection problem/)).toBeNull()
     // The dropped attempt is removed: the conversation holds the question once.

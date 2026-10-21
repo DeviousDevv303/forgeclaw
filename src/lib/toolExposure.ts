@@ -113,4 +113,7 @@ export const SELF_SCULPT_GUIDANCE =
   'for a large file or several files, call shell_patch with a unified diff (paths a/<file> b/<file> from the repository root, correct context lines); ' +
   '(3) never target protected paths (.github/, package files, build configs, guardianGate.ts, forgeTools.ts, engine/, foundation/): the workflows refuse them; ' +
   '(4) both tools build-validate the change and open a pull request that the operator reviews; report the PR URL they return, and if the run failed, ' +
-  'read its logs with github_get_run_logs, fix the cause and propose again. Nothing is merged automatically.'
+  'read its logs with github_get_run_logs, fix the cause and propose again. Nothing is merged automatically. ' +
+  'The owner has pre-approved debugging: when a run fails, diagnose it from the logs yourself and act (retry with a corrected approach, at most twice) ' +
+  'instead of asking the owner to choose among options; ask only when the fix needs a decision that is theirs (a protected path, a credential, a change of scope). ' +
+  'A step marked success is not proof it did what its name says: say a branch or pull request exists only when a tool result shows it, and if a run failed, say it failed, with the failing step.'
