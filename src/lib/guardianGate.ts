@@ -15,7 +15,19 @@ const ALWAYS_COSIGN = new Set([
   'gmail_send',          // external email, irreversible
   'calendar_create',     // creates real calendar events
   'shell_exec',          // dispatches GitHub Actions runner — real external execution
+  'github_merge_pr',     // merges a pull request into the default branch (irreversible from here)
 ])
+
+/** Clicking, typing and key presses act on a page; goto/scroll/wait/back only look. Unreadable input counts as acting. */
+function browserActionsInteractive(raw: unknown): boolean {
+  let list: unknown = raw
+  if (typeof raw === 'string') { try { list = JSON.parse(raw) } catch { return true } }
+  if (!Array.isArray(list)) return true
+  return list.some(a => !['goto', 'scroll', 'wait', 'back'].includes((a as { type?: string } | null)?.type ?? ''))
+}
+
+// Co-signed even under the 'autonomous' posture: a merge changes what runs in production and cannot be undone from chat.
+const NEVER_AUTONOMOUS = new Set(['github_merge_pr'])
 
 // Autonomous in the default operator-shell posture, co-signed under full-cosign. Authorized by Cristian
 // Nunez on 2026-10-20 ("fully autonomous" site deployment): publishing a static site to a non-default
@@ -70,7 +82,11 @@ export function requiresCoSign(call: ToolCall, posture: GuardianPosture | boolea
     ? postureFromTier1Active(posture)
     : posture
 
+  if (NEVER_AUTONOMOUS.has(call.name)) return true
   if (resolved === 'autonomous') return false  // fully autonomous — no gates
+
+  // The cloud browser: looking is free in operator-shell; acting on a page (click, type, key press) is co-signed.
+  if (call.name === 'browser_run') return resolved === 'full-cosign' || browserActionsInteractive(call.input.actions)
 
   if (resolved === 'operator-shell') {
     // Operator's shell commands and site deployment are autonomous — no obstacles.

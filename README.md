@@ -109,7 +109,7 @@ Updated 2026-10-20. "Works" means it ran successfully end to end on GitHub Actio
 | Self-sculpt / shell repair | `sculpt_self`, `shell_patch` | **Works:** runs 39362448179 and 39362463489 opened the intended pull requests. Key gate and `/sculpt` are not verified live. |
 | Website deploy | `github_create_repo`, `github_publish_site`, `github_pages_status` | Not verified live (acceptance step C). |
 | Build-step sites | `github_build_site` / `site-build.yml` | Not verified live (acceptance step D). |
-| Pictures: Claude / Kimi | native image input | Not yet confirmed live with Kimi K2.7 Code. |
+| Pictures: Claude / Kimi | native image input | **Works with Kimi K2.7 Code** (verified live 2026-10-20: it described an uploaded screenshot correctly). Claude not yet run live. |
 | Pictures: DeepSeek | `analyze_image` / `image-analyze.yml` | The Qwen2-VL model ran on main (run 39319037899, URL input). The attached-picture path is not verified live. |
 | Free mode (visitors) | `relay/` | Needs the relay deployed or redeployed (`relay/README.md`). Not verified live. |
 | Error reports to owner | `relay/` `/v1/errors` + Resend | Needs the relay and a Resend key. Not verified live. |
@@ -118,8 +118,9 @@ Updated 2026-10-20. "Works" means it ran successfully end to end on GitHub Actio
 | Shell commands | `shell_exec` / `shell-exec.yml` | Works. Runs report the command's own exit code. |
 | GitHub repo read/write, issues, runs, logs | `github_*` tools | Works with a GitHub token. |
 | Code search proxy | `search-proxy.yml` | Works: run 39465089415, all 10 results scoped to DeviousDevv303/forgeclaw. |
-| Code review | `review_code` / `code-review.yml` | Only dispatches; the result does not reach the chat yet (scheduled). |
+| Code review | `review_code` / `code-review.yml` | Returns the review to the chat (mirror branch). The workflow ran on main (run 39505268990); the review text and the app path end to end are not verified live. |
 | Browser automation | `browser-automation.yml` | Fixed 2026-10-19, not verified live. Not a chat tool. |
+| Click and browse (cloud browser) | `browser_run` / `browser-agent.yml` | **New, not run live yet.** Free: it uses only GitHub Actions minutes (unlimited on a public repository, your monthly quota on a private one; a round takes a few minutes and a session is capped at 10 rounds) and no paid service. The runner is tested in a real Chromium (browse, click, type, follow links; refuses internal addresses, password fields, downloads); the workflow has never been dispatched. Clicking and typing need your co-sign. NEXUS keeps what worked as a playbook (typed text is never stored); once you approve it, it teaches the browsing agent and DeepSeek. Kimi/Claude only. |
 | Gmail, Calendar, WhatsApp | `gmail_*`, `calendar_*`, `send_whatsapp` | Need your own OAuth/API credentials in Settings; not verified here. |
 | `http_fetch`, `run_js` | browser-side | Work within browser limits (`http_fetch` is subject to CORS). |
 

@@ -1,0 +1,87 @@
+name: Browser Agent
+
+# One round of the ForgeClaw browser agent: replays the given actions in a fresh Chromium and reports the page
+# (url, title, visible text, interactive elements, a screenshot). The app's model decides the next round.
+# Untrusted websites run in the 'browse' job, which is read-only and keeps no credential; only the 'mirror' job can
+# write, and it runs no browser. Private/internal addresses, password fields and downloads are refused in the runner.
+on:
+  workflow_dispatch:
+    inputs:
+      actions_json:
+        description: 'JSON array of actions to replay from a blank page'
+        required: true
+      invocation_id:
+        description: 'Unique ID'
+        required: true
+
+run-name: Browser agent ${{ inputs.invocation_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  browse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Restore Chromium cache
+        id: pw_cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-1.64.1-chromium-${{ runner.os }}
+      - name: Install Playwright and Chromium (exact pin)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw"
+          cd "$RUNNER_TEMP/pw"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+          echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >> "$GITHUB_ENV"
+      - name: Run the browser actions
+        env:
+          ACTIONS_JSON: ${{ inputs.actions_json }}
+        run: node scripts/browser-agent.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-agent-${{ inputs.invocation_id }}
+          path: agent-out
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # Publishes the round where the app can read it (artifact zips are not readable from the browser).
+  # Write access lives only here; this job runs no browser and no page content is executed.
+  mirror:
+    needs: browse
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # Checkout first: it cleans the workspace, which would delete a result downloaded before it.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: browser-agent-${{ inputs.invocation_id }}
+          path: result
+      - name: Publish the round
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          BROWSE_RESULT: ${{ needs.browse.result }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export GIT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          bash .github/scripts/browser_mirror.sh "https://github.com/$REPO.git" "$INVOCATION_ID" result "$BROWSE_RESULT"

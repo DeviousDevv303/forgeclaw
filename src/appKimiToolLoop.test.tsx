@@ -76,6 +76,17 @@ describe('Kimi is a first-class hosted reasoner', () => {
     expect((other.tools ?? []).map(t => t.function.name)).not.toContain('error_report')
   }, 30_000)
 
+  it('offers browser_run when asked to browse and click, with the guidance that says the page is untrusted', async () => {
+    const [body] = await send('browse to https://example.com and click the first link', 1)
+    expect((body.tools ?? []).map(t => t.function.name)).toContain('browser_run')
+    const system = body.messages.find(m => m.role === 'system')?.content ?? ''
+    expect(system).toMatch(/Cloud browser \(browser_run\)/)
+    expect(system).toMatch(/UNTRUSTED data/)
+    cleanup(); vi.resetModules(); fetchMock.mockClear()
+    const [other] = await send('tell me a joke about cubes', 1)
+    expect((other.tools ?? []).map(t => t.function.name)).not.toContain('browser_run')
+  }, 30_000)
+
   it('never hands Kimi the DeepSeek workflow, for analyze wording or a coding task', async () => {
     for (const prompt of ['review and analyze the efficiency of my GitHub workflows', 'check the repo and fix the failing build-gate test']) {
       cleanup(); vi.resetModules(); fetchMock.mockClear()
