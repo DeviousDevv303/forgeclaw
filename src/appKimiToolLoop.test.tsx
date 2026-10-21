@@ -192,7 +192,7 @@ describe('Kimi is a first-class hosted reasoner', () => {
     expect(screen.queryByRole('button', { name: 'MIC' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'NEXUS' }))
     expect(screen.getByText('My Logic Is Undeniable')).toBeTruthy()
-    expect(screen.getByText(/Learning is not authority/)).toBeTruthy()
+    expect(screen.getByText(/Convergence closes the loop/)).toBeTruthy()
   }, 15_000)
 
   it('runs /sculpt without any chat provider: no Kimi key needed and Kimi is never called', async () => {

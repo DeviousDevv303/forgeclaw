@@ -17,7 +17,7 @@ export const NEXUS_PRINCIPLES = [
   'Evidence over assertion: only a real tool result proves an action happened.',
   'Failures are data: every failure, block and refusal is recorded and counted.',
   'Recurrence is a lesson: a failure seen twice is surfaced to the agent before it repeats it.',
-  'Learning is not authority: candidates stay unapproved until the operator signs an admission.',
+  'Convergence closes the loop: evidence-backed results and your own rules become knowledge by themselves; visitors never do, and you can remove any rule.',
 ] as const
 
 export type Outcome = 'verified' | 'completed' | 'attempted' | 'failed' | 'blocked'
@@ -190,7 +190,8 @@ export function llmReadiness(approved: number, candidates: LearningCandidate[]):
   const tools = new Set(candidates.map(c => field(c, 'tool')).filter(Boolean))
   return {
     approved,
-    awaitingReview: candidates.length,
+    // Records with no evidence behind them yet; evidence-backed ones converge by themselves (nexusConvergence.ts).
+    awaitingReview: candidates.filter(c => c.admissionStatus === 'candidate').length,
     step: approved >= 1_000 ? 2 : approved > 0 ? 1 : 0,
     next: next ? { approved: next.approved, label: next.label } : null,
     progress: next ? Math.min(1, (approved - prev) / (next.approved - prev)) : 1,

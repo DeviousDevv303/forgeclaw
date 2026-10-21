@@ -6,6 +6,7 @@
 
 import { safeGetItem, safeSetItem, strictGetItem, strictSetItem, type StorageResult } from './storage'
 import { DEEPSEEK_PRIMARY_CHECKPOINT } from './deepseekCheckpoints'
+import { CONVERGED_BY, convergencePhase } from './nexusConvergence'
 import { type AdmissionTrustConfig, type CandidateAuthorization, type AuthorizationValidation, verifyCandidateAuthorization } from './corpusAdmissionAuth'
 
 export type CorpusAdmissionStatus = 'raw' | 'candidate' | 'approved' | 'rejected'
@@ -293,6 +294,18 @@ export class CorpusRepository {
     return out.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
   }
 
+  /** Knowledge the convergence rule admitted, by phase (nexusConvergence.ts). */
+  getConvergedCounts(): Record<string, number> {
+    const counts: Record<string, number> = {}
+    for (const id of readIndex(INDEX_KEY)) {
+      const record = safeRecord(safeGetItem(`${RECORD_PREFIX}${id}`))
+      if (record?.admissionStatus !== 'approved' || record.metadata.admittedBy !== CONVERGED_BY) continue
+      const phase = record.metadata.phase || 'other'
+      counts[phase] = (counts[phase] ?? 0) + 1
+    }
+    return counts
+  }
+
   getApprovedCount(): number {
     let count = 0
     for (const id of readIndex(INDEX_KEY)) {
@@ -321,11 +334,13 @@ export class CorpusRepository {
         metadata: { input: input.input, runtime: input.runtime, model: input.model, ...(input.metadata || {}) },
       }
       this.saveRecord(interaction)
+      // The loop closes by itself for evidence-backed records (nexusConvergence.ts); everything else stays a candidate.
+      const phase = convergencePhase(input)
       const candidate: LearningCandidate = {
         ...interaction,
         id: `candidate-${integrity}`,
         recordType: 'learning_candidate',
-        admissionStatus: 'candidate',
+        admissionStatus: phase ? 'approved' : 'candidate',
         sourceInteractionId: interactionId,
         runtime: input.runtime,
         model: input.model,
@@ -334,6 +349,20 @@ export class CorpusRepository {
         generatedResult: input.result,
       }
       this.saveRecord(candidate, true)
+      if (phase) {
+        this.saveRecord({
+          id: `knowledge-${integrity}`,
+          corpusId: interaction.corpusId,
+          source: interaction.source,
+          content: input.result,
+          timestamp,
+          version: this.nextVersion(),
+          recordType: 'knowledge',
+          integrity,
+          admissionStatus: 'approved',
+          metadata: { input: input.input, runtime: input.runtime, model: input.model, sourceInteractionId: interactionId, admittedBy: CONVERGED_BY, phase },
+        })
+      }
       return { interaction, candidate }
     })
   }
@@ -401,7 +430,8 @@ export class CorpusRepository {
   }
 
   checkNexusKnowledge(task: string): NexusKnowledge | null {
-    const match = this.retrieve(task, 1)[0]
+    // A direct answer comes only from signed knowledge: a converged record is evidence for guidance, not a reply to serve.
+    const match = this.retrieve(task, 5).find(record => record.metadata.admittedBy !== CONVERGED_BY)
     if (!match) return null
     const queryTokens = tokenise(task)
     const haystack = tokenise(`${match.content} ${Object.values(match.metadata).join(' ')}`)

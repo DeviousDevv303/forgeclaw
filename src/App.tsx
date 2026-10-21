@@ -1941,7 +1941,10 @@ function App() {
         : hasUnresolvedToolFailure
           ? 'STATUS: BLOCKED\nA requested tool execution failed and was not successfully resolved; the task was not accepted as complete.'
           : ''
-      await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`)
+      // The outcome NEXUS records: a blocked run is not a completed one, and an answer that passed the evidence gate with
+      // a successful tool result behind it is 'verified', which NEXUS lets converge into knowledge (nexusConvergence.ts).
+      const answerOutcome = completionPhase === 'BLOCKED' ? 'blocked' : allToolResults.some(result => !result.isError) ? 'verified' : 'completed'
+      await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`, { outcome: answerOutcome })
       // Sync plan to ForgeOps + emit terminal event
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (completionBlocked) emitForge({ type: 'MISSION_BLOCKED', reason: 'Repository evidence required, but no GitHub tool returned successfully' })
