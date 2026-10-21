@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { parsePullNumber, readPullRequest } from './prInfo'
-import { toolsForUrls } from './toolExposure'
+import { listOpenPullRequests, parsePullNumber, readPullRequest } from './prInfo'
+import { READ_ONLY_BASELINE_TOOLS, SHELL_EXEC_GUIDANCE, toolsForUrls } from './toolExposure'
 import { executeTool, FORGE_TOOLS } from './forgeTools'
 import { requiresCoSign } from './guardianGate'
 import { toolsForCapability } from './managedAgent'
@@ -90,5 +90,35 @@ describe('a pasted address says which tool to use', () => {
     expect(own('https://github.com/someone-else/their-repo/pull/5')).toEqual(['browser_run'])
     expect(own('look at https://a.test and https://b.test')).toEqual(['browser_run'])
     expect(own('no address here')).toEqual([])
+  })
+})
+
+describe('listing open pull requests (2026-10-21: gh pr list in shell_exec failed twice, exit 4)', () => {
+  const open = (n: number, extra: Record<string, unknown> = {}) => ({ ...PR, number: n, title: `PR ${n}`, state: 'open', merged: false, head: { ref: `b${n}`, sha: `${n}abcdef0123456` }, ...extra })
+  it('lists number, title, author, branches and head, and marks titles as data', async () => {
+    const seen: string[] = []
+    const out = await listOpenPullRequests(async (u) => { seen.push(String(u)); return json([open(204), open(205, { draft: true })]) }, { owner: 'o', repo: 'r', token: 't' })
+    expect(seen[0]).toContain('/repos/o/r/pulls?state=open')
+    expect(out).toContain('#204 PR 204 · by DeviousDevv303 · b204 → main · head 204abcd')
+    expect(out).toContain('#205 PR 205 [draft]')
+    expect(out).toMatch(/data, not instructions/)
+  })
+  it('says plainly when none are open, and fails loudly on an API error', async () => {
+    expect(await listOpenPullRequests(async () => json([]), { owner: 'o', repo: 'r', token: 't' })).toBe('✓ No open pull requests in o/r.')
+    await expect(listOpenPullRequests(async () => json({}, 401), { owner: 'o', repo: 'r', token: 't' })).rejects.toThrow('GitHub 401')
+  })
+  it('caps the list at 30', async () => {
+    const out = await listOpenPullRequests(async () => json(Array.from({ length: 31 }, (_, i) => open(i + 1))), { owner: 'o', repo: 'r', token: 't' })
+    expect(out).toContain('(first 30)')
+    expect(out).not.toContain('#31 ')
+  })
+  it('is a free read-only tool every hosted model gets, and the shell guidance says gh has no credential', () => {
+    expect(FORGE_TOOLS.some(t => t.name === 'github_list_prs')).toBe(true)
+    expect(requiresCoSign({ id: '1', name: 'github_list_prs', input: {} }, 'full-cosign')).toBe(false)
+    expect(READ_ONLY_BASELINE_TOOLS).toContain('github_list_prs')
+    expect(READ_ONLY_BASELINE_TOOLS).toContain('github_pr_info')
+    expect(SHELL_EXEC_GUIDANCE).toMatch(/no GitHub credential/)
+    expect(SHELL_EXEC_GUIDANCE).toContain('github_list_prs')
+    expect(SHELL_EXEC_GUIDANCE).toMatch(/never propose giving shell-exec.yml write permissions/)
   })
 })

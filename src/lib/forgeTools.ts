@@ -41,7 +41,7 @@ import { getErrorLog } from './errorLog'
 import { runBrowserRound } from './browserAgent'
 import { recordBrowserLearning } from './browserLearning'
 import { mergePullRequest } from './mergePr'
-import { parsePullNumber, readPullRequest } from './prInfo'
+import { listOpenPullRequests, parsePullNumber, readPullRequest } from './prInfo'
 import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
@@ -447,6 +447,11 @@ export const FORGE_TOOLS: ToolDef[] = [
       properties: { pull_number: { type: 'string', description: 'The pull request number (202), "#202", or its github.com URL.' } },
       required: ['pull_number'],
     },
+  },
+  {
+    name: 'github_list_prs',
+    description: 'List the open pull requests of this repository: number, title, author, branches and head commit, oldest first. Read-only. Use it when the owner asks what pull requests are open or tells you to merge them; then read each with github_pr_info and merge with github_merge_pr. Never use gh or curl in shell_exec for this: the shell runner has no GitHub credential.',
+    parameters: { type: 'object', properties: {}, required: [] },
   },
   {
     name: 'github_get_run_logs',
@@ -945,6 +950,12 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const pullNumber = parsePullNumber(input.pull_number)
         if (!pullNumber) throw new Error('pull_number must be a pull request number, "#202" or a github.com/.../pull/N URL.')
         return await readPullRequest((url, init) => toolFetch(ctx, url, init), { owner, repo, token, pullNumber })
+      }
+
+      // ── List open pull requests (read-only) ──
+      case 'github_list_prs': {
+        if (!token) throw new Error('No GitHub token configured.')
+        return await listOpenPullRequests((url, init) => toolFetch(ctx, url, init), { owner, repo, token })
       }
 
       case 'github_get_run_logs': {

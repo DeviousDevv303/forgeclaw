@@ -18,6 +18,8 @@ export const READ_ONLY_BASELINE_TOOLS = [
   'github_search_code',
   'github_get_run_status',
   'github_get_run_logs',
+  'github_list_prs',
+  'github_pr_info',
   'web_search',
 ] as const
 
@@ -42,7 +44,10 @@ export const SHELL_EXEC_GUIDANCE =
   'shell_exec facts: it starts in a fresh shallow checkout of the repository at main (working directory = repo root), so never git clone it; ' +
   'node_modules is not installed (run `npm ci` first in the same command, e.g. `npm ci && npx vitest run src/lib`); ' +
   'git history is one commit deep (run `git fetch --unshallow` first if you need it); there are no git credentials, so it cannot push; ' +
-  'nothing persists between calls; each job is limited to 10 minutes. Chain related steps into one command with &&.'
+  'nothing persists between calls; each job is limited to 10 minutes. Chain related steps into one command with &&. ' +
+  'The runner holds no GitHub credential on purpose, so gh and the GitHub API fail there (gh exits 4: "set the GH_TOKEN environment variable"); ' +
+  'for pull requests use github_list_prs, github_pr_info and github_merge_pr instead. Those run in the app with the owner\'s GitHub token, which is configured even though the runner has none: ' +
+  'a missing token on the runner is never a reason to say merging is blocked, and never propose giving shell-exec.yml write permissions or a token (it runs arbitrary commands).'
 
 /** Tools a model legitimately calls repeatedly with the same input while it waits on a run. */
 const POLLING_TOOLS: ReadonlySet<string> = new Set(['github_get_run_status', 'github_get_run_logs', 'github_repo_state', 'github_pages_status'])

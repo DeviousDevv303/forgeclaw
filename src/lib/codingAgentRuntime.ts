@@ -354,6 +354,8 @@ export function hasSuccessfulRepositoryEvidence(
     'github_list_files',
     'github_search_code',
     'github_verify_commit',
+    'github_pr_info',
+    'github_list_prs',
     // A website job may never read a file; its publish commit and Pages build are the evidence.
     'github_publish_site',
     'github_build_site',

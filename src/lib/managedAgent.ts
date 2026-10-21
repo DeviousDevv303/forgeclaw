@@ -65,6 +65,7 @@ export const CODING_TOOL_ORDER: readonly string[] = [
   'github_run_workflow',
   'github_get_run_status',
   'github_get_run_logs',
+  'github_list_prs',
   'github_pr_info',
   'error_report',
   'browser_run',
