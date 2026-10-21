@@ -28,7 +28,14 @@ const MAX_PROMPT_HEURISTICS = 12
 
 const EXPLICIT_RE = /^\s*(?:rule|heuristic)\s*:\s*(.+)$/i
 // A sentence that states how things should be done, possibly after a softener ("also", "please", "and").
-const DIRECTIVE_RE = /^(?:(?:ok(?:ay)?|yeah|yes|alright|bro|and|also|so|please|just|but|then),?\s+)*((?:always|never|don'?t|do not|make sure|ensure|prefer|avoid|only|no more|stop)\b.+|i (?:want|need|prefer|don'?t want|do not want|expect)\b.+|(?:if|when)\b.+?,?\s+(?:then\s+)?\S.+)$/i
+// "only" is not a lead word: it is too often descriptive ("only you know the language").
+const DIRECTIVE_RE = /^(?:(?:ok(?:ay)?|yeah|yes|alright|bro|and|also|so|please|just|but|then),?\s+)*((?:always|never|don'?t|do not|make sure|ensure|prefer|avoid|no more|stop)\b.+|i (?:want|need|prefer|don'?t want|do not want|expect)\b.+|(?:if|when)\b.+?,?\s+(?:then\s+)?\S.+)$/i
+// An if/when sentence is a rule only when its consequence says what to do, not what will happen
+// ("when that next opportunity comes, we'll look at…" is a plan).
+const CONDITIONAL_RE = /^(?:if|when)\b/i
+const CONDITIONAL_ACTION_RE = /\b(?:always|never|must|should|don'?t|do not|make sure|stop|tell me|ask me|use|prefer|avoid|report|refuse)\b/i
+// Code, not prose: operators and brackets, statements, comments.
+const CODE_RE = /[{};]|=>|[<>!=]=|\breturn\b|\/\/|\bconst\b|\bfunction\b|\(\s*\w+\s*[<>]/
 
 /** Lower-case, unify quotes and spacing, drop trailing punctuation, cap length: the same rule groups together. */
 export function normalizeRule(text: string): string {
@@ -44,7 +51,11 @@ export function normalizeRule(text: string): string {
 export function extractRules(prompt: string): Array<{ rule: string; original: string; explicit: boolean }> {
   const out: Array<{ rule: string; original: string; explicit: boolean }> = []
   const seen = new Set<string>()
+  let inFence = false
   for (const line of prompt.split(/\n+/)) {
+    // Pasted code is not the owner's rules.
+    if (/^\s*```/.test(line)) { inFence = !inFence; continue }
+    if (inFence) continue
     const explicit = EXPLICIT_RE.exec(line)
     const pieces = explicit ? [explicit[1]] : line.split(/(?<=[.!?])\s+/)
     for (const piece of pieces) {
@@ -52,6 +63,7 @@ export function extractRules(prompt: string): Array<{ rule: string; original: st
       if (original.length < 8) continue
       const match = explicit ? original : DIRECTIVE_RE.exec(original)?.[1]
       if (!match) continue
+      if (!explicit && (CODE_RE.test(match) || (CONDITIONAL_RE.test(match) && !CONDITIONAL_ACTION_RE.test(match)))) continue
       const rule = normalizeRule(match)
       if (rule.length < 8 || seen.has(rule)) continue
       seen.add(rule)

@@ -20,6 +20,21 @@ describe('NEXUS heuristics', () => {
     expect(rules.map(r => r.rule)).toEqual(['always run the tests before you push', 'never merge my prs', 'evidence over claims'])
     expect(rules.find(r => r.rule === 'evidence over claims')?.explicit).toBe(true)
     expect(extractRules('I want it to be free for them. If it fails, then tell me why')).toHaveLength(2)
+    expect(extractRules('When it breaks, we will see')).toEqual([])
+  })
+
+  it("skips code, plans and descriptions (the first live NEXUS page, 2026-10-20)", () => {
+    for (const noise of [
+      'if (n < 5) return 0.25; // each vector can move centroid by up to 25%',
+      'if (n < 15) return 0.15',
+      "when that next opportunity comes, we'll look at the actual offer, pay, schedule, travel requirements, and housing costs before making the jump",
+      'only you know the language',
+      '```\nalways = true;\nnever();\n```',
+    ]) expect(extractRules(noise), noise).toEqual([])
+    expect(extractRules('do not claim success unless the file was actually created and committed').map(r => r.rule))
+      .toEqual(['do not claim success unless the file was actually created and committed'])
+    expect(extractRules('If a test fails, tell me the exact error').map(r => r.rule)).toEqual(['if a test fails, tell me the exact error'])
+    expect(extractRules('rule: if (x) then y').map(r => r.explicit)).toEqual([true])  // explicit always counts
   })
 
   it('a rule becomes a candidate when repeated in separate prompts, or when stated explicitly', () => {
