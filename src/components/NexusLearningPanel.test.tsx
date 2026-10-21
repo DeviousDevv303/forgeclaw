@@ -158,21 +158,23 @@ describe('the knowledge NEXUS treats as known is listed, with its origin, and re
 
 describe('legacy knowledge can be removed in one go, and is not counted as training data', () => {
   const entry = (id: string, timestamp: string, metadata: Record<string, string>) => ({ id, corpusId: 'c', source: 'forgeclaw', content: `answer ${id}`, timestamp, version: 1, recordType: 'knowledge', integrity: id, admissionStatus: 'approved', metadata: { input: `question ${id}`, ...metadata } })
-  it('REMOVE ALL LEGACY removes only the legacy entries, after confirmation', async () => {
+  it('REMOVE ALL LEGACY asks on the page, cancels cleanly, and removes only the legacy entries', async () => {
     const { fireEvent } = await import('@testing-library/react')
     knowledgeSeed.push(entry('legacy-a', '2026-10-01T12:00:00.000Z', {}), entry('legacy-b', '2026-10-05T12:00:00.000Z', {}), entry('auto-c', '2026-10-21T22:31:00.000Z', { admittedBy: 'nexus-convergence', phase: 'first_principles' }))
-    const confirm = vi.fn(() => false)
-    vi.stubGlobal('confirm', confirm)
+    // A browser that blocks dialogs (in-app browsers often do): window.confirm returns false. The purge must not depend on it.
+    vi.stubGlobal('confirm', vi.fn(() => false))
     try {
       __setLangForTests('en')
       render(<NexusLearningPanel />)
       expect(screen.getByTestId('nexus-llm-road').textContent).toContain('1 verified training example')
       fireEvent.click(screen.getByRole('button', { name: 'REMOVE ALL LEGACY (2)' }))
-      expect(confirm).toHaveBeenCalledTimes(1)
-      expect(removedKnowledge).toEqual([]) // declined: nothing removed
-      confirm.mockReturnValue(true)
+      expect(screen.getByRole('alertdialog').textContent).toContain('Remove all 2 legacy entries')
+      fireEvent.click(screen.getByRole('button', { name: 'CANCEL' }))
+      expect(removedKnowledge).toEqual([])
       fireEvent.click(screen.getByRole('button', { name: 'REMOVE ALL LEGACY (2)' }))
+      fireEvent.click(screen.getByRole('button', { name: 'YES, REMOVE 2' }))
       expect(removedKnowledge.sort()).toEqual(['legacy-a', 'legacy-b'])
+      expect(screen.getByText('Removed 2 of 2 legacy entries.')).toBeTruthy()
     } finally { knowledgeSeed.length = 0; removedKnowledge.length = 0; vi.unstubAllGlobals() }
   })
 })
