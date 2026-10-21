@@ -82,32 +82,6 @@ export function clearErrorLog() {
   }
 }
 
-export function formatErrorLogForEmail(): string {
-  const entries = getErrorLog()
-  if (entries.length === 0) return 'No errors logged.'
-
-  const lines = [
-    'ForgeClaw Error Log',
-    `Generated: ${new Date().toISOString()}`,
-    `Total entries: ${entries.length}`,
-    '',
-    '---',
-    '',
-  ]
-
-  for (const e of entries) {
-    const time = new Date(e.timestamp).toISOString()
-    lines.push(`[${e.level.toUpperCase()}] ${time} — ${e.source}`)
-    lines.push(`  ${e.message}`)
-    if (e.details) {
-      lines.push(`  Details: ${e.details.slice(0, 500)}`)
-    }
-    lines.push('')
-  }
-
-  return lines.join('\n')
-}
-
 /** Install global error handlers to capture uncaught errors. */
 export function installErrorHandlers() {
   if (typeof window === 'undefined') return

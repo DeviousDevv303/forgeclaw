@@ -8,7 +8,7 @@ import { ThroneRig } from './components/ThroneRig'
 // import { SupabaseProvider } from './components/SupabaseProvider'
 import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
-import { installErrorHandlers, logError, getErrorLog, clearErrorLog, formatErrorLogForEmail } from './lib/errorLog'
+import { installErrorHandlers, logError } from './lib/errorLog'
 
 /** Persisted DeepSeek run for resume after app background/kill. */
 interface PersistedDeepSeekRun {
@@ -201,7 +201,6 @@ import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { ReasoningFrameworkPanel } from './components/ReasoningFrameworkPanel'
 import { loadOwnerScaffold, operatingLoopFor } from './lib/ownerScaffold'
 import { VisitorLearningImport } from './components/VisitorLearningImport'
-import { startErrorReporting } from './lib/errorReporting'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
@@ -713,61 +712,7 @@ function App() {
   // localStorage PAT are both honoured here, not just in the GitHub tool helpers.
   const [ghToken, setGhToken] = useState(() => resolveGithubToken())
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
-  // No built-in address: the bundle is public, so a default would publish the owner's email to every
-  // visitor and send a visitor's error log to the owner. Each browser sets its own in Settings.
-  const [errorLogEmail, setErrorLogEmail] = useState(() => safeGetItem('forgeclaw_error_log_email') || '')
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
-
-  const sendErrorLogs = async (silent = false) => {
-    if (!errorLogEmail.trim()) {
-      if (!silent) alert('Set an error-log email address in Settings first.')
-      return false
-    }
-    const logText = formatErrorLogForEmail()
-    const count = getErrorLog().length
-    if (count === 0) {
-      if (!silent) alert('No errors logged yet.')
-      return false
-    }
-    try {
-      const output = await executeTool(
-        { id: `error-log-${Date.now()}`, name: 'gmail_send', input: {
-          to: errorLogEmail,
-          subject: `ForgeClaw Error Log - ${new Date().toISOString().slice(0, 10)} (${count} entries)`,
-          body: logText,
-        } },
-        { ...loadToolContext(), ghToken, ghOwner: ghOwner || CANONICAL_IDENTITY.owner, ghRepo: ghRepo || CANONICAL_IDENTITY.repository },
-      )
-      if (!silent) alert(output.startsWith('✓') ? `Sent ${count} log entries to ${errorLogEmail}` : output)
-      return output.startsWith('✓')
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      logError('sendErrorLogs', msg)
-      if (!silent) alert(`Failed to send: ${msg}`)
-      return false
-    }
-  }
-
-  // Auto-send error logs every 30 minutes if enabled and there are new errors
-  const [autoSendErrorLogs, setAutoSendErrorLogs] = useState(() => safeGetItem('forgeclaw_auto_send_error_logs') === 'true')
-  useEffect(() => { safeSetItem('forgeclaw_auto_send_error_logs', autoSendErrorLogs ? 'true' : 'false') }, [autoSendErrorLogs])
-  useEffect(() => {
-    if (!autoSendErrorLogs) return
-    const interval = setInterval(async () => {
-      const lastSent = parseInt(safeGetItem('forgeclaw_error_log_last_sent') || '0', 10)
-      const entries = getErrorLog()
-      // Only send if there are errors newer than the last send
-      const hasNew = entries.some(e => e.timestamp > lastSent)
-      if (hasNew && entries.length > 0) {
-        const sent = await sendErrorLogs(true)
-        if (sent) {
-          safeSetItem('forgeclaw_error_log_last_sent', String(Date.now()))
-          clearErrorLog()
-        }
-      }
-    }, 30 * 60 * 1000) // 30 minutes
-    return () => clearInterval(interval)
-  }, [autoSendErrorLogs])
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
     return safeJsonParse(saved, [])
@@ -939,7 +884,6 @@ function App() {
     }
   }, [activeTab])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
-  useEffect(() => { safeSetItem('forgeclaw_error_log_email', errorLogEmail) }, [errorLogEmail])
   useEffect(() => { installErrorHandlers() }, [])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
@@ -947,10 +891,6 @@ function App() {
   useEffect(() => { safeSetItem('fm_anthropic_workspace_id', anthropicWorkspaceId) }, [anthropicWorkspaceId])
   useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
   useEffect(() => { safeSetItem('fm_moonshot_model', moonshotModel) }, [moonshotModel])
-  // Every user's error log goes to the developer through the relay (errorReporting.ts); no setup needed.
-  const reportModeRef = useRef<'owner' | 'visitor'>('visitor')
-  useEffect(() => { reportModeRef.current = ghToken?.trim() ? 'owner' : 'visitor' }, [ghToken])
-  useEffect(() => startErrorReporting(() => reportModeRef.current), [])
   useEffect(() => { safeSetItem('fm_corpus_webhook', corpusWebhookUrl) }, [corpusWebhookUrl])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
@@ -2462,46 +2402,6 @@ function App() {
         {activeTab === 'settings' && (
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
-
-              {/* ── Error Log Email ── */}
-              <section aria-labelledby="error-log-heading" style={{ marginBottom: '18px', background: '#101010', border: '1px solid #3b2415', borderRadius: '6px', padding: '14px' }}>
-                <h2 id="error-log-heading" style={{ margin: '0 0 6px 0', color: '#f97316', fontSize: '13px', letterSpacing: '1px', textTransform: 'uppercase' }}>Error Log Email</h2>
-                <div style={{ color: '#999', fontSize: '10px', lineHeight: 1.5, marginBottom: '10px' }}>
-                  ForgeClaw captures errors automatically. Email the log for remote troubleshooting.
-                </div>
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                  <input
-                    type="email"
-                    value={errorLogEmail}
-                    onChange={(e) => setErrorLogEmail(e.target.value)}
-                    placeholder="Email for error logs"
-                    style={{ flex: 1, background: '#1a1a1a', border: '1px solid #333', borderRadius: '4px', color: '#ddd', padding: '8px', fontSize: '12px' }}
-                  />
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    onClick={() => sendErrorLogs()}
-                    style={{ background: '#f97316', border: 'none', borderRadius: '4px', color: '#fff', padding: '8px 16px', fontSize: '12px', cursor: 'pointer', fontWeight: 'bold' }}
-                  >
-                    Send Error Logs ({getErrorLog().length})
-                  </button>
-                  <button
-                    onClick={() => { clearErrorLog(); alert('Error log cleared.') }}
-                    style={{ background: '#333', border: 'none', borderRadius: '4px', color: '#ddd', padding: '8px 16px', fontSize: '12px', cursor: 'pointer' }}
-                  >
-                    Clear
-                  </button>
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', color: '#999', fontSize: '11px', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={autoSendErrorLogs}
-                    onChange={(e) => setAutoSendErrorLogs(e.target.checked)}
-                    style={{ accentColor: '#f97316' }}
-                  />
-                  Auto-send error logs every 30 minutes
-                </label>
-              </section>
 
               {/* ── Foundational governance: read-only canonical projection ── */}
               <section aria-labelledby="founder-principles-heading" style={{ marginBottom: '18px', background: '#101010', border: '1px solid #3b2415', borderRadius: '6px', padding: '14px' }}>
