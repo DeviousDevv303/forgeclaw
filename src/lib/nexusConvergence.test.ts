@@ -101,4 +101,12 @@ describe('knowledge: listed, labelled by origin, removable', () => {
     expect(corpusRepository.getApprovedCount()).toBe(0)
     expect(localStorage.getItem('forgeclaw_nexus_record_v1:knowledge-legacy1')).toBeNull()
   })
+  it('counts only evidence-backed knowledge as training data, not legacy entries', async () => {
+    const legacy = { id: 'knowledge-legacy2', corpusId: 'nexus-local', source: 'forgeclaw', content: 'una Personen Thanksgiving skew', timestamp: '2026-10-02T12:00:00.000Z', version: 1, recordType: 'knowledge', integrity: 'legacy2', admissionStatus: 'approved', metadata: { input: 'hi', model: 'qwen2.5-3b' } }
+    localStorage.setItem('forgeclaw_nexus_record_v1:knowledge-legacy2', JSON.stringify(legacy))
+    localStorage.setItem('forgeclaw_nexus_index_v1', JSON.stringify(['knowledge-legacy2']))
+    await corpusRepository.appendInteraction(chat('verified'))
+    expect(corpusRepository.getApprovedCount()).toBe(2)
+    expect(corpusRepository.getTrainingCount()).toBe(1)
+  })
 })

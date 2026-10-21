@@ -385,6 +385,20 @@ export class CorpusRepository {
     return counts
   }
 
+  /**
+   * Knowledge that counts as a training example: only what earned its place with evidence (auto-added by convergence).
+   * The "approved" total also holds the legacy entries admitted with no review (Sep 24 – Oct 13): on 2026-10-21 they were
+   * 30 of 38 and mostly junk (model gibberish, non-answers), so the road to the NEXUS LLM was counting them as training data.
+   */
+  getTrainingCount(): number {
+    let count = 0
+    for (const id of readIndex(INDEX_KEY)) {
+      const record = safeRecord(safeGetItem(`${RECORD_PREFIX}${id}`))
+      if (record?.admissionStatus === 'approved' && record.metadata.admittedBy === CONVERGED_BY) count += 1
+    }
+    return count
+  }
+
   getApprovedCount(): number {
     let count = 0
     for (const id of readIndex(INDEX_KEY)) {

@@ -39,6 +39,7 @@ vi.mock('../lib/corpus', () => ({
     getApprovedCount: () => 0,
     getConvergedCounts: () => ({}),
     listKnowledge: () => knowledgeSeed,
+    getTrainingCount: () => knowledgeSeed.filter(k => (k.metadata as Record<string, string>).admittedBy === 'nexus-convergence').length,
     removeKnowledge: (id: string) => { removedKnowledge.push(id); return true },
     rejectCandidate: () => Promise.resolve(false),
   },
@@ -152,5 +153,26 @@ describe('the knowledge NEXUS treats as known is listed, with its origin, and re
       fireEvent.click(remove)
       expect(removedKnowledge).toContain('knowledge-legacy')
     } finally { knowledgeSeed.length = 0; removedKnowledge.length = 0 }
+  })
+})
+
+describe('legacy knowledge can be removed in one go, and is not counted as training data', () => {
+  const entry = (id: string, timestamp: string, metadata: Record<string, string>) => ({ id, corpusId: 'c', source: 'forgeclaw', content: `answer ${id}`, timestamp, version: 1, recordType: 'knowledge', integrity: id, admissionStatus: 'approved', metadata: { input: `question ${id}`, ...metadata } })
+  it('REMOVE ALL LEGACY removes only the legacy entries, after confirmation', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    knowledgeSeed.push(entry('legacy-a', '2026-10-01T12:00:00.000Z', {}), entry('legacy-b', '2026-10-05T12:00:00.000Z', {}), entry('auto-c', '2026-10-21T22:31:00.000Z', { admittedBy: 'nexus-convergence', phase: 'first_principles' }))
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    try {
+      __setLangForTests('en')
+      render(<NexusLearningPanel />)
+      expect(screen.getByTestId('nexus-llm-road').textContent).toContain('1 verified training example')
+      fireEvent.click(screen.getByRole('button', { name: 'REMOVE ALL LEGACY (2)' }))
+      expect(confirm).toHaveBeenCalledTimes(1)
+      expect(removedKnowledge).toEqual([]) // declined: nothing removed
+      confirm.mockReturnValue(true)
+      fireEvent.click(screen.getByRole('button', { name: 'REMOVE ALL LEGACY (2)' }))
+      expect(removedKnowledge.sort()).toEqual(['legacy-a', 'legacy-b'])
+    } finally { knowledgeSeed.length = 0; removedKnowledge.length = 0; vi.unstubAllGlobals() }
   })
 })

@@ -37,7 +37,9 @@ export function NexusLearningPanel() {
   const summary = useMemo(() => summarizeLearning(candidates), [candidates])
   const shown = useMemo(() => candidates.filter(c => filter === 'all' || outcomeOf(c) === filter).slice(0, 60), [candidates, filter])
   const approved = corpusRepository.getApprovedCount()
-  const road = useMemo(() => llmReadiness(approved, candidates), [approved, candidates])
+  // The road counts only evidence-backed knowledge; legacy entries admitted without review are not training data.
+  const training = corpusRepository.getTrainingCount()
+  const road = useMemo(() => llmReadiness(training, candidates), [training, candidates])
   const [decisions, setDecisions] = useState(() => loadDecisions())
   const mined = useMemo(() => mineHeuristics(candidates), [candidates])
   const active = useMemo(() => activeHeuristics(mined, decisions), [mined, decisions])
@@ -45,6 +47,7 @@ export function NexusLearningPanel() {
   const converged = useMemo(() => corpusRepository.getConvergedCounts(), [candidates]) // eslint-disable-line react-hooks/exhaustive-deps
   const [knowledgeTick, setKnowledgeTick] = useState(0)
   const knowledge = useMemo(() => corpusRepository.listKnowledge(), [candidates, knowledgeTick]) // eslint-disable-line react-hooks/exhaustive-deps
+  const legacy = useMemo(() => knowledge.filter(k => knowledgeOrigin(k).startsWith('LEGACY')), [knowledge])
   const phaseCounts: Record<string, number> = {
     assumptions: summary.lessons.length,
     heuristics: active.length,
@@ -74,7 +77,7 @@ export function NexusLearningPanel() {
       <section style={{ ...card, borderColor: '#2a1a05' }} aria-label="Road to the NEXUS LLM" data-testid="nexus-llm-road">
         <div style={heading}>ROAD TO THE NEXUS LLM</div>
         <div style={{ color: '#eee', fontFamily: mono, fontSize: '13px', marginBottom: '6px' }}>
-          {road.approved.toLocaleString()} approved training example{road.approved === 1 ? '' : 's'}
+          {road.approved.toLocaleString()} verified training example{road.approved === 1 ? '' : 's'}
           {road.next ? ` · next: ${road.next.label} at ${road.next.approved.toLocaleString()}` : ' · every data milestone reached'}
         </div>
         <div style={{ height: '8px', background: '#1a1a1a', borderRadius: '4px', overflow: 'hidden', marginBottom: '8px' }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(road.progress * 100)}>
@@ -159,6 +162,16 @@ export function NexusLearningPanel() {
       <section style={card} aria-label="Knowledge" data-testid="nexus-knowledge">
         <div style={heading}>KNOWLEDGE · what NEXUS treats as known ({knowledge.length})</div>
         <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>These entries guide the models and count as training data. Check where each came from and remove anything wrong.</div>
+        {legacy.length > 0 && (
+          <button
+            onClick={() => {
+              if (!globalThis.confirm?.(`Remove all ${legacy.length} legacy entries (admitted without review, Sep 24 – Oct 13)? This cannot be undone.`)) return
+              for (const k of legacy) corpusRepository.removeKnowledge(k.id)
+              setKnowledgeTick(n => n + 1); refresh()
+            }}
+            style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', marginBottom: '8px' }}
+          >REMOVE ALL LEGACY ({legacy.length})</button>
+        )}
         {knowledge.length === 0
           ? <div style={{ color: '#555', fontSize: '12px' }}>Nothing yet.</div>
           : knowledge.slice(0, 100).map(k => (
