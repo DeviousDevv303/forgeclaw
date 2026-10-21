@@ -174,9 +174,25 @@ jobs:
           } | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
           bash "$RUNNER_TEMP/check-symlinks.sh"
 
+      # Optional: act as the ForgeClaw GitHub App (own name and avatar; its pull requests also get the normal
+      # build check, which pull requests opened with the default token do not). Skipped, with the default
+      # token as the fallback, until the repository variable FORGECLAW_APP_ID and the secret
+      # FORGECLAW_APP_PRIVATE_KEY exist.
+      - name: Sign in as the ForgeClaw app
+        id: app
+        if: vars.FORGECLAW_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FORGECLAW_APP_ID }}
+          private-key: ${{ secrets.FORGECLAW_APP_PRIVATE_KEY }}
+
       - name: Commit and push repair branch
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          AS_APP: ${{ steps.app.outputs.token != '' && 'true' || '' }}
+          APP_ID: ${{ vars.FORGECLAW_APP_ID }}
+          APP_SLUG: ${{ vars.FORGECLAW_APP_SLUG || 'forgeclaw' }}
           REPAIR_BRANCH: ${{ inputs.repair_branch }}
           REPAIR_REASON: ${{ inputs.reason }}
         run: |
@@ -187,6 +203,10 @@ jobs:
             echo 'No repair changes to publish.'
             exit 0
           fi
+          if [[ -n "${AS_APP:-}" ]]; then
+            git config user.name "${APP_SLUG}[bot]"
+            git config user.email "${APP_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
+          fi
           git add --all
           git commit -m "repair: $(printf '%s' "$REPAIR_REASON" | tr '\n\r' '  ' | cut -c1-200)"
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
@@ -196,7 +216,7 @@ jobs:
       # Layer 6: PR-only landing path. This step never merges the PR.
       - name: Create labeled pull request
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
           REPAIR_BRANCH: ${{ inputs.repair_branch }}
           REPAIR_REASON: ${{ inputs.reason }}
           INVOCATION_ID: ${{ inputs.invocation_id }}
@@ -207,7 +227,9 @@ jobs:
           pr_url="$(gh pr list --base main --head "$REPAIR_BRANCH" --state open --json url --jq '.[0].url // empty')"
           if [[ -z "$pr_url" ]]; then
             body=$(cat <<EOF
-          Guarded autonomous repair proposal.
+          <img src="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/main/docs/brand/forgeclaw-avatar.png" width="64" align="right" alt="ForgeClaw">
+
+          **ForgeClaw** · autonomous agent · guarded repair proposal
 
           - Invocation ID: $INVOCATION_ID
           - Baseline exit code: ${{ steps.baseline.outcome == 'success' && '0' || '1' }}
@@ -216,7 +238,7 @@ jobs:
           - Landing path: pull request to main; this workflow never merges.
           EOF
           )
-            pr_url="$(gh pr create --base main --head "$REPAIR_BRANCH" --title "repair: $(printf '%s' "$REPAIR_REASON" | tr '\n\r' '  ' | cut -c1-200)" --body "$body")"
+            pr_url="$(gh pr create --base main --head "$REPAIR_BRANCH" --title "[ForgeClaw] repair: $(printf '%s' "$REPAIR_REASON" | tr '\n\r' '  ' | cut -c1-200)" --body "$body")"
           fi
           gh pr edit "$pr_url" --add-label "$label"
           echo "Pull request: $pr_url"
