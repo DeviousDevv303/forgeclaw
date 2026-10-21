@@ -8,6 +8,7 @@
 
 import type { LearningCandidate } from './corpus'
 import { summarizeLearning } from './nexusLearning'
+import { getErrorLog, type ErrorLogEntry } from './errorLog'
 import { jobFailureEvidence } from './runDiagnosis'
 import { redactSecrets } from './screenText'
 
@@ -21,6 +22,8 @@ export interface ErrorReportInput {
   repo: string
   token: string
   candidates: LearningCandidate[]
+  /** This browser's own error log (errorLog.ts); defaults to the live one. */
+  appLog?: ErrorLogEntry[]
   now?: number
 }
 
@@ -31,6 +34,22 @@ export function recurringFailures(candidates: LearningCandidate[], max = 8): str
     `${i + 1}. ${l.tool} ×${l.count}${l.ownerCount !== l.count ? ` (${l.ownerCount} from your own runs)` : ''}: ${l.pattern} (last ${l.lastSeen.slice(0, 10)})`)
   if (unreliable.length) lines.push('Tools with failures (all time): ' + unreliable.map(t => `${t.tool} ${t.failed}/${t.total} failed`).join('; '))
   return lines
+}
+
+/** This browser's own error log, grouped: what the app itself logged (failed requests, tool errors, workflow failures), most frequent first. */
+export function appErrorLogSection(entries: ErrorLogEntry[], max = 8): string[] {
+  const groups = new Map<string, { source: string; message: string; level: string; count: number; last: number; detail: string }>()
+  for (const e of entries) {
+    const key = `${e.source}|${e.message.replace(/\b[0-9a-f]{7,40}\b/gi, '<sha>').replace(/\d+/g, '#').slice(0, 120)}`
+    const g = groups.get(key) ?? { source: e.source, message: e.message.slice(0, 160), level: e.level, count: 0, last: 0, detail: '' }
+    g.count += 1
+    if (e.timestamp >= g.last) { g.last = e.timestamp; g.detail = (e.details ?? '').split('\n')[0].slice(0, 140) }
+    groups.set(key, g)
+  }
+  return [...groups.values()]
+    .sort((a, b) => b.count - a.count || b.last - a.last)
+    .slice(0, max)
+    .map((g, i) => `${i + 1}. [${g.level}] ${g.source} ×${g.count}: ${g.message}${g.detail ? ` — ${g.detail}` : ''} (last ${new Date(g.last).toISOString().slice(0, 16).replace('T', ' ')})`)
 }
 
 export async function failedRuns(request: Fetch, input: Pick<ErrorReportInput, 'owner' | 'repo' | 'token' | 'now'>, max = 3): Promise<string[]> {
@@ -62,8 +81,12 @@ export async function buildErrorReport(request: Fetch, input: ErrorReportInput):
   const failures = recurringFailures(input.candidates)
   let runs: string[]
   try { runs = await failedRuns(request, input) } catch (error) { runs = [`(Could not read failed runs: ${error instanceof Error ? error.message : String(error)}.)`] }
+  const appLog = appErrorLogSection(input.appLog ?? getErrorLog())
   const text = [
     'FORGECLAW ERROR REPORT (read-only evidence; nothing was changed)',
+    '',
+    `THIS BROWSER'S OWN ERROR LOG (what the app itself logged, most frequent first):`,
+    appLog.length ? appLog.join('\n') : '(empty)',
     '',
     'RECURRING FAILURES recorded by NEXUS (newest evidence first):',
     failures.length ? failures.join('\n') : '(none recorded)',

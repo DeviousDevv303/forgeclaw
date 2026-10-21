@@ -37,6 +37,7 @@ import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepR
 import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
 import { jobFailureEvidence } from './runDiagnosis'
 import { buildErrorReport } from './errorReport'
+import { getErrorLog } from './errorLog'
 import { runBrowserRound } from './browserAgent'
 import { recordBrowserLearning } from './browserLearning'
 import { mergePullRequest } from './mergePr'
@@ -925,7 +926,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       // ── ForgeClaw's own errors, as evidence (read-only) ──
       case 'error_report': {
         if (!token) throw new Error('No GitHub token configured; the failed-run part of the report needs one.')
-        return await buildErrorReport((url, init) => toolFetch(ctx, url, init), { owner, repo, token, candidates: corpusRepository.listCandidates(500) })
+        return await buildErrorReport((url, init) => toolFetch(ctx, url, init), { owner, repo, token, candidates: corpusRepository.listCandidates(500), appLog: getErrorLog() })
       }
 
       case 'github_get_run_logs': {

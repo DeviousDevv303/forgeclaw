@@ -22,7 +22,7 @@ function github(runs: unknown[], logs: string | null = '2026-10-21T03:39:48Z No 
     return new Response('{}', { status: 404 })
   }
 }
-const base = { owner: 'o', repo: 'r', token: 't', now }
+const base = { owner: 'o', repo: 'r', token: 't', now, appLog: [] }
 const recent = { id: 5, name: 'Shell repair', display_title: 'Shell repair x', head_branch: 'main', created_at: '2026-10-21T03:38:00Z', html_url: 'https://github.com/o/r/actions/runs/5', run_number: 42 }
 
 describe('buildErrorReport', () => {
@@ -55,6 +55,24 @@ describe('buildErrorReport', () => {
   it('never lets a token through', async () => {
     const token = 'ghp_' + 'q'.repeat(30)
     const out = await buildErrorReport(github([recent], `x ${token}\n##[error]boom`), { ...base, candidates: [candidate(1, 'shell_exec', `bad ${token}`)] })
+    expect(out).not.toContain(token)
+  })
+})
+
+describe('this browser\'s own error log', () => {
+  const at = Date.parse('2026-10-21T10:00:00Z')
+  const entry = (n: number, message: string, source = 'github', details?: string) => ({ timestamp: at + n * 1000, level: 'error' as const, source, message, details })
+  it('groups repeats, most frequent first, with the latest detail', async () => {
+    const appLog = [entry(1, 'GitHub 404 for run 123'), entry(2, 'GitHub 404 for run 456', 'github', 'Not Found'), entry(3, 'GitHub 404 for run 789', 'github', 'Run not found'), entry(4, 'Failed to fetch', 'chat')]
+    const out = await buildErrorReport(github([]), { ...base, candidates: [], appLog })
+    expect(out).toContain("THIS BROWSER'S OWN ERROR LOG")
+    expect(out).toMatch(/1\. \[error\] github ×3: GitHub 404 for run 123 — Run not found/)
+    expect(out).toMatch(/2\. \[error\] chat ×1: Failed to fetch/)
+  })
+  it('says when the log is empty, and never leaks a token from it', async () => {
+    expect(await buildErrorReport(github([]), { ...base, candidates: [], appLog: [] })).toContain('(empty)')
+    const token = 'ghp_' + 'w'.repeat(30)
+    const out = await buildErrorReport(github([]), { ...base, candidates: [], appLog: [entry(1, `auth failed ${token}`)] })
     expect(out).not.toContain(token)
   })
 })
