@@ -84,9 +84,9 @@ describe('github_search_code', () => {
     await vi.runAllTimersAsync()
     const result = await pending
 
-    // The search request and the tree fallback each use the shared three-attempt
-    // transport retry policy.
-    expect(fetchMock).toHaveBeenCalledTimes(6)
+    // The search request and the tree fallback each use the shared three-attempt transport retry policy; in between,
+    // one attempt to dispatch the content search (git grep on a runner) also fails to fetch.
+    expect(fetchMock).toHaveBeenCalledTimes(7)
     expect(result).toContain('[TOOL ERROR] GitHub code search: browser network/CORS failure')
     expect(result).toContain('request produced no HTTP response')
     expect(result).not.toContain('HTTP 0')
