@@ -9,7 +9,7 @@ import { corpusRepository, type LearningCandidate } from '../lib/corpus'
 import { LLM_MILESTONES, LLM_ROADMAP, llmReadiness, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, summarizeLearning, type Outcome } from '../lib/nexusLearning'
 import { useI18n } from '../lib/i18n'
 import { activeHeuristics, decide, loadDecisions, mineHeuristics } from '../lib/nexusHeuristics'
-import { NEXUS_PHASES } from '../lib/nexusConvergence'
+import { CONVERGED_BY, NEXUS_PHASES } from '../lib/nexusConvergence'
 import { describeTaste, loadTaste, MIN_TASTE_EVENTS, resetTaste } from '../lib/nexusTaste'
 
 const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
@@ -180,7 +180,7 @@ export function NexusLearningPanel() {
 
       <section style={card} aria-label="Candidates">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <div style={heading}>{t('nexus.candidatesTitle')} {filter !== 'all' ? `· ${filter}` : ''} {t('nexus.unapproved')}</div>
+          <div style={heading}>{t('nexus.candidatesTitle')} {filter !== 'all' ? `· ${filter}` : ''}</div>
           <button onClick={refresh} style={{ background: 'none', border: '1px solid #2a2a2a', color: '#777', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>{t('nexus.refresh')}</button>
         </div>
         <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>{t('nexus.admissionNote')}</div>
@@ -189,15 +189,17 @@ export function NexusLearningPanel() {
           ? <div style={{ color: '#555', fontSize: '12px' }}>{filter !== 'all' ? t('nexus.nothingRecordedWithOutcome', { outcome: filter }) : t('nexus.nothingRecorded')}</div>
           : shown.map(c => {
               const outcome = outcomeOf(c)
+              const auto = c.metadata?.admittedBy === CONVERGED_BY
+              const phaseLabel = NEXUS_PHASES.find(p => p.phase === c.metadata?.phase)?.label
               return (
                 <div key={c.id} style={{ borderTop: '1px solid #161616', padding: '8px 0', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                   <span style={{ color: OUTCOME_COLOR[outcome], fontSize: '10px', fontFamily: 'monospace', minWidth: '70px' }}>● {outcome}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ color: '#888', fontSize: '10px', fontFamily: 'monospace' }}>{c.timestamp.slice(0, 19).replace('T', ' ')} · {c.metadata?.channel || c.source}{c.metadata?.tool ? ` · ${c.metadata.tool}` : ''} · {c.model}{c.metadata?.flags ? <span style={{ color: '#ef4444' }}> · ⚠ {c.metadata.flags}</span> : null}</div>
+                    <div style={{ color: '#888', fontSize: '10px', fontFamily: 'monospace' }}>{c.timestamp.slice(0, 19).replace('T', ' ')} · {c.metadata?.channel || c.source}{c.metadata?.tool ? ` · ${c.metadata.tool}` : ''} · {c.model}{auto && c.admissionStatus === 'approved' ? <span style={{ color: '#22c55e' }}> · AUTO-ADDED{phaseLabel ? ` · ${phaseLabel}` : ''}{c.metadata?.admittedAt ? ` · ${String(c.metadata.admittedAt).slice(0, 16).replace('T', ' ')}` : ''}</span> : null}{c.admissionStatus === 'rejected' ? <span style={{ color: '#777' }}> · removed</span> : null}{c.metadata?.flags ? <span style={{ color: '#ef4444' }}> · ⚠ {c.metadata.flags}</span> : null}</div>
                     <div style={{ color: '#ccc', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.input.slice(0, 160)}</div>
                     <div style={{ color: '#666', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(c.generatedResult || '').slice(0, 200)}</div>
                   </div>
-                  <button onClick={() => void reject(c)} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>{t('nexus.reject')}</button>
+                  {c.admissionStatus !== 'rejected' && <button onClick={() => void reject(c)} title={auto ? 'Remove this from what NEXUS knows; it will not be added again' : undefined} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>{auto ? 'REMOVE' : t('nexus.reject')}</button>}
                 </div>
               )
             })}

@@ -26,6 +26,12 @@ describe('what converges into knowledge by itself', () => {
     expect(convergencePhase(chat('verified', 'agent'))).toBeNull()
     expect(convergencePhase({ ...chat('verified'), source: VISITOR_SOURCE })).toBeNull()
   })
+  it('a visitor is refused on any one of its three markers, even a record claiming "verified"', () => {
+    const verified = chat('verified')
+    expect(convergencePhase({ ...verified, source: VISITOR_SOURCE })).toBeNull()
+    expect(convergencePhase({ ...verified, metadata: { ...verified.metadata, channel: 'visitor' }, context: verified.context.replace('channel=chat', 'channel=visitor') })).toBeNull()
+    expect(convergencePhase({ ...verified, metadata: { ...verified.metadata, visitor: 'v-123' } })).toBeNull()
+  })
   it('a verified answer is stored as approved knowledge, marked and never served verbatim', async () => {
     await corpusRepository.appendInteraction(chat('verified'))
     const known = corpusRepository.retrieve('how many open PRs', 3)
@@ -34,6 +40,20 @@ describe('what converges into knowledge by itself', () => {
     expect(corpusRepository.getConvergedCounts()).toEqual({ first_principles: 1 })
     expect(corpusRepository.getApprovedCount()).toBe(1)
     expect(corpusRepository.checkNexusKnowledge('how many open PRs')).toBeNull()
+  })
+  it('an auto-admitted entry is stamped with its phase and time, and the owner can remove it for good', async () => {
+    await corpusRepository.appendInteraction(chat('verified'))
+    const [candidate] = corpusRepository.listCandidates(5)
+    expect(candidate.metadata).toMatchObject({ admittedBy: 'nexus-convergence', phase: 'first_principles' })
+    expect(Number.isNaN(Date.parse(String(candidate.metadata.admittedAt)))).toBe(false)
+    expect(await corpusRepository.rejectCandidate(candidate.id, 'removed by the owner')).not.toBeNull()
+    expect(corpusRepository.retrieve('how many open PRs', 3)).toEqual([])
+    expect(corpusRepository.getApprovedCount()).toBe(0)
+    expect(corpusRepository.listCandidates(5)[0].admissionStatus).toBe('rejected')
+    // the same thing happening again does not bring it back
+    await corpusRepository.appendInteraction(chat('verified'))
+    expect(corpusRepository.retrieve('how many open PRs', 3)).toEqual([])
+    expect(corpusRepository.getApprovedCount()).toBe(0)
   })
   it('an unverified answer stays a candidate', async () => {
     await corpusRepository.appendInteraction(chat('completed'))

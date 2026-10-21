@@ -81,6 +81,19 @@ describe('NexusLearningPanel phone layout', () => {
   })
 })
 
+describe('what NEXUS added by itself is visible and removable', () => {
+  const auto = { id: 'candidate-auto', timestamp: '2026-10-21T20:00:00.000Z', source: 'learning:chat', model: 'k2', input: 'how many open PRs', generatedResult: 'Two.', admissionStatus: 'approved', metadata: { outcome: 'verified', channel: 'chat', actor: 'user', admittedBy: 'nexus-convergence', phase: 'first_principles', admittedAt: '2026-10-21T20:00:01.000Z' } } as unknown as LearningCandidate
+  it('is badged AUTO-ADDED with its phase and time, and offers REMOVE', () => {
+    seeded.push(auto)
+    try {
+      __setLangForTests('en')
+      render(<NexusLearningPanel />)
+      expect(screen.getByText(/AUTO-ADDED · First Principles · 2026-10-21 20:00/)).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'REMOVE' })).toBeTruthy()
+    } finally { seeded.splice(seeded.indexOf(auto), 1) }
+  })
+})
+
 describe('your heuristics are active without approval', () => {
   // 2026-10-21 (owner): "I don't have to approve or admit anything manually". A rule the owner states twice is given to
   // every model at once; "remove" takes it out, and that sticks across a reload.
