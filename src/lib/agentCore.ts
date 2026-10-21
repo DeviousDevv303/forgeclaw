@@ -65,8 +65,8 @@ On failure: classify → diagnose → retry with alternative method.
 
 RETRY AUTHORITY
 Safe failed actions (NETWORK_FAILURE, transient TOOL_FAILURE) may be retried automatically up to 3 times.
-Require user approval before retrying actions that are: destructive, irreversible, externally visible, costly, or security-sensitive.
-Never retry AUTH_FAILURE automatically — always require new credentials.
+Never repeat a destructive, irreversible, externally visible, costly, or security-sensitive call unchanged: find the cause, then send a corrected call or use another tool, and keep going. Guardian asks the owner itself before any call that needs approval; do not stop to ask.
+Never retry AUTH_FAILURE unchanged. A shell_exec job has no GitHub credential by design; that is not the owner's token, which the GitHub tools use. Tell the owner about a credential only when a GitHub tool itself is refused.
 
 RESPONSE FORMAT
 Always structure responses as:
@@ -140,7 +140,8 @@ export function classifyFailure(error: string): ToolFailureClass {
 // KimiClaw regex-based alternative (used by telemetry for richer classification)
 export function classifyToolFailure(errorMsg: string): ToolFailureClass {
   if (/rate.?limit|too many requests|api rate limit/i.test(errorMsg)) return 'RATE_LIMIT'
-  if (/401|403|unauthorized|forbidden|api.?key|invalid.{0,20}key/i.test(errorMsg)) return 'AUTH_FAILURE'
+  // gh on the credential-free shell runner: "set the GH_TOKEN environment variable" / "not logged into any GitHub hosts".
+  if (/401|403|unauthorized|forbidden|api.?key|invalid.{0,20}key|GH_TOKEN|not logged in/i.test(errorMsg)) return 'AUTH_FAILURE'
   if (/failed to fetch|network|timeout|econnrefused|enotfound|net::err/i.test(errorMsg)) return 'NETWORK_FAILURE'
   if (/not found|missing|no such|dependency|module|package/i.test(errorMsg)) return 'DEPENDENCY_FAILURE'
   if (/tool error|invalid input|bad request|malformed/i.test(errorMsg)) return 'TOOL_FAILURE'
@@ -270,26 +271,35 @@ export interface RetryDecision {
   requiresUserApproval?: boolean
 }
 
+// The decision is appended to the failed tool result and the model reads it as an instruction. It used to say
+// "Destructive action requires user approval before retry" after every failed shell_exec (which runs without
+// approval in the operator-shell posture) and "requires new credentials" after gh's "set GH_TOKEN" on the runner,
+// so the model stopped mid-task and reported the owner's token missing (2026-10-21). Guardian already asks the
+// owner before any call that needs co-sign, so a failure never needs approval to try a corrected call.
+const FIX_AND_CONTINUE = 'Read the output above, fix the cause and send a corrected call, or use another tool, and keep going. Guardian asks the owner itself if a call needs approval; do not stop to ask.'
+
 export function decideRetry(
   failureClass: ToolFailureClass,
   attemptCount: number,
   isDestructiveAction: boolean,
 ): RetryDecision {
-  // Destructive actions never auto-retry
-  if (isDestructiveAction) {
-    return {
-      shouldRetry: false,
-      reason: 'Destructive action requires user approval before retry.',
-      requiresUserApproval: true,
-    }
-  }
-
-  // Hard limit reached
+  // Hard limit: the same tool failing again and again is a sign this path is wrong, not a reason to stop.
   if (attemptCount >= 3) {
     return {
       shouldRetry: false,
-      reason: `Retry limit reached after ${attemptCount} attempts. Escalating to BLOCKED.`,
-      requiresUserApproval: true,
+      reason: `This tool failed ${attemptCount} times in a row.`,
+      alternativeStrategy: 'Stop using it for this step: take another tool or approach. If none exists, finish with STATUS: BLOCKED and quote the error.',
+      requiresUserApproval: false,
+    }
+  }
+
+  // Destructive actions are never repeated unchanged, but a corrected call is the agent's job, not the owner's.
+  // Auth and permission failures have their own advice below, shell commands included (gh on the runner is one).
+  if (isDestructiveAction && failureClass !== 'AUTH_FAILURE' && failureClass !== 'USER_CONSTRAINT') {
+    return {
+      shouldRetry: false,
+      reason: 'Do not repeat this call unchanged.',
+      alternativeStrategy: FIX_AND_CONTINUE,
     }
   }
 
@@ -332,7 +342,8 @@ export function decideRetry(
     case 'AUTH_FAILURE':
       return {
         shouldRetry: false,
-        reason: 'Authentication failure requires new credentials or elevated permission.',
+        reason: 'Authentication failed for this call.',
+        alternativeStrategy: 'A shell_exec job has no GitHub credential by design: that is not the owner\'s token, which the GitHub tools use. Use those tools instead. Only if a GitHub tool itself is refused, tell the owner which credential failed.',
         requiresUserApproval: true,
       }
 
@@ -340,6 +351,7 @@ export function decideRetry(
       return {
         shouldRetry: false,
         reason: 'Blocked by user-defined constraint or permission boundary.',
+        alternativeStrategy: 'Do not try to get around it. Continue with the parts that are allowed, and say what needs the owner.',
         requiresUserApproval: true,
       }
 
@@ -347,8 +359,8 @@ export function decideRetry(
     default:
       return {
         shouldRetry: false,
-        reason: `Unknown failure on attempt ${attemptCount}/3. Requires diagnosis before retry.`,
-        requiresUserApproval: true,
+        reason: `Unclassified failure (attempt ${attemptCount}/3): do not repeat it unchanged.`,
+        alternativeStrategy: FIX_AND_CONTINUE,
       }
   }
 }
