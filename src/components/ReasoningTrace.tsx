@@ -1,1 +1,95 @@
-Ly8gRm9yZ2VDbGF3IC0gQ29weXJpZ2h0IChjKSAyMDI2IERldmlvdXNEZXZ2MzAzIChDcmlzdGlhbikuIEFsbCBSaWdodHMgUmVzZXJ2ZWQuCi8vIFByb3ByaWV0YXJ5IHNvdXJjZS1hdmFpbGFibGUgbGljZW5zZS4gQ29tbWVyY2lhbCB1c2UgcmVxdWlyZXMgd3JpdHRlbiBwZXJtaXNzaW9uLiBTZWUgTElDRU5TRS4KaW1wb3J0IHsgdXNlSTE4biB9IGZyb20gJy4uL2xpYi9pMThuJwoKaW50ZXJmYWNlIFJlYXNvbmluZ1RyYWNlUHJvcHMgewogIHRyYWNlOiBzdHJpbmcKICBpc09wZW46IGJvb2xlYW4KICBvblRvZ2dsZTogKCkgPT4gdm9pZAp9Cgpjb25zdCBUUkFDRV9GT05UID0gIidCcnVzaCBTY3JpcHQgTVQnLCAnQXBwbGUgQ2hhbmNlcnknLCAnU2Vnb2UgU2NyaXB0JywgJ1phcGZpbm8nLCBjdXJzaXZlIgpjb25zdCBUUkFDRV9MQVNFUiA9ICcjMzlmZjE0Jwpjb25zdCBUUkFDRV9MQVNFUl9TT0ZUID0gJ3JnYmEoNTcsIDI1NSwgMjAsIDAuNzIpJwpjb25zdCBUUkFDRV9MQVNFUl9ESU0gPSAncmdiYSg1NywgMjU1LCAyMCwgMC4zNCknCgpmdW5jdGlvbiBzcGxpdFRyYWNlTGluZShsaW5lOiBzdHJpbmcpOiB7IGxhYmVsPzogc3RyaW5nOyB2YWx1ZTogc3RyaW5nIH0gewogIGNvbnN0IG1hdGNoID0gL14oW0EtWl1bQS1aYS16IF17MiwyNH0pOlxzKiguKikkLy5leGVjKGxpbmUudHJpbSgpKQogIGlmICghbWF0Y2gpIHJldHVybiB7IHZhbHVlOiBsaW5lIH0KICByZXR1cm4geyBsYWJlbDogbWF0Y2hbMV0sIHZhbHVlOiBtYXRjaFsyXSB9Cn0KCmV4cG9ydCBmdW5jdGlvbiBSZWFzb25pbmdUcmFjZSh7IHRyYWNlLCBpc09wZW4sIG9uVG9nZ2xlIH06IFJlYXNvbmluZ1RyYWNlUHJvcHMpIHsKICBjb25zdCB7IHQgfSA9IHVzZUkxOG4oKQogIGNvbnN0IGxpbmVzID0gdHJhY2Uuc3BsaXQoJ1xuJykubWFwKGxpbmUgPT4gbGluZS50cmltRW5kKCkpLmZpbHRlcihCb29sZWFuKQogIGNvbnN0IGZpcnN0TGluZSA9IGxpbmVzWzBdID8/IHQoJ3RyYWNlLnJlYWR5JykKCiAgcmV0dXJuICgKICAgIDxkaXYgc3R5bGU9e3sgd2lkdGg6ICcxMDAlJywgbWF4V2lkdGg6ICc5MCUnLCBtYXJnaW5Ub3A6ICc4cHgnIH19PgogICAgICA8YnV0dG9uCiAgICAgICAgb25DbGljaz17b25Ub2dnbGV9CiAgICAgICAgc3R5bGU9e3sKICAgICAgICAgIHdpZHRoOiAnMTAwJScsCiAgICAgICAgICBiYWNrZ3JvdW5kOiAnbGluZWFyLWdyYWRpZW50KDkwZGVnLCByZ2JhKDU3LDI1NSwyMCwwLjA3NSksIHJnYmEoNTcsMjU1LDIwLDAuMDI1KSknLAogICAgICAgICAgYm9yZGVyOiBgMXB4IHNvbGlkICR7VFJBQ0VfTEFTRVJfRElNfWAsCiAgICAgICAgICBib3JkZXJSYWRpdXM6ICc4cHgnLAogICAgICAgICAgY3Vyc29yOiAncG9pbnRlcicsCiAgICAgICAgICBwYWRkaW5nOiAnOHB4IDExcHgnLAogICAgICAgICAgbWluSGVpZ2h0OiAnNDBweCcsCiAgICAgICAgICBkaXNwbGF5OiAnZmxleCcsCiAgICAgICAgICBhbGlnbkl0ZW1zOiAnY2VudGVyJywKICAgICAgICAgIGp1c3RpZnlDb250ZW50OiAnc3BhY2UtYmV0d2VlbicsCiAgICAgICAgICBnYXA6ICcxMHB4JywKICAgICAgICAgIFdlYmtpdFRhcEhpZ2hsaWdodENvbG9yOiAndHJhbnNwYXJlbnQnLAogICAgICAgICAgYm94U2hhZG93OiBpc09wZW4KICAgICAgICAgICAgPyAnMCAwIDIycHggcmdiYSg1NywgMjU1LCAyMCwgMC4xOCksIGluc2V0IDAgMCAxOHB4IHJnYmEoNTcsIDI1NSwgMjAsIDAuMDQ1KScKICAgICAgICAgICAgOiAnMCAwIDEycHggcmdiYSg1NywgMjU1LCAyMCwgMC4xKScsCiAgICAgICAgfX0KICAgICAgPgogICAgICAgIDxzcGFuIHN0eWxlPXt7IGRpc3BsYXk6ICdmbGV4JywgYWxpZ25JdGVtczogJ2NlbnRlcicsIGdhcDogJzhweCcsIG1pbldpZHRoOiAwIH19PgogICAgICAgICAgPHNwYW4gc3R5bGU9e3sgY29sb3I6IFRSQUNFX0xBU0VSLCBmb250U2l6ZTogJzEwcHgnLCB0ZXh0U2hhZG93OiBgMCAwIDhweCAke1RSQUNFX0xBU0VSX1NPRlR9YCwgZmxleFNocmluazogMCB9fT4KICAgICAgICAgICAge2lzT3BlbiA/ICd2JyA6ICc+J30KICAgICAgICAgIDwvc3Bhbj4KICAgICAgICAgIDxzcGFuIHN0eWxlPXt7IGNvbG9yOiBUUkFDRV9MQVNFUiwgZm9udFNpemU6ICcxNHB4JywgZm9udEZhbWlseTogVFJBQ0VfRk9OVCwgbGV0dGVyU3BhY2luZzogJzAuNnB4JywgdGV4dFNoYWRvdzogYDAgMCAxMXB4ICR7VFJBQ0VfTEFTRVJfU09GVH1gLCBmbGV4U2hyaW5rOiAwIH19PgogICAgICAgICAgICB7dCgndHJhY2UudGl0bGUnKX0KICAgICAgICAgIDwvc3Bhbj4KICAgICAgICAgIDxzcGFuIHN0eWxlPXt7IGNvbG9yOiAncmdiYSg1NywyNTUsMjAsMC40MiknLCBmb250U2l6ZTogJzEwcHgnLCBmb250RmFtaWx5OiAiJ0NvdXJpZXIgTmV3JywgbW9ub3NwYWNlIiwgb3ZlcmZsb3c6ICdoaWRkZW4nLCB0ZXh0T3ZlcmZsb3c6ICdlbGxpcHNpcycsIHdoaXRlU3BhY2U6ICdub3dyYXAnIH19PgogICAgICAgICAgICB7Zmlyc3RMaW5lfQogICAgICAgICAgPC9zcGFuPgogICAgICAgIDwvc3Bhbj4KICAgICAgPC9idXR0b24+CgogICAgICB7aXNPcGVuICYmICgKICAgICAgICA8ZGl2IHN0eWxlPXt7CiAgICAgICAgICBiYWNrZ3JvdW5kOiAnbGluZWFyLWdyYWRpZW50KDE4MGRlZywgcmdiYSgzLCAxNCwgNCwgMC45NyksIHJnYmEoMSwgNywgMiwgMC45OSkpJywKICAgICAgICAgIGJvcmRlcjogYDFweCBzb2xpZCAke1RSQUNFX0xBU0VSX0RJTX1gLAogICAgICAgICAgYm9yZGVyVG9wOiAnbm9uZScsCiAgICAgICAgICBib3JkZXJSYWRpdXM6ICcwIDAgOHB4IDhweCcsCiAgICAgICAgICBwYWRkaW5nOiAnMTJweCAxNXB4IDEzcHgnLAogICAgICAgICAgbWFyZ2luVG9wOiAnLTFweCcsCiAgICAgICAgICBtYXhIZWlnaHQ6ICcyNjBweCcsCiAgICAgICAgICBvdmVyZmxvd1k6ICdhdXRvJywKICAgICAgICAgIGJveFNoYWRvdzogJ2luc2V0IDAgMCAyNHB4IHJnYmEoNTcsIDI1NSwgMjAsIDAuMDc1KSwgMCAwIDE4cHggcmdiYSg1NywgMjU1LCAyMCwgMC4xMiknLAogICAgICAgIH19PgogICAgICAgICAgPGRpdiBzdHlsZT17eyBkaXNwbGF5OiAnZ3JpZCcsIGdhcDogJzdweCcgfX0+CiAgICAgICAgICAgIHtsaW5lcy5tYXAoKGxpbmUsIGluZGV4KSA9PiB7CiAgICAgICAgICAgICAgY29uc3QgcGFydCA9IHNwbGl0VHJhY2VMaW5lKGxpbmUpCiAgICAgICAgICAgICAgcmV0dXJuICgKICAgICAgICAgICAgICAgIDxkaXYga2V5PXtgJHtpbmRleH0tJHtsaW5lfWB9IHN0eWxlPXt7IGRpc3BsYXk6IHBhcnQubGFiZWwgPyAnZ3JpZCcgOiAnYmxvY2snLCBncmlkVGVtcGxhdGVDb2x1bW5zOiBwYXJ0LmxhYmVsID8gJzExMnB4IDFmcicgOiB1bmRlZmluZWQsIGdhcDogJzlweCcsIGFsaWduSXRlbXM6ICdiYXNlbGluZScgfX0+CiAgICAgICAgICAgICAgICAgIHtwYXJ0LmxhYmVsICYmICgKICAgICAgICAgICAgICAgICAgICA8c3BhbiBzdHlsZT17eyBjb2xvcjogJ3JnYmEoNTcsMjU1LDIwLDAuNTgpJywgZm9udFNpemU6ICcxMHB4JywgZm9udEZhbWlseTogIidDb3VyaWVyIE5ldycsIG1vbm9zcGFjZSIsIGxldHRlclNwYWNpbmc6ICcxcHgnLCB0ZXh0VHJhbnNmb3JtOiAndXBwZXJjYXNlJyB9fT4KICAgICAgICAgICAgICAgICAgICAgIHtwYXJ0LmxhYmVsfQogICAgICAgICAgICAgICAgICAgIDwvc3Bhbj4KICAgICAgICAgICAgICAgICAgKX0KICAgICAgICAgICAgICAgICAgPHNwYW4gc3R5bGU9e3sgY29sb3I6IFRSQUNFX0xBU0VSLCBmb250U2l6ZTogJzEycHgnLCBmb250RmFtaWx5OiBUUkFDRV9GT05ULCBsaW5lSGVpZ2h0OiAnMS44JywgbGV0dGVyU3BhY2luZzogJzAuMnB4JywgdGV4dFNoYWRvdzogJzAgMCA4cHggcmdiYSg1NywgMjU1LCAyMCwgMC40MiknLCB3aGl0ZVNwYWNlOiAncHJlLXdyYXAnLCB3b3JkQnJlYWs6ICdicmVhay13b3JkJyB9fT4KICAgICAgICAgICAgICAgICAgICB7cGFydC52YWx1ZX0KICAgICAgICAgICAgICAgICAgPC9zcGFuPgogICAgICAgICAgICAgICAgPC9kaXY+CiAgICAgICAgICAgICAgKQogICAgICAgICAgICB9KX0KICAgICAgICAgIDwvZGl2PgogICAgICAgIDwvZGl2PgogICAgICApfQogICAgPC9kaXY+CiAgKQp9Cg==
+// ForgeClaw - Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+import { useI18n } from '../lib/i18n'
+
+interface ReasoningTraceProps {
+  trace: string
+  isOpen: boolean
+  onToggle: () => void
+}
+
+const TRACE_FONT = "'Brush Script MT', 'Apple Chancery', 'Segoe Script', 'Zapfino', cursive"
+const TRACE_LASER = '#39ff14'
+const TRACE_LASER_SOFT = 'rgba(57, 255, 20, 0.72)'
+const TRACE_LASER_DIM = 'rgba(57, 255, 20, 0.34)'
+
+function splitTraceLine(line: string): { label?: string; value: string } {
+  const match = /^([A-Z][A-Za-z ]{2,24}):\s*(.*)$/.exec(line.trim())
+  if (!match) return { value: line }
+  return { label: match[1], value: match[2] }
+}
+
+export function ReasoningTrace({ trace, isOpen, onToggle }: ReasoningTraceProps) {
+  const { t } = useI18n()
+  const lines = trace.split('\n').map(line => line.trimEnd()).filter(Boolean)
+  const firstLine = lines[0] ?? t('trace.ready')
+
+  return (
+    <div style={{ width: '100%', maxWidth: '90%', marginTop: '8px' }}>
+      <button
+        onClick={onToggle}
+        style={{
+          width: '100%',
+          background: 'linear-gradient(90deg, rgba(57,255,20,0.075), rgba(57,255,20,0.025))',
+          border: `1px solid ${TRACE_LASER_DIM}`,
+          borderRadius: '8px',
+          cursor: 'pointer',
+          padding: '8px 11px',
+          minHeight: '40px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '10px',
+          WebkitTapHighlightColor: 'transparent',
+          boxShadow: isOpen
+            ? '0 0 22px rgba(57, 255, 20, 0.18), inset 0 0 18px rgba(57, 255, 20, 0.045)'
+            : '0 0 12px rgba(57, 255, 20, 0.1)',
+        }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+          <span style={{ color: TRACE_LASER, fontSize: '10px', textShadow: `0 0 8px ${TRACE_LASER_SOFT}`, flexShrink: 0 }}>
+            {isOpen ? 'v' : '>'}
+          </span>
+          <span style={{ color: TRACE_LASER, fontSize: '14px', fontFamily: TRACE_FONT, letterSpacing: '0.6px', textShadow: `0 0 11px ${TRACE_LASER_SOFT}`, flexShrink: 0 }}>
+            {t('trace.title')}
+          </span>
+          <span style={{ color: 'rgba(57,255,20,0.42)', fontSize: '10px', fontFamily: "'Courier New', monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {firstLine}
+          </span>
+        </span>
+      </button>
+
+      {isOpen && (
+        <div style={{
+          background: 'linear-gradient(180deg, rgba(3, 14, 4, 0.97), rgba(1, 7, 2, 0.99))',
+          border: `1px solid ${TRACE_LASER_DIM}`,
+          borderTop: 'none',
+          borderRadius: '0 0 8px 8px',
+          padding: '12px 15px 13px',
+          marginTop: '-1px',
+          maxHeight: '260px',
+          overflowY: 'auto',
+          boxShadow: 'inset 0 0 24px rgba(57, 255, 20, 0.075), 0 0 18px rgba(57, 255, 20, 0.12)',
+        }}>
+          <div style={{ display: 'grid', gap: '7px' }}>
+            {lines.map((line, index) => {
+              const part = splitTraceLine(line)
+              return (
+                <div key={`${index}-${line}`} style={{ display: part.label ? 'grid' : 'block', gridTemplateColumns: part.label ? '112px 1fr' : undefined, gap: '9px', alignItems: 'baseline' }}>
+                  {part.label && (
+                    <span style={{ color: 'rgba(57,255,20,0.58)', fontSize: '10px', fontFamily: "'Courier New', monospace", letterSpacing: '1px', textTransform: 'uppercase' }}>
+                      {part.label}
+                    </span>
+                  )}
+                  <span style={{ color: TRACE_LASER, fontSize: '12px', fontFamily: TRACE_FONT, lineHeight: '1.8', letterSpacing: '0.2px', textShadow: '0 0 8px rgba(57, 255, 20, 0.42)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                    {part.value}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
