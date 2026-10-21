@@ -340,9 +340,17 @@ export class CorpusRepository {
       // An entry the owner removed never converges again.
       const phase = readIndex(DECLINED_KEY).includes(integrity) ? null : convergencePhase(input)
       const admitted: Record<string, string> = phase ? { admittedBy: CONVERGED_BY, phase, admittedAt: timestamp } : {}
+      // The same fact from several runs is one record; it remembers every run that produced it (newest 20).
+      const run = input.metadata?.run
+      let runs: Record<string, string> = {}
+      if (run) {
+        let prior: string[] = []
+        try { prior = (JSON.parse(safeGetItem(`${CANDIDATE_PREFIX}candidate-${integrity}`) || 'null') as LearningCandidate | null)?.metadata?.runs?.split(',') ?? [] } catch { /* a corrupt prior record has no runs */ }
+        runs = { run, runs: [...new Set([...prior.filter(Boolean), run])].slice(-20).join(',') }
+      }
       const candidate: LearningCandidate = {
         ...interaction,
-        metadata: { ...interaction.metadata, ...admitted },
+        metadata: { ...interaction.metadata, ...runs, ...admitted },
         id: `candidate-${integrity}`,
         recordType: 'learning_candidate',
         admissionStatus: phase ? 'approved' : 'candidate',
@@ -365,7 +373,7 @@ export class CorpusRepository {
           recordType: 'knowledge',
           integrity,
           admissionStatus: 'approved',
-          metadata: { input: input.input, runtime: input.runtime, model: input.model, sourceInteractionId: interactionId, ...admitted },
+          metadata: { input: input.input, runtime: input.runtime, model: input.model, sourceInteractionId: interactionId, ...runs, ...admitted },
         })
       }
       return { interaction, candidate }

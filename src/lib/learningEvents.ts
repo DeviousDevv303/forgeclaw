@@ -36,6 +36,13 @@ export interface LearningEventInput {
   actor?: LearningActor
   /** How the prompt reached ForgeClaw: spoken or typed. */
   origin?: 'voice' | 'typed'
+  /** The run that produced this event (a retry of a run shares its parent's id). */
+  runId?: string
+}
+
+/** The id for a run's learning events: a retry inherits its parent's id, so it never counts as an independent run. */
+export function learningRunId(parent?: string): string {
+  return parent || `run-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 }
 
 export interface LearningRecorder {
@@ -75,7 +82,8 @@ export function buildLearningEvent(event: LearningEventInput): CorpusInteraction
     runtime: event.runtime,
     model: event.model,
     source: `learning:${event.channel}`,
-    metadata: { ...fields, redacted_or_truncated: String(input.redacted || result.redacted), admission: 'unapproved' },
+    // The run id stays out of `context`: that is hashed, and the same fact from two runs must stay one record (whose runs list grows).
+    metadata: { ...fields, ...(event.runId ? { run: event.runId } : {}), redacted_or_truncated: String(input.redacted || result.redacted), admission: 'unapproved' },
   }
 }
 

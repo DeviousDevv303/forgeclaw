@@ -45,6 +45,19 @@ async function requestFor(prompt: string): Promise<string[]> {
   return ((JSON.parse(String((call[1] as RequestInit).body)) as Body).tools ?? []).map(t => t.function.name)
 }
 
+describe('learning events carry a run id', () => {
+  it('a real chat turn is recorded with the id of its run', async () => {
+    await requestFor('what is two plus two')
+    await new Promise(resolve => setTimeout(resolve, 800))
+    const records = Object.keys(localStorage)
+      .filter(key => key.startsWith('forgeclaw_nexus_candidate_v1:'))
+      .map(key => JSON.parse(localStorage.getItem(key) || '{}') as { input?: string; metadata?: { run?: string; runs?: string } })
+    const turn = records.find(record => record.input === 'what is two plus two')
+    expect(turn?.metadata?.run).toMatch(/^run-[a-z0-9]+-[a-z0-9]+$/)
+    expect(turn?.metadata?.runs).toBe(turn?.metadata?.run)
+  }, 30_000)
+})
+
 describe('the owner\'s private reasoning framework reaches the prompt', () => {
   it('with one set in this browser it replaces the default loop, privately and briefly', async () => {
     localStorage.setItem('fc_owner_scaffold_v1', 'Phase A: TESTFRAMEWORK look first.')
