@@ -76,6 +76,14 @@ describe('Kimi is a first-class hosted reasoner', () => {
     expect((other.tools ?? []).map(t => t.function.name)).not.toContain('error_report')
   }, 30_000)
 
+  it('offers error_report for the natural ways of asking, including a phone keyboard\'s curly apostrophe', async () => {
+    for (const prompt of ['check your error logs and tell me what\u2019s broken', 'diagnose yourself and come up with a plan', 'what went wrong with your last runs?', 'pull your error report']) {
+      cleanup(); vi.resetModules(); fetchMock.mockClear()
+      const [body] = await send(prompt, 1)
+      expect((body.tools ?? []).map(t => t.function.name), prompt).toContain('error_report')
+    }
+  }, 60_000)
+
   it('offers browser_run when asked to browse and click, with the guidance that says the page is untrusted', async () => {
     const [body] = await send('browse to https://example.com and click the first link', 1)
     expect((body.tools ?? []).map(t => t.function.name)).toContain('browser_run')
