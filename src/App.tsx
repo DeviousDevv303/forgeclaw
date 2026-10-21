@@ -1335,7 +1335,7 @@ function App() {
       'shell_patch': ['sculpt', 'self-improve', 'self improve', 'improve yourself', 'upgrade yourself', 'modify yourself', 'self-modify', 'self modify', 'evolve', 'your own code', 'your code', 'patch', 'diff'],
       'error_report': ['error log', 'error logs', 'error report', 'your logs', 'diagnos', 'what went wrong', 'what failed', 'your errors', 'check your errors', 'diagnose yourself', 'self-diagnose', 'self diagnose', 'debug yourself', 'what is broken', "what's broken", 'your failures', 'fix your errors', 'pull your errors', 'your own errors'],
       'github_merge_pr': ['merge pull', 'merge pr', 'merge #', 'merge the pr', 'merge this pr', 'merge it', 'merge request'],
-      'browser_run': ['browse the', 'browse to', 'browser', 'open http', 'go to http', 'visit http', 'navigate to', 'click on', 'click the', 'fill out', 'fill in the form', 'on the website', 'on that site', 'web page and', 'search on'],
+      'browser_run': ['browse the', 'browse to', 'browser', 'go online', 'on the web', 'on the internet', 'online and', 'open http', 'go to http', 'visit http', 'navigate to', 'click on', 'click the', 'fill out', 'fill in the form', 'on the website', 'on that site', 'web page and', 'search on'],
       'deep_research': ['research', 'investigate', 'sources', 'look into', 'find out', 'compare', 'latest', 'literature', 'study', 'studies', 'evidence', 'report on'],
       'github_build_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'react', 'vite', 'npm', 'bundle'],
       'github_create_repo': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'new repo', 'new repository', 'create repo', 'create a repo'],
