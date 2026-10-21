@@ -15,6 +15,7 @@ import { describeTaste, loadTaste, MIN_TASTE_EVENTS, resetTaste } from '../lib/n
 const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
 const mono = "'Courier New', monospace"
 const card: React.CSSProperties = { background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '12px 14px' }
+const purgeButton: React.CSSProperties = { background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', marginBottom: '8px' }
 const heading: React.CSSProperties = { fontSize: '10px', color: '#f97316', letterSpacing: '2px', fontFamily: 'monospace', fontWeight: 'bold', marginBottom: '10px', textTransform: 'uppercase' }
 
 function outcomeOf(c: LearningCandidate): Outcome {
@@ -48,6 +49,8 @@ export function NexusLearningPanel() {
   const [knowledgeTick, setKnowledgeTick] = useState(0)
   const knowledge = useMemo(() => corpusRepository.listKnowledge(), [candidates, knowledgeTick]) // eslint-disable-line react-hooks/exhaustive-deps
   const legacy = useMemo(() => knowledge.filter(k => knowledgeOrigin(k).startsWith('LEGACY')), [knowledge])
+  const [purgeArmed, setPurgeArmed] = useState(false)
+  const [knowledgeNotice, setKnowledgeNotice] = useState('')
   const phaseCounts: Record<string, number> = {
     assumptions: summary.lessons.length,
     heuristics: active.length,
@@ -162,15 +165,28 @@ export function NexusLearningPanel() {
       <section style={card} aria-label="Knowledge" data-testid="nexus-knowledge">
         <div style={heading}>KNOWLEDGE · what NEXUS treats as known ({knowledge.length})</div>
         <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>These entries guide the models and count as training data. Check where each came from and remove anything wrong.</div>
-        {legacy.length > 0 && (
-          <button
-            onClick={() => {
-              if (!globalThis.confirm?.(`Remove all ${legacy.length} legacy entries (admitted without review, Sep 24 – Oct 13)? This cannot be undone.`)) return
-              for (const k of legacy) corpusRepository.removeKnowledge(k.id)
-              setKnowledgeTick(n => n + 1); refresh()
-            }}
-            style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', marginBottom: '8px' }}
-          >REMOVE ALL LEGACY ({legacy.length})</button>
+        {knowledgeNotice && <div role="status" style={{ color: '#22c55e', fontSize: '11px', marginBottom: '8px' }}>{knowledgeNotice}</div>}
+        {/* Confirmed on the page, not with window.confirm: some browsers (in-app ones especially) block that dialog, and then
+            confirm returns false and the button would silently do nothing. */}
+        {legacy.length > 0 && !purgeArmed && (
+          <button onClick={() => setPurgeArmed(true)} style={purgeButton}>REMOVE ALL LEGACY ({legacy.length})</button>
+        )}
+        {legacy.length > 0 && purgeArmed && (
+          <div role="alertdialog" aria-label="Confirm removing all legacy entries" style={{ border: '1px solid #3a1a1a', borderRadius: '6px', padding: '8px', marginBottom: '8px' }}>
+            <div style={{ color: '#ddd', fontSize: '11px', marginBottom: '6px', overflowWrap: 'anywhere' }}>Remove all {legacy.length} legacy entries (admitted without review, Sep 24 – Oct 13)? This cannot be undone.</div>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => {
+                  let removed = 0
+                  for (const k of legacy) if (corpusRepository.removeKnowledge(k.id)) removed += 1
+                  setPurgeArmed(false); setKnowledgeTick(n => n + 1); refresh()
+                  setKnowledgeNotice(`Removed ${removed} of ${legacy.length} legacy entries.`)
+                }}
+                style={{ ...purgeButton, marginBottom: 0, color: '#fff', background: '#7f1d1d' }}
+              >YES, REMOVE {legacy.length}</button>
+              <button onClick={() => setPurgeArmed(false)} style={{ ...purgeButton, marginBottom: 0, color: '#aaa', borderColor: '#333' }}>CANCEL</button>
+            </div>
+          </div>
         )}
         {knowledge.length === 0
           ? <div style={{ color: '#555', fontSize: '12px' }}>Nothing yet.</div>
