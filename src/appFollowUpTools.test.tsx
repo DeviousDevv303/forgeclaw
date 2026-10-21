@@ -74,6 +74,18 @@ describe('the owner\'s private reasoning framework reaches the prompt', () => {
   }, 30_000)
 })
 
+describe('a command with a request after it goes to the model, not straight to the shell', () => {
+  // 2026-10-21: "run cat nonexistent.txt, then tell me how many open PRs there are" was run as a command; the question was lost.
+  it.each([
+    'Run `cat nonexistent.txt`, then tell me how many open PRs there are',
+    'cat nonexistent.txt and then tell me how many PRs are open',
+  ])('%s', async prompt => {
+    const tools = await requestFor(prompt)
+    expect(tools).toContain('shell_exec')
+    expect(tools).toContain('github_list_prs')
+  }, 30_000)
+})
+
 describe('a follow-up keeps the tools of the task it continues', () => {
   it('"Resume" after "merge the open PRs" still offers the merge tool', async () => {
     localStorage.setItem('forgemind_history', JSON.stringify([

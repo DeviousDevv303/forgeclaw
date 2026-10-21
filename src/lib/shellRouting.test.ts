@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractExplicitShellCommand, forcedShellCommand, isExplicitShellRequest, looksLikeShellCommand } from './codingAgentRuntime'
+import { extractExplicitShellCommand, forcedShellCommand, hasFollowUpRequest, isExplicitShellRequest, looksLikeShellCommand } from './codingAgentRuntime'
 
 describe('ordinary English is not dispatched as a shell command', () => {
   it.each([
@@ -24,6 +24,36 @@ describe('real commands still route to the shell', () => {
   ])('%s', (text, expected) => {
     expect(isExplicitShellRequest(text)).toBe(true)
     expect(extractExplicitShellCommand(text)).toBe(expected)
+  })
+})
+
+describe('a command with a request after it is a task for the model, not a command', () => {
+  // 2026-10-21: "run cat nonexistent.txt, then tell me how many PRs are open". With backticks only the command ran and the
+  // question was dropped; without them the whole sentence was sent to the shell as one command.
+  it.each([
+    'Run `cat nonexistent.txt`, then tell me how many open PRs there are',
+    'Run `pwd` and then list the open PRs',
+    'cat nonexistent.txt and then tell me how many PRs are open',
+    'git log --oneline then summarize it',
+    'run `ls -la`. After that tell me what is biggest',
+    '`npm test` and let me know if it passes',
+    'Please run `git status` and show me what changed',
+    'cat package.json, how many dependencies are there',
+  ])('%s', text => {
+    expect(extractExplicitShellCommand(text)).toBeNull()
+  })
+
+  it.each([
+    'Run `pwd`', 'Please run the shell command: `pwd`', 'run `npm test` please', 'ls -la | head -5', 'npm run build && npm test',
+    'grep -rn "then tell me" src', 'grep -c "how many" notes.txt', 'cd src && ls', '$ echo then done', '/shell cat a.txt and then b.txt',
+  ])('still runs directly: %s', text => {
+    expect(extractExplicitShellCommand(text)).not.toBeNull()
+  })
+
+  it('hasFollowUpRequest ignores quoted text and shell if/then', () => {
+    expect(hasFollowUpRequest('grep "then tell me" src')).toBe(false)
+    expect(hasFollowUpRequest('if true; then echo hi; fi')).toBe(false)
+    expect(hasFollowUpRequest('cat x, then tell me how many')).toBe(true)
   })
 })
 
