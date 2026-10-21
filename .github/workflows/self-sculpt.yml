@@ -132,10 +132,26 @@ jobs:
           npm run build
           echo 'changed=true' >> "$GITHUB_OUTPUT"
 
+      # Optional: act as the ForgeClaw GitHub App (own name and avatar; its pull requests also get the normal
+      # build check, which pull requests opened with the default token do not). Skipped, with the default
+      # token as the fallback, until the repository variable FORGECLAW_APP_ID and the secret
+      # FORGECLAW_APP_PRIVATE_KEY exist.
+      - name: Sign in as the ForgeClaw app
+        id: app
+        if: vars.FORGECLAW_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FORGECLAW_APP_ID }}
+          private-key: ${{ secrets.FORGECLAW_APP_PRIVATE_KEY }}
+
       - name: Commit and push proposal branch
         if: steps.proposal.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          AS_APP: ${{ steps.app.outputs.token != '' && 'true' || '' }}
+          APP_ID: ${{ vars.FORGECLAW_APP_ID }}
+          APP_SLUG: ${{ vars.FORGECLAW_APP_SLUG || 'forgeclaw' }}
           SCULPT_REASON: ${{ inputs.reason }}
           SCULPT_BRANCH: ${{ inputs.branch }}
         run: |
@@ -143,6 +159,10 @@ jobs:
           reason="$(printf '%s' "$SCULPT_REASON" | tr '\n\r' '  ' | cut -c1-240)"
           git config user.name 'ForgeClaw'
           git config user.email 'forgeclaw@local'
+          if [[ -n "${AS_APP:-}" ]]; then
+            git config user.name "${APP_SLUG}[bot]"
+            git config user.email "${APP_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
+          fi
           git commit -m "sculpt: $reason"
           auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
           echo "::add-mask::$auth"
@@ -151,7 +171,9 @@ jobs:
       - name: Open pull request for review
         if: steps.proposal.outputs.changed == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          APP_REPO: ${{ github.repository }}
+          APP_SERVER: ${{ github.server_url }}
           SCULPT_BRANCH: ${{ inputs.branch }}
           SCULPT_REASON: ${{ inputs.reason }}
         run: |
@@ -161,7 +183,8 @@ jobs:
           from pathlib import Path
           reason = ' '.join(os.environ['SCULPT_REASON'].split())[:240]
           Path('/tmp/self-sculpt-pr-body.md').write_text(
-              'Automated self-sculpt proposal from ForgeClaw.\n\n'
+              f'<img src="{os.environ["APP_SERVER"]}/{os.environ["APP_REPO"]}/raw/main/docs/brand/forgeclaw-avatar.png" width="64" align="right" alt="ForgeClaw">\n\n'
+              '**ForgeClaw** · autonomous agent · self-sculpt proposal\n\n'
               f'Reason: {reason}\n\n'
               'Build validation passed. Review the diff and required checks before merging; this workflow never auto-merges.\n',
               encoding='utf-8',
@@ -170,5 +193,5 @@ jobs:
           gh pr create \
             --base main \
             --head "$SCULPT_BRANCH" \
-            --title "sculpt: $(printf '%s' "$SCULPT_REASON" | tr '\n\r' '  ' | cut -c1-240)" \
+            --title "[ForgeClaw] sculpt: $(printf '%s' "$SCULPT_REASON" | tr '\n\r' '  ' | cut -c1-240)" \
             --body-file /tmp/self-sculpt-pr-body.md
