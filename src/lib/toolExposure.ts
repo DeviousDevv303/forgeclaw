@@ -162,3 +162,23 @@ export function toolsForUrls(text: string, ownerName: string, repoName: string):
   }
   return [...out]
 }
+
+/**
+ * A message that only continues the previous task: "Resume", "yes, do it", "go ahead and merge them", "try again".
+ * It names no tool, so the tools are chosen from the task it continues (App.tsx). Long or new requests are not.
+ */
+export function isFollowUp(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'")
+  if (!t || t.length > 80) return false
+  return /^(?:ok(?:ay)?|yes|yeah|yep|sure|please|go|do it|go ahead|proceed|continue|resume|retry|try again|again|keep going|carry on|finish(?: it)?|same|next|now)\b/.test(t)
+}
+
+/**
+ * The owner asks for a merge in their own words: "merge 208", "merge them", "go ahead and merge both", "merge PR #205".
+ * The merge keywords were exact phrases ("merge pr", "merge #", "merge it"), so most of those offered no merge tool and
+ * ForgeClaw had to say it could not merge (2026-10-21). Offering the tool runs nothing: a merge still needs the owner's tap.
+ */
+export function mergeRequested(text: string): boolean {
+  const t = text.toLowerCase()
+  return /\bmerg(?:e|ing)\b/.test(t) && /\b(?:prs?|pull(?:\s+requests?)?|them|both|all|it|those|these|everything)\b|#\s*\d+|\b\d{2,5}\b/.test(t)
+}
