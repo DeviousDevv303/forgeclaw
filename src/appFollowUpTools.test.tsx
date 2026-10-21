@@ -28,6 +28,12 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.doUnmock('./lib/sculptKey'); vi.resetModules() })
 
+async function systemPromptFor(prompt: string): Promise<string> {
+  await requestFor(prompt)
+  const call = fetchMock.mock.calls.find(([url]) => String(url) === KIMI_URL)!
+  return (JSON.parse(String((call[1] as RequestInit).body)) as { messages: Array<{ role: string; content: string }> }).messages.find(m => m.role === 'system')!.content
+}
+
 async function requestFor(prompt: string): Promise<string[]> {
   const { default: App } = await import('./App')
   render(<App />)
@@ -38,6 +44,21 @@ async function requestFor(prompt: string): Promise<string[]> {
   const call = fetchMock.mock.calls.find(([url]) => String(url) === KIMI_URL)!
   return ((JSON.parse(String((call[1] as RequestInit).body)) as Body).tools ?? []).map(t => t.function.name)
 }
+
+describe('the owner\'s private reasoning framework reaches the prompt', () => {
+  it('with one set in this browser it replaces the default loop, privately and briefly', async () => {
+    localStorage.setItem('fc_owner_scaffold_v1', 'Phase A: TESTFRAMEWORK look first.')
+    const system = await systemPromptFor('fix the failing build')
+    expect(system).toContain('TESTFRAMEWORK look first.')
+    expect(system).toMatch(/private reasoning, one or two lines per phase, never in the visible answer/)
+    expect(system).not.toContain('CORE OPERATING LOOP\nFor every task:')
+  }, 30_000)
+  it('with none set the default loop is unchanged', async () => {
+    const system = await systemPromptFor('fix the failing build')
+    expect(system).toContain('CORE OPERATING LOOP\nFor every task:')
+    expect(system).not.toContain('OWN REASONING FRAMEWORK')
+  }, 30_000)
+})
 
 describe('a follow-up keeps the tools of the task it continues', () => {
   it('"Resume" after "merge the open PRs" still offers the merge tool', async () => {
