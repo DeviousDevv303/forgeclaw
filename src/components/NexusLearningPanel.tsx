@@ -112,12 +112,17 @@ export function NexusLearningPanel() {
         <div style={heading}>YOUR HEURISTICS · mined from what you type</div>
         <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>Rules you state ("always…", "never…", "make sure…", "I want…", "if… then…", or "rule: …") that you repeat, or mark explicitly. Only approved ones are given to every model. Visitors' input is never mined.</div>
         {decisions.approved.length > 0 && (
-          <ul style={{ margin: '0 0 8px', paddingLeft: '18px', color: '#22c55e', fontSize: '12px', lineHeight: 1.7 }}>
-            {decisions.approved.map(rule => (
-              <li key={rule}>{rule} <button onClick={() => setDecisions(decide(rule, 'forget'))} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>remove</button></li>
-            ))}
-          </ul>
+          // Labelled, so an approved rule (with its "remove" link) is not mistaken for one asking to be approved again.
+          <div aria-label="Approved heuristics" style={{ marginBottom: '8px' }}>
+            <div style={{ color: '#22c55e', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>✓ APPROVED · given to every model ({decisions.approved.length}) · saved in this browser</div>
+            <ul style={{ margin: '4px 0 0', paddingLeft: '18px', color: '#22c55e', fontSize: '12px', lineHeight: 1.7 }}>
+              {decisions.approved.map(rule => (
+                <li key={rule} style={{ overflowWrap: 'anywhere' }}>{rule} <button onClick={() => setDecisions(decide(rule, 'forget'))} title="Stop giving this rule to the models" style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>remove</button></li>
+              ))}
+            </ul>
+          </div>
         )}
+        {pending.length > 0 && <div style={{ color: '#aaa', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '0.5px', margin: '4px 0' }}>WAITING FOR YOUR DECISION ({pending.length})</div>}
         {pending.length === 0
           ? <div style={{ color: '#555', fontSize: '12px' }}>{decisions.approved.length ? 'No new heuristics to review.' : 'No heuristics yet. State a rule twice, or start a line with "rule:".'}</div>
           : pending.slice(0, 12).map(h => (

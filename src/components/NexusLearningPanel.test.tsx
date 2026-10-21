@@ -79,3 +79,33 @@ describe('NexusLearningPanel phone layout', () => {
     expect(screen.queryByText('Mi Lógica Es Innegable')).toBeNull()
   })
 })
+
+describe('approving a heuristic sticks', () => {
+  // 2026-10-21 (owner): "I keep approving this and it keeps popping up to approve again". The approval was saved; the
+  // approved list had no label, so the approved rule with its "remove" link looked like a new request.
+  const rule = 'do not claim success unless the file was actually created and committed'
+  const said = (id: string): LearningCandidate => ({ id, timestamp: '2026-10-05T00:00:00.000Z', source: 'learning:chat', model: 'm', input: rule, generatedResult: 'ok', approved: false, metadata: { outcome: 'completed', channel: 'chat', actor: 'user' } } as unknown as LearningCandidate)
+  it('shows it under a labelled Approved list after approving, and still after the page is reloaded', async () => {
+    const { fireEvent } = await import('@testing-library/react')
+    localStorage.clear()
+    seeded.push(said('h1'), said('h2'))
+    try {
+      __setLangForTests('en')
+      render(<NexusLearningPanel />)
+      expect(screen.getByText(/WAITING FOR YOUR DECISION \(1\)/)).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: 'APPROVE' }))
+      const approvedList = screen.getByLabelText('Approved heuristics')
+      expect(approvedList.textContent).toContain('APPROVED · given to every model (1)')
+      expect(approvedList.textContent).toContain(rule)
+      expect(screen.queryByRole('button', { name: 'APPROVE' })).toBeNull()
+      cleanup()
+      render(<NexusLearningPanel />)
+      expect(screen.getByLabelText('Approved heuristics').textContent).toContain(rule)
+      expect(screen.queryByRole('button', { name: 'APPROVE' })).toBeNull()
+      expect(screen.queryByText(/WAITING FOR YOUR DECISION/)).toBeNull()
+    } finally {
+      seeded.splice(seeded.length - 2, 2)
+      localStorage.clear()
+    }
+  })
+})
