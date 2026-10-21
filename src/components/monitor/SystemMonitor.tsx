@@ -17,6 +17,8 @@ interface SystemMonitorProps {
   proposals?: ProposalType[]  // Cycle 2: Proposals from useWarRoom
   onAcknowledge?: (targetId: string) => void  // Cycle 3: Proposal write-back
   onReject?: (targetId: string) => void  // Cycle 3: Proposal write-back
+  /** The owner is looking: the strip carries their name. A free-mode visitor sees a neutral label (2026-10-19). */
+  ownerView?: boolean
 }
 
 export const SystemMonitor = memo(function SystemMonitor({ 
@@ -27,6 +29,7 @@ export const SystemMonitor = memo(function SystemMonitor({
   proposals = [],
   onAcknowledge,
   onReject,
+  ownerView = false,
 }: SystemMonitorProps) {
   const { t } = useI18n()
   const [internalExpanded, setInternalExpanded] = useState(expandedProp ?? false)
@@ -65,7 +68,7 @@ export const SystemMonitor = memo(function SystemMonitor({
           {isActive ? '⚡' : '💤'}
         </span>
         <span className="text-slate-400 font-mono">
-          {t('monitor.computer')}
+          {t(ownerView ? 'monitor.ownerComputer' : 'monitor.computer')}
         </span>
         <span className="text-xs text-slate-600 ml-auto">
           {displayEvents.length > 0

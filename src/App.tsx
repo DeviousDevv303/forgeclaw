@@ -3038,6 +3038,7 @@ function App() {
               proposals={proposals}
               onAcknowledge={handleAcknowledge}
               onReject={handleReject}
+              ownerView={!isPublicVisitor(ghToken)}
             />
             
               {/* ── Autonomy mode toggle ── */}

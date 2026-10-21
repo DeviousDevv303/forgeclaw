@@ -175,6 +175,17 @@ function stripShellPrefix(prompt: string): string {
   return prompt.trim().replace(/^(?:\/shell\s+|!\s*|\$\s*)/i, '').trim()
 }
 
+// A message that asks for more than the command ("run X, then tell me how many…") is a task, not a command: the model
+// decomposes it and calls the shell tool itself. Run directly, the command swallowed the rest of the request (or, without
+// backticks, the whole sentence became the command): 2026-10-21, "run cat nonexistent.txt, then tell me how many PRs are open".
+const FOLLOW_UP_RE = /(?:^|[\s,;.])(?:and\s+)?then\b|\bafter(?:wards| that)\b|\band\s+(?:also\s+)?(?:tell|show|report|explain|summari[sz]e|list|count|check|answer|let)\b|\b(?:tell|show) me\b|\blet me know\b|\bhow many\b/i
+
+/** True when the text asks for something after (or besides) the command. Quoted strings and shell if/then are not follow-ups. */
+export function hasFollowUpRequest(text: string): boolean {
+  if (/\bif\b[\s\S]*\bthen\b/.test(text)) return false
+  return FOLLOW_UP_RE.test(text.replace(/"[^"]*"|'[^']*'/g, ' '))
+}
+
 export function extractExplicitShellCommand(prompt: string): string | null {
   const forced = forcedShellCommand(prompt)
   if (forced !== null) {
@@ -187,6 +198,8 @@ export function extractExplicitShellCommand(prompt: string): string | null {
   }
 
   const inlineCode = text.match(/`([^`\n]+)`/)
+  // Text around the command counts too: `cat x`, then tell me … is a task for the model.
+  if (hasFollowUpRequest(inlineCode ? text.replace(inlineCode[0], ' ') : text)) return null
   let command = inlineCode?.[1]?.trim() ?? text
   command = command.replace(/^```(?:bash|sh)?\s*/i, '').replace(/\s*```$/, '').trim()
   command = command.replace(/^(?:please\s+)?(?:run|execute)\s+(?:the\s+)?(?:shell\s+command|shell|command|bash)\s*[:：]?\s*/i, '')
