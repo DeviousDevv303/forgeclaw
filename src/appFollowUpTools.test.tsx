@@ -47,6 +47,11 @@ describe('a follow-up keeps the tools of the task it continues', () => {
     ]))
     expect(await requestFor('Resume')).toContain('github_merge_pr')
   }, 30_000)
+  it('"merge 208" (no "pr" in it) offers the merge tool', async () => {
+    const tools = await requestFor('merge 208')
+    expect(tools).toContain('github_merge_pr')
+    expect(tools).toContain('github_pr_info')
+  }, 30_000)
   it('with no such task in the conversation, "Resume" alone does not offer it', async () => {
     expect(await requestFor('Resume')).not.toContain('github_merge_pr')
   }, 30_000)

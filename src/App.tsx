@@ -203,7 +203,7 @@ import { startErrorReporting } from './lib/errorReporting'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
-import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 import { compactToolHistory } from './lib/historyCompaction'
 import { clearKeyVerified, isKeyRejection, isKeyVerified, markKeyVerified } from './lib/keyVerification'
@@ -1398,6 +1398,8 @@ function App() {
     coreToolNames.push(...baselineToolNames(activeProvider))
     // A pasted address says what to use: this repository's pages need the GitHub tools, any other page the cloud browser.
     coreToolNames.push(...toolsForUrls(promptText || '', ghOwner || CANONICAL_IDENTITY.owner, ghRepo || CANONICAL_IDENTITY.repository))
+    // A merge asked for in any wording gets the merge tool and the readers it needs (still offered only while self-sculpt is unlocked).
+    if (mergeRequested(messageLower)) coreToolNames.push('github_merge_pr', 'github_list_prs', 'github_pr_info')
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
     // Self-modification tools are offered only while the owner's self-sculpt key is unlocked.
     const sculptUnlocked = isSculptUnlocked()

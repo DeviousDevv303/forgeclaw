@@ -172,3 +172,13 @@ export function isFollowUp(text: string): boolean {
   if (!t || t.length > 80) return false
   return /^(?:ok(?:ay)?|yes|yeah|yep|sure|please|go|do it|go ahead|proceed|continue|resume|retry|try again|again|keep going|carry on|finish(?: it)?|same|next|now)\b/.test(t)
 }
+
+/**
+ * The owner asks for a merge in their own words: "merge 208", "merge them", "go ahead and merge both", "merge PR #205".
+ * The merge keywords were exact phrases ("merge pr", "merge #", "merge it"), so most of those offered no merge tool and
+ * ForgeClaw had to say it could not merge (2026-10-21). Offering the tool runs nothing: a merge still needs the owner's tap.
+ */
+export function mergeRequested(text: string): boolean {
+  const t = text.toLowerCase()
+  return /\bmerg(?:e|ing)\b/.test(t) && /\b(?:prs?|pull(?:\s+requests?)?|them|both|all|it|those|these|everything)\b|#\s*\d+|\b\d{2,5}\b/.test(t)
+}
