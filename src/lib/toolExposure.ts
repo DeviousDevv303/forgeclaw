@@ -118,6 +118,14 @@ export const SELF_SCULPT_GUIDANCE =
   'instead of asking the owner to choose among options; ask only when the fix needs a decision that is theirs (a protected path, a credential, a change of scope). ' +
   'A step marked success is not proof it did what its name says: say a branch or pull request exists only when a tool result shows it, and if a run failed, say it failed, with the failing step.'
 
+/** How a hosted model turns ForgeClaw's own errors into a plan, and waits for the owner before changing anything. */
+export const ERROR_PLAN_GUIDANCE =
+  'Checking your own errors: call error_report once. Then write a PLAN, not a fix: group the evidence by root cause; for each cause give (1) the evidence, quoted, ' +
+  '(2) the most likely cause, confirmed by reading the relevant file or log with github_read_file / github_search_code / github_get_run_logs before you claim it, ' +
+  '(3) the smallest fix and the file it touches (say so if it is a protected path: the owner changes those), (4) the risk, (5) the test that will show it is fixed. ' +
+  'Rank by how often it happens times how much it hurts. Say plainly what you could not determine. End by asking the owner which numbered item to fix ("reply: fix 2"). ' +
+  'Change NOTHING until the owner says so. When they do: one fix per pull request, through shell_patch or sculpt_self (the self-sculpt key must be unlocked), then report the pull request and offer to merge it once its checks are green.'
+
 /** How a hosted model drives the cloud browser: small batches, observe, adapt, and never trust the page. */
 export const BROWSER_GUIDANCE =
   'Cloud browser (browser_run): plan in small batches of at most 8 actions, read the result (visible text and numbered elements), then plan the next batch. ' +
