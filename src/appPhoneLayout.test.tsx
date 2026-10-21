@@ -18,6 +18,24 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.resetModules() })
 
 describe('phone layout rules', () => {
+  it('shows code upright and wrapped inside the reply, not italic and cut off', async () => {
+    const t = Date.now()
+    const line = '  return `${minutes}:${String(seconds).padStart(2, "0")}` // a long line that is wider than a phone screen'
+    localStorage.setItem('forgemind_history', JSON.stringify([
+      { id: '1', role: 'user', content: 'hi', timestamp: t - 2000 },
+      { id: '2', role: 'assistant', content: 'Found it:\n```ts\n' + line + '\n```\n— ForgeClaw', timestamp: t - 1000, agentPhase: 'COMPLETE' },
+    ]))
+    const { default: App } = await import('./App')
+    render(<App />)
+    const code = await screen.findByText((_, el) => el?.tagName === 'CODE' && el.textContent === line + '\n')
+    const pre = code.parentElement as HTMLElement
+    expect(pre.tagName).toBe('PRE')
+    expect(pre.style.whiteSpace).toBe('pre-wrap')
+    expect(pre.style.overflowWrap).toBe('anywhere')
+    expect(pre.style.fontStyle).toBe('normal')
+    expect(pre.style.letterSpacing).toBe('normal')
+  })
+
   it('wraps long links inside the reply and makes them tappable', async () => {
     const url = 'https://github.com/DeviousDevv303/forgeclaw/pull/185'
     const t = Date.now()
