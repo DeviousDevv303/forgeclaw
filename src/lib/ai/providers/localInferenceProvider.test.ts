@@ -166,7 +166,15 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
     expect(extractStatus('STATUS: COMPLETE\nNEXT_ACTION: none')).toBe('COMPLETE')
     expect(decideRetry('NETWORK_FAILURE', 1, false).shouldRetry).toBe(true)
     expect(decideRetry('RATE_LIMIT', 1, false).alternativeStrategy).toContain('Back off')
-    expect(decideRetry('TOOL_FAILURE', 1, true).requiresUserApproval).toBe(true)
+    // A failed shell command is fixed by the agent; it never stops to ask the owner (Guardian asks when a call needs it).
+    const shell = decideRetry('TOOL_FAILURE', 1, true)
+    expect(shell.shouldRetry).toBe(false)
+    expect(shell.requiresUserApproval).toBeFalsy()
+    expect(shell.alternativeStrategy).toMatch(/keep going/)
+    expect(decideRetry('UNKNOWN', 1, false).requiresUserApproval).toBeFalsy()
+    expect(decideRetry('AUTH_FAILURE', 1, true).alternativeStrategy).toMatch(/shell_exec job has no GitHub credential/)
+    expect(classifyToolFailure('gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.')).toBe('AUTH_FAILURE')
+    expect(decideRetry('TOOL_FAILURE', 3, true).alternativeStrategy).toMatch(/another tool/)
   })
 
   it('exercises an offline local tool without external credentials', async () => {
