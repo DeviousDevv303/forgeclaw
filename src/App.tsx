@@ -205,6 +205,7 @@ import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
 import { baselineToolNames, BROWSER_GUIDANCE, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
+import { clearKeyVerified, isKeyRejection, isKeyVerified, markKeyVerified } from './lib/keyVerification'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
 const TRUNCATED_ATTEMPT = '[truncated-arguments]'
@@ -655,10 +656,14 @@ function App() {
   // Reactive core: broadcasts `forgeclaw:state` on window for the cube visual layer (docs/INTEGRATION.md).
   useForgeCore(forgeOpsState)
   const [anthropicApiKey, setAnthropicApiKey] = useState<string>(() => readAnthropicKey())
-  const [anthropicApiKeyStatus, setAnthropicApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>('unverified')
+  const [anthropicApiKeyStatus, setAnthropicApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>(() => isKeyVerified('anthropic', readAnthropicKey()) ? 'valid' : 'unverified')
+  // A verified key stays verified (keyVerification.ts); this re-renders after the remembered state changes.
+  const [keyVerifyTick, setKeyVerifyTick] = useState(0)
   const [anthropicModel, setAnthropicModel] = useState<string>(() => readAnthropicModel())
   const [anthropicWorkspaceId, setAnthropicWorkspaceId] = useState<string>(() => readAnthropicWorkspaceId())
   const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const moonshotKeyVerified = useMemo(() => isKeyVerified('moonshot', moonshotApiKey), [moonshotApiKey, keyVerifyTick])
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
   const [localModel, setLocalModel] = useState<string>(() => safeGetItem('fm_local_model') || localInferenceProvider.models[0].id)
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
@@ -2005,7 +2010,8 @@ function App() {
       // Auth/runtime failures are surfaced to the operator. No hidden provider fallback occurs.
       const isAuthError = /invalid.*(auth|api.?key|token)|unauthorized|authentication|401/i.test(rawMsg)
       if (isAuthError) {
-        if (activeProvider === 'anthropic') setAnthropicApiKeyStatus('invalid')
+        if (activeProvider === 'anthropic') { clearKeyVerified('anthropic'); setAnthropicApiKeyStatus('invalid') }
+        if (activeProvider === 'moonshot') { clearKeyVerified('moonshot'); setKeyVerifyTick(n => n + 1) }
       }
     } finally {
       if (activeRunRef.current?.id === runId) {
@@ -2177,12 +2183,14 @@ function App() {
     setTestKeyError('')
     try {
       await testProviderKey(anthropicApiKey, 'anthropic', anthropicWorkspaceId)
+      markKeyVerified('anthropic', anthropicApiKey)
       setAnthropicApiKeyStatus('valid')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       setTestKeyError(msg)
-      const isAuthReject = msg.includes('401') || /unauthorized|invalid.*(api.?key|token|auth)/i.test(msg)
-      setAnthropicApiKeyStatus(isAuthReject ? 'invalid' : 'unverified')
+      // Only a rejection downgrades a key; a network failure on a re-test leaves a verified key verified.
+      if (isKeyRejection(msg)) { clearKeyVerified('anthropic'); setAnthropicApiKeyStatus('invalid') }
+      else setAnthropicApiKeyStatus(isKeyVerified('anthropic', anthropicApiKey) ? 'valid' : 'unverified')
     } finally {
       setTestingKey(false)
     }
@@ -2560,9 +2568,12 @@ function App() {
                     <div style={{ color: '#666', fontSize: '10px', marginTop: '5px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.moonshotKeyHelp')}</div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                    <button onClick={async () => { if (!moonshotApiKey.trim()) { setTestKeyError(t('test.noMoonshotKey')); return }; setTestingKey(true); setTestKeyError(''); try { await testProviderKey(moonshotApiKey, 'moonshot'); setTestKeyError('Moonshot/Kimi API key verified') } catch (err) { setTestKeyError(err instanceof Error ? err.message : String(err)) } finally { setTestingKey(false) } }} disabled={testingKey || !moonshotApiKey} style={{ flex: 1, background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? t('test.testing') : 'TEST KIMI KEY'}</button>
+                    <button onClick={async () => { if (!moonshotApiKey.trim()) { setTestKeyError(t('test.noMoonshotKey')); return }; setTestingKey(true); setTestKeyError(''); try { await testProviderKey(moonshotApiKey, 'moonshot'); markKeyVerified('moonshot', moonshotApiKey); setKeyVerifyTick(n => n + 1) } catch (err) { const msg = err instanceof Error ? err.message : String(err); setTestKeyError(msg); if (isKeyRejection(msg)) { clearKeyVerified('moonshot'); setKeyVerifyTick(n => n + 1) } } finally { setTestingKey(false) } }} disabled={testingKey || !moonshotApiKey} style={{ flex: 1, background: testingKey ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? t('test.testing') : 'TEST KIMI KEY'}</button>
                   </div>
-                  <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px', color: testKeyError.includes('verified') ? '#22c55e' : '#eab308', fontFamily: 'monospace' }}>{moonshotApiKey ? (testKeyError || t('settings.moonshotKeySaved')) : t('settings.moonshotKeyMissing')}</div>
+                  <div data-key-status={moonshotKeyVerified ? 'verified' : 'unverified'} style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px', color: moonshotKeyVerified ? '#22c55e' : '#eab308', fontFamily: 'monospace' }}>
+                    {!moonshotApiKey ? t('settings.moonshotKeyMissing') : moonshotKeyVerified ? t('settings.moonshotKeyVerified') : (testKeyError || t('settings.moonshotKeySaved'))}
+                    {moonshotKeyVerified && testKeyError && <div style={{ color: '#eab308', marginTop: '3px', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  </div>
                 </>
               )}
               {activeProvider === 'anthropic' && (
@@ -2570,7 +2581,7 @@ function App() {
                   <div style={{ marginBottom: '14px' }}>
                     <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.anthropicKey')}</label>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                      <input type={showApiKey ? 'text' : 'password'} placeholder="sk-ant-..." value={anthropicApiKey} onChange={e => { setAnthropicApiKey(e.target.value); setAnthropicApiKeyStatus('unverified') }} style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${anthropicApiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                      <input type={showApiKey ? 'text' : 'password'} placeholder="sk-ant-..." value={anthropicApiKey} onChange={e => { setAnthropicApiKey(e.target.value); setAnthropicApiKeyStatus(isKeyVerified('anthropic', e.target.value) ? 'valid' : 'unverified') }} style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${anthropicApiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
                       <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>{showApiKey ? '🙈' : '👁'}</button>
                     </div>
                     {testKeyError && <div style={{ color: anthropicApiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
