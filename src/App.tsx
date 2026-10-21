@@ -2008,7 +2008,7 @@ function App() {
         const dropped = new Set([userMsg.id, cloudMsgId].filter(Boolean) as string[])
         setMessages(prev => prev.filter(m => !dropped.has(m.id)))
         const retry = () => { void sendPromptRef.current(promptText, imageUrl, { ...options, autoRetried: true, parentRunId: learningId }) }
-        emitFailure({ source: 'forgemind', severity: 'info', message: `Request interrupted while the app was in the background; retrying once on return (${rawMsg})` })
+        emitFailure({ source: 'forgemind', severity: 'info', message: `Request interrupted while the app was in the background; retrying once on return as the same run ${learningId} (${rawMsg})` })
         if (typeof document !== 'undefined' && document.hidden) {
           const onVisible = () => { if (document.hidden) return; document.removeEventListener('visibilitychange', onVisible); retry() }
           document.addEventListener('visibilitychange', onVisible)

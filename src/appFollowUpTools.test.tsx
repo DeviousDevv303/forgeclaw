@@ -45,6 +45,45 @@ async function requestFor(prompt: string): Promise<string[]> {
   return ((JSON.parse(String((call[1] as RequestInit).body)) as Body).tools ?? []).map(t => t.function.name)
 }
 
+describe('a retry after the app was in the background', () => {
+  // The first attempt records nothing, so its id is only visible in the failure ledger; the retry's learning entry must match it.
+  it('is announced in the failure ledger with its run id, and its learning entry carries that same id', async () => {
+    let hidden = true
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden })
+    let kimiCalls = 0
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) !== KIMI_URL) return new Response('{}', { status: 404 })
+      kimiCalls += 1
+      if (kimiCalls === 1) throw new TypeError('Failed to fetch')
+      return Response.json({ choices: [{ message: { content: 'Done.' }, finish_reason: 'stop' }] })
+    })
+    try {
+      const { default: App } = await import('./App')
+      render(<App />)
+      const box = screen.getByRole('textbox') as HTMLTextAreaElement
+      fireEvent.change(box, { target: { value: 'what is two plus two' } })
+      fireEvent.keyDown(box, { key: 'Enter' })
+      await waitFor(() => expect(kimiCalls).toBe(1), { timeout: 8000 })
+      fireEvent.click(screen.getByRole('button', { name: /^ACTIVITY/ }))
+      fireEvent.click(screen.getByRole('button', { name: /^FAILURES/ }))
+      const announced = await waitFor(() => {
+        const match = /as the same run (run-[a-z0-9]+-[a-z0-9]+)/.exec(document.body.textContent ?? '')
+        expect(match).not.toBeNull()
+        return match![1]
+      }, { timeout: 8000 })
+      hidden = false
+      document.dispatchEvent(new Event('visibilitychange'))
+      await waitFor(() => expect(kimiCalls).toBe(2), { timeout: 8000 })
+      await new Promise(resolve => setTimeout(resolve, 800))
+      const turn = Object.keys(localStorage)
+        .filter(key => key.startsWith('forgeclaw_nexus_candidate_v1:'))
+        .map(key => JSON.parse(localStorage.getItem(key) || '{}') as { input?: string; metadata?: { run?: string } })
+        .find(record => record.input === 'what is two plus two')
+      expect(turn?.metadata?.run).toBe(announced)
+    } finally { delete (document as unknown as { hidden?: boolean }).hidden }
+  }, 40_000)
+})
+
 describe('learning events carry a run id', () => {
   it('a real chat turn is recorded with the id of its run', async () => {
     await requestFor('what is two plus two')
