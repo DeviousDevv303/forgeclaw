@@ -35,6 +35,7 @@ import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type Git
 import { buildAndPublishSite } from './siteBuild'
 import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepResearch'
 import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
+import { jobFailureEvidence } from './runDiagnosis'
 import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
@@ -71,16 +72,19 @@ async function describeFailedRun(request: GithubRequest, input: { owner: string;
     const base = `https://api.github.com/repos/${input.owner}/${input.repo}`
     const jobsRes = await request(`${base}/actions/runs/${input.runId}/jobs`, { headers })
     if (!jobsRes.ok) return ''
-    const jobs = ((await jobsRes.json()) as { jobs?: Array<{ steps?: Array<{ name: string; conclusion: string | null }> }> }).jobs ?? []
+    const jobs = ((await jobsRes.json()) as { jobs?: Array<{ id: number; conclusion: string | null; steps?: Array<{ name: string; conclusion: string | null }> }> }).jobs ?? []
     const steps = jobs.flatMap(job => job.steps ?? [])
     const failed = steps.find(step => step.conclusion === 'failure')
     if (!failed) return ''
+    const failedJob = jobs.find(job => job.conclusion === 'failure')
+    const evidence = failedJob ? await jobFailureEvidence(request, { owner: input.owner, repo: input.repo, token: input.token, jobId: failedJob.id }) : ''
     const passed = steps.filter(step => step.conclusion === 'success' && !/^(Set up job|Post |Complete job|Run actions\/)/.test(step.name)).map(step => step.name)
     const refRes = await request(`${base}/git/ref/heads/${encodeURIComponent(input.branch).replace(/%2F/g, '/')}`, { headers })
     const pushed = refRes.ok
     return `it failed at the step "${failed.name}". Steps that passed before it: ${passed.length ? passed.join('; ') : '(none)'}. ` +
       `Branch ${input.branch} on GitHub: ${pushed ? 'EXISTS (pushed)' : 'NOT FOUND, so nothing was persisted'}. ` +
-      'A step that exited 0 is not proof it did what its name says. Read the failing step\'s log with github_get_run_logs, diagnose it, and say what you found; do not claim a branch or pull request that does not exist.'
+      'A step that exited 0 is not proof it did what its name says. Do not claim a branch or pull request that does not exist.' +
+      (evidence ? `\n${evidence}\nDiagnose from this evidence and say what you found.` : '')
   } catch {
     return ''
   }
@@ -901,6 +905,10 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           for (const step of job.steps) {
             const icon = step.conclusion === 'success' ? '✅' : step.conclusion === 'failure' ? '❌' : step.conclusion === 'skipped' ? '⏭' : '⏳'
             lines.push(`  ${icon} Step ${step.number}: ${step.name} (${step.conclusion ?? step.status})`)
+          }
+          // Step names alone never say why; add the error text of a failed job (first two, to bound the result).
+          if (job.conclusion === 'failure' && token && lines.filter(l => l.startsWith('  Evidence:')).length < 2) {
+            lines.push(`  Evidence: ${(await jobFailureEvidence((url, init) => toolFetch(ctx, url, init), { owner, repo, token, jobId: job.id })).replace(/\n/g, '\n    ')}`)
           }
         }
         return lines.join('\n').trim() || '(no jobs found)'
