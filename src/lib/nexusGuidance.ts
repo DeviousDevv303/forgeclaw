@@ -7,9 +7,9 @@
 // deepseekContext.ts puts it in the context of every DeepSeek chat dispatch.
 //
 // What goes in (and why it is safe to give a model):
-//   • the owner's APPROVED heuristics (the owner's own rules, approved by the owner);
+//   • the owner's ACTIVE heuristics (the owner's own rules, mined from what the owner typed; removable on the NEXUS page);
 //   • recurring failures from the OWNER's own runs (lessonsForPrompt ignores visitors), as evidence to avoid;
-//   • APPROVED corpus records relevant to this task, of any age, unless they are repository-state facts
+//   • APPROVED corpus records relevant to this task (signed, or converged from evidence: nexusConvergence.ts), of any age, unless they are repository-state facts
 //     (HEAD SHAs, branch status), which go stale: that is what the one-hour freshness rule protects.
 // Unapproved candidates and visitor input never appear. It is advisory evidence, not an instruction to run tools.
 
@@ -42,7 +42,7 @@ export interface NexusGuidance {
 export function nexusGuidanceForDeepSeek(task: string, deps: GuidanceDeps = {}): NexusGuidance {
   const empty: NexusGuidance = { text: '', heuristics: 0, lessons: 0, records: 0 }
   if (!task.trim()) return empty
-  const heuristics = heuristicsForPrompt(deps.decisions ?? loadDecisions())
+  const heuristics = heuristicsForPrompt(deps.decisions ?? loadDecisions(), deps.candidates ?? corpusRepository.listCandidates(500))
   const lessons = lessonsForPrompt(summarizeLearning(deps.candidates ?? corpusRepository.listCandidates(500)), ['deepseek_reason', 'github_repo_state', 'github_read_file', 'github_search_code', 'shell_exec', 'web_search', 'browser_run', 'browser_playbook'], 3)
 
   const taskWords = words(task)

@@ -39,14 +39,17 @@ describe('what NEXUS keeps from a browse', () => {
     const b = failurePattern(browserPlaybook({ ...ok, ok: false, goal: 'compare prices', failedStep: { type: 'click', note: 'element not found' } }))
     expect(a).toBe(b)
   })
-  it('records an UNAPPROVED candidate that NEXUS can count, never a trained or approved record', async () => {
+  it('a playbook that worked converges into knowledge by itself (Extension); a failed one stays a candidate', async () => {
     expect(await recordBrowserLearning(ok, { runtime: 'browser-agent', model: 'chromium' })).toBe(true)
     const candidates = corpusRepository.listCandidates(10)
     expect(candidates).toHaveLength(1)
-    expect(candidates[0].admissionStatus).toBe('candidate')
+    expect(candidates[0].admissionStatus).toBe('approved')
     expect(candidates[0].content).toContain('Browser playbook for example.com')
     expect(JSON.stringify(candidates[0])).not.toContain('Elm St')
-    expect(corpusRepository.retrieve('example.com first search result', 5)).toEqual([])
+    const known = corpusRepository.retrieve('example.com first search result', 5)
+    expect(known).toHaveLength(1)
+    expect(known[0].metadata).toMatchObject({ admittedBy: 'nexus-convergence', phase: 'extension' })
+    expect(corpusRepository.checkNexusKnowledge('example.com first search result')).toBeNull() // never served verbatim
     const failed = await recordBrowserLearning({ ...ok, ok: false, failedStep: { type: 'click', note: 'element not found' } }, { runtime: 'browser-agent', model: 'chromium' })
     expect(failed).toBe(true)
     expect(summarizeLearning(corpusRepository.listCandidates(10)).byOutcome.failed).toBe(1)
@@ -104,7 +107,7 @@ describe('the round feeds NEXUS', () => {
 })
 
 describe('the browser_run tool teaches NEXUS', () => {
-  it('records an unapproved playbook from a real tool call, with the goal the model gave', async () => {
+  it('records a playbook from a real tool call, with the goal the model gave, and it converges', async () => {
     const { vi, expect: ex } = await import('vitest')
     const { executeTool } = await import('./forgeTools')
     const ids: string[] = []
@@ -122,7 +125,7 @@ describe('the browser_run tool teaches NEXUS', () => {
         { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', requestGuardianApproval: async () => true } as never)
       ex(out).toContain('✓ Browser session')
       await vi.waitFor(() => ex(corpusRepository.listCandidates(10).some(c => c.source === BROWSER_PLAYBOOK_SOURCE && c.content.includes('goal: find the pricing page'))).toBe(true))
-      ex(corpusRepository.listCandidates(10).every(c => c.admissionStatus === 'candidate')).toBe(true)
+      ex(corpusRepository.listCandidates(10).find(c => c.source === BROWSER_PLAYBOOK_SOURCE)?.admissionStatus).toBe('approved')
     } finally { vi.unstubAllGlobals() }
   }, 60_000)
 })

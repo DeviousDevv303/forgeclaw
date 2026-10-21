@@ -26,7 +26,7 @@ beforeEach(() => {
   Object.defineProperty(window, 'speechSynthesis', { configurable: true, writable: true, value: { getVoices: () => [], speak() {}, cancel() {}, pause() {}, resume() {}, onvoiceschanged: null } })
   Object.defineProperty(navigator, 'languages', { value: ['en-US'], configurable: true })
 })
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.doUnmock('./lib/sculptKey'); vi.resetModules() })
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.doUnmock('./lib/sculptKey'); vi.resetModules() })
 
 async function systemPromptFor(prompt: string): Promise<string> {
   await requestFor(prompt)
@@ -52,6 +52,20 @@ describe('the owner\'s private reasoning framework reaches the prompt', () => {
     expect(system).toContain('TESTFRAMEWORK look first.')
     expect(system).toMatch(/private reasoning, one or two lines per phase, never in the visible answer/)
     expect(system).not.toContain('CORE OPERATING LOOP\nFor every task:')
+  }, 30_000)
+  it('a free-mode visitor (no GitHub token) never gets it, even with the text in storage', async () => {
+    localStorage.setItem('fc_owner_scaffold_v1', 'Phase A: TESTFRAMEWORK look first.')
+    localStorage.removeItem('gh_token')
+    vi.stubEnv('VITE_PUBLIC_RELAY_URL', 'https://relay.test') // the production build: a relay is configured
+    vi.resetModules()
+    const { default: App } = await import('./App')
+    render(<App />)
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'fix the failing build' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    const bodies = fetchMock.mock.calls.map(([, init]) => String((init as RequestInit | undefined)?.body ?? ''))
+    expect(bodies.some(body => body.includes('TESTFRAMEWORK'))).toBe(false)
   }, 30_000)
   it('with none set the default loop is unchanged', async () => {
     const system = await systemPromptFor('fix the failing build')

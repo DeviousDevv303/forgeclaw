@@ -4,10 +4,11 @@
 // NEXUS reads the owner's own prompts (never visitors': they are excluded, so nobody else can plant a rule),
 // picks out rule-shaped statements ("always…", "never…", "don't…", "make sure…", "I want…", "prefer…",
 // "if…then…", or an explicit "rule:" / "heuristic:"), and counts how often each recurs. A recurring or explicit
-// rule becomes a candidate heuristic. Nothing reaches a model until the owner approves it on the NEXUS page;
-// approved heuristics are then given to every model as the owner's operating rules.
+// rule becomes a heuristic. Since 2026-10-21 it is active at once ("I don't have to approve or admit anything
+// manually"): the source is only ever the owner's own words, and the owner can remove any rule on the NEXUS page.
+// Active heuristics are given to every model as the owner's operating rules (Phase 2 of the owner's scaffolding).
 
-import type { LearningCandidate } from './corpus'
+import { corpusRepository, type LearningCandidate } from './corpus'
 import { isVisitorCandidate } from './nexusLearning'
 
 export interface HeuristicCandidate {
@@ -121,10 +122,16 @@ export function decide(rule: string, decision: 'approve' | 'reject' | 'forget', 
   return next
 }
 
-/** System-prompt block of the owner's approved heuristics; empty when none are approved. */
-export function heuristicsForPrompt(decisions: HeuristicDecisions = loadDecisions()): string {
-  const rules = decisions.approved.slice(0, MAX_PROMPT_HEURISTICS)
+/** The rules in force: every mined rule and every rule the owner approved earlier, minus the ones the owner removed. */
+export function activeHeuristics(mined: HeuristicCandidate[], decisions: HeuristicDecisions): string[] {
+  const removed = new Set(decisions.rejected)
+  return [...new Set([...decisions.approved, ...mined.map(h => h.rule)])].filter(rule => !removed.has(rule))
+}
+
+/** System-prompt block of the owner's active heuristics; empty when there are none. */
+export function heuristicsForPrompt(decisions: HeuristicDecisions = loadDecisions(), candidates: LearningCandidate[] = corpusRepository.listCandidates(500)): string {
+  const rules = activeHeuristics(mineHeuristics(candidates), decisions).slice(0, MAX_PROMPT_HEURISTICS)
   if (!rules.length) return ''
-  return "OWNER HEURISTICS (the owner's own rules, approved by the owner; follow them unless they conflict with safety rules or the owner's current request):\n" +
+  return "OWNER HEURISTICS (the owner's own rules, learned from what the owner said; follow them unless they conflict with safety rules or the owner's current request):\n" +
     rules.map(r => `- ${r}`).join('\n')
 }

@@ -4,8 +4,9 @@
 // Small, deterministic, localStorage-backed corpus ledger. No network is needed
 // to initialize or use this module; synchronization is an explicit optional path.
 
-import { safeGetItem, safeSetItem, strictGetItem, strictSetItem, type StorageResult } from './storage'
+import { safeGetItem, safeRemoveItem, safeSetItem, strictGetItem, strictSetItem, type StorageResult } from './storage'
 import { DEEPSEEK_PRIMARY_CHECKPOINT } from './deepseekCheckpoints'
+import { CONVERGED_BY, convergencePhase } from './nexusConvergence'
 import { type AdmissionTrustConfig, type CandidateAuthorization, type AuthorizationValidation, verifyCandidateAuthorization } from './corpusAdmissionAuth'
 
 export type CorpusAdmissionStatus = 'raw' | 'candidate' | 'approved' | 'rejected'
@@ -116,6 +117,8 @@ const VERSION_KEY = 'forgeclaw_nexus_version_v1'
 const RECORD_PREFIX = 'forgeclaw_nexus_record_v1:'
 const CANDIDATE_PREFIX = 'forgeclaw_nexus_candidate_v1:'
 const CANDIDATE_INDEX_KEY = 'forgeclaw_nexus_candidate_index_v1'
+/** Integrity hashes of auto-admitted entries the owner removed; they never converge again. */
+const DECLINED_KEY = 'forgeclaw_nexus_declined_v1'
 const MAX_INDEX_ENTRIES = 10_000
 
 function readIndex(key: string): string[] {
@@ -293,6 +296,18 @@ export class CorpusRepository {
     return out.sort((a, b) => b.timestamp.localeCompare(a.timestamp))
   }
 
+  /** Knowledge the convergence rule admitted, by phase (nexusConvergence.ts). */
+  getConvergedCounts(): Record<string, number> {
+    const counts: Record<string, number> = {}
+    for (const id of readIndex(INDEX_KEY)) {
+      const record = safeRecord(safeGetItem(`${RECORD_PREFIX}${id}`))
+      if (record?.admissionStatus !== 'approved' || record.metadata.admittedBy !== CONVERGED_BY) continue
+      const phase = record.metadata.phase || 'other'
+      counts[phase] = (counts[phase] ?? 0) + 1
+    }
+    return counts
+  }
+
   getApprovedCount(): number {
     let count = 0
     for (const id of readIndex(INDEX_KEY)) {
@@ -321,11 +336,16 @@ export class CorpusRepository {
         metadata: { input: input.input, runtime: input.runtime, model: input.model, ...(input.metadata || {}) },
       }
       this.saveRecord(interaction)
+      // The loop closes by itself for evidence-backed records (nexusConvergence.ts); everything else stays a candidate.
+      // An entry the owner removed never converges again.
+      const phase = readIndex(DECLINED_KEY).includes(integrity) ? null : convergencePhase(input)
+      const admitted: Record<string, string> = phase ? { admittedBy: CONVERGED_BY, phase, admittedAt: timestamp } : {}
       const candidate: LearningCandidate = {
         ...interaction,
+        metadata: { ...interaction.metadata, ...admitted },
         id: `candidate-${integrity}`,
         recordType: 'learning_candidate',
-        admissionStatus: 'candidate',
+        admissionStatus: phase ? 'approved' : 'candidate',
         sourceInteractionId: interactionId,
         runtime: input.runtime,
         model: input.model,
@@ -334,6 +354,20 @@ export class CorpusRepository {
         generatedResult: input.result,
       }
       this.saveRecord(candidate, true)
+      if (phase) {
+        this.saveRecord({
+          id: `knowledge-${integrity}`,
+          corpusId: interaction.corpusId,
+          source: interaction.source,
+          content: input.result,
+          timestamp,
+          version: this.nextVersion(),
+          recordType: 'knowledge',
+          integrity,
+          admissionStatus: 'approved',
+          metadata: { input: input.input, runtime: input.runtime, model: input.model, sourceInteractionId: interactionId, ...admitted },
+        })
+      }
       return { interaction, candidate }
     })
   }
@@ -401,7 +435,8 @@ export class CorpusRepository {
   }
 
   checkNexusKnowledge(task: string): NexusKnowledge | null {
-    const match = this.retrieve(task, 1)[0]
+    // A direct answer comes only from signed knowledge: a converged record is evidence for guidance, not a reply to serve.
+    const match = this.retrieve(task, 5).find(record => record.metadata.admittedBy !== CONVERGED_BY)
     if (!match) return null
     const queryTokens = tokenise(task)
     const haystack = tokenise(`${match.content} ${Object.values(match.metadata).join(' ')}`)
@@ -503,9 +538,19 @@ export class CorpusRepository {
     if (!raw) return null
     let candidate: LearningCandidate
     try { candidate = JSON.parse(raw) as LearningCandidate } catch { return null }
-    if (candidate.admissionStatus !== 'candidate') return null
+    // An entry NEXUS admitted by itself is removed here: its knowledge record is deleted and it is never admitted again.
+    const converged = candidate.admissionStatus === 'approved' && candidate.metadata?.admittedBy === CONVERGED_BY
+    if (candidate.admissionStatus !== 'candidate' && !converged) return null
     const expectedIntegrity = await integrityHash([candidate.input, candidate.context, candidate.generatedResult, candidate.runtime, candidate.model].join('\n'))
     if (expectedIntegrity !== candidate.integrity) return null
+    if (converged) {
+      const knowledgeId = `knowledge-${candidate.integrity}`
+      safeRemoveItem(`${RECORD_PREFIX}${knowledgeId}`)
+      writeIndex(INDEX_KEY, readIndex(INDEX_KEY).filter(id => id !== knowledgeId))
+      const declined = readIndex(DECLINED_KEY)
+      if (!declined.includes(candidate.integrity)) writeIndex(DECLINED_KEY, [...declined, candidate.integrity])
+      safeSetItem(`${CANDIDATE_PREFIX}${candidate.id}`, JSON.stringify({ ...candidate, admissionStatus: 'rejected' }))
+    }
     const rejected: CorpusRecord = {
       id: `rejected-${candidate.integrity}`,
       corpusId: candidate.corpusId,

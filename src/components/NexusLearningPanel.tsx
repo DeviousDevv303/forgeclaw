@@ -8,7 +8,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { corpusRepository, type LearningCandidate } from '../lib/corpus'
 import { LLM_MILESTONES, LLM_ROADMAP, llmReadiness, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, summarizeLearning, type Outcome } from '../lib/nexusLearning'
 import { useI18n } from '../lib/i18n'
-import { decide, loadDecisions, mineHeuristics } from '../lib/nexusHeuristics'
+import { activeHeuristics, decide, loadDecisions, mineHeuristics } from '../lib/nexusHeuristics'
+import { CONVERGED_BY, NEXUS_PHASES } from '../lib/nexusConvergence'
 import { describeTaste, loadTaste, MIN_TASTE_EVENTS, resetTaste } from '../lib/nexusTaste'
 
 const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
@@ -39,7 +40,16 @@ export function NexusLearningPanel() {
   const road = useMemo(() => llmReadiness(approved, candidates), [approved, candidates])
   const [decisions, setDecisions] = useState(() => loadDecisions())
   const mined = useMemo(() => mineHeuristics(candidates), [candidates])
-  const pending = mined.filter(h => !decisions.approved.includes(h.rule) && !decisions.rejected.includes(h.rule))
+  const active = useMemo(() => activeHeuristics(mined, decisions), [mined, decisions])
+  const minedByRule = useMemo(() => new Map(mined.map(h => [h.rule, h])), [mined])
+  const converged = useMemo(() => corpusRepository.getConvergedCounts(), [candidates]) // eslint-disable-line react-hooks/exhaustive-deps
+  const phaseCounts: Record<string, number> = {
+    assumptions: summary.lessons.length,
+    heuristics: active.length,
+    first_principles: converged.first_principles ?? 0,
+    extension: converged.extension ?? 0,
+    convergence: Object.values(converged).reduce((a, b) => a + b, 0) + active.length,
+  }
   const [taste, setTaste] = useState(() => loadTaste())
   const tasteWords = useMemo(() => describeTaste(taste), [taste])
 
@@ -69,12 +79,25 @@ export function NexusLearningPanel() {
           <div style={{ width: `${Math.round(road.progress * 100)}%`, height: '100%', background: '#f97316' }} />
         </div>
         <div style={{ color: '#888', fontSize: '11px', lineHeight: 1.6, marginBottom: '8px' }}>
-          {road.awaitingReview.toLocaleString()} candidate(s) awaiting your review · data covers {road.toolCoverage} tool(s) · milestones {LLM_MILESTONES.map(m => m.approved.toLocaleString()).join(' / ')}
+          {road.awaitingReview.toLocaleString()} record(s) with no evidence yet · data covers {road.toolCoverage} tool(s) · milestones {LLM_MILESTONES.map(m => m.approved.toLocaleString()).join(' / ')}
         </div>
         <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', lineHeight: 1.7 }}>
           {LLM_ROADMAP.map((step, i) => <li key={step} style={{ color: i < road.step ? '#22c55e' : i === road.step ? '#f97316' : '#555' }}>{step}{i === road.step ? ' ← now' : ''}</li>)}
         </ol>
-        <div style={{ color: '#555', fontSize: '10px', marginTop: '8px' }}>NEXUS is training data, not a model yet. Only records you approve count; the milestones are estimates for a LoRA fine-tune of an open base model.</div>
+        <div style={{ color: '#555', fontSize: '10px', marginTop: '8px' }}>NEXUS is training data, not a model yet. Evidence-backed records count by themselves; the milestones are estimates for a LoRA fine-tune of an open base model.</div>
+      </section>
+
+      <section style={{ ...card, borderColor: '#2a1a05' }} aria-label="Five-phase learning loop" data-testid="nexus-phases">
+        <div style={heading}>THE LOOP · what NEXUS has learned, by phase · no approval needed</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '8px', marginTop: '6px' }}>
+          {NEXUS_PHASES.map(p => (
+            <div key={p.phase} style={{ border: '1px solid #1e1e1e', borderRadius: '6px', padding: '6px 8px', minWidth: 0 }}>
+              <div style={{ color: '#f97316', fontSize: '10px', fontFamily: 'monospace', overflowWrap: 'anywhere' }}>{p.icon} {p.label.toUpperCase()}</div>
+              <div style={{ color: '#eee', fontSize: '18px', fontFamily: mono }}>{phaseCounts[p.phase]}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ color: '#666', fontSize: '10px', marginTop: '6px', lineHeight: 1.6 }}>Assumptions: recurring failures to avoid · Heuristics: your own rules · First Principles: your tasks answered with tool evidence · Extension: browsing steps that worked · Convergence: everything that became knowledge by itself. Visitors' input never converges.</div>
       </section>
 
       <section aria-label="Evidence totals" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px' }}>
@@ -110,31 +133,25 @@ export function NexusLearningPanel() {
 
       <section style={card} aria-label="Your heuristics" data-testid="nexus-heuristics">
         <div style={heading}>YOUR HEURISTICS · mined from what you type</div>
-        <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>Rules you state ("always…", "never…", "make sure…", "I want…", "if… then…", or "rule: …") that you repeat, or mark explicitly. Only approved ones are given to every model. Visitors' input is never mined.</div>
-        {decisions.approved.length > 0 && (
-          // Labelled, so an approved rule (with its "remove" link) is not mistaken for one asking to be approved again.
-          <div aria-label="Approved heuristics" style={{ marginBottom: '8px' }}>
-            <div style={{ color: '#22c55e', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>✓ APPROVED · given to every model ({decisions.approved.length}) · saved in this browser</div>
-            <ul style={{ margin: '4px 0 0', paddingLeft: '18px', color: '#22c55e', fontSize: '12px', lineHeight: 1.7 }}>
-              {decisions.approved.map(rule => (
-                <li key={rule} style={{ overflowWrap: 'anywhere' }}>{rule} <button onClick={() => setDecisions(decide(rule, 'forget'))} title="Stop giving this rule to the models" style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>remove</button></li>
-              ))}
-            </ul>
-          </div>
-        )}
-        {pending.length > 0 && <div style={{ color: '#aaa', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '0.5px', margin: '4px 0' }}>WAITING FOR YOUR DECISION ({pending.length})</div>}
-        {pending.length === 0
-          ? <div style={{ color: '#555', fontSize: '12px' }}>{decisions.approved.length ? 'No new heuristics to review.' : 'No heuristics yet. State a rule twice, or start a line with "rule:".'}</div>
-          : pending.slice(0, 12).map(h => (
-              <div key={h.rule} style={{ borderTop: '1px solid #161616', padding: '6px 0', display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ color: '#ddd', fontSize: '12px' }}>{h.rule}</div>
-                  <div style={{ color: '#666', fontSize: '10px', fontFamily: 'monospace' }}>{h.explicit ? 'explicit · ' : ''}said {h.count}× · last {h.lastSeen.slice(0, 10)}</div>
-                </div>
-                <button onClick={() => setDecisions(decide(h.rule, 'approve'))} style={{ background: 'none', border: '1px solid #1a3a1a', color: '#5a5', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>APPROVE</button>
-                <button onClick={() => setDecisions(decide(h.rule, 'reject'))} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>REJECT</button>
-              </div>
-            ))}
+        <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>Rules you state ("always…", "never…", "make sure…", "I want…", "if… then…", or "rule: …") that you repeat, or mark explicitly. They are given to every model as soon as NEXUS finds them; remove any you don't mean. Visitors' input is never mined.</div>
+        {active.length === 0
+          ? <div style={{ color: '#555', fontSize: '12px' }}>No heuristics yet. State a rule twice, or start a line with "rule:".</div>
+          : (
+            <div aria-label="Active heuristics">
+              <div style={{ color: '#22c55e', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>✓ ACTIVE · given to every model ({active.length}) · saved in this browser</div>
+              <ul style={{ margin: '4px 0 0', paddingLeft: '18px', color: '#22c55e', fontSize: '12px', lineHeight: 1.7 }}>
+                {active.slice(0, 24).map(rule => {
+                  const h = minedByRule.get(rule)
+                  return (
+                    <li key={rule} style={{ overflowWrap: 'anywhere' }}>
+                      {rule}{h ? <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}> · {h.explicit ? 'explicit · ' : ''}said {h.count}×</span> : null}{' '}
+                      <button onClick={() => setDecisions(decide(rule, 'reject'))} title="Stop giving this rule to the models" style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>remove</button>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
       </section>
 
       <section style={card} aria-label="Lessons">
@@ -163,7 +180,7 @@ export function NexusLearningPanel() {
 
       <section style={card} aria-label="Candidates">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-          <div style={heading}>{t('nexus.candidatesTitle')} {filter !== 'all' ? `· ${filter}` : ''} {t('nexus.unapproved')}</div>
+          <div style={heading}>{t('nexus.candidatesTitle')} {filter !== 'all' ? `· ${filter}` : ''}</div>
           <button onClick={refresh} style={{ background: 'none', border: '1px solid #2a2a2a', color: '#777', borderRadius: '4px', padding: '3px 10px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>{t('nexus.refresh')}</button>
         </div>
         <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>{t('nexus.admissionNote')}</div>
@@ -172,15 +189,17 @@ export function NexusLearningPanel() {
           ? <div style={{ color: '#555', fontSize: '12px' }}>{filter !== 'all' ? t('nexus.nothingRecordedWithOutcome', { outcome: filter }) : t('nexus.nothingRecorded')}</div>
           : shown.map(c => {
               const outcome = outcomeOf(c)
+              const auto = c.metadata?.admittedBy === CONVERGED_BY
+              const phaseLabel = NEXUS_PHASES.find(p => p.phase === c.metadata?.phase)?.label
               return (
                 <div key={c.id} style={{ borderTop: '1px solid #161616', padding: '8px 0', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                   <span style={{ color: OUTCOME_COLOR[outcome], fontSize: '10px', fontFamily: 'monospace', minWidth: '70px' }}>● {outcome}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ color: '#888', fontSize: '10px', fontFamily: 'monospace' }}>{c.timestamp.slice(0, 19).replace('T', ' ')} · {c.metadata?.channel || c.source}{c.metadata?.tool ? ` · ${c.metadata.tool}` : ''} · {c.model}{c.metadata?.flags ? <span style={{ color: '#ef4444' }}> · ⚠ {c.metadata.flags}</span> : null}</div>
+                    <div style={{ color: '#888', fontSize: '10px', fontFamily: 'monospace' }}>{c.timestamp.slice(0, 19).replace('T', ' ')} · {c.metadata?.channel || c.source}{c.metadata?.tool ? ` · ${c.metadata.tool}` : ''} · {c.model}{auto && c.admissionStatus === 'approved' ? <span style={{ color: '#22c55e' }}> · AUTO-ADDED{phaseLabel ? ` · ${phaseLabel}` : ''}{c.metadata?.admittedAt ? ` · ${String(c.metadata.admittedAt).slice(0, 16).replace('T', ' ')}` : ''}</span> : null}{c.admissionStatus === 'rejected' ? <span style={{ color: '#777' }}> · removed</span> : null}{c.metadata?.flags ? <span style={{ color: '#ef4444' }}> · ⚠ {c.metadata.flags}</span> : null}</div>
                     <div style={{ color: '#ccc', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.input.slice(0, 160)}</div>
                     <div style={{ color: '#666', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(c.generatedResult || '').slice(0, 200)}</div>
                   </div>
-                  <button onClick={() => void reject(c)} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>{t('nexus.reject')}</button>
+                  {c.admissionStatus !== 'rejected' && <button onClick={() => void reject(c)} title={auto ? 'Remove this from what NEXUS knows; it will not be added again' : undefined} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>{auto ? 'REMOVE' : t('nexus.reject')}</button>}
                 </div>
               )
             })}

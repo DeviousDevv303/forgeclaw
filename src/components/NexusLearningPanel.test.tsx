@@ -34,6 +34,7 @@ vi.mock('../lib/corpus', () => ({
   corpusRepository: {
     listCandidates: () => seeded,
     getApprovedCount: () => 0,
+    getConvergedCounts: () => ({}),
     rejectCandidate: () => Promise.resolve(false),
   },
 }))
@@ -80,29 +81,40 @@ describe('NexusLearningPanel phone layout', () => {
   })
 })
 
-describe('approving a heuristic sticks', () => {
-  // 2026-10-21 (owner): "I keep approving this and it keeps popping up to approve again". The approval was saved; the
-  // approved list had no label, so the approved rule with its "remove" link looked like a new request.
+describe('what NEXUS added by itself is visible and removable', () => {
+  const auto = { id: 'candidate-auto', timestamp: '2026-10-21T20:00:00.000Z', source: 'learning:chat', model: 'k2', input: 'how many open PRs', generatedResult: 'Two.', admissionStatus: 'approved', metadata: { outcome: 'verified', channel: 'chat', actor: 'user', admittedBy: 'nexus-convergence', phase: 'first_principles', admittedAt: '2026-10-21T20:00:01.000Z' } } as unknown as LearningCandidate
+  it('is badged AUTO-ADDED with its phase and time, and offers REMOVE', () => {
+    seeded.push(auto)
+    try {
+      __setLangForTests('en')
+      render(<NexusLearningPanel />)
+      expect(screen.getByText(/AUTO-ADDED · First Principles · 2026-10-21 20:00/)).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'REMOVE' })).toBeTruthy()
+    } finally { seeded.splice(seeded.indexOf(auto), 1) }
+  })
+})
+
+describe('your heuristics are active without approval', () => {
+  // 2026-10-21 (owner): "I don't have to approve or admit anything manually". A rule the owner states twice is given to
+  // every model at once; "remove" takes it out, and that sticks across a reload.
   const rule = 'do not claim success unless the file was actually created and committed'
   const said = (id: string): LearningCandidate => ({ id, timestamp: '2026-10-05T00:00:00.000Z', source: 'learning:chat', model: 'm', input: rule, generatedResult: 'ok', approved: false, metadata: { outcome: 'completed', channel: 'chat', actor: 'user' } } as unknown as LearningCandidate)
-  it('shows it under a labelled Approved list after approving, and still after the page is reloaded', async () => {
+  it('lists a mined rule as active with no APPROVE button, and remove sticks after a reload', async () => {
     const { fireEvent } = await import('@testing-library/react')
     localStorage.clear()
     seeded.push(said('h1'), said('h2'))
     try {
       __setLangForTests('en')
       render(<NexusLearningPanel />)
-      expect(screen.getByText(/WAITING FOR YOUR DECISION \(1\)/)).toBeTruthy()
-      fireEvent.click(screen.getByRole('button', { name: 'APPROVE' }))
-      const approvedList = screen.getByLabelText('Approved heuristics')
-      expect(approvedList.textContent).toContain('APPROVED · given to every model (1)')
-      expect(approvedList.textContent).toContain(rule)
+      const list = screen.getByLabelText('Active heuristics')
+      expect(list.textContent).toContain('ACTIVE · given to every model (1)')
+      expect(list.textContent).toContain(rule)
       expect(screen.queryByRole('button', { name: 'APPROVE' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'remove' }))
+      expect(screen.queryByLabelText('Active heuristics')).toBeNull()
       cleanup()
       render(<NexusLearningPanel />)
-      expect(screen.getByLabelText('Approved heuristics').textContent).toContain(rule)
-      expect(screen.queryByRole('button', { name: 'APPROVE' })).toBeNull()
-      expect(screen.queryByText(/WAITING FOR YOUR DECISION/)).toBeNull()
+      expect(screen.queryByLabelText('Active heuristics')).toBeNull()
     } finally {
       seeded.splice(seeded.length - 2, 2)
       localStorage.clear()
