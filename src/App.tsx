@@ -126,6 +126,7 @@ import { sendViaRouter, isDeepSeekProvider, testProviderKey, corpusProvider, moo
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { isToolFailureOutput } from './lib/toolOutcome'
 import { createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
+import { answerOutcome } from './lib/nexusConvergence'
 import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
 import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
@@ -1898,8 +1899,9 @@ function App() {
           : ''
       // The outcome NEXUS records: a blocked run is not a completed one, and an answer that passed the evidence gate with
       // a successful tool result behind it is 'verified', which NEXUS lets converge into knowledge (nexusConvergence.ts).
-      const answerOutcome = completionPhase === 'BLOCKED' ? 'blocked' : allToolResults.some(result => !result.isError) ? 'verified' : 'completed'
-      await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`, { outcome: answerOutcome })
+      // A model's own reasoning (deepseek_reason and the like) is not evidence; only real tool results make an answer 'verified'.
+      const recordedOutcome = answerOutcome(completionPhase === 'BLOCKED', allToolResults)
+      await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`, { outcome: recordedOutcome })
       // Sync plan to ForgeOps + emit terminal event
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (completionBlocked) emitForge({ type: 'MISSION_BLOCKED', reason: 'Repository evidence required, but no GitHub tool returned successfully' })
