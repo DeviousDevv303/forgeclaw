@@ -2,12 +2,15 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   FUNDS_STORAGE_KEY, FundsError, applyFundsCommand, emptyFunds, estimateFee, formatFundsStatus, formatProposal, honestyLine, loadFunds, outcomeFromKalshiResult, ownerRulesPrompt,
-  parseFundsCommand, pnlFor, proposePosition, runFundsCommand, settlePosition, sizePosition, summarize, trackRecord,
+  PAPER_DAYS_REQUIRED, paperGate, parseFundsCommand, pnlFor, proposePosition, runFundsCommand, saveFunds, settlePosition, sizePosition, summarize, trackRecord,
   type FundsState, type ProposalInput,
 } from './fundsLedger'
+import { withPaperWeek } from './fundsLedger.fixtures'
 
 const NOW = Date.parse('2026-10-22T15:00:00Z')
-const funded = (amount = 1000): FundsState => applyFundsCommand(emptyFunds(), { kind: 'deposit', amount }, NOW).state
+const capped = (cap = 1_000_000): FundsState => applyFundsCommand(emptyFunds(), { kind: 'limits', changes: { capAmount: cap } }, NOW).state
+/** Cap set, money in, and a finished paper week, so real-money paths are open. */
+const funded = (amount = 1000): FundsState => withPaperWeek(applyFundsCommand(capped(), { kind: 'deposit', amount }, NOW).state, NOW)
 const proposal = (over: Partial<ProposalInput> = {}): ProposalInput => ({
   venue: 'kalshi', market: 'KX-RAIN-OCT', side: 'yes', price: 0.4, probability: 0.55,
   rationale: 'NWS forecast gives 60% rain for the window and three models agree; market lags the update.',
@@ -60,7 +63,7 @@ describe('proposals', () => {
     expect(() => proposePosition(funded(), proposal({ rationale: 'gut feel' }), NOW)).toThrow(/rationale/)
   })
   it('requires funds and sane numbers', () => {
-    expect(() => proposePosition(emptyFunds(), proposal(), NOW)).toThrow(/No funds/)
+    expect(() => proposePosition(withPaperWeek(emptyFunds(), NOW), proposal(), NOW)).toThrow(/No funds/)
     expect(() => proposePosition(funded(), proposal({ price: 1 }), NOW)).toThrow(/price/)
     expect(() => proposePosition(funded(), proposal({ probability: 0 }), NOW)).toThrow(/probability/)
   })
@@ -81,13 +84,13 @@ describe('owner flow and P/L', () => {
     st = applyFundsCommand(st, { kind: 'approve', id: 'p2' }, NOW).state
     expect(summarize(st, NOW).available).toBeLessThan(1000)
     st = applyFundsCommand(st, { kind: 'placed', id: 'p2', fillPrice: 0.42 }, NOW).state
-    const p = st.positions[0]
+    const p = st.positions.find(x => x.id === 'p2')!
     expect(p.fillPrice).toBe(0.42)
     const won = settlePosition(st, 'p2', 'won', 'owner', NOW)
-    expect(won.positions[0].pnl).toBeCloseTo(p.contracts * 0.58 - p.feeEstimate, 2)
-    expect(summarize(won, NOW).bankroll).toBeCloseTo(1000 + won.positions[0].pnl!, 2)
+    expect(won.positions.find(x => x.id === 'p2')!.pnl).toBeCloseTo(p.contracts * 0.58 - p.feeEstimate, 2)
+    expect(summarize(won, NOW).bankroll).toBeCloseTo(1000 + won.positions.find(x => x.id === 'p2')!.pnl!, 2)
     const lost = settlePosition(st, 'p2', 'lost', 'owner', NOW)
-    expect(lost.positions[0].pnl).toBeCloseTo(-(p.contracts * 0.42) - p.feeEstimate, 2)
+    expect(lost.positions.find(x => x.id === 'p2')!.pnl).toBeCloseTo(-(p.contracts * 0.42) - p.feeEstimate, 2)
     expect(pnlFor(p, 'void')).toBe(0)
   })
   it('stops new real proposals for the day once the daily loss limit is hit', () => {
@@ -116,7 +119,7 @@ describe('owner flow and P/L', () => {
 
 describe('track record', () => {
   it('scores the model against the prices paid (Brier)', () => {
-    let st = funded()
+    let st = applyFundsCommand(capped(), { kind: 'deposit', amount: 1000 }, NOW).state
     st = proposePosition(st, proposal({ mode: 'paper' }), NOW).state
     st = settlePosition(st, 'p2', 'won', 'owner', NOW)
     const t = trackRecord(st)
@@ -144,6 +147,8 @@ describe('commands', () => {
 describe('storage', () => {
   beforeEach(() => localStorage.clear())
   it('persists owner commands and reports refusals without changing anything', () => {
+    expect(runFundsCommand('/funds add 500 kalshi', NOW)).toMatch(/^Not done: Set your cap first/)
+    expect(runFundsCommand('/funds limits cap=1000', NOW)).toMatch(/cap \$1000\.00/)
     expect(runFundsCommand('/funds add 500 kalshi', NOW)).toMatch(/Recorded deposit of \$500\.00.*Bankroll \$500\.00/)
     expect(loadFunds().movements).toHaveLength(1)
     expect(runFundsCommand('/funds withdraw 900', NOW)).toMatch(/^Not done: Only \$500\.00 is available/)
@@ -219,5 +224,68 @@ describe('cage rules', () => {
     expect(() => applyFundsCommand(st, { kind: 'unrule', index: 5 }, NOW)).toThrow(/no rule 5/)
     expect(ownerRulesPrompt(emptyFunds())).toBe('')
     expect(parseFundsCommand('/funds rule x')).toMatchObject({ kind: 'usage' })
+  })
+})
+
+// Owner's paper-first gate (2026-10-22): no real proposals or approvals until 7 days have settled paper results.
+describe('paper-first gate', () => {
+  const DAY = 86_400_000
+  const settlePaper = (st: FundsState, market: string, at: number, outcome: 'won' | 'lost' | 'void' = 'won') => {
+    const r = proposePosition(st, proposal({ market }), at)
+    return settlePosition(r.state, r.position.id, outcome, 'owner', at)
+  }
+
+  it('records every proposal as paper, automatically, from day one, with no money in', () => {
+    const r = proposePosition(capped(), proposal(), NOW)
+    expect(r.gatedToPaper).toBe(true)
+    expect(r.position).toMatchObject({ mode: 'paper', status: 'placed' })
+    expect(formatProposal(r.position, r.sizing, r.gatedToPaper)).toContain('paper-first gate is still locked')
+    expect(formatFundsStatus(r.state, NOW)).toContain(`Real trading is locked by the paper-first gate: 0/${PAPER_DAYS_REQUIRED} days`)
+  })
+
+  it('sizes paper exactly like real money, against the phantom bankroll', () => {
+    const st = applyFundsCommand(capped(), { kind: 'limits', changes: { paperBankroll: 500 } }, NOW).state
+    const r = proposePosition(st, proposal(), NOW)
+    expect(r.position.stake + r.position.feeEstimate).toBeLessThanOrEqual(25) // 5% of 500
+    expect(r.sizing.binding).toMatch(/paper bankroll/)
+    expect(summarize(r.state, NOW).paperAvailable).toBeCloseTo(500 - r.position.stake - r.position.feeEstimate, 2)
+    expect(summarize(r.state, NOW).available).toBe(0)
+  })
+
+  it('opens only after paper results on 7 different days, not 7 days after first use', () => {
+    let st = capped()
+    // Seven paper results, all settled on the same day a week after the first proposal: still 1 day of data.
+    for (let i = 0; i < 7; i++) st = settlePaper(st, `SAME-${i}`, NOW + 7 * DAY)
+    expect(paperGate(st)).toMatchObject({ days: 1, open: false })
+    // A void result is not a result.
+    st = settlePaper(st, 'VOID', NOW + 8 * DAY, 'void')
+    expect(paperGate(st).days).toBe(1)
+    for (let d = 9; d <= 13; d++) st = settlePaper(st, `D${d}`, NOW + d * DAY, d % 2 ? 'won' : 'lost')
+    expect(paperGate(st)).toMatchObject({ days: 6, open: false })
+    expect(proposePosition(st, proposal({ market: 'still-paper' }), NOW + 13 * DAY).position.mode).toBe('paper')
+    st = settlePaper(st, 'D14', NOW + 14 * DAY)
+    expect(paperGate(st)).toMatchObject({ days: 7, open: true })
+    st = applyFundsCommand(st, { kind: 'deposit', amount: 1000 }, NOW + 14 * DAY).state
+    const real = proposePosition(st, proposal({ market: 'first-real' }), NOW + 14 * DAY)
+    expect(real.gatedToPaper).toBe(false)
+    expect(real.position).toMatchObject({ mode: 'real', status: 'proposed' })
+    expect(formatFundsStatus(real.state, NOW + 14 * DAY)).toContain('Paper-first gate: OPEN (7 days')
+  })
+
+  it('refuses to approve a real position while the gate is locked (e.g. data from before the gate)', () => {
+    const opened = proposePosition(funded(), proposal(), NOW)
+    const locked: FundsState = { ...opened.state, positions: opened.state.positions.filter(p => !p.id.startsWith('w')) }
+    expect(() => applyFundsCommand(locked, { kind: 'approve', id: opened.position.id }, NOW)).toThrow(/paper-first gate: 0\/7/)
+  })
+
+  it('the cap has to exist before the money does', () => {
+    expect(() => applyFundsCommand(emptyFunds(), { kind: 'deposit', amount: 100 }, NOW)).toThrow(/Set your cap first/)
+  })
+
+  it('keeps the paper week across reloads', () => {
+    localStorage.clear()
+    const st = settlePaper(capped(), 'P', NOW)
+    expect(saveFunds(st)).toBe(true)
+    expect(paperGate(loadFunds()).days).toBe(1)
   })
 })

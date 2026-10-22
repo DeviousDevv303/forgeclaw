@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { executeTool, FORGE_TOOLS } from './forgeTools'
-import { loadFunds, runFundsCommand } from './fundsLedger'
+import { emptyFunds, loadFunds, runFundsCommand, saveFunds } from './fundsLedger'
+import { withPaperWeek } from './fundsLedger.fixtures'
 import { requiresCoSign } from './guardianGate'
 import { NOT_EVIDENCE_TOOLS } from './nexusConvergence'
 
@@ -14,6 +15,12 @@ const propose = (over: Record<string, unknown> = {}) => call('funds_propose', {
 })
 
 beforeEach(() => localStorage.clear())
+/** Cap, money in, and a finished paper week, so real proposals are allowed. */
+function fundAndOpenGate(amount = 1000) {
+  runFundsCommand('/funds limits cap=100000')
+  runFundsCommand(`/funds add ${amount}`)
+  saveFunds(withPaperWeek(loadFunds(), Date.now()))
+}
 afterEach(() => vi.unstubAllGlobals())
 
 describe('funds tools', () => {
@@ -28,23 +35,25 @@ describe('funds tools', () => {
   })
 
   it('refuses to propose without funds, then proposes a sized position that waits for the owner', async () => {
+    saveFunds(withPaperWeek(emptyFunds(), Date.now()))
     expect(await propose()).toMatch(/TOOL ERROR.*No funds/)
-    runFundsCommand('/funds add 1000 kalshi')
+    localStorage.clear()
+    fundAndOpenGate()
     const out = await propose()
     expect(out).toMatch(/Proposed p2 \[real, proposed\] kalshi "KX-RAIN-OCT" YES x119 @ \$0\.40/)
     expect(out).toMatch(/\/funds approve p2/)
-    expect(loadFunds().positions[0].status).toBe('proposed')
+    expect(loadFunds().positions.find(p => p.id === 'p2')!.status).toBe('proposed')
     expect(await call('funds_status', {})).toContain('p2 [real, proposed]')
   })
 
   it('refuses a negative-edge bet and records nothing', async () => {
-    runFundsCommand('/funds add 1000')
+    fundAndOpenGate()
     expect(await propose({ probability: 0.35 })).toMatch(/TOOL ERROR.*No edge/)
-    expect(loadFunds().positions).toHaveLength(0)
+    expect(loadFunds().positions.filter(p => !p.id.startsWith('w'))).toHaveLength(0)
   })
 
   it('settles a placed Kalshi position only from Kalshi\'s published result', async () => {
-    runFundsCommand('/funds add 1000')
+    fundAndOpenGate()
     await propose()
     expect(await call('funds_settle', { id: 'p2' })).toMatch(/TOOL ERROR.*proposed/)
     runFundsCommand('/funds approve p2')
@@ -55,15 +64,14 @@ describe('funds tools', () => {
       return Response.json({ markets: [{ ticker: 'KX-RAIN-OCT', status: result ? 'finalized' : 'active', result }] })
     }))
     expect(await call('funds_settle', { id: 'p2' })).toMatch(/not settled.*no result yet/)
-    expect(loadFunds().positions[0].status).toBe('placed')
+    expect(loadFunds().positions.find(p => p.id === 'p2')!.status).toBe('placed')
     result = 'yes'
     expect(await call('funds_settle', { id: 'p2' })).toMatch(/settled from Kalshi \(result yes\): won, P\/L \$/)
-    const p = loadFunds().positions[0]
-    expect(p).toMatchObject({ status: 'settled', outcome: 'won', settledBy: 'kalshi' })
+    expect(loadFunds().positions.find(p => p.id === 'p2')).toMatchObject({ status: 'settled', outcome: 'won', settledBy: 'kalshi' })
   })
 
   it('a Kalshi settlement can trip the loss stop, and no tool can lift it', async () => {
-    runFundsCommand('/funds add 1000')
+    fundAndOpenGate()
     runFundsCommand('/funds limits daily=3')
     await propose()
     runFundsCommand('/funds approve p2')
@@ -77,10 +85,24 @@ describe('funds tools', () => {
   })
 
   it('leaves non-Kalshi settlement to the owner', async () => {
-    runFundsCommand('/funds add 1000')
+    fundAndOpenGate()
     await propose({ venue: 'sportsbook', market: 'Chiefs ML Sunday' })
     runFundsCommand('/funds approve p2')
     runFundsCommand('/funds placed p2')
     expect(await call('funds_settle', { id: 'p2' })).toMatch(/owner settles it with \/funds settle p2/)
+  })
+
+  it('before the paper week, a real proposal is recorded as paper automatically, and settle "all" builds the paper record', async () => {
+    runFundsCommand('/funds limits cap=1000')
+    expect(await propose({ market: 'KX-A' })).toMatch(/Proposed p1 \[paper, open\].*paper-first gate is still locked/s)
+    expect(await propose({ market: 'KX-B' })).toMatch(/Proposed p2 \[paper, open\]/)
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const ticker = new URL(String(url)).searchParams.get('tickers')
+      return Response.json({ markets: [{ ticker, status: ticker === 'KX-A' ? 'finalized' : 'active', result: ticker === 'KX-A' ? 'yes' : '' }] })
+    }))
+    const out = await call('funds_settle', { id: 'all' })
+    expect(out).toMatch(/p1 \[paper\] settled from Kalshi \(result yes\): won/)
+    expect(out).toMatch(/p2 not settled: Kalshi shows KX-B as active with no result yet/)
+    expect(await call('funds_status', {})).toMatch(/1\/7 days with settled paper results/)
   })
 })

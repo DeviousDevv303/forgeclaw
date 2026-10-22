@@ -67,8 +67,10 @@ export interface FundsLimits {
   dailyLossPct: number
   /** Fraction of the Kelly stake used (1 = full Kelly). */
   kellyFraction: number
-  /** Most money that may ever be put in (deposits minus withdrawals), in dollars; 0 = not set. */
+  /** Most money that may ever be put in (deposits minus withdrawals), in dollars; 0 = not set. Must be set before any deposit. */
   capAmount: number
+  /** Phantom bankroll paper positions are sized against (dollars). */
+  paperBankroll: number
 }
 
 export interface FundsState {
@@ -83,7 +85,7 @@ export interface FundsState {
   rules?: string[]
 }
 
-export const DEFAULT_LIMITS: FundsLimits = { maxStakePct: 5, maxExposurePct: 30, dailyLossPct: 10, kellyFraction: 0.25, capAmount: 0 }
+export const DEFAULT_LIMITS: FundsLimits = { maxStakePct: 5, maxExposurePct: 30, dailyLossPct: 10, kellyFraction: 0.25, capAmount: 0, paperBankroll: 1000 }
 
 export function emptyFunds(): FundsState {
   return { version: 1, movements: [], positions: [], limits: { ...DEFAULT_LIMITS }, nextId: 1, rules: [] }
@@ -117,6 +119,10 @@ export interface FundsSummary {
   available: number
   paperPnl: number
   settledToday: number
+  /** Phantom bankroll + paper P/L, and what open paper positions commit of it. */
+  paperBankroll: number
+  paperOpenStake: number
+  paperAvailable: number
 }
 
 const startOfDay = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime() }
@@ -128,12 +134,16 @@ export function summarize(state: FundsState, nowMs: number): FundsSummary {
   const realizedPnl = real.filter(p => p.status === 'settled').reduce((s, p) => s + (p.pnl ?? 0), 0)
   const bankroll = deposited - withdrawn + realizedPnl
   const openStake = real.filter(p => p.status === 'approved' || p.status === 'placed').reduce((s, p) => s + p.stake + p.feeEstimate, 0)
-  const paperPnl = state.positions.filter(p => p.mode === 'paper' && p.status === 'settled').reduce((s, p) => s + (p.pnl ?? 0), 0)
+  const paper = state.positions.filter(p => p.mode === 'paper')
+  const paperPnl = paper.filter(p => p.status === 'settled').reduce((s, p) => s + (p.pnl ?? 0), 0)
+  const paperBankroll = state.limits.paperBankroll + paperPnl
+  const paperOpenStake = paper.filter(p => p.status === 'placed').reduce((s, p) => s + p.stake + p.feeEstimate, 0)
   const dayStart = startOfDay(nowMs)
   const settledToday = real.filter(p => p.status === 'settled' && (p.settledAt ?? 0) >= dayStart).reduce((s, p) => s + (p.pnl ?? 0), 0)
   return {
     deposited: cents(deposited), withdrawn: cents(withdrawn), realizedPnl: cents(realizedPnl), bankroll: cents(bankroll),
     openStake: cents(openStake), available: cents(bankroll - openStake), paperPnl: cents(paperPnl), settledToday: cents(settledToday),
+    paperBankroll: cents(paperBankroll), paperOpenStake: cents(paperOpenStake), paperAvailable: cents(paperBankroll - paperOpenStake),
   }
 }
 
@@ -167,13 +177,19 @@ export function sizePosition(input: ProposalInput, state: FundsState, nowMs: num
   const { price: P, probability: p } = input
   const s = summarize(state, nowMs)
   const L = state.limits
+  // Paper positions are sized exactly like real ones, against the phantom bankroll.
+  const paper = input.mode === 'paper'
+  const bankroll = paper ? s.paperBankroll : s.bankroll
+  const open = paper ? s.paperOpenStake : s.openStake
+  const available = paper ? s.paperAvailable : s.available
+  const of = paper ? 'paper bankroll' : 'bankroll'
   const edge = p - P
   const kellyFull = edge > 0 ? edge / (1 - P) : 0
   const caps: Array<[string, number]> = [
-    [`${L.kellyFraction}x Kelly`, L.kellyFraction * kellyFull * s.bankroll],
-    [`max stake ${L.maxStakePct}% of bankroll`, (L.maxStakePct / 100) * s.bankroll],
-    [`max exposure ${L.maxExposurePct}% of bankroll`, (L.maxExposurePct / 100) * s.bankroll - s.openStake],
-    ['available funds', s.available],
+    [`${L.kellyFraction}x Kelly`, L.kellyFraction * kellyFull * bankroll],
+    [`max stake ${L.maxStakePct}% of ${of}`, (L.maxStakePct / 100) * bankroll],
+    [`max exposure ${L.maxExposurePct}% of ${of}`, (L.maxExposurePct / 100) * bankroll - open],
+    [paper ? 'available paper funds' : 'available funds', available],
   ]
   if (input.maxStake !== undefined && input.maxStake > 0) caps.push(['requested max stake', input.maxStake])
   const [binding, budget] = caps.reduce((min, c) => (c[1] < min[1] ? c : min))
@@ -187,6 +203,24 @@ export function sizePosition(input: ProposalInput, state: FundsState, nowMs: num
 
 // ── Model actions ──────────────────────────────────────────────────────────────
 
+// ── Paper-first gate ───────────────────────────────────────────────────────────
+
+/** Real trading unlocks only after paper results were recorded on this many different days. */
+export const PAPER_DAYS_REQUIRED = 7
+
+const dayKey = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}` }
+
+/** Days (local) on which a paper position settled won or lost. Not days since first use: the week must produce data. */
+export function paperGate(state: FundsState): { days: number; required: number; open: boolean } {
+  const days = new Set(state.positions
+    .filter(p => p.mode === 'paper' && p.status === 'settled' && (p.outcome === 'won' || p.outcome === 'lost') && p.settledAt)
+    .map(p => dayKey(p.settledAt!)))
+  return { days: days.size, required: PAPER_DAYS_REQUIRED, open: days.size >= PAPER_DAYS_REQUIRED }
+}
+
+const gateLockedMessage = (g: { days: number; required: number }) =>
+  `Real trading is locked by the paper-first gate: ${g.days}/${g.required} days with settled paper results.`
+
 export const haltedMessage = (h: { reason: string }) => `HALTED: ${h.reason} No real proposals or approvals until the owner types /funds resume.`
 
 /** True once today's settled real losses reach the daily limit (of the bankroll at the start of the day). */
@@ -197,8 +231,12 @@ export function dailyLossHit(state: FundsState, nowMs: number): boolean {
 
 const inUnit = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n > 0 && n < 1
 
-export function proposePosition(state: FundsState, input: ProposalInput, nowMs: number): { state: FundsState; position: FundsPosition; sizing: Sizing } {
-  const mode: PositionMode = input.mode === 'paper' ? 'paper' : 'real'
+export function proposePosition(state: FundsState, input: ProposalInput, nowMs: number): { state: FundsState; position: FundsPosition; sizing: Sizing; gatedToPaper: boolean } {
+  const requested: PositionMode = input.mode === 'paper' ? 'paper' : 'real'
+  // Paper-first: until the gate opens, a real proposal is recorded as paper, automatically.
+  const gate = paperGate(state)
+  const gatedToPaper = requested === 'real' && !gate.open
+  const mode: PositionMode = gatedToPaper ? 'paper' : requested
   if (!inUnit(input.price)) throw new FundsError('price must be between 0 and 1 (what one $1 contract costs).')
   if (!inUnit(input.probability)) throw new FundsError('probability must be between 0 and 1 (your own estimate that this side wins).')
   if (input.side !== 'yes' && input.side !== 'no') throw new FundsError('side must be "yes" or "no".')
@@ -207,9 +245,10 @@ export function proposePosition(state: FundsState, input: ProposalInput, nowMs: 
   const sources = input.sources.map(s => s.trim()).filter(Boolean)
   if (!sources.length) throw new FundsError('at least one source is required: research before proposing.')
   const s = summarize(state, nowMs)
-  if (s.bankroll <= 0) throw new FundsError('No funds in the ledger. The owner adds them with /funds add <amount>.')
+  if (mode === 'real' && s.bankroll <= 0) throw new FundsError('No funds in the ledger. The owner adds them with /funds add <amount>.')
+  if (mode === 'paper' && s.paperBankroll <= 0) throw new FundsError('The paper bankroll is used up. The owner can reset it with /funds limits paper=<amount>.')
   if (mode === 'real' && state.halted) throw new FundsError(haltedMessage(state.halted))
-  const sizing = sizePosition(input, state, nowMs)
+  const sizing = sizePosition({ ...input, mode }, state, nowMs)
   if (sizing.edge <= 0) {
     throw new FundsError(`No edge: your probability ${pct(input.probability)} does not beat the price ${money(input.price)} (${pct(input.price)}). Not proposed.`)
   }
@@ -222,7 +261,7 @@ export function proposePosition(state: FundsState, input: ProposalInput, nowMs: 
     // A paper position needs no approval: no money is involved.
     status: mode === 'paper' ? 'placed' : 'proposed', ...(mode === 'paper' ? { placedAt: nowMs } : {}),
   }
-  return { state: { ...state, positions: [...state.positions, position], nextId: state.nextId + 1 }, position, sizing }
+  return { state: { ...state, positions: [...state.positions, position], nextId: state.nextId + 1 }, position, sizing, gatedToPaper }
 }
 
 export function pnlFor(position: FundsPosition, outcome: PositionOutcome): number {
@@ -281,7 +320,7 @@ export const FUNDS_USAGE = [
   '/funds approve <id> | /funds reject <id> — decide on a proposal',
   '/funds placed <id> [fill price] — confirm you placed the order on the venue',
   '/funds settle <id> won|lost|void — record the result (Kalshi positions can also settle from Kalshi)',
-  '/funds limits [cap=1000] [stake=5] [exposure=30] [daily=10] [kelly=0.25] — cap in dollars; others % of bankroll; kelly a fraction',
+  '/funds limits [cap=1000] [paper=1000] [stake=5] [exposure=30] [daily=10] [kelly=0.25] — cap and paper bankroll in dollars; others % of bankroll; kelly a fraction',
   '/funds resume — lift a loss-stop halt (only you can)',
   '/funds rule <your rule> · /funds rules · /funds unrule <n> — your own rules, given to every plan',
 ].join('\n')
@@ -329,14 +368,14 @@ export function parseFundsCommand(text: string): FundsCommand | null {
     return { kind: 'unrule', index }
   }
   if (verb === 'limits') {
-    const keys: Record<string, keyof FundsLimits> = { cap: 'capAmount', stake: 'maxStakePct', exposure: 'maxExposurePct', daily: 'dailyLossPct', kelly: 'kellyFraction' }
+    const keys: Record<string, keyof FundsLimits> = { cap: 'capAmount', paper: 'paperBankroll', stake: 'maxStakePct', exposure: 'maxExposurePct', daily: 'dailyLossPct', kelly: 'kellyFraction' }
     const changes: Partial<FundsLimits> = {}
     for (const part of rest) {
       const [k, v] = part.split('=')
       const key = keys[(k ?? '').toLowerCase()]
       const n = Number(v)
       if (!key || !Number.isFinite(n) || n <= 0) return usage(`Bad limit "${part}".`)
-      if (key === 'capAmount' ? n > 1e9 : key === 'kellyFraction' ? n > 1 : n > 100) return usage(`"${part}" is out of range (percentages up to 100, kelly up to 1).`)
+      if (key === 'capAmount' || key === 'paperBankroll' ? n > 1e9 : key === 'kellyFraction' ? n > 1 : n > 100) return usage(`"${part}" is out of range (percentages up to 100, kelly up to 1).`)
       changes[key] = n
     }
     return { kind: 'limits', changes }
@@ -354,6 +393,9 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
       if (cmd.kind === 'withdraw' && cmd.amount > summarize(state, nowMs).available + 1e-9) {
         throw new FundsError(`Only ${money(summarize(state, nowMs).available)} is available (the rest backs open positions).`)
       }
+      if (cmd.kind === 'deposit' && state.limits.capAmount <= 0) {
+        throw new FundsError('Set your cap first: /funds limits cap=<amount>. The cap has to exist before the money does.')
+      }
       if (cmd.kind === 'deposit' && state.limits.capAmount > 0) {
         const s = summarize(state, nowMs)
         const netIn = s.deposited - s.withdrawn
@@ -370,6 +412,7 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
       if (!p) throw new FundsError(`No position ${cmd.id}.`)
       if (p.status !== 'proposed') throw new FundsError(`${cmd.id} is ${p.status}; only a proposal can be approved.`)
       if (state.halted) throw new FundsError(haltedMessage(state.halted))
+      if (p.mode === 'real' && !paperGate(state).open) throw new FundsError(gateLockedMessage(paperGate(state)))
       const s = summarize(state, nowMs)
       if (p.stake + p.feeEstimate > s.available + 1e-9) throw new FundsError(`${cmd.id} needs ${money(p.stake + p.feeEstimate)} but only ${money(s.available)} is available.`)
       const next = updatePosition(state, cmd.id, x => ({ ...x, status: 'approved', approvedAt: nowMs }))
@@ -424,7 +467,7 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
 
 // ── Reporting ──────────────────────────────────────────────────────────────────
 
-const formatLimits = (L: FundsLimits) => `cap ${L.capAmount > 0 ? money(L.capAmount) : 'not set'} · max stake ${L.maxStakePct}% · max exposure ${L.maxExposurePct}% · daily loss stop ${L.dailyLossPct}% (halts until you resume) · ${L.kellyFraction}x Kelly`
+const formatLimits = (L: FundsLimits) => `cap ${L.capAmount > 0 ? money(L.capAmount) : 'not set'} · paper bankroll ${money(L.paperBankroll)} · max stake ${L.maxStakePct}% · max exposure ${L.maxExposurePct}% · daily loss stop ${L.dailyLossPct}% (halts until you resume) · ${L.kellyFraction}x Kelly`
 const formatRules = (rules: string[]) => rules.map((r, i) => `${i + 1}. ${r}`).join('\n')
 
 /**
@@ -465,11 +508,16 @@ export function formatFundsStatus(state: FundsState, nowMs: number): string {
     ? `${t.won}/${t.settled} won; Brier score: your estimates ${t.modelBrier} vs prices paid ${t.marketBrier} (lower is better; estimates must beat prices for an edge to be real)`
     : 'no settled positions yet'
   const rules = state.rules ?? []
+  const gate = paperGate(state)
   return [
     ...(state.halted ? [haltedMessage(state.halted)] : []),
     `Funds ledger (ForgeClaw records funds; it never holds or moves money):`,
     `Bankroll ${money(s.bankroll)} = ${money(s.deposited)} in − ${money(s.withdrawn)} out + ${money(s.realizedPnl)} realized`,
-    `Available ${money(s.available)} · committed to open positions ${money(s.openStake)} · today ${money(s.settledToday)} · paper P/L ${money(s.paperPnl)}`,
+    `Available ${money(s.available)} · committed to open positions ${money(s.openStake)} · today ${money(s.settledToday)}`,
+    `Paper: bankroll ${money(s.paperBankroll)} (P/L ${money(s.paperPnl)}) · available ${money(s.paperAvailable)}`,
+    gate.open
+      ? `Paper-first gate: OPEN (${gate.days} days with settled paper results). Real proposals need your approval.`
+      : `${gateLockedMessage(gate)} Every proposal is recorded as paper until ${gate.required} days have settled paper results.`,
     `Limits: ${formatLimits(state.limits)}`,
     `Track record: ${record}`,
     open.length ? `Open positions:\n${open.map(formatPosition).join('\n')}` : 'Open positions: none',
@@ -477,9 +525,9 @@ export function formatFundsStatus(state: FundsState, nowMs: number): string {
   ].join('\n')
 }
 
-export function formatProposal(position: FundsPosition, sizing: Sizing): string {
+export function formatProposal(position: FundsPosition, sizing: Sizing, gatedToPaper = false): string {
   const next = position.mode === 'paper'
-    ? 'Paper position: tracked now, no money involved.'
+    ? `Paper position: tracked now against the phantom bankroll, no money involved.${gatedToPaper ? ' Recorded as paper because the paper-first gate is still locked.' : ''}`
     : `Waiting for the owner: /funds approve ${position.id} or /funds reject ${position.id}. Nothing is placed until the owner places it on ${position.venue}.`
   return `Proposed ${formatPosition(position)}\n   edge ${pct(sizing.edge)} per contract; size limited by ${sizing.binding}\n   ${honestyLine(position)}\n   ${next}`
 }

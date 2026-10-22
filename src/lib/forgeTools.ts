@@ -652,8 +652,8 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'funds_settle',
-    description: "Settle a placed Kalshi position from Kalshi's own published result (never from your judgement). Other venues are settled by the owner with /funds settle.",
-    parameters: { type: 'object', properties: { id: { type: 'string', description: 'Position id, e.g. p3' } }, required: ['id'] },
+    description: "Settle placed Kalshi positions (paper and real) from Kalshi's own published result, never from your judgement. id \"all\" checks every placed Kalshi position. Other venues are settled by the owner with /funds settle.",
+    parameters: { type: 'object', properties: { id: { type: 'string', description: 'Position id, e.g. p3, or "all"' } }, required: ['id'] },
   },
   {
     name: 'review_code',
@@ -1937,7 +1937,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const num = (v: unknown) => (typeof v === 'number' ? v : Number(v))
         const rawSources = Array.isArray(input.sources) ? input.sources : typeof input.sources === 'string' ? input.sources.split(/[\n,]+/) : []
         try {
-          const { state, position, sizing } = proposePosition(loadFunds(), {
+          const { state, position, sizing, gatedToPaper } = proposePosition(loadFunds(), {
             mode: input.mode === 'paper' ? 'paper' : 'real',
             venue: String(input.venue ?? ''), market: String(input.market ?? ''),
             side: String(input.side ?? '').toLowerCase() as 'yes' | 'no',
@@ -1945,7 +1945,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
             rationale: String(input.rationale ?? ''), sources: rawSources.map(String),
             ...(input.max_stake !== undefined ? { maxStake: num(input.max_stake) } : {}),
           }, Date.now())
-          return formatProposal(position, sizing) + (saveFunds(state) ? '' : NOT_SAVED_WARNING)
+          return formatProposal(position, sizing, gatedToPaper) + (saveFunds(state) ? '' : NOT_SAVED_WARNING)
         } catch (error) {
           if (error instanceof FundsError) throw new Error(`Not proposed: ${error.message}`)
           throw error
@@ -1953,19 +1953,45 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       }
 
       case 'funds_settle': {
+        // Settles from Kalshi's published result only. id "all" settles every placed Kalshi position (paper and real).
+        const deps = { fetcher: (url: string, init?: RequestInit) => toolFetch(ctx, url, init), signal: ctx.signal }
         const id = String(input.id ?? '').toLowerCase()
-        const ledger = loadFunds()
-        const position = ledger.positions.find(p => p.id === id)
-        if (!position) throw new Error(`No position ${id}.`)
-        if (!/kalshi/i.test(position.venue)) throw new Error(`${id} is on ${position.venue}: the owner settles it with /funds settle ${id} won|lost|void.`)
-        if (position.status !== 'placed') throw new Error(`${id} is ${position.status}; only a placed position can be settled.`)
-        const market = await fetchKalshiMarket(position.market, { fetcher: (url, init) => toolFetch(ctx, url, init), signal: ctx.signal })
-        if (!market) throw new Error(`Kalshi does not list ${position.market}; settle it with /funds settle ${id} won|lost|void.`)
-        const outcome = outcomeFromKalshiResult(position, market.result)
-        if (!outcome) return `${id} not settled: Kalshi shows ${position.market} as ${market.status ?? 'unknown'} with no result yet.`
-        const next = settlePosition(ledger, id, outcome, 'kalshi', Date.now())
-        const settled = next.positions.find(p => p.id === id)!
-        return `${id} settled from Kalshi (result ${market.result}): ${outcome}, P/L ${settled.pnl! < 0 ? '-' : ''}$${Math.abs(settled.pnl!).toFixed(2)}.${saveFunds(next) ? '' : NOT_SAVED_WARNING}`
+        let ledger = loadFunds()
+        const targets = id === 'all'
+          ? ledger.positions.filter(p => p.status === 'placed' && /kalshi/i.test(p.venue))
+          : ledger.positions.filter(p => p.id === id)
+        if (id !== 'all') {
+          const position = targets[0]
+          if (!position) throw new Error(`No position ${id}.`)
+          if (!/kalshi/i.test(position.venue)) throw new Error(`${id} is on ${position.venue}: the owner settles it with /funds settle ${id} won|lost|void.`)
+          if (position.status !== 'placed') throw new Error(`${id} is ${position.status}; only a placed position can be settled.`)
+        }
+        if (!targets.length) return 'No placed Kalshi positions to settle.'
+        const lines: string[] = []
+        let changed = false
+        for (const position of targets) {
+          let market
+          try {
+            market = await fetchKalshiMarket(position.market, deps)
+          } catch (error) {
+            if (id !== 'all') throw error
+            lines.push(`${position.id}: not checked (${error instanceof Error ? error.message : String(error)})`)
+            continue
+          }
+          if (!market) {
+            if (id !== 'all') throw new Error(`Kalshi does not list ${position.market}; settle it with /funds settle ${position.id} won|lost|void.`)
+            lines.push(`${position.id}: Kalshi does not list ${position.market}; settle it with /funds settle ${position.id} won|lost|void.`)
+            continue
+          }
+          const outcome = outcomeFromKalshiResult(position, market.result)
+          if (!outcome) { lines.push(`${position.id} not settled: Kalshi shows ${position.market} as ${market.status ?? 'unknown'} with no result yet.`); continue }
+          ledger = settlePosition(ledger, position.id, outcome, 'kalshi', Date.now())
+          changed = true
+          const pnl = ledger.positions.find(p => p.id === position.id)!.pnl!
+          lines.push(`${position.id} [${position.mode}] settled from Kalshi (result ${market.result}): ${outcome}, P/L ${pnl < 0 ? '-' : ''}$${Math.abs(pnl).toFixed(2)}.`)
+        }
+        if (ledger.halted && !loadFunds().halted) lines.push(ledger.halted.reason + ' Real trading is HALTED until the owner types /funds resume.')
+        return lines.join('\n') + (changed && !saveFunds(ledger) ? NOT_SAVED_WARNING : '')
       }
 
       case 'review_code': {
