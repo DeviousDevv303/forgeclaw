@@ -37,7 +37,7 @@ None.
 
 ## Handover (for Muse)
 
-Assignment, in this order. Stay inside `docs/directive` rules in `docs/agents/muse-directive-2026-10-20.md`
+Assignment, in this order. Follow the rules in `docs/agents/muse-directive-2026-10-20.md`
 (draft PR, own branch `muse/<short-name>`, evidence in the PR body, no protected paths without the
 owner's named OK).
 
