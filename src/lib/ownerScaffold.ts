@@ -35,7 +35,7 @@ export function operatingLoopFor(scaffold: string, fallback: string): string {
     'Your reasoning for every task MUST be written in the phases of the framework below, in order, as labeled lines: each line starts ' +
     'with the phase name exactly as the framework writes it, then a colon, then what that phase concludes about THIS task (its files, ' +
     'PRs, tools, numbers), not a general statement. Do not skip, merge or rename a phase. Keep each phase to one or two lines. ' +
-    'Only a greeting or small talk is exempt. The phases belong in your reasoning, never in the visible answer. ' +
+    'There is no exemption: every task, however small, gets the phases. The phases belong in your reasoning, never in the visible answer. ' +
     'Act on real tool results and verify before you claim. On failure, find the root cause and retry another way. Continue until the objective is complete, blocked, or explicitly stopped.\n\n' +
     `${text}\n\n`
 }
