@@ -47,6 +47,8 @@ describe('resume on return', () => {
     fireEvent.keyDown(box, { key: 'Enter' })
     await waitFor(() => expect(screen.getByText(/Back and answered\./)).toBeTruthy(), { timeout: 20000 })
     expect(kimiCalls).toBe(2)
+    // The whole-task resend tells her it is connected again and working, as a pop-up.
+    expect(screen.getByText(/Connected again — working on it/)).toBeTruthy()
     expect(screen.queryByText(/temporary connection problem/)).toBeNull()
     // The dropped attempt is removed: the conversation holds the question once.
     const saved = JSON.parse(localStorage.getItem('forgemind_history') || '[]') as Array<{ role: string; content: string }>

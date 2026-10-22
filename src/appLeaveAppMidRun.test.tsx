@@ -93,8 +93,11 @@ describe('the reconnect pop-up', () => {
 
     // It clears by itself, and neither text was ever written into the conversation.
     await waitFor(() => expect(screen.queryByText(/Connected again — working on it/)).toBeNull(), { timeout: 8000 })
-    const history = localStorage.getItem('forgemind_history') || ''
-    expect(history).not.toMatch(/Reconnecting|Connected again|Picking up where it stopped/)
+    // Not in the chat, and not in anything else the app stores either (NEXUS candidates, corpus, ledgers): transient
+    // UI text must never become learning content.
+    const stored = Object.keys(localStorage).map(k => `${k}=${localStorage.getItem(k)}`).join('\n')
+    expect(stored).not.toMatch(/Reconnecting… you left|Connected again — working|Reconectando…|Conexión restablecida/)
+    expect(stored).not.toMatch(/Picking up where it stopped/)
   })
 })
 
