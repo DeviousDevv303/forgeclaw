@@ -62,6 +62,20 @@ describe('funds tools', () => {
     expect(p).toMatchObject({ status: 'settled', outcome: 'won', settledBy: 'kalshi' })
   })
 
+  it('a Kalshi settlement can trip the loss stop, and no tool can lift it', async () => {
+    runFundsCommand('/funds add 1000')
+    runFundsCommand('/funds limits daily=3')
+    await propose()
+    runFundsCommand('/funds approve p2')
+    runFundsCommand('/funds placed p2')
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ markets: [{ ticker: 'KX-RAIN-OCT', status: 'finalized', result: 'no' }] })))
+    expect(await call('funds_settle', { id: 'p2' })).toMatch(/lost/)
+    expect(loadFunds().halted?.reason).toMatch(/Daily loss limit hit/)
+    expect(await propose({ market: 'KX-NEXT' })).toMatch(/TOOL ERROR.*HALTED/)
+    expect(FORGE_TOOLS.some(t => /resume|limit|deposit|approve/.test(t.name) && t.name.startsWith('funds_'))).toBe(false)
+    expect(runFundsCommand('/funds resume')).toMatch(/^Resumed/)
+  })
+
   it('leaves non-Kalshi settlement to the owner', async () => {
     runFundsCommand('/funds add 1000')
     await propose({ venue: 'sportsbook', market: 'Chiefs ML Sunday' })

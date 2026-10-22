@@ -113,7 +113,7 @@ export const RESEARCH_GUIDANCE =
 
 /** Planning with the owner's money: research, own probability vs price, sized proposals, owner decides. */
 export const FUNDS_GUIDANCE =
-  'Funds plan: you are planning with the owner\'s real money. 1) Call funds_status first: bankroll, available funds, limits, open positions and your track record. ' +
+  'Funds plan: you are planning with the owner\'s real money. 1) Call funds_status first: bankroll, available funds, limits, open positions, your track record and the owner\'s own rules, which override anything here. If it says HALTED, propose nothing real. ' +
   '2) Research before proposing: kalshi_markets for live prices and market rules, web_search and deep_research for evidence. Look for markets where public evidence ' +
   '(official data, schedules, forecasts, polls, injury reports) points away from the price. 3) For each candidate, state YOUR probability with the evidence behind it; ' +
   'do not anchor on the market price. Propose only where your probability beats the price after fees. 4) Propose each position with funds_propose; it sizes the ' +

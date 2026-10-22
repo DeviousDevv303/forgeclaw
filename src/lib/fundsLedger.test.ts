@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  FUNDS_STORAGE_KEY, FundsError, applyFundsCommand, emptyFunds, estimateFee, formatFundsStatus, loadFunds, outcomeFromKalshiResult,
+  FUNDS_STORAGE_KEY, FundsError, applyFundsCommand, emptyFunds, estimateFee, formatFundsStatus, formatProposal, honestyLine, loadFunds, outcomeFromKalshiResult, ownerRulesPrompt,
   parseFundsCommand, pnlFor, proposePosition, runFundsCommand, settlePosition, sizePosition, summarize, trackRecord,
   type FundsState, type ProposalInput,
 } from './fundsLedger'
@@ -153,5 +153,71 @@ describe('storage', () => {
   it('falls back to an empty ledger on corrupt storage', () => {
     localStorage.setItem(FUNDS_STORAGE_KEY, '{nope')
     expect(loadFunds()).toEqual(emptyFunds())
+  })
+})
+
+// Owner's cage rules (2026-10-22): cap at funding time, size limit, latched loss stop, no chase, honesty line, own rules.
+describe('cage rules', () => {
+  const settleLoss = (st: FundsState, market: string, at = NOW) => {
+    st = proposePosition(st, proposal({ market }), at).state
+    const id = `p${st.nextId - 1}`
+    st = applyFundsCommand(st, { kind: 'approve', id }, at).state
+    st = applyFundsCommand(st, { kind: 'placed', id }, at).state
+    return settlePosition(st, id, 'lost', 'owner', at)
+  }
+
+  it('1. refuses funding above the cap you set', () => {
+    let st = applyFundsCommand(emptyFunds(), { kind: 'limits', changes: { capAmount: 300 } }, NOW).state
+    st = applyFundsCommand(st, { kind: 'deposit', amount: 200 }, NOW).state
+    expect(() => applyFundsCommand(st, { kind: 'deposit', amount: 150 }, NOW)).toThrow(/over your cap of \$300\.00 \(\$100\.00 left\)/)
+    expect(summarize(applyFundsCommand(st, { kind: 'deposit', amount: 100 }, NOW).state, NOW).deposited).toBe(300)
+    expect(parseFundsCommand('/funds limits cap=300')).toEqual({ kind: 'limits', changes: { capAmount: 300 } })
+  })
+
+  it('2. never stakes more than the per-position limit, whatever the model asks', () => {
+    const s = sizePosition(proposal({ probability: 0.95, maxStake: 10_000 }), funded(), NOW)
+    expect(s.stake + s.fee).toBeLessThanOrEqual(50)
+  })
+
+  it('3. the loss stop halts real proposals AND approvals, survives midnight, and only /funds resume lifts it', () => {
+    let st = applyFundsCommand(funded(1000), { kind: 'limits', changes: { dailyLossPct: 3 } }, NOW).state
+    st = proposePosition(st, proposal({ market: 'pending' }), NOW).state // p2, waiting
+    st = settleLoss(st, 'loser') // about -50: over 3%
+    expect(st.halted?.reason).toMatch(/Daily loss limit hit/)
+    const tomorrow = NOW + 36 * 3600_000
+    expect(() => proposePosition(st, proposal({ market: 'next' }), tomorrow)).toThrow(/HALTED.*\/funds resume/)
+    expect(() => applyFundsCommand(st, { kind: 'approve', id: 'p2' }, tomorrow)).toThrow(/HALTED/)
+    expect(proposePosition(st, proposal({ market: 'paper', mode: 'paper' }), tomorrow).position.status).toBe('placed')
+    expect(formatFundsStatus(st, tomorrow)).toMatch(/^HALTED/)
+    st = applyFundsCommand(st, { kind: 'resume' }, tomorrow).state
+    expect(st.halted).toBeUndefined()
+    expect(proposePosition(st, proposal({ market: 'next' }), tomorrow).position.status).toBe('proposed')
+  })
+
+  it('4. no chasing: after a loss the same bet is sized the same or smaller, never larger', () => {
+    const before = sizePosition(proposal(), funded(), NOW).stake
+    const afterLoss = settleLoss(funded(), 'loser')
+    expect(sizePosition(proposal({ market: 'again' }), afterLoss, NOW).stake).toBeLessThanOrEqual(before)
+    const afterTwo = settleLoss(afterLoss, 'loser2')
+    expect(sizePosition(proposal({ market: 'again' }), afterTwo, NOW).stake).toBeLessThanOrEqual(sizePosition(proposal({ market: 'again' }), afterLoss, NOW).stake)
+  })
+
+  it('6. every proposal and approval carries the expected value at the market price and at ForgeClaw\'s estimate', () => {
+    const { state, position, sizing } = proposePosition(funded(), proposal(), NOW)
+    expect(honestyLine(position)).toBe("Expected value after fees: -$2.00 at the market's price (implied 40%); $15.85 only if ForgeClaw's 55% is right.")
+    expect(formatProposal(position, sizing)).toContain(honestyLine(position))
+    expect(applyFundsCommand(state, { kind: 'approve', id: position.id }, NOW).message).toContain("at the market's price (implied 40%)")
+  })
+
+  it('your own rules are stored, listed, removable, and given to the plan', () => {
+    let st = applyFundsCommand(emptyFunds(), { kind: 'rule', text: 'never bet on games my own team plays' }, NOW).state
+    st = applyFundsCommand(st, { kind: 'rule', text: 'only markets that settle within 7 days' }, NOW).state
+    expect(formatFundsStatus(st, NOW)).toContain('2. only markets that settle within 7 days')
+    expect(ownerRulesPrompt(st)).toContain('1. never bet on games my own team plays')
+    st = applyFundsCommand(st, { kind: 'unrule', index: 1 }, NOW).state
+    expect(st.rules).toEqual(['only markets that settle within 7 days'])
+    expect(() => applyFundsCommand(st, { kind: 'unrule', index: 5 }, NOW)).toThrow(/no rule 5/)
+    expect(ownerRulesPrompt(emptyFunds())).toBe('')
+    expect(parseFundsCommand('/funds rule x')).toMatchObject({ kind: 'usage' })
   })
 })

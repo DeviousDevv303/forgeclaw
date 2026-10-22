@@ -47,6 +47,7 @@ describe('/funds in the chat', () => {
 
   it('a "multiply my funds" request reaches the model with the funds tools, live data, research and the plan rules', async () => {
     localStorage.setItem('fm_moonshot_key', 'sk-test-kimi-key-0123456789abcdef')
+    localStorage.setItem('forgeclaw_funds_v1', JSON.stringify({ version: 1, movements: [], positions: [], limits: {}, nextId: 1, rules: ['never bet on games my own team plays'] }))
     const bodies: string[] = []
     vi.stubGlobal('fetch', vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       if (String(url).includes('moonshot')) { bodies.push(String(init?.body ?? '')); throw new TypeError('Failed to fetch') }
@@ -61,5 +62,6 @@ describe('/funds in the chat', () => {
     for (const name of ['funds_status', 'funds_propose', 'funds_settle', 'kalshi_markets', 'deep_research', 'web_search']) expect(tools).toContain(name)
     expect(JSON.stringify(body.messages)).toContain('Funds plan: you are planning with the owner')
     expect(JSON.stringify(body.messages)).toContain('You cannot approve, place orders or move money')
+    expect(JSON.stringify(body.messages)).toContain('1. never bet on games my own team plays')
   }, 30_000)
 })
