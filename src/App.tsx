@@ -191,6 +191,7 @@ import { formatUserFacingError, isTransientNetworkError, sanitizeChatText } from
 import { useI18n, LOCALE_TAGS, type Lang } from './lib/i18n'
 import { ElapsedNote } from './components/ElapsedNote'
 import { NexusLearningPanel } from './components/NexusLearningPanel'
+import { HoldToConfirmButton } from './components/HoldToConfirmButton'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
@@ -2150,7 +2151,6 @@ function App() {
   }
 
   const handleClearMemory = () => {
-    if (!window.confirm(t('confirm.wipe'))) return
     safeRemoveItem('forgemind_history'); safeRemoveItem('forgemind_corpus')
     setMessages([]); setCorpus([]); setLastSource(null); setOpenReasoningIds(new Set())
     emitFailure({ source: 'forgemind', severity: 'info', message: 'Session memory wiped by user.' })
@@ -2324,7 +2324,7 @@ function App() {
             </div>
             <div style={{ fontSize: '11px', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{getStatusIndicator()}</div>
           </div>
-          <button onClick={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>{t('header.wipe')}</button>
+          <HoldToConfirmButton onConfirm={handleClearMemory} style={{ ...headerBtnStyle, opacity: 0.6 }}>{t('header.wipe')}</HoldToConfirmButton>
           <button onClick={handleExportCorpus} style={headerBtnStyle}>{t('header.export')}</button>
         </div>
       </header>
@@ -2604,13 +2604,13 @@ function App() {
                   >
                     {t('settings.exportCount', { n: corpus.length.toLocaleString() })}
                   </button>
-                  <button
-                    onClick={() => { setCorpus([]); safeRemoveItem('forgemind_corpus') }}
+                  <HoldToConfirmButton
+                    onConfirm={() => { setCorpus([]); safeRemoveItem('forgemind_corpus') }}
                     disabled={!corpus.length}
                     style={{ flex: 1, background: '#1a0505', border: '1px solid #3a1010', color: corpus.length ? '#ef4444' : '#444', borderRadius: '4px', padding: '6px', cursor: corpus.length ? 'pointer' : 'not-allowed', fontSize: '10px', fontWeight: 'bold', letterSpacing: '0.5px', textTransform: 'uppercase' }}
                   >
                     {t('settings.clear')}
-                  </button>
+                  </HoldToConfirmButton>
                 </div>
               </div>
 

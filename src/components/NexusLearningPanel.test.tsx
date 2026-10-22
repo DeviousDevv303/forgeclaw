@@ -150,7 +150,13 @@ describe('the knowledge NEXUS treats as known is listed, with its origin, and re
       expect(list.textContent).toContain('LEGACY · admitted without review (Sep 24 – Oct 13)')
       expect(list.textContent).toContain('what is forgeclaw')
       const remove = [...list.querySelectorAll('button')].find(b => b.textContent === 'REMOVE')!
-      fireEvent.click(remove)
+      // REMOVE is hold-to-confirm now: a click must not remove, a full hold must.
+      fireEvent.pointerDown(remove)
+      fireEvent.pointerUp(remove)
+      expect(removedKnowledge).toEqual([])
+      fireEvent.pointerDown(remove)
+      await new Promise(resolve => setTimeout(resolve, 700))
+      fireEvent.pointerUp(remove)
       expect(removedKnowledge).toContain('knowledge-legacy')
     } finally { knowledgeSeed.length = 0; removedKnowledge.length = 0 }
   })

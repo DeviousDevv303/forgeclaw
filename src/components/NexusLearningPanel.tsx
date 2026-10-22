@@ -11,6 +11,7 @@ import { useI18n } from '../lib/i18n'
 import { activeHeuristics, decide, loadDecisions, mineHeuristics } from '../lib/nexusHeuristics'
 import { CONVERGED_BY, knowledgeOrigin, NEXUS_PHASES } from '../lib/nexusConvergence'
 import { describeTaste, loadTaste, MIN_TASTE_EVENTS, resetTaste } from '../lib/nexusTaste'
+import { HoldToConfirmButton } from './HoldToConfirmButton'
 
 const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
 const mono = "'Courier New', monospace"
@@ -135,7 +136,7 @@ export function NexusLearningPanel() {
           </div>
         )}
         {(taste.liked.n > 0 || taste.disliked.n > 0) && (
-          <button onClick={() => setTaste(resetTaste())} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', marginTop: '4px' }}>RESET TASTE</button>
+          <HoldToConfirmButton onConfirm={() => setTaste(resetTaste())} title="Hold to reset your taste profile" style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', marginTop: '4px' }}>RESET TASTE</HoldToConfirmButton>
         )}
       </section>
 
@@ -197,7 +198,7 @@ export function NexusLearningPanel() {
                   <div style={{ color: '#ccc', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(k.metadata.input || '').slice(0, 160)}</div>
                   <div style={{ color: '#666', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.content.slice(0, 200)}</div>
                 </div>
-                <button onClick={() => { if (corpusRepository.removeKnowledge(k.id)) { setKnowledgeTick(n => n + 1); refresh() } }} title="Remove this from what NEXUS knows" style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>REMOVE</button>
+                <HoldToConfirmButton onConfirm={() => { if (corpusRepository.removeKnowledge(k.id)) { setKnowledgeTick(n => n + 1); refresh() } }} title="Hold to remove this from what NEXUS knows" style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>REMOVE</HoldToConfirmButton>
               </div>
             ))}
       </section>
@@ -247,7 +248,7 @@ export function NexusLearningPanel() {
                     <div style={{ color: '#ccc', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.input.slice(0, 160)}</div>
                     <div style={{ color: '#666', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(c.generatedResult || '').slice(0, 200)}</div>
                   </div>
-                  {c.admissionStatus !== 'rejected' && <button onClick={() => void reject(c)} title={auto ? 'Remove this from what NEXUS knows; it will not be added again' : undefined} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>{auto ? 'REMOVE' : t('nexus.reject')}</button>}
+                  {c.admissionStatus !== 'rejected' && <HoldToConfirmButton onConfirm={() => void reject(c)} title={auto ? 'Hold to remove this from what NEXUS knows; it will not be added again' : 'Hold to reject this candidate'} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>{auto ? 'REMOVE' : t('nexus.reject')}</HoldToConfirmButton>}
                 </div>
               )
             })}
