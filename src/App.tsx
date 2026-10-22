@@ -211,12 +211,13 @@ import { loadOwnerScaffold, operatingLoopFor, reasoningFormatReminder } from './
 import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
+import { parseFundsCommand, runFundsCommand } from './lib/fundsLedger'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitUntilVisible } from './lib/pageVisibility'
 import { DEEPSEEK_RUN_EXPIRED_NOTE, isDeepSeekRunResumable } from './lib/deepseekRunResume'
 import { ConnectionToast, type ConnectionNotice } from './components/ConnectionToast'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
-import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 import { compactToolHistory } from './lib/historyCompaction'
 import { clearKeyVerified, isKeyRejection, isKeyVerified, markKeyVerified } from './lib/keyVerification'
@@ -459,7 +460,7 @@ const MAX_PAGE_RETURN_RETRIES = 3
 
 /** A prompt that runs a fixed command rather than the model: re-running it could repeat a side effect, so it waits for a tap. */
 function isFixedCommandPrompt(prompt: string): boolean {
-  return Boolean(parseDirectDeepSeekCommand(prompt) || parseSculptCommand(prompt)) || isExplicitShellRequest(prompt) || isExplicitToolRequest(prompt)
+  return Boolean(parseDirectDeepSeekCommand(prompt) || parseSculptCommand(prompt) || parseFundsCommand(prompt)) || isExplicitShellRequest(prompt) || isExplicitToolRequest(prompt)
 }
 
 function cleanStoredMessage(message: Message): Message {
@@ -1260,6 +1261,8 @@ function App() {
     const directDispatchOnly = !imageUrl && !hasAttachment && (
       // /sculpt and /patch use no chat provider, so they run without a provider key.
       parseSculptCommand(promptText) !== null ||
+      // /funds is the owner's ledger, handled here with no model.
+      parseFundsCommand(promptText) !== null ||
       isExplicitToolRequest(promptText) ||
       (isExplicitShellRequest(promptText) && extractExplicitShellCommand(promptText) !== null)
     )
@@ -1347,7 +1350,7 @@ function App() {
       'error_report': ['error log', 'error logs', 'error report', 'your logs', 'diagnos', 'what went wrong', 'what failed', 'your errors', 'check your errors', 'diagnose yourself', 'self-diagnose', 'self diagnose', 'debug yourself', 'what is broken', "what's broken", 'your failures', 'fix your errors', 'pull your errors', 'your own errors'],
       'github_merge_pr': ['merge pull', 'merge pr', 'merge #', 'merge the pr', 'merge this pr', 'merge it', 'merge request'],
       'browser_run': ['browse the', 'browse to', 'browser', 'go online', 'on the web', 'on the internet', 'online and', 'open http', 'go to http', 'visit http', 'navigate to', 'click on', 'click the', 'fill out', 'fill in the form', 'on the website', 'on that site', 'web page and', 'search on'],
-      'deep_research': ['research', 'investigate', 'sources', 'look into', 'find out', 'compare', 'latest', 'literature', 'study', 'studies', 'evidence', 'report on'],
+      'deep_research': ['research', 'investigate', 'multiply', 'master plan', 'game plan', 'sources', 'look into', 'find out', 'compare', 'latest', 'literature', 'study', 'studies', 'evidence', 'report on'],
       'github_build_site': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'react', 'vite', 'npm', 'bundle'],
       'github_create_repo': ['website', 'webpage', 'web page', 'landing page', 'deploy', 'new repo', 'new repository', 'create repo', 'create a repo'],
       'github_repo_state': ['state', 'status', 'head', 'branch'],
@@ -1358,7 +1361,11 @@ function App() {
       // Not a bare 'review': that would offer it for "review my workflows".
       'review_code': ['code review', 'review this code', 'review my code'],
       'weather_forecast': ['weather', 'forecast', 'temperature', 'rain', 'snow', 'how hot', 'how cold'],
-      'kalshi_markets': ['kalshi', 'prediction market', 'polymarket odds', 'contract price', 'implied probability'],
+      'kalshi_markets': ['kalshi', 'prediction market', 'polymarket odds', 'contract price', 'implied probability', 'multiply', 'my funds', 'my money', 'bankroll', 'master plan', 'game plan', 'betting', 'bets'],
+      // The owner's money: planning, proposals and settlement (fundsLedger.ts). Approving and placing stay owner commands.
+      'funds_status': ['multiply', 'my funds', 'my money', 'the funds', 'bankroll', 'grow my', 'master plan', 'game plan', 'invest', 'betting', 'bets', 'kalshi', 'prediction market', 'position', '/funds'],
+      'funds_propose': ['multiply', 'my funds', 'my money', 'the funds', 'bankroll', 'grow my', 'master plan', 'game plan', 'invest', 'betting', 'bets', 'kalshi', 'prediction market', 'position', '/funds'],
+      'funds_settle': ['multiply', 'my funds', 'my money', 'the funds', 'bankroll', 'grow my', 'master plan', 'game plan', 'invest', 'betting', 'bets', 'kalshi', 'prediction market', 'position', '/funds'],
     }
 
     // A follow-up ("Resume", "yes, do it", "go ahead") names no tool; the task it continues does. The owner's last few
@@ -1425,7 +1432,7 @@ function App() {
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
-        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'browser_run') ? `\n${BROWSER_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'error_report') ? `\n${ERROR_PLAN_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
+        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'browser_run') ? `\n${BROWSER_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'error_report') ? `\n${ERROR_PLAN_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'funds_propose') ? `\n${FUNDS_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
@@ -1512,6 +1519,22 @@ function App() {
             guardianPosture,
             requestGuardianApproval,
           }),
+      }
+
+      // /funds: the owner's funds ledger (fundsLedger.ts). Owner-typed only: no model can add funds, approve or place.
+      const fundsReply = runFundsCommand(promptText)
+      if (fundsReply !== null) {
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        const fundsOk = !fundsReply.startsWith('Not done:')
+        setMessages(prev => prev.map(message => message.id === msgId
+          ? { ...message, content: fundsReply, streaming: false, agentPhase: fundsOk ? 'COMPLETE' : 'BLOCKED' }
+          : message))
+        emitForge(fundsOk ? { type: 'MISSION_COMPLETE' } : { type: 'MISSION_BLOCKED', reason: fundsReply.slice(0, 140) })
+        setRequestStatus(fundsOk ? 'success' : 'blocked')
+        setLastRequestError(fundsOk ? '' : fundsReply)
+        setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+        resolveTask(taskId)
+        return
       }
 
       // /sculpt and /patch: provider-independent self-sculpt (sculptCommand.ts). Each step runs through
