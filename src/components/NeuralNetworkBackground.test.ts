@@ -106,7 +106,9 @@ describe('NeuralNetworkBackground', () => {
     vi.restoreAllMocks();
   });
 
-  it('keeps the animation loop running after an automatic density change', () => {
+  // CPU-bound, not hanging: 300 real high-density frames take 2.5-4.8 s alone, so the default 5 s timed out under
+  // suite load (docs/flakes.md entry 2: 7 of 15 ordered runs). A dead loop fails the expect below, not the clock.
+  it('keeps the animation loop running after an automatic density change', { timeout: 20_000 }, () => {
     // Start at 'high' so a slow device can step DOWN (step-up is impossible at the cap).
     render(React.createElement(NeuralNetworkBackground, {
       state: IDLE_NEURAL_STATE,
@@ -125,6 +127,10 @@ describe('NeuralNetworkBackground', () => {
       expect(cbs.length, `loop died at frame ${i}`).toBeGreaterThan(0);
       clock += i < 150 ? 50 : 16;
       for (const cb of cbs) cb(clock);
+      // Every ctx method is a vi.fn() that records its arguments; 300 high-density frames recorded millions of calls
+      // and took ~4.8 s of the 5 s budget, so the suite timed it out under load (docs/flakes.md entry 2). This test
+      // asserts only that the loop survives, so drop the call history as it goes (implementations are kept).
+      if (i % 50 === 49) { vi.clearAllMocks(); mockCtx.styles.length = 0; }
     }
     expect(rafCallbacks.length).toBeGreaterThan(0);
   });
