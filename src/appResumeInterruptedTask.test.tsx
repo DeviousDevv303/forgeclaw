@@ -70,6 +70,27 @@ describe('a task interrupted by the page closing', () => {
     expect(kimiBodies).toHaveLength(1)
   })
 
+  it('hands the model where the interrupted attempt stopped (branch, HEAD, steps already done)', { timeout: 30000 }, async () => {
+    const CODING = 'build my mom an English-learning website and deploy it to GitHub Pages'
+    const t = Date.now() - 10 * 60_000
+    localStorage.setItem('forgemind_history', JSON.stringify([
+      { id: 'u1', role: 'user', content: CODING, timestamp: t },
+      { id: 'a1', role: 'assistant', content: 'Processing…', streaming: true, timestamp: t },
+    ]))
+    // ForgeClaw's own persisted record of the dead attempt's progress.
+    localStorage.setItem('fc_coding_agent_state', JSON.stringify({
+      task: CODING, taskStatus: 'in_progress', branch: 'site-english', headSha: 'abc1234def', headShaShort: 'abc1234',
+      completedSteps: ['created repo english-site', 'wrote index.html'], pendingSteps: ['add read-aloud', 'enable Pages'],
+    }))
+    const { default: App } = await import('./App')
+    render(<App />)
+    await waitFor(() => expect(screen.getByText(/Picked it back up\./)).toBeTruthy(), { timeout: 20000 })
+    const body = JSON.parse(kimiBodies[0]).messages.map((m: { content: string }) => m.content).join('\n')
+    expect(body).toContain('Where the interrupted attempt stopped')
+    expect(body).toContain('site-english')
+    expect(body).toContain('created repo english-site')
+  })
+
   it('does not re-run a resume by itself; RESUME runs it on a tap', { timeout: 30000 }, async () => {
     seed({ resumedAfterInterrupt: true })
     const { default: App } = await import('./App')

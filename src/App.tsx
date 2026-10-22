@@ -1638,7 +1638,13 @@ function App() {
       )
       // Only project the minimum runtime state required for this request. Full
       // task state remains in storage and is surfaced by the UI, not token stream.
-      effectivePrompt = `${promptText}${imageUrl && !isHostedReasoner ? '\n\n[A picture is attached to this message; analyze_image with image_url "attached" looks at it.]' : ''}${options.resumedAfterInterrupt ? `\n\n${RESUME_MODEL_NOTE}` : ''}\n\n${buildRuntimeRequestContext({
+      // On a resume, hand the model ForgeClaw's own record of where the interrupted attempt stopped (branch, HEAD,
+      // steps already done) so it continues from ground truth instead of guessing. This is persisted state, not the
+      // model's memory; buildRuntimeRequestContext still tells it to confirm with a GitHub read before writing.
+      const resumeContext = options.resumedAfterInterrupt
+        ? `\n\n${RESUME_MODEL_NOTE}${compressedState ? `\n\nWhere the interrupted attempt stopped (ForgeClaw's own record):\n${compressedState}` : ''}`
+        : ''
+      effectivePrompt = `${promptText}${imageUrl && !isHostedReasoner ? '\n\n[A picture is attached to this message; analyze_image with image_url "attached" looks at it.]' : ''}${resumeContext}\n\n${buildRuntimeRequestContext({
         owner,
         repo,
         taskStatus: codingAgentState.taskStatus,

@@ -27,9 +27,13 @@ describe('findInterruptedTask', () => {
   it('never re-runs a resume by itself (no loop when the resume is killed too)', () => {
     expect(findInterruptedTask(pair({ resumedAfterInterrupt: true }), { now, isCommand: notCommand })).toMatchObject({ auto: false, reason: 'already-resumed' })
   })
-  it('waits for a tap when the task is old', () => {
+  it('waits for a tap when the task is older than the window', () => {
     const t = now - AUTO_RESUME_MAX_AGE_MS - 1
     expect(findInterruptedTask(pair({}, { timestamp: t }), { now, isCommand: notCommand })).toMatchObject({ auto: false, reason: 'too-old' })
+  })
+  it('still auto-resumes at exactly the window boundary (> not >=)', () => {
+    const t = now - AUTO_RESUME_MAX_AGE_MS
+    expect(findInterruptedTask(pair({}, { timestamp: t }), { now, isCommand: notCommand })).toMatchObject({ auto: true })
   })
   it('waits for a tap on a fixed command, which could repeat a side effect', () => {
     expect(findInterruptedTask(pair(), { now, isCommand: () => true })).toMatchObject({ auto: false, reason: 'command' })

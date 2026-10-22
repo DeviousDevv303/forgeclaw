@@ -46,6 +46,8 @@ export function findInterruptedTask(
     if (!reply.streaming || reply.id === opts.skipReplyId) return null
     const user = messages.slice(0, i).reverse().find(m => m.role === 'user')
     if (!user || !user.content.trim()) return null
+    // Age is measured from when the task started (the reply's timestamp), the proxy for "its context is now stale".
+    // At exactly the window (=, not just <) the task still auto-resumes; only strictly older waits for a tap.
     const reason: InterruptedTask['reason'] = user.resumedAfterInterrupt
       ? 'already-resumed'
       : opts.now - reply.timestamp > AUTO_RESUME_MAX_AGE_MS
