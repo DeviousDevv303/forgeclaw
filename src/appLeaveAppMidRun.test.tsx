@@ -56,6 +56,51 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.resetModules(); Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }) })
 
+describe('the reconnect pop-up', () => {
+  it('says reconnecting while away, then connected again and working, then goes; none of it is chat text', { timeout: 40000 }, async () => {
+    // The owner stays away until the test lets them back.
+    replies = [
+      'leave',
+      { choices: [{ message: { content: 'All done reading.' }, finish_reason: 'stop' }] },
+    ]
+    const fetchBefore = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    const inner = fetchBefore.getMockImplementation()!
+    fetchBefore.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === KIMI_URL && replies[0] === 'leave') {
+        replies.shift()
+        kimiBodies.push(JSON.parse(String(init?.body)) as KimiBody)
+        setHidden(true) // no timer: stays hidden until released
+        throw new TypeError('Failed to fetch')
+      }
+      return inner(input, init)
+    })
+    const { default: App } = await import('./App')
+    render(<App />)
+    const box = await screen.findByPlaceholderText(/Ask anything/i)
+    fireEvent.change(box, { target: { value: 'tell me a short fact' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+
+    const away = await screen.findByText(/Reconnecting… you left the app mid-step/, undefined, { timeout: 10000 })
+    expect(away.closest('[role="status"]')?.getAttribute('data-connection-notice')).toBe('reconnecting')
+    // It is a pop-up: pointer-transparent, outside the conversation.
+    expect((away.closest('[role="status"]') as HTMLElement).style.pointerEvents).toBe('none')
+
+    setHidden(false) // the owner is back
+    const back = await screen.findByText(/Connected again — working on it/, undefined, { timeout: 10000 })
+    expect(back.closest('[role="status"]')?.getAttribute('data-connection-notice')).toBe('back')
+    expect(screen.queryByText(/Reconnecting… you left the app mid-step/)).toBeNull()
+    await waitFor(() => expect(screen.getByText(/All done reading\./)).toBeTruthy(), { timeout: 10000 })
+
+    // It clears by itself, and neither text was ever written into the conversation.
+    await waitFor(() => expect(screen.queryByText(/Connected again — working on it/)).toBeNull(), { timeout: 8000 })
+    // Not in the chat, and not in anything else the app stores either (NEXUS candidates, corpus, ledgers): transient
+    // UI text must never become learning content.
+    const stored = Object.keys(localStorage).map(k => `${k}=${localStorage.getItem(k)}`).join('\n')
+    expect(stored).not.toMatch(/Reconnecting… you left|Connected again — working|Reconectando…|Conexión restablecida/)
+    expect(stored).not.toMatch(/Picking up where it stopped/)
+  })
+})
+
 describe('leaving the app mid-run', () => {
   it('picks the run back up on every return, without redoing finished steps', { timeout: 30000 }, async () => {
     const { default: App } = await import('./App')
