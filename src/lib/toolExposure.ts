@@ -121,7 +121,7 @@ export const FUNDS_GUIDANCE =
   'of the bankroll they use, the timeline, what result would show the plan is wrong (your track record versus the prices paid), and when to stop or scale up. ' +
   '6) You cannot approve, place orders or move money. The owner approves with /funds approve <id>, places the order on the venue, and confirms with ' +
   '/funds placed <id> <fill price>. Never say a position is placed unless funds_status shows it placed. 7) Settle placed Kalshi positions with funds_settle (id "all" for every one) once markets have results. ' +
-  '8) Paper-first: until funds_status shows the gate OPEN, every proposal is recorded as paper against the phantom bankroll. Propose exactly as you would with real money, prefer markets that settle within days, and settle them, so the paper week produces a real record. Never describe paper results as real money.'
+  '8) The owner prefers short-term, quick-turnaround markets (settling within hours or days). Use mode=paper only when the owner asks to test an idea without money, and never describe paper results as real money.'
 
 /** How a hosted model improves ForgeClaw itself: evidence first, smallest safe proposal, PR only. */
 export const SELF_SCULPT_GUIDANCE =

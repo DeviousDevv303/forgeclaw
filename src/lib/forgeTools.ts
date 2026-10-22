@@ -1937,7 +1937,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const num = (v: unknown) => (typeof v === 'number' ? v : Number(v))
         const rawSources = Array.isArray(input.sources) ? input.sources : typeof input.sources === 'string' ? input.sources.split(/[\n,]+/) : []
         try {
-          const { state, position, sizing, gatedToPaper } = proposePosition(loadFunds(), {
+          const { state, position, sizing } = proposePosition(loadFunds(), {
             mode: input.mode === 'paper' ? 'paper' : 'real',
             venue: String(input.venue ?? ''), market: String(input.market ?? ''),
             side: String(input.side ?? '').toLowerCase() as 'yes' | 'no',
@@ -1945,7 +1945,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
             rationale: String(input.rationale ?? ''), sources: rawSources.map(String),
             ...(input.max_stake !== undefined ? { maxStake: num(input.max_stake) } : {}),
           }, Date.now())
-          return formatProposal(position, sizing, gatedToPaper) + (saveFunds(state) ? '' : NOT_SAVED_WARNING)
+          return formatProposal(position, sizing) + (saveFunds(state) ? '' : NOT_SAVED_WARNING)
         } catch (error) {
           if (error instanceof FundsError) throw new Error(`Not proposed: ${error.message}`)
           throw error

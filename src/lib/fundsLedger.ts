@@ -203,24 +203,6 @@ export function sizePosition(input: ProposalInput, state: FundsState, nowMs: num
 
 // ── Model actions ──────────────────────────────────────────────────────────────
 
-// ── Paper-first gate ───────────────────────────────────────────────────────────
-
-/** Real trading unlocks only after paper results were recorded on this many different days. */
-export const PAPER_DAYS_REQUIRED = 7
-
-const dayKey = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}` }
-
-/** Days (local) on which a paper position settled won or lost. Not days since first use: the week must produce data. */
-export function paperGate(state: FundsState): { days: number; required: number; open: boolean } {
-  const days = new Set(state.positions
-    .filter(p => p.mode === 'paper' && p.status === 'settled' && (p.outcome === 'won' || p.outcome === 'lost') && p.settledAt)
-    .map(p => dayKey(p.settledAt!)))
-  return { days: days.size, required: PAPER_DAYS_REQUIRED, open: days.size >= PAPER_DAYS_REQUIRED }
-}
-
-const gateLockedMessage = (g: { days: number; required: number }) =>
-  `Real trading is locked by the paper-first gate: ${g.days}/${g.required} days with settled paper results.`
-
 export const haltedMessage = (h: { reason: string }) => `HALTED: ${h.reason} No real proposals or approvals until the owner types /funds resume.`
 
 /** True once today's settled real losses reach the daily limit (of the bankroll at the start of the day). */
@@ -231,12 +213,8 @@ export function dailyLossHit(state: FundsState, nowMs: number): boolean {
 
 const inUnit = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n > 0 && n < 1
 
-export function proposePosition(state: FundsState, input: ProposalInput, nowMs: number): { state: FundsState; position: FundsPosition; sizing: Sizing; gatedToPaper: boolean } {
-  const requested: PositionMode = input.mode === 'paper' ? 'paper' : 'real'
-  // Paper-first: until the gate opens, a real proposal is recorded as paper, automatically.
-  const gate = paperGate(state)
-  const gatedToPaper = requested === 'real' && !gate.open
-  const mode: PositionMode = gatedToPaper ? 'paper' : requested
+export function proposePosition(state: FundsState, input: ProposalInput, nowMs: number): { state: FundsState; position: FundsPosition; sizing: Sizing } {
+  const mode: PositionMode = input.mode === 'paper' ? 'paper' : 'real'
   if (!inUnit(input.price)) throw new FundsError('price must be between 0 and 1 (what one $1 contract costs).')
   if (!inUnit(input.probability)) throw new FundsError('probability must be between 0 and 1 (your own estimate that this side wins).')
   if (input.side !== 'yes' && input.side !== 'no') throw new FundsError('side must be "yes" or "no".')
@@ -261,7 +239,7 @@ export function proposePosition(state: FundsState, input: ProposalInput, nowMs: 
     // A paper position needs no approval: no money is involved.
     status: mode === 'paper' ? 'placed' : 'proposed', ...(mode === 'paper' ? { placedAt: nowMs } : {}),
   }
-  return { state: { ...state, positions: [...state.positions, position], nextId: state.nextId + 1 }, position, sizing, gatedToPaper }
+  return { state: { ...state, positions: [...state.positions, position], nextId: state.nextId + 1 }, position, sizing }
 }
 
 export function pnlFor(position: FundsPosition, outcome: PositionOutcome): number {
@@ -412,7 +390,6 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
       if (!p) throw new FundsError(`No position ${cmd.id}.`)
       if (p.status !== 'proposed') throw new FundsError(`${cmd.id} is ${p.status}; only a proposal can be approved.`)
       if (state.halted) throw new FundsError(haltedMessage(state.halted))
-      if (p.mode === 'real' && !paperGate(state).open) throw new FundsError(gateLockedMessage(paperGate(state)))
       const s = summarize(state, nowMs)
       if (p.stake + p.feeEstimate > s.available + 1e-9) throw new FundsError(`${cmd.id} needs ${money(p.stake + p.feeEstimate)} but only ${money(s.available)} is available.`)
       const next = updatePosition(state, cmd.id, x => ({ ...x, status: 'approved', approvedAt: nowMs }))
@@ -508,16 +485,12 @@ export function formatFundsStatus(state: FundsState, nowMs: number): string {
     ? `${t.won}/${t.settled} won; Brier score: your estimates ${t.modelBrier} vs prices paid ${t.marketBrier} (lower is better; estimates must beat prices for an edge to be real)`
     : 'no settled positions yet'
   const rules = state.rules ?? []
-  const gate = paperGate(state)
   return [
     ...(state.halted ? [haltedMessage(state.halted)] : []),
     `Funds ledger (ForgeClaw records funds; it never holds or moves money):`,
     `Bankroll ${money(s.bankroll)} = ${money(s.deposited)} in − ${money(s.withdrawn)} out + ${money(s.realizedPnl)} realized`,
     `Available ${money(s.available)} · committed to open positions ${money(s.openStake)} · today ${money(s.settledToday)}`,
-    `Paper: bankroll ${money(s.paperBankroll)} (P/L ${money(s.paperPnl)}) · available ${money(s.paperAvailable)}`,
-    gate.open
-      ? `Paper-first gate: OPEN (${gate.days} days with settled paper results). Real proposals need your approval.`
-      : `${gateLockedMessage(gate)} Every proposal is recorded as paper until ${gate.required} days have settled paper results.`,
+    `Paper (optional, phantom money): bankroll ${money(s.paperBankroll)} (P/L ${money(s.paperPnl)}) · available ${money(s.paperAvailable)}`,
     `Limits: ${formatLimits(state.limits)}`,
     `Track record: ${record}`,
     open.length ? `Open positions:\n${open.map(formatPosition).join('\n')}` : 'Open positions: none',
@@ -525,9 +498,9 @@ export function formatFundsStatus(state: FundsState, nowMs: number): string {
   ].join('\n')
 }
 
-export function formatProposal(position: FundsPosition, sizing: Sizing, gatedToPaper = false): string {
+export function formatProposal(position: FundsPosition, sizing: Sizing): string {
   const next = position.mode === 'paper'
-    ? `Paper position: tracked now against the phantom bankroll, no money involved.${gatedToPaper ? ' Recorded as paper because the paper-first gate is still locked.' : ''}`
+    ? 'Paper position: tracked now against the phantom bankroll, no money involved.'
     : `Waiting for the owner: /funds approve ${position.id} or /funds reject ${position.id}. Nothing is placed until the owner places it on ${position.venue}.`
   return `Proposed ${formatPosition(position)}\n   edge ${pct(sizing.edge)} per contract; size limited by ${sizing.binding}\n   ${honestyLine(position)}\n   ${next}`
 }
