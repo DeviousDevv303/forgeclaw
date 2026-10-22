@@ -445,8 +445,9 @@ function buildMessageTrace(message: Message): string | undefined {
   return lines.length ? lines.join('\n\n') : undefined
 }
 
-/** How many times one run may re-ask a model step cut off by the owner leaving the app. */
-const MAX_PAGE_RETURN_RETRIES = 10
+/** How many times one run may re-ask a model step cut off by the owner leaving the app. Each one needs a real
+ * leave-and-return, so this caps repeated app-switching rather than blind time-based retries; the ledger shows it. */
+const MAX_PAGE_RETURN_RETRIES = 3
 
 /** A prompt that runs a fixed command rather than the model: re-running it could repeat a side effect, so it waits for a tap. */
 function isFixedCommandPrompt(prompt: string): boolean {

@@ -86,9 +86,31 @@ describe('a task interrupted by the page closing', () => {
     render(<App />)
     await waitFor(() => expect(screen.getByText(/Picked it back up\./)).toBeTruthy(), { timeout: 20000 })
     const body = JSON.parse(kimiBodies[0]).messages.map((m: { content: string }) => m.content).join('\n')
+    // Content, not plumbing: the actual spot from codingAgentState appears verbatim — branch, HEAD, every completed
+    // and pending step — so the model continues from the record, not a reconstruction.
     expect(body).toContain('Where the interrupted attempt stopped')
-    expect(body).toContain('site-english')
+    expect(body).toContain('Branch: site-english')
+    expect(body).toContain('HEAD: abc1234')
     expect(body).toContain('created repo english-site')
+    expect(body).toContain('wrote index.html')
+    expect(body).toContain('add read-aloud')
+    expect(body).toContain('enable Pages')
+  })
+
+  it('mutation check: with no recorded state, the resume carries no stopped-at block (only the generic note)', { timeout: 30000 }, async () => {
+    const CODING = 'build my mom an English-learning website and deploy it to GitHub Pages'
+    const t = Date.now() - 10 * 60_000
+    localStorage.setItem('forgemind_history', JSON.stringify([
+      { id: 'u1', role: 'user', content: CODING, timestamp: t },
+      { id: 'a1', role: 'assistant', content: 'Processing…', streaming: true, timestamp: t },
+    ]))
+    // No fc_coding_agent_state is seeded: ForgeClaw has no record of a spot.
+    const { default: App } = await import('./App')
+    render(<App />)
+    await waitFor(() => expect(screen.getByText(/Picked it back up\./)).toBeTruthy(), { timeout: 20000 })
+    const body = JSON.parse(kimiBodies[0]).messages.map((m: { content: string }) => m.content).join('\n')
+    expect(body).toContain('Resumed task: an earlier attempt')
+    expect(body).not.toContain('Where the interrupted attempt stopped')
   })
 
   it('does not re-run a resume by itself; RESUME runs it on a tap', { timeout: 30000 }, async () => {
