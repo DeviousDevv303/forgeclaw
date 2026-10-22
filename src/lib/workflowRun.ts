@@ -48,6 +48,9 @@ export interface WaitForRunInput {
   now?: () => number
 }
 
+/** Network drops, timeouts, rate limits and GitHub 5xx: worth another read. 401/403/404 are not. */
+const TRANSIENT_READ_ERROR = /failed to fetch|network|load failed|timed out|GitHub (?:408|429|5\d\d)\b/i
+
 /** Finds the run a dispatch created and polls it until it completes (any conclusion). */
 export async function waitForCorrelatedRun(request: GithubRequest, input: WaitForRunInput): Promise<ShellWorkflowRun> {
   const sleep = input.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
@@ -55,20 +58,34 @@ export async function waitForCorrelatedRun(request: GithubRequest, input: WaitFo
   const headers = { Authorization: `token ${input.token}`, Accept: 'application/vnd.github+json' }
   const base = `https://api.github.com/repos/${input.owner}/${input.repo}`
   let run: ShellWorkflowRun | undefined
-  while (now() - input.since < input.maxWaitMs) {
+  let lastReadError: string | undefined
+  // The dispatch already happened, so one dropped or 5xx read must not abandon the run: keep going until the deadline.
+  // The deadline is checked after each read, so there is always one last look (a run first listed at the deadline
+  // used to be reported as never appearing). A refused credential or missing workflow still fails at once.
+  for (;;) {
     if (input.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
-    if (!run) {
-      const list = await okJson<{ workflow_runs?: ShellWorkflowRun[] }>(request, `${base}/actions/workflows/${input.workflow}/runs?event=workflow_dispatch&per_page=20`, `finding the ${input.workflow} run`, { headers, cache: 'no-store' })
-      run = list.workflow_runs?.find(r => isCorrelatedShellRun(r, input.needle, input.since, now()))
-    } else {
-      run = await okJson<ShellWorkflowRun>(request, `${base}/actions/runs/${run.id}`, `polling the ${input.workflow} run`, { headers, cache: 'no-store' })
-      if (run.status === 'completed') return run
+    try {
+      if (!run) {
+        const list = await okJson<{ workflow_runs?: ShellWorkflowRun[] }>(request, `${base}/actions/workflows/${input.workflow}/runs?event=workflow_dispatch&per_page=20`, `finding the ${input.workflow} run`, { headers, cache: 'no-store' })
+        run = list.workflow_runs?.find(r => isCorrelatedShellRun(r, input.needle, input.since, now()))
+      } else {
+        run = await okJson<ShellWorkflowRun>(request, `${base}/actions/runs/${run.id}`, `polling the ${input.workflow} run`, { headers, cache: 'no-store' })
+      }
+      lastReadError = undefined
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      const message = error instanceof Error ? error.message : String(error)
+      if (!TRANSIENT_READ_ERROR.test(message)) throw error
+      lastReadError = message
     }
+    if (run?.status === 'completed') return run
+    if (now() - input.since >= input.maxWaitMs) break
     await sleep(run ? 10_000 : 3_000)
   }
   const minutes = Math.round(input.maxWaitMs / 60000)
-  if (!run) throw new Error(`${input.workflow} was dispatched as ${input.needle} but its run did not appear within ${minutes} minutes`)
-  throw new Error(`${input.workflow} run #${run.run_number} did not finish within ${minutes} minutes: ${run.html_url}`)
+  const lastError = lastReadError ? ` (last read error: ${lastReadError})` : ''
+  if (!run) throw new Error(`${input.workflow} was dispatched as ${input.needle} but its run did not appear within ${minutes} minutes${lastError}`)
+  throw new Error(`${input.workflow} run #${run.run_number} did not finish within ${minutes} minutes: ${run.html_url}${lastError}`)
 }
 
 /** The open pull request whose head is `branch`, if any. */

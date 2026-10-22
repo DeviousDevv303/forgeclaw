@@ -176,7 +176,8 @@ export async function waitForDeepSeekRun(ctx: ToolContext, owner: string, repo: 
   let run: DeepSeekWorkflowRun | undefined
   let attempt = 0
   let lastReadError: string | undefined
-  while (!run && Date.now() < discoveryDeadline) {
+  // Deadline checked after each read, never before: the last sleep ends at the deadline (see imageArtifact.ts).
+  while (!run) {
     if (ctx.signal?.aborted) throw new DOMException('DeepSeek run aborted', 'AbortError')
     // The dispatch already succeeded, so one slow or failed list read must not abandon a run that is
     // executing on GitHub. Keep polling until the deadline; only persistent HTTP statuses stop early.

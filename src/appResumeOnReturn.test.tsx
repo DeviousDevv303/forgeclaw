@@ -55,7 +55,9 @@ describe('resume on return', () => {
     expect(saved.filter(m => m.role === 'user' && m.content === 'tell me a short fact')).toHaveLength(1)
   })
 
-  it('does not retry a failure that happened while the app was in front', async () => {
+  // 2026-10-22: a failure while the app is in front now gets the two short on-screen retries (App.tsx,
+  // ON_SCREEN_RETRY_DELAYS_MS), but never the background whole-task resend.
+  it('a failure while the app was in front gets only the short on-screen retries, not the background resend', { timeout: 30000 }, async () => {
     failFirst = false
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === KIMI_URL) { kimiCalls++; throw new TypeError('Failed to fetch') }
@@ -66,8 +68,8 @@ describe('resume on return', () => {
     const box = await screen.findByPlaceholderText(/Ask anything/i)
     fireEvent.change(box, { target: { value: 'tell me a short fact' } })
     fireEvent.keyDown(box, { key: 'Enter' })
-    await waitFor(() => expect(screen.getByText(/temporary connection problem/)).toBeTruthy(), { timeout: 8000 })
-    expect(kimiCalls).toBe(1)
+    await waitFor(() => expect(screen.getByText(/temporary connection problem/)).toBeTruthy(), { timeout: 15000 })
+    expect(kimiCalls).toBe(3)
   })
 })
 

@@ -100,7 +100,9 @@ export async function waitForImageRun(
   let attempt = 0
   let lastReadError: string | undefined
 
-  while (!run && Date.now() < discoveryDeadline) {
+  // The deadline is checked after each read (below), never before: the last sleep ends at the deadline, and a
+  // check here would skip the final look. A run first listed then was reported "not found".
+  while (!run) {
     if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
     // The dispatch already succeeded, so one slow or failed list read must not abandon a run that is
     // executing on GitHub. Keep polling until the deadline; only persistent HTTP statuses stop early.

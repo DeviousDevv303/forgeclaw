@@ -148,6 +148,40 @@ describe('dispatcher integrity (offline)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
+  it('shell_exec takes one last look at the deadline: a run first listed exactly then is found, not lost', async () => {
+    vi.useFakeTimers()
+    try {
+      let invocationId = ''
+      let deadline = Infinity
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = new URL(String(input))
+        if (url.pathname.endsWith('/dispatches')) {
+          invocationId = (JSON.parse(String(init?.body)) as { inputs: { invocation_id: string } }).inputs.invocation_id
+          deadline = Date.now() + 120_000 // SHELL_RUN_LIST_TIMEOUT_MS
+          return new Response(null, { status: 204 })
+        }
+        if (url.pathname.endsWith('/runs')) {
+          if (Date.now() < deadline) return Response.json({ workflow_runs: [] })
+          return Response.json({ workflow_runs: [{
+            id: 4343, name: `Shell exec ${invocationId}`, display_title: `Shell exec ${invocationId}`, event: 'workflow_dispatch',
+            status: 'queued', conclusion: null, created_at: new Date().toISOString(), head_branch: 'main',
+            html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/4343', run_number: 100,
+          }] })
+        }
+        throw new Error(`Unexpected request: ${url}`)
+      }))
+      const pending = executeTool({ id: 'shell-deadline', name: 'shell_exec', input: { command: 'pwd', wait: false } },
+        { ...ctx(), ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
+      let output = ''
+      void pending.then(v => { output = v })
+      for (let t = 0; t < 130_000 && !output; t += 1000) await vi.advanceTimersByTimeAsync(1000)
+      expect(output).toContain('Shell execution dispatched.')
+      expect(output).toContain('id: 4343')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('dispatches the exact ForgeClaw reasoning question and supplied project context to the fixed workflow without NEXUS learning', async () => {
     const JSZip = (await import('jszip')).default
     const zip = new JSZip()

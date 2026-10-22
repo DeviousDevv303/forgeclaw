@@ -20,6 +20,16 @@ export function leftPageSince(mark: number): boolean {
   return hides !== mark || (typeof document !== 'undefined' && document.hidden)
 }
 
+/** Resolves true after `ms`, or false at once if the signal aborts first (the owner pressed STOP). */
+export function waitMs(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false)
+  return new Promise(resolve => {
+    const onAbort = () => { clearTimeout(timer); resolve(false) }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(true) }, ms)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 /** Resolves true once the page is visible (at once if it already is), false if the signal aborts first. */
 export function waitUntilVisible(signal?: AbortSignal): Promise<boolean> {
   if (signal?.aborted) return Promise.resolve(false)
