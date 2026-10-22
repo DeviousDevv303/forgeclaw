@@ -1651,7 +1651,9 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const discoveryDelays = [100, 250, 500, 1000, 2000] as const
         let discoveryAttempt = 0
 
-        while (!run && Date.now() < findDeadline) {
+        // Deadline checked after each read, never before: the last sleep ends at the deadline, so a check here
+        // skipped the final look (see imageArtifact.ts).
+        while (!run) {
           if (ctx.signal?.aborted) return '[TOOL ERROR] Run aborted while locating shell execution.'
           try {
             run = await findCorrelatedRun()

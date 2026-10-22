@@ -111,6 +111,18 @@ describe('image run discovery and status polling', () => {
     expect(out.error).toBe('Image generation dispatched but correlated run "img-1" was not found within 120s.')
   })
 
+  it('(c2) takes one last look at the deadline: a run that is first listed exactly then is found, not lost', async () => {
+    vi.useFakeTimers()
+    const deadline = Date.now() + 120_000
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (!isList(input)) return Response.json(imageRun('completed'))
+      return Date.now() >= deadline ? listed() : Response.json({ workflow_runs: [] })
+    }))
+    const out = await settle(waitForImageRun(ctx, 'DeviousDevv303', 'forgeclaw', 'img-1', Date.now()), 130_000)
+    expect(out.error).toBeUndefined()
+    expect(out.value).toMatchObject({ id: 7 })
+  })
+
   it('(d) a refused credential during discovery fails at once, not after 120s of polling', async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn(async () => new Response('forbidden', { status: 403, statusText: 'Forbidden' }))

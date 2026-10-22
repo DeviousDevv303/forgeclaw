@@ -203,6 +203,26 @@ describe('DeepSeek stage-specific failures', () => {
     await assertion
   })
 
+  it('takes one last look at the deadline: a run first listed exactly then is found, not lost', async () => {
+    vi.useFakeTimers()
+    const invocationId = 'deepseek-at-deadline'
+    const deadline = Date.now() + 120_000
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('raw.githubusercontent.com')) return new Response('ok', { status: 200 })
+      if (!String(input).includes('/deepseek-16b.yml/runs?')) throw new Error(`Unexpected fetch URL: ${String(input)}`)
+      if (Date.now() < deadline) return Response.json({ workflow_runs: [] })
+      return Response.json({ workflow_runs: [{
+        id: 77, name: `DeepSeek 16B ${invocationId}`, display_title: `DeepSeek 16B ${invocationId}`, event: 'workflow_dispatch',
+        status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main',
+        html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/77', run_number: 77,
+      }] })
+    }) as unknown as typeof fetch)
+    const pending = waitForDeepSeekRun(ctx(), 'DeviousDevv303', 'forgeclaw', invocationId, Date.now())
+    const settled = pending.then(v => ({ v }), e => ({ e: String(e) }))
+    await vi.advanceTimersByTimeAsync(125_000)
+    expect(await settled).toMatchObject({ v: { id: 77 } })
+  })
+
   it('tolerates transient poll failures and times out after max wait', async () => {
     vi.useFakeTimers()
     const invocationId = 'deepseek-timeout-poll'
