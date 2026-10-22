@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 
-import { isCorrelatedShellRun, type ShellWorkflowRun } from './shellCorrelation'
+import { explainShellRunMismatch, isCorrelatedShellRun, type ShellWorkflowRun } from './shellCorrelation'
 
 /**
  * Real web search without an API key: dispatch the repository's read-only
@@ -89,58 +89,100 @@ export async function runDdgWorkflowSearch(rawQuery: string, count: number, deps
   const invocationId = `ddg-${now()}-${Math.random().toString(36).slice(2, 8)}`
   const dispatchedAt = now()
 
-  const dispatch = await deps.fetcher(`${workflowUrl}/dispatches`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      ref: 'main',
-      inputs: { queries: query, max_results: String(count), delay_seconds: '1', invocation_id: invocationId },
-    }),
-  })
+  // Not retried: a POST that reached GitHub before the connection dropped would start a second run.
+  let dispatch: Response
+  try {
+    dispatch = await deps.fetcher(`${workflowUrl}/dispatches`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        ref: 'main',
+        inputs: { queries: query, max_results: String(count), delay_seconds: '1', invocation_id: invocationId },
+      }),
+    })
+  } catch (error) {
+    if (deps.signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) throw error
+    throw new Error(`DuckDuckGo workflow dispatch failed (network error: ${error instanceof Error ? error.message : String(error)})`)
+  }
   if (!dispatch.ok) throw new Error(`DuckDuckGo workflow dispatch failed (GitHub ${dispatch.status})`)
 
-  // Find our run by run-name; workflow_dispatch itself returns 204 with no run ID.
-  let run: ShellWorkflowRun | undefined
-  const discoverUntil = now() + (deps.runDiscoveryTimeoutMs ?? 60_000)
-  while (!run && now() < discoverUntil) {
-    if (deps.signal?.aborted) throw new Error('web_search aborted while locating the workflow run.')
-    const res = await deps.fetcher(`${workflowUrl}/runs?event=workflow_dispatch&per_page=30`, { headers, cache: 'no-store' })
-    if (res.ok) {
-      const data = await res.json() as { workflow_runs?: ShellWorkflowRun[] }
-      run = (data.workflow_runs ?? []).find(r => isCorrelatedShellRun(r, invocationId, dispatchedAt, now()))
+  // The dispatch succeeded, so the run exists on GitHub from here on. A dropped connection or a
+  // non-OK read (phone backgrounded, flaky network, brief rate limit) must not abandon it: every
+  // read below is retried until its deadline, and the last failure is reported, never swallowed.
+  type Read = { res: Response } | { error: string }
+  const read = async (url: string, init?: RequestInit): Promise<Read> => {
+    try {
+      return { res: await deps.fetcher(url, init) }
+    } catch (error) {
+      if (deps.signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) throw error
+      return { error: `network error: ${error instanceof Error ? error.message : String(error)}` }
     }
-    if (!run) await sleep(pollMs)
   }
-  if (!run) throw new Error(`DuckDuckGo workflow dispatched but run "${invocationId}" was not found.`)
+
+  // Find our run by run-name; workflow_dispatch itself returns 204 with no run ID.
+  // The deadline is checked AFTER each read, so a sleep suspended past the deadline still gets a final look.
+  let run: ShellWorkflowRun | undefined
+  let lastListState = 'no list read yet'
+  const discoverUntil = now() + (deps.runDiscoveryTimeoutMs ?? 90_000)
+  for (;;) {
+    if (deps.signal?.aborted) throw new Error('web_search aborted while locating the workflow run.')
+    const r = await read(`${workflowUrl}/runs?event=workflow_dispatch&per_page=30`, { headers, cache: 'no-store' })
+    if ('error' in r) lastListState = r.error
+    else if (!r.res.ok) lastListState = `GitHub ${r.res.status}`
+    else {
+      try {
+        const runs = (await r.res.json() as { workflow_runs?: ShellWorkflowRun[] }).workflow_runs ?? []
+        run = runs.find(x => isCorrelatedShellRun(x, invocationId, dispatchedAt, now()))
+        const nearest = runs[0] ? explainShellRunMismatch(runs[0], invocationId, dispatchedAt, now()) : null
+        lastListState = `${runs.length} runs listed, none matched${nearest ? ` (newest: ${nearest})` : ''}`
+      } catch {
+        lastListState = 'run list was not valid JSON'
+      }
+    }
+    if (run || now() >= discoverUntil) break
+    await sleep(pollMs)
+  }
+  if (!run) throw new Error(`DuckDuckGo workflow dispatched but run "${invocationId}" was not found (last read: ${lastListState}).`)
 
   let finalRun: ShellWorkflowRun = run
+  let lastPollState = 'not polled'
   const completeUntil = now() + (deps.runCompletionTimeoutMs ?? 120_000)
-  while (finalRun.status !== 'completed' && now() < completeUntil) {
+  while (finalRun.status !== 'completed') {
     if (deps.signal?.aborted) throw new Error('web_search aborted while waiting for the workflow run.')
+    if (now() >= completeUntil) break
     await sleep(pollMs)
-    const res = await deps.fetcher(`${base}/runs/${run.id}`, { headers, cache: 'no-store' })
-    if (res.ok) finalRun = await res.json() as ShellWorkflowRun
+    const r = await read(`${base}/runs/${run.id}`, { headers, cache: 'no-store' })
+    if ('error' in r) lastPollState = r.error
+    else if (!r.res.ok) lastPollState = `GitHub ${r.res.status}`
+    else {
+      try { finalRun = await r.res.json() as ShellWorkflowRun; lastPollState = 'ok' } catch { lastPollState = 'run was not valid JSON' }
+    }
   }
   if (finalRun.status !== 'completed') {
-    throw new Error(`DuckDuckGo search did not finish in time (run ${run.id}, status ${finalRun.status}): ${finalRun.html_url}`)
+    throw new Error(`DuckDuckGo search did not finish in time (run ${run.id}, status ${finalRun.status}, last poll: ${lastPollState}): ${finalRun.html_url ?? run.html_url}`)
   }
 
   let parsed: DdgQueryResult[] | null = null
   let lastLogState = 'no log yet'
   const logUntil = now() + (deps.logTimeoutMs ?? 60_000)
-  while (!parsed && now() < logUntil) {
-    const jobsRes = await deps.fetcher(`${base}/runs/${run.id}/jobs?per_page=10`, { headers, cache: 'no-store' })
-    if (jobsRes.ok) {
-      const jobs = (await jobsRes.json() as { jobs?: Array<{ id: number }> }).jobs ?? []
+  for (;;) {
+    if (deps.signal?.aborted) throw new Error('web_search aborted while reading the workflow log.')
+    const jobsRes = await read(`${base}/runs/${run.id}/jobs?per_page=10`, { headers, cache: 'no-store' })
+    if ('error' in jobsRes) lastLogState = `jobs ${jobsRes.error}`
+    else if (!jobsRes.res.ok) lastLogState = `jobs ${jobsRes.res.status}`
+    else {
+      const jobs = (await jobsRes.res.json().catch(() => ({})) as { jobs?: Array<{ id: number }> }).jobs ?? []
       if (jobs[0]) {
-        const logRes = await deps.fetcher(`${base}/jobs/${jobs[0].id}/logs`, { headers })
-        if (logRes.ok) {
-          parsed = parseDdgLog(await logRes.text())
+        const logRes = await read(`${base}/jobs/${jobs[0].id}/logs`, { headers })
+        if ('error' in logRes) lastLogState = `logs ${logRes.error}`
+        else if (logRes.res.ok) {
+          parsed = parseDdgLog(await logRes.res.text())
           lastLogState = parsed ? 'ok' : 'log has no result line'
-        } else lastLogState = `logs ${logRes.status}`
+        } else lastLogState = `logs ${logRes.res.status}`
       } else lastLogState = 'job not yet available'
-    } else lastLogState = `jobs ${jobsRes.status}`
-    if (!parsed) await sleep(pollMs)
+    }
+    if (parsed || now() >= logUntil) break
+    await sleep(pollMs)
   }
   if (!parsed) {
     throw new Error(`DuckDuckGo run ${run.id} ended "${finalRun.conclusion ?? 'unknown'}" but no results were readable (${lastLogState}): ${finalRun.html_url}`)

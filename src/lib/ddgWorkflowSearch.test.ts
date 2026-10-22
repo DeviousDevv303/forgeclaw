@@ -76,6 +76,45 @@ describe('runDdgWorkflowSearch', () => {
   it('fails loudly when the run is never found', async () => {
     await expect(runDdgWorkflowSearch('q', 5, { ...base, fetcher: fakeGithub({ neverFindRun: true }).fetcher })).rejects.toThrow('was not found')
   })
+  it('keeps looking for the run through dropped connections and non-OK reads', async () => {
+    const gh = fakeGithub({ logText: resultLine })
+    let listReads = 0
+    const flaky = async (url: string, init?: RequestInit) => {
+      if (url.includes('/runs?event') && ++listReads <= 2) {
+        if (listReads === 1) throw new TypeError('Failed to fetch')
+        return json({}, false)
+      }
+      if (url.includes('/jobs?') && listReads === 3) { listReads++; throw new TypeError('Failed to fetch') }
+      return gh.fetcher(url, init)
+    }
+    const out = await runDdgWorkflowSearch('q', 5, { ...base, runDiscoveryTimeoutMs: 10_000, logTimeoutMs: 10_000, fetcher: flaky })
+    expect(out).toContain('Blade erosion')
+    expect(listReads).toBe(4)
+  })
+  it('still reads once more when a suspended sleep overran the discovery deadline', async () => {
+    let t = Date.now()
+    const gh = fakeGithub({ logText: resultLine })
+    let listReads = 0
+    const fetcher = async (url: string, init?: RequestInit) => {
+      if (url.includes('/runs?event') && ++listReads === 1) return json({ workflow_runs: [] })
+      return gh.fetcher(url, init)
+    }
+    // The app was backgrounded: the first sleep returns long after the deadline.
+    const out = await runDdgWorkflowSearch('q', 5, { ...base, now: () => t, sleep: async () => { t += 600_000 }, runDiscoveryTimeoutMs: 60_000, logTimeoutMs: 10_000, fetcher })
+    expect(out).toContain('Blade erosion')
+    expect(listReads).toBe(2)
+  })
+  it('names the last read failure when the run is never found', async () => {
+    const fetcher = async (url: string, init?: RequestInit) => {
+      if (url.includes('/runs?event')) throw new TypeError('Failed to fetch')
+      return fakeGithub({}).fetcher(url, init)
+    }
+    await expect(runDdgWorkflowSearch('q', 5, { ...base, fetcher })).rejects.toThrow('last read: network error: Failed to fetch')
+  })
+  it('labels a dispatch network failure instead of a bare "Failed to fetch"', async () => {
+    const fetcher = async () => { throw new TypeError('Failed to fetch') }
+    await expect(runDdgWorkflowSearch('q', 5, { ...base, fetcher })).rejects.toThrow('dispatch failed (network error: Failed to fetch)')
+  })
   it('fails loudly when the log has no result line', async () => {
     await expect(runDdgWorkflowSearch('q', 5, { ...base, fetcher: fakeGithub({ logText: 'nothing here' }).fetcher })).rejects.toThrow('no results were readable')
   })
