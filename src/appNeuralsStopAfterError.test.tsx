@@ -34,7 +34,7 @@ describe('a failed request ends the run', () => {
     const box = screen.getByRole('textbox') as HTMLTextAreaElement
     fireEvent.change(box, { target: { value: 'tell me a short fact about cubes' } })
     fireEvent.keyDown(box, { key: 'Enter' })
-    await waitFor(() => expect(screen.getAllByText(/temporary connection problem/).length).toBeGreaterThan(0), { timeout: 8000 })
+    await waitFor(() => expect(screen.getAllByText(/temporary connection problem/).length).toBeGreaterThan(0), { timeout: 15000 })
     await waitFor(() => expect(states[states.length - 1]?.state).toBe('error'))
     expect(states.some(s => s.state === 'running' || s.state === 'thinking')).toBe(true)
     window.removeEventListener('forgeclaw:state', onState)

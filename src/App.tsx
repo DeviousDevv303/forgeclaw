@@ -213,7 +213,7 @@ import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { ownerRulesPrompt, parseFundsCommand, runFundsCommand } from './lib/fundsLedger'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
-import { leftPageSince, visibilityMark, waitUntilVisible } from './lib/pageVisibility'
+import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/pageVisibility'
 import { DEEPSEEK_RUN_EXPIRED_NOTE, isDeepSeekRunResumable } from './lib/deepseekRunResume'
 import { ConnectionToast, type ConnectionNotice } from './components/ConnectionToast'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
@@ -457,6 +457,8 @@ function buildMessageTrace(message: Message): string | undefined {
 /** How many times one run may re-ask a model step cut off by the owner leaving the app. Each one needs a real
  * leave-and-return, so this caps repeated app-switching rather than blind time-based retries; the ledger shows it. */
 const MAX_PAGE_RETURN_RETRIES = 3
+/** A drop while the app stays on screen (Wi-Fi to cellular, a network blip): the same step is asked again after these waits. */
+const ON_SCREEN_RETRY_DELAYS_MS = [1500, 4000] as const
 
 /** A prompt that runs a fixed command rather than the model: re-running it could repeat a side effect, so it waits for a tap. */
 function isFixedCommandPrompt(prompt: string): boolean {
@@ -1781,6 +1783,22 @@ function App() {
           // A pop-up, not chat text: nothing is written into the conversation.
           showConnectionNotice('reconnecting')
           if (!(await waitUntilVisible(controller.signal))) break
+          streamBuffer = ''
+          pageMark = visibilityMark()
+          routerResult = await sendViaRouter(routerRequest, currentKey, activeProvider)
+          if (routerResult.success) showConnectionNotice('back')
+        }
+        // The retry above needs the owner to have left the app. A drop while ForgeClaw stayed on screen ended the run at
+        // once ("Failed to fetch" with nothing to recover it, 2026-10-22). Ask the same step again, briefly, a couple of times.
+        for (
+          let blip = 0;
+          blip < ON_SCREEN_RETRY_DELAYS_MS.length && !routerResult.success && !controller.signal.aborted
+            && !leftPageSince(pageMark) && isTransientNetworkError(routerResult.error.message);
+          blip++
+        ) {
+          emitFailure({ source: 'forgemind', severity: 'info', message: `Step ${iter + 1} lost its connection while the app was open (${routerResult.error.message}); asking it again as the same run ${learningId}, keeping its progress (${blip + 1}/${ON_SCREEN_RETRY_DELAYS_MS.length})` })
+          showConnectionNotice('reconnecting')
+          if (!(await waitMs(ON_SCREEN_RETRY_DELAYS_MS[blip], controller.signal))) break
           streamBuffer = ''
           pageMark = visibilityMark()
           routerResult = await sendViaRouter(routerRequest, currentKey, activeProvider)
