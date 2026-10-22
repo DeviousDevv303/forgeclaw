@@ -18,7 +18,8 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.resetModules() })
 
 describe('replies interrupted by a reload', () => {
   it('are marked interrupted instead of "Still working" forever', async () => {
-    const t = Date.now() - 7 * 3600_000
+    // Older than the auto-resume window (interruptedTask.ts), so it waits for a tap instead of re-running.
+    const t = Date.now() - 13 * 3600_000
     localStorage.setItem('forgemind_history', JSON.stringify([
       { id: '1', role: 'user', content: 'Generate me an image of a mirador', timestamp: t },
       { id: '2', role: 'assistant', content: '', streaming: true, timestamp: t },
@@ -27,5 +28,6 @@ describe('replies interrupted by a reload', () => {
     render(<App />)
     expect(await screen.findByText(/Interrupted: ForgeClaw was closed or reloaded before this finished/)).toBeTruthy()
     expect(screen.queryByText(/Still working/)).toBeNull()
+    expect(screen.getByText(/Tap RESUME to run it again/)).toBeTruthy()
   })
 })
