@@ -116,7 +116,6 @@ export const EN = {
 
 
 
-  'confirm.wipe': 'WIPE ALL CHAT HISTORY AND CORPUS? (API keys are kept)',
   'test.noAnthropicKey': 'No Anthropic key entered',
   'test.noMoonshotKey': 'No Moonshot/Kimi key entered',
   'test.localReachable': 'Local llama.cpp endpoint is reachable',
@@ -522,7 +521,6 @@ const ES: Record<Key, string> = {
 
 
 
-  'confirm.wipe': '¿BORRAR TODO EL HISTORIAL DEL CHAT Y EL CORPUS? (Las claves de API se conservan)',
   'test.noAnthropicKey': 'No se ingresó la clave de Anthropic',
   'test.noMoonshotKey': 'No se ingresó la clave de Moonshot/Kimi',
   'test.localReachable': 'El endpoint local de llama.cpp responde',
