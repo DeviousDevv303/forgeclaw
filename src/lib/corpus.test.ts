@@ -194,15 +194,20 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(requiresCoSign({ id: 'corpus-shell', name: 'shell_exec', input: {} }, true)).toBe(true)
   })
 
-  it('accommodates 10,000 interaction records in persistent local storage', async () => {
+  it('accommodates 10,000 interaction records in persistent local storage', async ({ signal }) => {
     const repository = new CorpusRepository({ mode: 'test' })
     for (let index = 0; index < 10_000; index += 1) {
+      // A timed-out test's promise keeps running: without this, its appends leaked into the next test's storage
+      // (docs/flakes.md entry 6, "expected 9 to be 7" after entry 5 timed out in a shuffled run).
+      if (signal.aborted) return
       await repository.appendInteraction({ input: `synthetic query ${index}`, context: '', result: `synthetic result ${index}`, runtime: 'corpus', model: 'local-model' })
     }
     expect(repository.getInteractionCount()).toBe(10_000)
     expect(repository.getCandidateCount()).toBe(10_000)
     expect(new CorpusRepository({ mode: 'test' }).getInteractionCount()).toBe(10_000)
-  }, 60_000)
+    // 10,000 sequential appends each rewrite an index of up to 10,000 ids: ~31 s alone, so 60 s timed out under suite
+    // load (docs/flakes.md entry 5). One real append is a few ms; only this test's back-to-back volume is quadratic.
+  }, 180_000)
 })
 
 describe('CORPUS admission authorization conformance', () => {
