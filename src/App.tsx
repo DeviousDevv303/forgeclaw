@@ -50,9 +50,15 @@ async function resumeOrphanedDeepSeekRun(
   if (!persisted) return false
   if (activeRunRef.current) return false // already running, don't double-dispatch
 
-  // Don't resume runs older than 30 minutes (workflow timeout)
-  if (Date.now() - persisted.dispatchedAt > 30 * 60_000) {
+  // Don't resume runs older than the workflow timeout. Its reply was left "running" when the page loaded, so end it
+  // here too: clearing only the saved run left "Still working" on screen forever.
+  if (!isDeepSeekRunResumable(persisted, Date.now())) {
     clearActiveDeepSeekRun()
+    deps.setMessages(prev => prev.map(m =>
+      m.id === persisted.messageId && m.streaming
+        ? { ...m, streaming: false, agentPhase: 'BLOCKED', content: `${m.content ? `${m.content}\n\n` : ''}${DEEPSEEK_RUN_EXPIRED_NOTE}` }
+        : m,
+    ))
     return false
   }
 
@@ -207,6 +213,7 @@ import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitUntilVisible } from './lib/pageVisibility'
+import { DEEPSEEK_RUN_EXPIRED_NOTE, isDeepSeekRunResumable } from './lib/deepseekRunResume'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
 import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
@@ -652,9 +659,12 @@ function App() {
     // persisted DeepSeek run is re-attached (resumeOrphanedDeepSeekRun); every other one is marked
     // interrupted instead of showing "Still working" forever.
     // The latest interrupted task is picked up again when the owner is back (interruptedTask.ts).
-    const resumable = loadActiveDeepSeekRun()?.messageId
+    // Only a run that can still be re-attached keeps its reply "running"; an expired one is ended below.
+    const persistedRun = loadActiveDeepSeekRun()
+    const resumable = persistedRun && isDeepSeekRunResumable(persistedRun, Date.now()) ? persistedRun.messageId : undefined
     const stored = safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage)
-    const task = findInterruptedTask(stored, { now: Date.now(), skipReplyId: resumable, isCommand: isFixedCommandPrompt })
+    // An expired DeepSeek reply is never auto-resumed (it would start a 9-23 minute workflow unasked); it says to resend.
+    const task = findInterruptedTask(stored, { now: Date.now(), skipReplyId: persistedRun?.messageId, isCommand: isFixedCommandPrompt })
     interruptedTaskRef.current = task
     return stored.map(m =>
       m.streaming && m.id !== resumable
