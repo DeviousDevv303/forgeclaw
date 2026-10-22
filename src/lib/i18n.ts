@@ -72,6 +72,8 @@ export const EN = {
   'resume.unknown': 'unknown',
   'resume.resume': 'RESUME TASK',
   'resume.dismiss': 'DISMISS',
+  'chat.resumeInterrupted': '↻ RESUME',
+  'chat.resumedLabel': '↻ resumed after ForgeClaw was closed',
 
   'guardian.fullCosign': '🛡 FULL CO-SIGN',
   'guardian.operatorShell': '⚡ OPERATOR-SHELL',
@@ -476,6 +478,8 @@ const ES: Record<Key, string> = {
   'resume.unknown': 'desconocido',
   'resume.resume': 'REANUDAR TAREA',
   'resume.dismiss': 'DESCARTAR',
+  'chat.resumeInterrupted': '↻ REANUDAR',
+  'chat.resumedLabel': '↻ reanudada después de cerrar ForgeClaw',
 
   'guardian.fullCosign': '🛡 COFIRMA TOTAL',
   'guardian.operatorShell': '⚡ SHELL DE OPERADOR',

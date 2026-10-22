@@ -205,6 +205,8 @@ import { loadOwnerScaffold, operatingLoopFor, reasoningFormatReminder } from './
 import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
+import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
+import { leftPageSince, visibilityMark, waitUntilVisible } from './lib/pageVisibility'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
 import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
@@ -239,6 +241,8 @@ interface Message {
   streaming?: boolean          // true while tokens are arriving
   plan?: string                // extracted PLAN: section for plan panel
   agentPhase?: AgentPhase      // current phase in the agent loop
+  resumedAfterInterrupt?: boolean // user message: a re-run of a task the page died on
+  resumeOf?: string            // interrupted reply: the user message RESUME re-runs
 }
 
 interface CorpusEntry {
@@ -441,6 +445,15 @@ function buildMessageTrace(message: Message): string | undefined {
   return lines.length ? lines.join('\n\n') : undefined
 }
 
+/** How many times one run may re-ask a model step cut off by the owner leaving the app. Each one needs a real
+ * leave-and-return, so this caps repeated app-switching rather than blind time-based retries; the ledger shows it. */
+const MAX_PAGE_RETURN_RETRIES = 3
+
+/** A prompt that runs a fixed command rather than the model: re-running it could repeat a side effect, so it waits for a tap. */
+function isFixedCommandPrompt(prompt: string): boolean {
+  return Boolean(parseDirectDeepSeekCommand(prompt) || parseSculptCommand(prompt)) || isExplicitShellRequest(prompt) || isExplicitToolRequest(prompt)
+}
+
 function cleanStoredMessage(message: Message): Message {
   if (message.role !== 'assistant') return message
   return {
@@ -632,15 +645,27 @@ function App() {
 
   const [activeTab, setActiveTab] = useState<Tab>('forgemind')
   const [activityView, setActivityView] = useState<ActivityView>('log')
+  const interruptedTaskRef = useRef<InterruptedTask | null>(null)
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = safeGetItem('forgemind_history')
     // A reply still "running" when the page closed can never finish: its request died with the page. Only a
     // persisted DeepSeek run is re-attached (resumeOrphanedDeepSeekRun); every other one is marked
     // interrupted instead of showing "Still working" forever.
+    // The latest interrupted task is picked up again when the owner is back (interruptedTask.ts).
     const resumable = loadActiveDeepSeekRun()?.messageId
-    return safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage).map(m =>
+    const stored = safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage)
+    const task = findInterruptedTask(stored, { now: Date.now(), skipReplyId: resumable, isCommand: isFixedCommandPrompt })
+    interruptedTaskRef.current = task
+    return stored.map(m =>
       m.streaming && m.id !== resumable
-        ? { ...m, streaming: false, agentPhase: 'BLOCKED', content: `${m.content ? `${m.content}\n\n` : ''}⚠ Interrupted: ForgeClaw was closed or reloaded before this finished. Send it again to retry.` }
+        ? {
+            ...m,
+            streaming: false,
+            agentPhase: 'BLOCKED',
+            ...(m.id === task?.replyId ? { resumeOf: task.userId } : {}),
+            content: `${m.content ? `${m.content}\n\n` : ''}⚠ Interrupted: ForgeClaw was closed or reloaded before this finished. ${
+              m.id !== task?.replyId ? 'Send it again to retry.' : task.auto ? 'Resuming it now that you are back.' : 'Tap RESUME to run it again.'}`,
+          }
         : m)
   })
   // The latest messages for sendPrompt, whose memoized closure would otherwise see the list from its last re-creation.
@@ -654,7 +679,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   /** Set when the page was hidden while a request ran: a phone pauses the page and kills the in-flight request. */
   const hiddenDuringRunRef = useRef(false)
-  const sendPromptRef = useRef<(promptText: string, imageUrl?: string, options?: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean; parentRunId?: string }) => Promise<void>>(async () => {})
+  const sendPromptRef = useRef<(promptText: string, imageUrl?: string, options?: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean; parentRunId?: string; resumedAfterInterrupt?: boolean }) => Promise<void>>(async () => {})
   const activeRunRef = useRef<{ id: string; controller: AbortController; messageId: string; journal?: RunJournal } | null>(null)
   const [testKeyError, setTestKeyError] = useState('')
   // Active execution is deterministic; a saved provider choice is preserved, otherwise Moonshot/Kimi is selected.
@@ -1027,7 +1052,7 @@ function App() {
     return { cleanText: cleanVisibleResponse(answerText), tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } satisfies { cleanText: string; tagsFound: string[]; thinking: string | undefined; trace: string | undefined; answerText: string; plan: string | undefined; agentPhase: AgentPhase; nextAction: string | undefined }
   }
 
-  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string, options: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean; parentRunId?: string } = {}) => {
+  const sendPrompt = useCallback(async (promptText: string, imageUrl?: string, options: { attachmentName?: string; resumeTask?: boolean; autoRetried?: boolean; parentRunId?: string; resumedAfterInterrupt?: boolean } = {}) => {
     if (!promptText.trim()) return
     // One request at a time. A second send used to take over activeRunRef without aborting the first,
     // so the first answer was discarded when it arrived and a duplicate workflow run was dispatched.
@@ -1069,7 +1094,7 @@ function App() {
     const executionObjective = options.attachmentName
       ? `Analyze attachment: ${options.attachmentName}`
       : displayContent
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now() }
+    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now(), ...(options.resumedAfterInterrupt ? { resumedAfterInterrupt: true } : {}) }
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : ''
     const currentProviderLabel = isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : 'sk-ant-...'
@@ -1614,7 +1639,13 @@ function App() {
       )
       // Only project the minimum runtime state required for this request. Full
       // task state remains in storage and is surfaced by the UI, not token stream.
-      effectivePrompt = `${promptText}${imageUrl && !isHostedReasoner ? '\n\n[A picture is attached to this message; analyze_image with image_url "attached" looks at it.]' : ''}\n\n${buildRuntimeRequestContext({
+      // On a resume, hand the model ForgeClaw's own record of where the interrupted attempt stopped (branch, HEAD,
+      // steps already done) so it continues from ground truth instead of guessing. This is persisted state, not the
+      // model's memory; buildRuntimeRequestContext still tells it to confirm with a GitHub read before writing.
+      const resumeContext = options.resumedAfterInterrupt
+        ? `\n\n${RESUME_MODEL_NOTE}${compressedState ? `\n\nWhere the interrupted attempt stopped (ForgeClaw's own record):\n${compressedState}` : ''}`
+        : ''
+      effectivePrompt = `${promptText}${imageUrl && !isHostedReasoner ? '\n\n[A picture is attached to this message; analyze_image with image_url "attached" looks at it.]' : ''}${resumeContext}\n\n${buildRuntimeRequestContext({
         owner,
         repo,
         taskStatus: codingAgentState.taskStatus,
@@ -1638,6 +1669,8 @@ function App() {
       // (e.g. github_repo_state {}) made once in each of three separate requests got blocked as a loop.
       const recentToolCalls: string[] = []
       const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
+      // Model steps re-asked after the owner left the app mid-step (bounded, so a flaky connection cannot loop forever).
+      let pageReturnRetries = 0
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -1661,7 +1694,7 @@ function App() {
           toolCalls: allToolResults.length,
         })
         setDiagnostics(prev => ({ ...prev, lastRequestMetrics: requestMetrics }))
-        const routerResult = await sendViaRouter({
+        const routerRequest: Parameters<typeof sendViaRouter>[0] = {
           model: currentModel,
           systemPrompt: activeSystemPrompt,
           // Claude and Kimi re-read the whole run on every step: older bulky results are cut (historyCompaction.ts).
@@ -1686,7 +1719,24 @@ function App() {
             const visibleText = cleanVisibleResponse(displayText)
             setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: visibleText || 'Preparing response...', streaming: true } : m))
           } : undefined,
-        }, currentKey, activeProvider)
+        }
+        let pageMark = visibilityMark()
+        let routerResult = await sendViaRouter(routerRequest, currentKey, activeProvider)
+        // Switching to another app kills the in-flight request on a phone ("Failed to fetch"). That used to end the
+        // whole run, losing every step already done. Now the same step is asked again once the owner is back, with
+        // every tool result so far kept.
+        while (
+          !routerResult.success && !controller.signal.aborted && pageReturnRetries < MAX_PAGE_RETURN_RETRIES
+          && leftPageSince(pageMark) && isTransientNetworkError(routerResult.error.message)
+        ) {
+          pageReturnRetries++
+          emitFailure({ source: 'forgemind', severity: 'info', message: `Step ${iter + 1} was cut off while the app was in the background (${routerResult.error.message}); asking it again on return as the same run ${learningId}, keeping its progress (${pageReturnRetries}/${MAX_PAGE_RETURN_RETRIES})` })
+          setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Reconnecting: you left the app mid-step. Picking up where it stopped…', streaming: true } : m))
+          if (!(await waitUntilVisible(controller.signal))) break
+          streamBuffer = ''
+          pageMark = visibilityMark()
+          routerResult = await sendViaRouter(routerRequest, currentKey, activeProvider)
+        }
         const latency = Math.round(performance.now() - reqStart)
         if (!routerResult.success) {
           setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'error', lastError: routerResult.error.message, lastLatencyMs: latency }))
@@ -2012,6 +2062,38 @@ function App() {
     document.addEventListener('visibilitychange', onHide)
     return () => document.removeEventListener('visibilitychange', onHide)
   }, [])
+
+  // Re-run an interrupted task: its dead pair is removed and the request is sent again, marked as a resume so the
+  // model checks what the first attempt already did. Never while another request runs; the RESUME button stays.
+  const resumeInterruptedTask = useCallback((task: Pick<InterruptedTask, 'userId' | 'replyId' | 'prompt' | 'imageUrl'>, how: 'auto' | 'tap') => {
+    if (activeRunRef.current) return false
+    setResumePrompt(null)
+    setMessages(prev => prev.filter(m => m.id !== task.userId && m.id !== task.replyId))
+    emitFailure({ source: 'forgemind', severity: 'info', message: `Resuming a task interrupted when ForgeClaw was closed (${how === 'auto' ? 'automatically, on return' : 'RESUME tapped'})` })
+    // After the removal renders, so the resumed request's history does not hold the dead attempt.
+    setTimeout(() => { void sendPromptRef.current(task.prompt, task.imageUrl, { resumedAfterInterrupt: true }) }, 0)
+    return true
+  }, [emitFailure])
+
+  // A task the page died on resumes by itself once, when the owner is back (the page is visible).
+  useEffect(() => {
+    const task = interruptedTaskRef.current
+    interruptedTaskRef.current = null
+    if (!task?.auto) return
+    let done = false
+    const run = () => {
+      if (done || document.hidden) return
+      done = true
+      document.removeEventListener('visibilitychange', run)
+      // A re-attached DeepSeek run may hold the slot; the RESUME button on the reply is the way back then.
+      if (!resumeInterruptedTask(task, 'auto')) {
+        setMessages(prev => prev.map(m => m.id === task.replyId ? { ...m, content: m.content.replace('Resuming it now that you are back.', 'Tap RESUME to run it again.') } : m))
+      }
+    }
+    document.addEventListener('visibilitychange', run)
+    const timer = setTimeout(run, 0)
+    return () => { done = true; clearTimeout(timer); document.removeEventListener('visibilitychange', run) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
@@ -2909,10 +2991,24 @@ function App() {
                               <svg width="13" height="13" viewBox="0 0 24 24" fill={msg.feedback === 'down' ? '#fff' : '#aaa'}><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L10.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
                             </button>
                             {renderTasteButtons(msg, '#666', '#222')}
+                            {msg.resumeOf && (
+                              <button
+                                type="button"
+                                disabled={loading}
+                                onClick={() => {
+                                  const asked = messages.find(m => m.id === msg.resumeOf)
+                                  if (asked) resumeInterruptedTask({ userId: asked.id, replyId: msg.id, prompt: asked.content, imageUrl: asked.imageUrl }, 'tap')
+                                }}
+                                style={{ ...actionButtonStyle, color: loading ? '#555' : '#93c5fd', border: '1px solid #334155' }}
+                              >
+                                {t('chat.resumeInterrupted')}
+                              </button>
+                            )}
                           </div>
                         )}
                         {msg.role === 'user' && (
                           <div style={{ marginTop: '8px', display: 'flex', gap: '8px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                            {msg.resumedAfterInterrupt && <span style={{ fontSize: '10px', color: '#3b1d05', fontFamily: 'monospace' }}>{t('chat.resumedLabel')}</span>}
                             <button onClick={() => handleCopy(msg.id, msg.content)} style={{ ...actionButtonStyle, color: '#000', border: '1px solid rgba(0,0,0,0.3)' }}>{copiedId === msg.id ? '✓' : t('chat.copy')}</button>
                             {renderTasteButtons(msg, '#333', 'rgba(0,0,0,0.3)')}
                           </div>
