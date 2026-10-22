@@ -45,6 +45,29 @@ describe('useNeuralState', () => {
     vi.clearAllMocks()
   })
 
+  it('settles to idle after the streaming window when the mission completed while tokens were still fresh', () => {
+    vi.useFakeTimers()
+    try {
+      const objective = evt({ type: 'OBJECTIVE_RECEIVED', objective: 'q' })
+      const { result, rerender } = renderHook(
+        ({ events, len }) => useNeuralState(stateWithEvents(events), 'corpus', { contentLength: len }),
+        { initialProps: { events: [objective] as AgentEvent[], len: 0 } },
+      )
+      // Reply text grows, then the mission completes in the same moment: the last tokens are < 1.5 s old.
+      act(() => { vi.advanceTimersByTime(100) })
+      rerender({ events: [objective], len: 400 })
+      const complete = evt({ type: 'MISSION_COMPLETE' })
+      rerender({ events: [objective, complete], len: 400 })
+      expect(result.current.phase).toBe('streaming')
+      // No further events ever arrive. Once the window has passed the background must go quiet.
+      act(() => { vi.advanceTimersByTime(5000) })
+      expect(result.current.phase).toBe('idle')
+      expect(result.current.tokenVelocity).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('starts idle', () => {
     const { result } = renderHook(() =>
       useNeuralState(stateWithEvents([]), 'corpus', { contentLength: 0 }),
