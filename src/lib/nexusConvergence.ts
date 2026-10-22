@@ -56,3 +56,20 @@ export function knowledgeOrigin(record: { timestamp: string; metadata: Record<st
   if (record.timestamp < UNSIGNED_ADMISSION_UNTIL) return 'LEGACY · admitted without review (Sep 24 – Oct 13)'
   return 'ADMITTED · origin not recorded'
 }
+
+/**
+ * Tools whose result is a model's own output or the app's own bookkeeping, not evidence about the world. On 2026-10-22 a
+ * DeepSeek answer that admitted "the context does not provide details about PR #223" still claimed "there are no pending
+ * PRs"; because its deepseek_reason call had succeeded, the answer counted as tool-backed and could converge as First
+ * Principles knowledge. A model's reasoning, review or vision reading is not evidence of a fact.
+ */
+export const NOT_EVIDENCE_TOOLS: ReadonlySet<string> = new Set([
+  'deepseek_reason', 'ask_deepseek', 'review_code', 'spawn_agent', 'analyze_image',
+  'coding_task_update', 'memory_write', 'memory_read', 'memory_list',
+])
+
+/** How a final answer is recorded: blocked, verified (a successful evidence tool backs it), or merely completed. */
+export function answerOutcome(blocked: boolean, results: ReadonlyArray<{ name: string; isError?: boolean }>): 'blocked' | 'verified' | 'completed' {
+  if (blocked) return 'blocked'
+  return results.some(result => !result.isError && !NOT_EVIDENCE_TOOLS.has(result.name)) ? 'verified' : 'completed'
+}

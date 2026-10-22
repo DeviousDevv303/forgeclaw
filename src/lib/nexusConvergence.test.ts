@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
 import { buildLearningEvent } from './learningEvents'
-import { convergencePhase, knowledgeOrigin, PLAYBOOK_SOURCE, VISITOR_SOURCE_ID } from './nexusConvergence'
+import { answerOutcome, convergencePhase, knowledgeOrigin, PLAYBOOK_SOURCE, VISITOR_SOURCE_ID } from './nexusConvergence'
 import { BROWSER_PLAYBOOK_SOURCE } from './browserLearning'
 import { VISITOR_SOURCE } from './nexusLearning'
 import { corpusRepository, type LearningCandidate } from './corpus'
@@ -108,5 +108,22 @@ describe('knowledge: listed, labelled by origin, removable', () => {
     await corpusRepository.appendInteraction(chat('verified'))
     expect(corpusRepository.getApprovedCount()).toBe(2)
     expect(corpusRepository.getTrainingCount()).toBe(1)
+  })
+})
+
+describe('only real evidence makes an answer "verified"', () => {
+  // 2026-10-22: DeepSeek answered "there are no pending PRs" (PR #223 was open) with only its own reasoning call behind it.
+  it('a model\'s own reasoning is not evidence', () => {
+    expect(answerOutcome(false, [{ name: 'deepseek_reason' }])).toBe('completed')
+    expect(answerOutcome(false, [{ name: 'ask_deepseek' }, { name: 'review_code' }, { name: 'coding_task_update' }])).toBe('completed')
+  })
+  it('a real tool result is, even alongside reasoning', () => {
+    expect(answerOutcome(false, [{ name: 'deepseek_reason' }, { name: 'github_list_prs' }])).toBe('verified')
+    expect(answerOutcome(false, [{ name: 'shell_exec' }])).toBe('verified')
+  })
+  it('a failed evidence tool does not count, and a blocked run is blocked', () => {
+    expect(answerOutcome(false, [{ name: 'github_list_prs', isError: true }])).toBe('completed')
+    expect(answerOutcome(true, [{ name: 'github_list_prs' }])).toBe('blocked')
+    expect(answerOutcome(false, [])).toBe('completed')
   })
 })
