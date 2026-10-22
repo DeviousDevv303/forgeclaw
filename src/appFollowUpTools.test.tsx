@@ -102,7 +102,9 @@ describe('the owner\'s private reasoning framework reaches the prompt', () => {
     localStorage.setItem('fc_owner_scaffold_v1', 'Phase A: TESTFRAMEWORK look first.')
     const system = await systemPromptFor('fix the failing build')
     expect(system).toContain('TESTFRAMEWORK look first.')
-    expect(system).toMatch(/private reasoning, one or two lines per phase, never in the visible answer/)
+    expect(system).toMatch(/MUST be written in the phases of the framework below/)
+    // The rule is repeated last, after lessons and past interactions, nearest to where the model starts reasoning.
+    expect(system.trimEnd().endsWith('before planning any tool call. Not in the visible answer.')).toBe(true)
     expect(system).not.toContain('CORE OPERATING LOOP\nFor every task:')
   }, 30_000)
   it('a free-mode visitor (no GitHub token) never gets it, even with the text in storage', async () => {
@@ -123,6 +125,7 @@ describe('the owner\'s private reasoning framework reaches the prompt', () => {
     const system = await systemPromptFor('fix the failing build')
     expect(system).toContain('CORE OPERATING LOOP\nFor every task:')
     expect(system).not.toContain('OWN REASONING FRAMEWORK')
+    expect(system).not.toContain('REASONING FORMAT (REQUIRED')
   }, 30_000)
 })
 

@@ -201,7 +201,7 @@ import { isPublicVisitor } from './lib/publicRelay'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { ReasoningFrameworkPanel } from './components/ReasoningFrameworkPanel'
-import { loadOwnerScaffold, operatingLoopFor } from './lib/ownerScaffold'
+import { loadOwnerScaffold, operatingLoopFor, reasoningFormatReminder } from './lib/ownerScaffold'
 import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
@@ -1382,7 +1382,8 @@ function App() {
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
           : '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for tasks that require delegated reasoning, then formulate the final response from the tool result.'
         : '\n\nPRIMARY REASONING POLICY\nAnswer the user directly and clearly. Do not emit tool syntax, code, token IDs, or internal runtime instructions.'
-    const baseSystemPrompt = `${forgemindSystemPrompt(isPublicVisitor(ghToken) ? '' : loadOwnerScaffold())}\n\nCURRENT DATE\n${currentDateNote()}${needsCurrentInfo(promptText) && finalTools.some(t => t.name === 'deep_research') ? ' This question is about what is current: call deep_research first and answer from its sources.' : ''}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
+    const ownerScaffold = isPublicVisitor(ghToken) ? '' : loadOwnerScaffold()
+    const baseSystemPrompt = `${forgemindSystemPrompt(ownerScaffold)}\n\nCURRENT DATE\n${currentDateNote()}${needsCurrentInfo(promptText) && finalTools.some(t => t.name === 'deep_research') ? ' This question is about what is current: call deep_research first and answer from its sources.' : ''}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
     
     // NEXUS recursive learning: recurring failures of the tools offered now, as counted evidence.
     const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(500)), runtimeTools.map(tool => tool.name))
@@ -1400,7 +1401,8 @@ function App() {
     const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.\n${NO_TOOLS_NOTICE}`
     const activeSystemPrompt = runtimeTools.length === 0
       ? conversationalSystemPrompt
-      : finalSystemPrompt
+      // The owner's reasoning format is repeated last, after lessons and past interactions, nearest to where reasoning starts.
+      : finalSystemPrompt + reasoningFormatReminder(ownerScaffold)
 
     // ── Runtime-owned repository identity ────────────────────────────────────
     // Do not pre-read or serialize HEAD/repository contents into the prompt. The
