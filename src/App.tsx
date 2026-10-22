@@ -206,6 +206,7 @@ import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
+import { leftPageSince, visibilityMark, waitUntilVisible } from './lib/pageVisibility'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
 import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsForUrls, ERROR_PLAN_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
@@ -443,6 +444,9 @@ function buildMessageTrace(message: Message): string | undefined {
 
   return lines.length ? lines.join('\n\n') : undefined
 }
+
+/** How many times one run may re-ask a model step cut off by the owner leaving the app. */
+const MAX_PAGE_RETURN_RETRIES = 10
 
 /** A prompt that runs a fixed command rather than the model: re-running it could repeat a side effect, so it waits for a tap. */
 function isFixedCommandPrompt(prompt: string): boolean {
@@ -1658,6 +1662,8 @@ function App() {
       // (e.g. github_repo_state {}) made once in each of three separate requests got blocked as a loop.
       const recentToolCalls: string[] = []
       const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
+      // Model steps re-asked after the owner left the app mid-step (bounded, so a flaky connection cannot loop forever).
+      let pageReturnRetries = 0
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -1681,7 +1687,7 @@ function App() {
           toolCalls: allToolResults.length,
         })
         setDiagnostics(prev => ({ ...prev, lastRequestMetrics: requestMetrics }))
-        const routerResult = await sendViaRouter({
+        const routerRequest: Parameters<typeof sendViaRouter>[0] = {
           model: currentModel,
           systemPrompt: activeSystemPrompt,
           // Claude and Kimi re-read the whole run on every step: older bulky results are cut (historyCompaction.ts).
@@ -1706,7 +1712,24 @@ function App() {
             const visibleText = cleanVisibleResponse(displayText)
             setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: visibleText || 'Preparing response...', streaming: true } : m))
           } : undefined,
-        }, currentKey, activeProvider)
+        }
+        let pageMark = visibilityMark()
+        let routerResult = await sendViaRouter(routerRequest, currentKey, activeProvider)
+        // Switching to another app kills the in-flight request on a phone ("Failed to fetch"). That used to end the
+        // whole run, losing every step already done. Now the same step is asked again once the owner is back, with
+        // every tool result so far kept.
+        while (
+          !routerResult.success && !controller.signal.aborted && pageReturnRetries < MAX_PAGE_RETURN_RETRIES
+          && leftPageSince(pageMark) && isTransientNetworkError(routerResult.error.message)
+        ) {
+          pageReturnRetries++
+          emitFailure({ source: 'forgemind', severity: 'info', message: `Step ${iter + 1} was cut off while the app was in the background (${routerResult.error.message}); asking it again on return as the same run ${learningId}, keeping its progress (${pageReturnRetries}/${MAX_PAGE_RETURN_RETRIES})` })
+          setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Reconnecting: you left the app mid-step. Picking up where it stopped…', streaming: true } : m))
+          if (!(await waitUntilVisible(controller.signal))) break
+          streamBuffer = ''
+          pageMark = visibilityMark()
+          routerResult = await sendViaRouter(routerRequest, currentKey, activeProvider)
+        }
         const latency = Math.round(performance.now() - reqStart)
         if (!routerResult.success) {
           setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'error', lastError: routerResult.error.message, lastLatencyMs: latency }))
