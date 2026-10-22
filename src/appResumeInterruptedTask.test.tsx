@@ -50,6 +50,8 @@ describe('a task interrupted by the page closing', () => {
     render(<App />)
     await waitFor(() => expect(screen.getByText(/Picked it back up\./)).toBeTruthy(), { timeout: 20000 })
     expect(kimiBodies).toHaveLength(1)
+    // She is told it is connected again and working (a pop-up that clears itself, not chat text).
+    expect(screen.getByText(/Connected again — working on it/)).toBeTruthy()
     expect(kimiBodies[0]).toContain('Resumed task: an earlier attempt at this request was interrupted')
     // The dead attempt is replaced: the task appears once, marked as a resume.
     await waitFor(() => expect(saved().filter(m => m.role === 'user' && m.content === TASK)).toHaveLength(1))
