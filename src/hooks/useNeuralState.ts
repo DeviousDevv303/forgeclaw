@@ -304,6 +304,27 @@ export function useNeuralState(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forgeOpsState.events, provider])
 
+  // The display phase is otherwise only recomputed when an event arrives. If the mission finishes while
+  // tokens are still fresh, 'streaming' would stay on screen forever, so re-evaluate when the window ends.
+  const streaming = neuralState.phase === 'streaming'
+  useEffect(() => {
+    if (!streaming) return
+    let timer: ReturnType<typeof setTimeout>
+    const arm = () => {
+      const remaining = Math.max(0, STREAMING_WINDOW_MS - (Date.now() - lastTokenTimeRef.current)) + 50
+      timer = setTimeout(() => {
+        // Tokens may still be flowing (content growth is tracked on render): keep watching until they stop.
+        if (Date.now() - lastTokenTimeRef.current < STREAMING_WINDOW_MS) { arm(); return }
+        velocityRef.current = 0
+        setNeuralState(prev => (prev.phase === 'streaming'
+          ? { ...prev, phase: agentPhaseRef.current, tokenVelocity: 0 }
+          : prev))
+      }, remaining)
+    }
+    arm()
+    return () => clearTimeout(timer)
+  }, [streaming])
+
   return neuralState
 }
 
