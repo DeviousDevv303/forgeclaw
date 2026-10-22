@@ -1358,6 +1358,7 @@ function App() {
       // Not a bare 'review': that would offer it for "review my workflows".
       'review_code': ['code review', 'review this code', 'review my code'],
       'weather_forecast': ['weather', 'forecast', 'temperature', 'rain', 'snow', 'how hot', 'how cold'],
+      'kalshi_markets': ['kalshi', 'prediction market', 'polymarket odds', 'contract price', 'implied probability'],
     }
 
     // A follow-up ("Resume", "yes, do it", "go ahead") names no tool; the task it continues does. The owner's last few

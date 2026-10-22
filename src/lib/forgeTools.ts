@@ -49,6 +49,7 @@ import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
 import { weatherForecast } from './weather'
+import { runKalshiMarkets, runKalshiOrderbook } from './kalshiMarkets'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -604,6 +605,24 @@ export const FORGE_TOOLS: ToolDef[] = [
         day: { type: 'number', description: 'Day to lead with: 0 = today, 1 = tomorrow (optional)' },
       },
       required: ['place'],
+    },
+  },
+  {
+    name: 'kalshi_markets',
+    description: 'Live Kalshi prediction-market data (read-only, no account): contract prices, the probability the price implies, volume, close time, and order-book depth. Use it for any question about Kalshi prices or odds instead of web_search. It reports what the market charges; a price is an implied chance, not a guarantee, and it never recommends a bet. If Kalshi cannot be reached it says so; never guess a price.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Words that must all appear in the market title/ticker, e.g. "bitcoin" or "fed rate"' },
+        ticker: { type: 'string', description: 'One exact market ticker (for a single market, or with orderbook=true)' },
+        event_ticker: { type: 'string', description: 'Only markets of this event' },
+        series_ticker: { type: 'string', description: 'Only markets of this series' },
+        closes_within_hours: { type: 'number', description: 'Only markets that close within this many hours' },
+        min_yes_ask: { type: 'number', description: 'Only markets whose YES ask is at least this (0-1), e.g. 0.9 for very likely outcomes' },
+        limit: { type: 'number', description: 'How many markets to show, default 10, max 15' },
+        orderbook: { type: 'boolean', description: 'With ticker: show the order book (bids and depth) instead of the summary' },
+      },
+      required: [],
     },
   },
   {
@@ -1857,6 +1876,27 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // Free, keyless, browser-allowed: works for the owner and for free-mode visitors alike.
         const day = input.day === undefined || input.day === null || input.day === '' ? null : Number(input.day)
         return await weatherForecast({ place: String(input.place || ''), day: Number.isFinite(day as number) ? day : null, signal: ctx.signal })
+      }
+
+      case 'kalshi_markets': {
+        // Keyless public market data. A direct browser call may be blocked by CORS; that is reported by name, never as "no markets".
+        const deps = { fetcher: (url: string, init?: RequestInit) => toolFetch(ctx, url, init), signal: ctx.signal }
+        const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+        const numeric = (v: unknown) => (v === undefined || v === null || v === '' || !Number.isFinite(Number(v)) ? undefined : Number(v))
+        const ticker = text(input.ticker)
+        if (input.orderbook === true || input.orderbook === 'true') {
+          if (!ticker) throw new Error('kalshi_markets orderbook needs a ticker. List markets first to find it.')
+          return await runKalshiOrderbook(ticker, deps)
+        }
+        return await runKalshiMarkets({
+          ticker,
+          query: text(input.query),
+          event_ticker: text(input.event_ticker),
+          series_ticker: text(input.series_ticker),
+          closes_within_hours: numeric(input.closes_within_hours),
+          min_yes_ask: numeric(input.min_yes_ask),
+          limit: numeric(input.limit),
+        }, deps)
       }
 
       case 'review_code': {
