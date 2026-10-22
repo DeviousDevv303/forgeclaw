@@ -236,7 +236,6 @@ export const EN = {
   'severity.critical': 'critical',
 
   'trace.title': 'Reasoning Trace',
-  'trace.public': 'PUBLIC TRACE',
   'trace.ready': 'Operational trace ready',
   'chain.steps': '{n} steps',
   'chain.done': ' · done',
@@ -642,7 +641,6 @@ const ES: Record<Key, string> = {
   'severity.critical': 'crítico',
 
   'trace.title': 'Traza de razonamiento',
-  'trace.public': 'TRAZA PÚBLICA',
   'trace.ready': 'Traza operativa lista',
   'chain.steps': '{n} pasos',
   'chain.done': ' · listo',

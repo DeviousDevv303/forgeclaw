@@ -57,9 +57,6 @@ export function ReasoningTrace({ trace, isOpen, onToggle }: ReasoningTraceProps)
             {firstLine}
           </span>
         </span>
-        <span style={{ color: 'rgba(57,255,20,0.52)', border: '1px solid rgba(57,255,20,0.18)', borderRadius: '999px', padding: '2px 7px', fontSize: '8px', letterSpacing: '1px', fontFamily: "'Courier New', monospace", flexShrink: 0 }}>
-          {t('trace.public')}
-        </span>
       </button>
 
       {isOpen && (
