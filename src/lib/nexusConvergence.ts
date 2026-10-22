@@ -66,6 +66,8 @@ export function knowledgeOrigin(record: { timestamp: string; metadata: Record<st
 export const NOT_EVIDENCE_TOOLS: ReadonlySet<string> = new Set([
   'deepseek_reason', 'ask_deepseek', 'review_code', 'spawn_agent', 'analyze_image',
   'coding_task_update', 'memory_write', 'memory_read', 'memory_list',
+  // The funds ledger is the app's own record, not evidence about the world (funds_settle reads Kalshi and is).
+  'funds_status', 'funds_propose',
 ])
 
 /** How a final answer is recorded: blocked, verified (a successful evidence tool backs it), or merely completed. */

@@ -35,6 +35,8 @@ export interface KalshiMarket {
   volume_24h_fp?: string
   open_interest_fp?: string
   rules_primary?: string
+  /** "yes" / "no" once the market is determined; empty before. */
+  result?: string
 }
 
 export interface KalshiQuery {
@@ -173,6 +175,14 @@ export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promis
   }
   const nowMs = now()
   return formatMarkets(selectMarkets(all, q, nowMs), q, nowMs, all.length)
+}
+
+/** One market by exact ticker, raw (for settlement); null when Kalshi does not list it. */
+export async function fetchKalshiMarket(ticker: string, deps: KalshiDeps): Promise<KalshiMarket | null> {
+  if (!/^[A-Za-z0-9_.-]{1,80}$/.test(ticker)) throw new KalshiError('Invalid Kalshi ticker.')
+  const data = await getJson(deps, buildMarketsUrl({ ticker })) as { markets?: KalshiMarket[] }
+  if (!Array.isArray(data?.markets)) throw new KalshiError('Kalshi response had no "markets" array.')
+  return data.markets.find(m => m?.ticker === ticker) ?? null
 }
 
 export interface KalshiBook { yes: Array<[number, number]>; no: Array<[number, number]> }

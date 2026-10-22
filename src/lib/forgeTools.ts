@@ -49,7 +49,8 @@ import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
 import { weatherForecast } from './weather'
-import { runKalshiMarkets, runKalshiOrderbook } from './kalshiMarkets'
+import { fetchKalshiMarket, runKalshiMarkets, runKalshiOrderbook } from './kalshiMarkets'
+import { formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -624,6 +625,35 @@ export const FORGE_TOOLS: ToolDef[] = [
       },
       required: [],
     },
+  },
+  {
+    name: 'funds_status',
+    description: "The owner's funds ledger: bankroll, available funds, limits, open positions and the track record (your past estimates scored against the prices paid). Call it before planning anything with the owner's money. ForgeClaw records funds; it never holds or moves money.",
+    parameters: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'funds_propose',
+    description: "Propose one yes/no position with the owner's funds after researching it. You give your own probability and the evidence; the tool sizes the stake from the bankroll and limits (fractional Kelly, stake/exposure caps, fees) and refuses a bet with no edge. A real proposal waits for the owner to approve and place it; you cannot place orders or move money. mode=paper tracks it without money.",
+    parameters: {
+      type: 'object',
+      properties: {
+        venue: { type: 'string', description: 'Where it would be placed, e.g. "kalshi"' },
+        market: { type: 'string', description: 'For Kalshi the exact market ticker (needed to settle it from Kalshi); otherwise a clear description' },
+        side: { type: 'string', enum: ['yes', 'no'], description: 'The side to buy' },
+        price: { type: 'number', description: 'What one $1 contract of that side costs now (0-1), from live data such as kalshi_markets. Decimal odds d: price 1/d' },
+        probability: { type: 'number', description: 'YOUR estimate (0-1) that this side wins, from your research, not the market price' },
+        rationale: { type: 'string', description: 'The evidence for your probability and why the price is wrong' },
+        sources: { type: 'array', items: { type: 'string' }, description: 'URLs or tool results you relied on' },
+        mode: { type: 'string', enum: ['real', 'paper'], description: 'real (default): needs owner approval; paper: tracked without money' },
+        max_stake: { type: 'number', description: 'Optional lower cap in dollars' },
+      },
+      required: ['venue', 'market', 'side', 'price', 'probability', 'rationale', 'sources'],
+    },
+  },
+  {
+    name: 'funds_settle',
+    description: "Settle a placed Kalshi position from Kalshi's own published result (never from your judgement). Other venues are settled by the owner with /funds settle.",
+    parameters: { type: 'object', properties: { id: { type: 'string', description: 'Position id, e.g. p3' } }, required: ['id'] },
   },
   {
     name: 'review_code',
@@ -1897,6 +1927,45 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           min_yes_ask: numeric(input.min_yes_ask),
           limit: numeric(input.limit),
         }, deps)
+      }
+
+      case 'funds_status':
+        return formatFundsStatus(loadFunds(), Date.now())
+
+      case 'funds_propose': {
+        // Records a proposal only. Approving, placing and moving money are owner commands (/funds), never tools.
+        const num = (v: unknown) => (typeof v === 'number' ? v : Number(v))
+        const rawSources = Array.isArray(input.sources) ? input.sources : typeof input.sources === 'string' ? input.sources.split(/[\n,]+/) : []
+        try {
+          const { state, position, sizing } = proposePosition(loadFunds(), {
+            mode: input.mode === 'paper' ? 'paper' : 'real',
+            venue: String(input.venue ?? ''), market: String(input.market ?? ''),
+            side: String(input.side ?? '').toLowerCase() as 'yes' | 'no',
+            price: num(input.price), probability: num(input.probability),
+            rationale: String(input.rationale ?? ''), sources: rawSources.map(String),
+            ...(input.max_stake !== undefined ? { maxStake: num(input.max_stake) } : {}),
+          }, Date.now())
+          return formatProposal(position, sizing) + (saveFunds(state) ? '' : NOT_SAVED_WARNING)
+        } catch (error) {
+          if (error instanceof FundsError) throw new Error(`Not proposed: ${error.message}`)
+          throw error
+        }
+      }
+
+      case 'funds_settle': {
+        const id = String(input.id ?? '').toLowerCase()
+        const ledger = loadFunds()
+        const position = ledger.positions.find(p => p.id === id)
+        if (!position) throw new Error(`No position ${id}.`)
+        if (!/kalshi/i.test(position.venue)) throw new Error(`${id} is on ${position.venue}: the owner settles it with /funds settle ${id} won|lost|void.`)
+        if (position.status !== 'placed') throw new Error(`${id} is ${position.status}; only a placed position can be settled.`)
+        const market = await fetchKalshiMarket(position.market, { fetcher: (url, init) => toolFetch(ctx, url, init), signal: ctx.signal })
+        if (!market) throw new Error(`Kalshi does not list ${position.market}; settle it with /funds settle ${id} won|lost|void.`)
+        const outcome = outcomeFromKalshiResult(position, market.result)
+        if (!outcome) return `${id} not settled: Kalshi shows ${position.market} as ${market.status ?? 'unknown'} with no result yet.`
+        const next = settlePosition(ledger, id, outcome, 'kalshi', Date.now())
+        const settled = next.positions.find(p => p.id === id)!
+        return `${id} settled from Kalshi (result ${market.result}): ${outcome}, P/L ${settled.pnl! < 0 ? '-' : ''}$${Math.abs(settled.pnl!).toFixed(2)}.${saveFunds(next) ? '' : NOT_SAVED_WARNING}`
       }
 
       case 'review_code': {
