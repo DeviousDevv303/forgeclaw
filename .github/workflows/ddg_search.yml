@@ -68,21 +68,32 @@ jobs:
           except ValueError as exc:
               raise SystemExit(f"MAX_RESULTS and DELAY_SECONDS must be numeric: {exc}")
 
+          # ddgs defaults to a 5 s timeout and races only a couple of engines per batch, so one slow
+          # engine (2026-10-22: html.duckduckgo.com timed out) failed the whole search. Use a longer
+          # timeout and retry; each attempt reshuffles which engines ddgs tries.
+          ATTEMPTS = 3
           results = []
-          with DDGS() as client:
+          with DDGS(timeout=15) as client:
               for index, query in enumerate(queries):
                   if index:
                       # Space requests to reduce the chance of DuckDuckGo rate limiting.
                       time.sleep(delay_seconds)
                   print(f"Searching query {index + 1}/{len(queries)}: {query}")
-                  try:
-                      hits = list(client.text(query, max_results=max_results))
-                      results.append({"query": query, "results": hits})
-                      print(json.dumps({"query": query, "count": len(hits), "results": hits}, indent=2))
-                  except Exception as exc:
-                      # Keep the failure tied to its query while making throttling visible.
-                      print(f"Search failed for {query!r}: {type(exc).__name__}: {exc}", file=sys.stderr)
-                      results.append({"query": query, "error": f"{type(exc).__name__}: {exc}"})
+                  errors = []
+                  for attempt in range(1, ATTEMPTS + 1):
+                      try:
+                          hits = list(client.text(query, max_results=max_results))
+                          results.append({"query": query, "results": hits})
+                          print(json.dumps({"query": query, "count": len(hits), "results": hits}, indent=2))
+                          break
+                      except Exception as exc:
+                          # Keep the failure tied to its query while making throttling visible.
+                          errors.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
+                          print(f"Search failed for {query!r} ({errors[-1]})", file=sys.stderr)
+                          if attempt < ATTEMPTS:
+                              time.sleep(2 * attempt)
+                  else:
+                      results.append({"query": query, "error": "; ".join(errors)})
 
           print("Search summary:")
           print(json.dumps(results, indent=2))
