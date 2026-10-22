@@ -211,7 +211,7 @@ import { loadOwnerScaffold, operatingLoopFor, reasoningFormatReminder } from './
 import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
-import { parseFundsCommand, runFundsCommand } from './lib/fundsLedger'
+import { ownerRulesPrompt, parseFundsCommand, runFundsCommand } from './lib/fundsLedger'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitUntilVisible } from './lib/pageVisibility'
 import { DEEPSEEK_RUN_EXPIRED_NOTE, isDeepSeekRunResumable } from './lib/deepseekRunResume'
@@ -1432,7 +1432,7 @@ function App() {
       : deepSeekDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
-        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'browser_run') ? `\n${BROWSER_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'error_report') ? `\n${ERROR_PLAN_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'funds_propose') ? `\n${FUNDS_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
+        ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'browser_run') ? `\n${BROWSER_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'error_report') ? `\n${ERROR_PLAN_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'funds_propose') ? `\n${FUNDS_GUIDANCE}${ownerRulesPrompt()}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
       : needsManualTools
         ? complexReasoningTask
           ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'

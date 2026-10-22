@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  FUNDS_STORAGE_KEY, FundsError, applyFundsCommand, emptyFunds, estimateFee, formatFundsStatus, loadFunds, outcomeFromKalshiResult,
-  parseFundsCommand, pnlFor, proposePosition, runFundsCommand, settlePosition, sizePosition, summarize, trackRecord,
+  FUNDS_STORAGE_KEY, FundsError, applyFundsCommand, emptyFunds, estimateFee, formatFundsStatus, formatProposal, honestyLine, loadFunds, outcomeFromKalshiResult, ownerRulesPrompt,
+  parseFundsCommand, pnlFor, proposePosition, runFundsCommand, saveFunds, settlePosition, sizePosition, summarize, trackRecord,
   type FundsState, type ProposalInput,
 } from './fundsLedger'
 
 const NOW = Date.parse('2026-10-22T15:00:00Z')
-const funded = (amount = 1000): FundsState => applyFundsCommand(emptyFunds(), { kind: 'deposit', amount }, NOW).state
+const capped = (cap = 1_000_000): FundsState => applyFundsCommand(emptyFunds(), { kind: 'limits', changes: { capAmount: cap } }, NOW).state
+/** Cap set and money in. */
+const funded = (amount = 1000): FundsState => applyFundsCommand(capped(), { kind: 'deposit', amount }, NOW).state
 const proposal = (over: Partial<ProposalInput> = {}): ProposalInput => ({
   venue: 'kalshi', market: 'KX-RAIN-OCT', side: 'yes', price: 0.4, probability: 0.55,
   rationale: 'NWS forecast gives 60% rain for the window and three models agree; market lags the update.',
@@ -81,13 +83,13 @@ describe('owner flow and P/L', () => {
     st = applyFundsCommand(st, { kind: 'approve', id: 'p2' }, NOW).state
     expect(summarize(st, NOW).available).toBeLessThan(1000)
     st = applyFundsCommand(st, { kind: 'placed', id: 'p2', fillPrice: 0.42 }, NOW).state
-    const p = st.positions[0]
+    const p = st.positions.find(x => x.id === 'p2')!
     expect(p.fillPrice).toBe(0.42)
     const won = settlePosition(st, 'p2', 'won', 'owner', NOW)
-    expect(won.positions[0].pnl).toBeCloseTo(p.contracts * 0.58 - p.feeEstimate, 2)
-    expect(summarize(won, NOW).bankroll).toBeCloseTo(1000 + won.positions[0].pnl!, 2)
+    expect(won.positions.find(x => x.id === 'p2')!.pnl).toBeCloseTo(p.contracts * 0.58 - p.feeEstimate, 2)
+    expect(summarize(won, NOW).bankroll).toBeCloseTo(1000 + won.positions.find(x => x.id === 'p2')!.pnl!, 2)
     const lost = settlePosition(st, 'p2', 'lost', 'owner', NOW)
-    expect(lost.positions[0].pnl).toBeCloseTo(-(p.contracts * 0.42) - p.feeEstimate, 2)
+    expect(lost.positions.find(x => x.id === 'p2')!.pnl).toBeCloseTo(-(p.contracts * 0.42) - p.feeEstimate, 2)
     expect(pnlFor(p, 'void')).toBe(0)
   })
   it('stops new real proposals for the day once the daily loss limit is hit', () => {
@@ -116,7 +118,7 @@ describe('owner flow and P/L', () => {
 
 describe('track record', () => {
   it('scores the model against the prices paid (Brier)', () => {
-    let st = funded()
+    let st = applyFundsCommand(capped(), { kind: 'deposit', amount: 1000 }, NOW).state
     st = proposePosition(st, proposal({ mode: 'paper' }), NOW).state
     st = settlePosition(st, 'p2', 'won', 'owner', NOW)
     const t = trackRecord(st)
@@ -144,6 +146,8 @@ describe('commands', () => {
 describe('storage', () => {
   beforeEach(() => localStorage.clear())
   it('persists owner commands and reports refusals without changing anything', () => {
+    expect(runFundsCommand('/funds add 500 kalshi', NOW)).toMatch(/^Not done: Set your cap first/)
+    expect(runFundsCommand('/funds limits cap=1000', NOW)).toMatch(/cap \$1000\.00/)
     expect(runFundsCommand('/funds add 500 kalshi', NOW)).toMatch(/Recorded deposit of \$500\.00.*Bankroll \$500\.00/)
     expect(loadFunds().movements).toHaveLength(1)
     expect(runFundsCommand('/funds withdraw 900', NOW)).toMatch(/^Not done: Only \$500\.00 is available/)
@@ -153,5 +157,102 @@ describe('storage', () => {
   it('falls back to an empty ledger on corrupt storage', () => {
     localStorage.setItem(FUNDS_STORAGE_KEY, '{nope')
     expect(loadFunds()).toEqual(emptyFunds())
+  })
+})
+
+// Owner's cage rules (2026-10-22): cap at funding time, size limit, latched loss stop, no chase, honesty line, own rules.
+describe('cage rules', () => {
+  const settleLoss = (st: FundsState, market: string, at = NOW) => {
+    st = proposePosition(st, proposal({ market }), at).state
+    const id = `p${st.nextId - 1}`
+    st = applyFundsCommand(st, { kind: 'approve', id }, at).state
+    st = applyFundsCommand(st, { kind: 'placed', id }, at).state
+    return settlePosition(st, id, 'lost', 'owner', at)
+  }
+
+  it('1. refuses funding above the cap you set', () => {
+    let st = applyFundsCommand(emptyFunds(), { kind: 'limits', changes: { capAmount: 300 } }, NOW).state
+    st = applyFundsCommand(st, { kind: 'deposit', amount: 200 }, NOW).state
+    expect(() => applyFundsCommand(st, { kind: 'deposit', amount: 150 }, NOW)).toThrow(/over your cap of \$300\.00 \(\$100\.00 left\)/)
+    expect(summarize(applyFundsCommand(st, { kind: 'deposit', amount: 100 }, NOW).state, NOW).deposited).toBe(300)
+    expect(parseFundsCommand('/funds limits cap=300')).toEqual({ kind: 'limits', changes: { capAmount: 300 } })
+  })
+
+  it('2. never stakes more than the per-position limit, whatever the model asks', () => {
+    const s = sizePosition(proposal({ probability: 0.95, maxStake: 10_000 }), funded(), NOW)
+    expect(s.stake + s.fee).toBeLessThanOrEqual(50)
+  })
+
+  it('3. the loss stop halts real proposals AND approvals, survives midnight, and only /funds resume lifts it', () => {
+    let st = applyFundsCommand(funded(1000), { kind: 'limits', changes: { dailyLossPct: 3 } }, NOW).state
+    st = proposePosition(st, proposal({ market: 'pending' }), NOW).state // p2, waiting
+    st = settleLoss(st, 'loser') // about -50: over 3%
+    expect(st.halted?.reason).toMatch(/Daily loss limit hit/)
+    const tomorrow = NOW + 36 * 3600_000
+    expect(() => proposePosition(st, proposal({ market: 'next' }), tomorrow)).toThrow(/HALTED.*\/funds resume/)
+    expect(() => applyFundsCommand(st, { kind: 'approve', id: 'p2' }, tomorrow)).toThrow(/HALTED/)
+    expect(proposePosition(st, proposal({ market: 'paper', mode: 'paper' }), tomorrow).position.status).toBe('placed')
+    expect(formatFundsStatus(st, tomorrow)).toMatch(/^HALTED/)
+    st = applyFundsCommand(st, { kind: 'resume' }, tomorrow).state
+    expect(st.halted).toBeUndefined()
+    expect(proposePosition(st, proposal({ market: 'next' }), tomorrow).position.status).toBe('proposed')
+  })
+
+  it('4. no chasing: after a loss the same bet is sized the same or smaller, never larger', () => {
+    const before = sizePosition(proposal(), funded(), NOW).stake
+    const afterLoss = settleLoss(funded(), 'loser')
+    expect(sizePosition(proposal({ market: 'again' }), afterLoss, NOW).stake).toBeLessThanOrEqual(before)
+    const afterTwo = settleLoss(afterLoss, 'loser2')
+    expect(sizePosition(proposal({ market: 'again' }), afterTwo, NOW).stake).toBeLessThanOrEqual(sizePosition(proposal({ market: 'again' }), afterLoss, NOW).stake)
+  })
+
+  it('6. every proposal and approval carries the expected value at the market price and at ForgeClaw\'s estimate', () => {
+    const { state, position, sizing } = proposePosition(funded(), proposal(), NOW)
+    expect(honestyLine(position)).toBe("Expected value after fees: -$2.00 at the market's price (implied 40%); $15.85 only if ForgeClaw's 55% is right.")
+    expect(formatProposal(position, sizing)).toContain(honestyLine(position))
+    expect(applyFundsCommand(state, { kind: 'approve', id: position.id }, NOW).message).toContain("at the market's price (implied 40%)")
+  })
+
+  it('your own rules are stored, listed, removable, and given to the plan', () => {
+    let st = applyFundsCommand(emptyFunds(), { kind: 'rule', text: 'never bet on games my own team plays' }, NOW).state
+    st = applyFundsCommand(st, { kind: 'rule', text: 'only markets that settle within 7 days' }, NOW).state
+    expect(formatFundsStatus(st, NOW)).toContain('2. only markets that settle within 7 days')
+    expect(ownerRulesPrompt(st)).toContain('1. never bet on games my own team plays')
+    st = applyFundsCommand(st, { kind: 'unrule', index: 1 }, NOW).state
+    expect(st.rules).toEqual(['only markets that settle within 7 days'])
+    expect(() => applyFundsCommand(st, { kind: 'unrule', index: 5 }, NOW)).toThrow(/no rule 5/)
+    expect(ownerRulesPrompt(emptyFunds())).toBe('')
+    expect(parseFundsCommand('/funds rule x')).toMatchObject({ kind: 'usage' })
+  })
+})
+
+// 2026-10-22 owner: "Move forward without paper". Paper is optional; real proposals work at once.
+describe('paper mode (optional)', () => {
+  it('real proposals need no paper history', () => {
+    const r = proposePosition(funded(), proposal(), NOW)
+    expect(r.position).toMatchObject({ mode: 'real', status: 'proposed' })
+    expect(applyFundsCommand(r.state, { kind: 'approve', id: r.position.id }, NOW).state.positions[0].status).toBe('approved')
+    expect(formatFundsStatus(r.state, NOW)).not.toMatch(/paper-first|gate/i)
+  })
+
+  it('paper, when asked for, is sized like real money against the phantom bankroll and needs no deposit', () => {
+    const st = applyFundsCommand(capped(), { kind: 'limits', changes: { paperBankroll: 500 } }, NOW).state
+    const r = proposePosition(st, proposal({ mode: 'paper' }), NOW)
+    expect(r.position).toMatchObject({ mode: 'paper', status: 'placed' })
+    expect(r.position.stake + r.position.feeEstimate).toBeLessThanOrEqual(25) // 5% of 500
+    expect(r.sizing.binding).toMatch(/paper bankroll/)
+    expect(summarize(r.state, NOW).paperAvailable).toBeCloseTo(500 - r.position.stake - r.position.feeEstimate, 2)
+    expect(summarize(r.state, NOW).available).toBe(0)
+  })
+
+  it('the cap has to exist before the money does', () => {
+    expect(() => applyFundsCommand(emptyFunds(), { kind: 'deposit', amount: 100 }, NOW)).toThrow(/Set your cap first/)
+  })
+
+  it('keeps the record across reloads', () => {
+    localStorage.clear()
+    const r = proposePosition(funded(), proposal(), NOW)
+    expect(saveFunds(r.state)).toBe(true)
+    expect(loadFunds().positions.map(p => p.id)).toEqual(['p2'])
   })
 })

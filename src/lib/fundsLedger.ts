@@ -63,10 +63,14 @@ export interface FundsLimits {
   maxStakePct: number
   /** All open real stakes together, % of bankroll. */
   maxExposurePct: number
-  /** New real proposals stop for the day once settled losses today reach this % of bankroll. */
+  /** Settled real losses today reaching this % of the day's starting bankroll HALT the ledger until the owner resumes it. */
   dailyLossPct: number
   /** Fraction of the Kelly stake used (1 = full Kelly). */
   kellyFraction: number
+  /** Most money that may ever be put in (deposits minus withdrawals), in dollars; 0 = not set. Must be set before any deposit. */
+  capAmount: number
+  /** Phantom bankroll paper positions are sized against (dollars). */
+  paperBankroll: number
 }
 
 export interface FundsState {
@@ -75,12 +79,16 @@ export interface FundsState {
   positions: FundsPosition[]
   limits: FundsLimits
   nextId: number
+  /** Set by the loss stop; only the owner's /funds resume clears it. No tool can. */
+  halted?: { at: number; reason: string }
+  /** The owner's own rules, given to every funds plan. Only the owner adds or removes them. */
+  rules?: string[]
 }
 
-export const DEFAULT_LIMITS: FundsLimits = { maxStakePct: 5, maxExposurePct: 30, dailyLossPct: 10, kellyFraction: 0.25 }
+export const DEFAULT_LIMITS: FundsLimits = { maxStakePct: 5, maxExposurePct: 30, dailyLossPct: 10, kellyFraction: 0.25, capAmount: 0, paperBankroll: 1000 }
 
 export function emptyFunds(): FundsState {
-  return { version: 1, movements: [], positions: [], limits: { ...DEFAULT_LIMITS }, nextId: 1 }
+  return { version: 1, movements: [], positions: [], limits: { ...DEFAULT_LIMITS }, nextId: 1, rules: [] }
 }
 
 export class FundsError extends Error {}
@@ -111,6 +119,10 @@ export interface FundsSummary {
   available: number
   paperPnl: number
   settledToday: number
+  /** Phantom bankroll + paper P/L, and what open paper positions commit of it. */
+  paperBankroll: number
+  paperOpenStake: number
+  paperAvailable: number
 }
 
 const startOfDay = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime() }
@@ -122,12 +134,16 @@ export function summarize(state: FundsState, nowMs: number): FundsSummary {
   const realizedPnl = real.filter(p => p.status === 'settled').reduce((s, p) => s + (p.pnl ?? 0), 0)
   const bankroll = deposited - withdrawn + realizedPnl
   const openStake = real.filter(p => p.status === 'approved' || p.status === 'placed').reduce((s, p) => s + p.stake + p.feeEstimate, 0)
-  const paperPnl = state.positions.filter(p => p.mode === 'paper' && p.status === 'settled').reduce((s, p) => s + (p.pnl ?? 0), 0)
+  const paper = state.positions.filter(p => p.mode === 'paper')
+  const paperPnl = paper.filter(p => p.status === 'settled').reduce((s, p) => s + (p.pnl ?? 0), 0)
+  const paperBankroll = state.limits.paperBankroll + paperPnl
+  const paperOpenStake = paper.filter(p => p.status === 'placed').reduce((s, p) => s + p.stake + p.feeEstimate, 0)
   const dayStart = startOfDay(nowMs)
   const settledToday = real.filter(p => p.status === 'settled' && (p.settledAt ?? 0) >= dayStart).reduce((s, p) => s + (p.pnl ?? 0), 0)
   return {
     deposited: cents(deposited), withdrawn: cents(withdrawn), realizedPnl: cents(realizedPnl), bankroll: cents(bankroll),
     openStake: cents(openStake), available: cents(bankroll - openStake), paperPnl: cents(paperPnl), settledToday: cents(settledToday),
+    paperBankroll: cents(paperBankroll), paperOpenStake: cents(paperOpenStake), paperAvailable: cents(paperBankroll - paperOpenStake),
   }
 }
 
@@ -161,13 +177,19 @@ export function sizePosition(input: ProposalInput, state: FundsState, nowMs: num
   const { price: P, probability: p } = input
   const s = summarize(state, nowMs)
   const L = state.limits
+  // Paper positions are sized exactly like real ones, against the phantom bankroll.
+  const paper = input.mode === 'paper'
+  const bankroll = paper ? s.paperBankroll : s.bankroll
+  const open = paper ? s.paperOpenStake : s.openStake
+  const available = paper ? s.paperAvailable : s.available
+  const of = paper ? 'paper bankroll' : 'bankroll'
   const edge = p - P
   const kellyFull = edge > 0 ? edge / (1 - P) : 0
   const caps: Array<[string, number]> = [
-    [`${L.kellyFraction}x Kelly`, L.kellyFraction * kellyFull * s.bankroll],
-    [`max stake ${L.maxStakePct}% of bankroll`, (L.maxStakePct / 100) * s.bankroll],
-    [`max exposure ${L.maxExposurePct}% of bankroll`, (L.maxExposurePct / 100) * s.bankroll - s.openStake],
-    ['available funds', s.available],
+    [`${L.kellyFraction}x Kelly`, L.kellyFraction * kellyFull * bankroll],
+    [`max stake ${L.maxStakePct}% of ${of}`, (L.maxStakePct / 100) * bankroll],
+    [`max exposure ${L.maxExposurePct}% of ${of}`, (L.maxExposurePct / 100) * bankroll - open],
+    [paper ? 'available paper funds' : 'available funds', available],
   ]
   if (input.maxStake !== undefined && input.maxStake > 0) caps.push(['requested max stake', input.maxStake])
   const [binding, budget] = caps.reduce((min, c) => (c[1] < min[1] ? c : min))
@@ -181,6 +203,14 @@ export function sizePosition(input: ProposalInput, state: FundsState, nowMs: num
 
 // ── Model actions ──────────────────────────────────────────────────────────────
 
+export const haltedMessage = (h: { reason: string }) => `HALTED: ${h.reason} No real proposals or approvals until the owner types /funds resume.`
+
+/** True once today's settled real losses reach the daily limit (of the bankroll at the start of the day). */
+export function dailyLossHit(state: FundsState, nowMs: number): boolean {
+  const s = summarize(state, nowMs)
+  return s.settledToday < 0 && -s.settledToday >= (state.limits.dailyLossPct / 100) * (s.bankroll - s.settledToday)
+}
+
 const inUnit = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n > 0 && n < 1
 
 export function proposePosition(state: FundsState, input: ProposalInput, nowMs: number): { state: FundsState; position: FundsPosition; sizing: Sizing } {
@@ -193,11 +223,10 @@ export function proposePosition(state: FundsState, input: ProposalInput, nowMs: 
   const sources = input.sources.map(s => s.trim()).filter(Boolean)
   if (!sources.length) throw new FundsError('at least one source is required: research before proposing.')
   const s = summarize(state, nowMs)
-  if (s.bankroll <= 0) throw new FundsError('No funds in the ledger. The owner adds them with /funds add <amount>.')
-  if (mode === 'real' && s.settledToday < 0 && -s.settledToday >= (state.limits.dailyLossPct / 100) * (s.bankroll - s.settledToday)) {
-    throw new FundsError(`Daily loss limit reached (${money(s.settledToday)} today, limit ${state.limits.dailyLossPct}%). No new real positions until tomorrow.`)
-  }
-  const sizing = sizePosition(input, state, nowMs)
+  if (mode === 'real' && s.bankroll <= 0) throw new FundsError('No funds in the ledger. The owner adds them with /funds add <amount>.')
+  if (mode === 'paper' && s.paperBankroll <= 0) throw new FundsError('The paper bankroll is used up. The owner can reset it with /funds limits paper=<amount>.')
+  if (mode === 'real' && state.halted) throw new FundsError(haltedMessage(state.halted))
+  const sizing = sizePosition({ ...input, mode }, state, nowMs)
   if (sizing.edge <= 0) {
     throw new FundsError(`No edge: your probability ${pct(input.probability)} does not beat the price ${money(input.price)} (${pct(input.price)}). Not proposed.`)
   }
@@ -228,10 +257,16 @@ function updatePosition(state: FundsState, id: string, change: (p: FundsPosition
 }
 
 export function settlePosition(state: FundsState, id: string, outcome: PositionOutcome, by: 'owner' | 'kalshi', nowMs: number): FundsState {
-  return updatePosition(state, id, p => {
+  const next = updatePosition(state, id, p => {
     if (p.status !== 'placed') throw new FundsError(`${id} is ${p.status}; only a placed position can be settled.`)
     return { ...p, status: 'settled', outcome, pnl: pnlFor(p, outcome), settledAt: nowMs, settledBy: by }
   })
+  // The loss stop latches: it stays on past midnight until the owner resumes.
+  if (!next.halted && dailyLossHit(next, nowMs)) {
+    const s = summarize(next, nowMs)
+    return { ...next, halted: { at: nowMs, reason: `Daily loss limit hit (${money(s.settledToday)} today, limit ${next.limits.dailyLossPct}%).` } }
+  }
+  return next
 }
 
 /** Kalshi's market `result` ("yes"/"no") decides the outcome; anything else is not settled yet. */
@@ -249,6 +284,10 @@ export type FundsCommand =
   | { kind: 'placed'; id: string; fillPrice?: number }
   | { kind: 'settle'; id: string; outcome: PositionOutcome }
   | { kind: 'limits'; changes: Partial<FundsLimits> }
+  | { kind: 'resume' }
+  | { kind: 'rule'; text: string }
+  | { kind: 'unrule'; index: number }
+  | { kind: 'rules' }
   | { kind: 'usage'; message: string }
 
 export const FUNDS_USAGE = [
@@ -259,7 +298,9 @@ export const FUNDS_USAGE = [
   '/funds approve <id> | /funds reject <id> — decide on a proposal',
   '/funds placed <id> [fill price] — confirm you placed the order on the venue',
   '/funds settle <id> won|lost|void — record the result (Kalshi positions can also settle from Kalshi)',
-  '/funds limits [stake=5] [exposure=30] [daily=10] [kelly=0.25] — percentages of bankroll; kelly is a fraction',
+  '/funds limits [cap=1000] [paper=1000] [stake=5] [exposure=30] [daily=10] [kelly=0.25] — cap and paper bankroll in dollars; others % of bankroll; kelly a fraction',
+  '/funds resume — lift a loss-stop halt (only you can)',
+  '/funds rule <your rule> · /funds rules · /funds unrule <n> — your own rules, given to every plan',
 ].join('\n')
 
 const ID_RE = /^p\d+$/i
@@ -292,15 +333,27 @@ export function parseFundsCommand(text: string): FundsCommand | null {
     if (outcome !== 'won' && outcome !== 'lost' && outcome !== 'void') return usage(`Say won, lost or void, e.g. /funds settle ${id} won`)
     return { kind: 'settle', id, outcome }
   }
+  if (verb === 'resume') return { kind: 'resume' }
+  if (verb === 'rules') return { kind: 'rules' }
+  if (verb === 'rule') {
+    const ruleText = rest.join(' ').trim()
+    if (ruleText.length < 3 || ruleText.length > 300) return usage('Write the rule after the command, e.g. /funds rule never bet on games my own team plays')
+    return { kind: 'rule', text: ruleText }
+  }
+  if (verb === 'unrule') {
+    const index = Number(rest[0])
+    if (!Number.isInteger(index) || index < 1) return usage('Give the rule number from /funds rules, e.g. /funds unrule 2')
+    return { kind: 'unrule', index }
+  }
   if (verb === 'limits') {
-    const keys: Record<string, keyof FundsLimits> = { stake: 'maxStakePct', exposure: 'maxExposurePct', daily: 'dailyLossPct', kelly: 'kellyFraction' }
+    const keys: Record<string, keyof FundsLimits> = { cap: 'capAmount', paper: 'paperBankroll', stake: 'maxStakePct', exposure: 'maxExposurePct', daily: 'dailyLossPct', kelly: 'kellyFraction' }
     const changes: Partial<FundsLimits> = {}
     for (const part of rest) {
       const [k, v] = part.split('=')
       const key = keys[(k ?? '').toLowerCase()]
       const n = Number(v)
       if (!key || !Number.isFinite(n) || n <= 0) return usage(`Bad limit "${part}".`)
-      if (key === 'kellyFraction' ? n > 1 : n > 100) return usage(`"${part}" is out of range (percentages up to 100, kelly up to 1).`)
+      if (key === 'capAmount' || key === 'paperBankroll' ? n > 1e9 : key === 'kellyFraction' ? n > 1 : n > 100) return usage(`"${part}" is out of range (percentages up to 100, kelly up to 1).`)
       changes[key] = n
     }
     return { kind: 'limits', changes }
@@ -318,6 +371,16 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
       if (cmd.kind === 'withdraw' && cmd.amount > summarize(state, nowMs).available + 1e-9) {
         throw new FundsError(`Only ${money(summarize(state, nowMs).available)} is available (the rest backs open positions).`)
       }
+      if (cmd.kind === 'deposit' && state.limits.capAmount <= 0) {
+        throw new FundsError('Set your cap first: /funds limits cap=<amount>. The cap has to exist before the money does.')
+      }
+      if (cmd.kind === 'deposit' && state.limits.capAmount > 0) {
+        const s = summarize(state, nowMs)
+        const netIn = s.deposited - s.withdrawn
+        if (netIn + cmd.amount > state.limits.capAmount + 1e-9) {
+          throw new FundsError(`That would put ${money(netIn + cmd.amount)} in, over your cap of ${money(state.limits.capAmount)} (${money(Math.max(0, state.limits.capAmount - netIn))} left). Only you can change it: /funds limits cap=<amount>.`)
+        }
+      }
       const movement: FundsMovement = { id: `m${state.nextId}`, at: nowMs, kind: cmd.kind, amount: cmd.amount, ...(cmd.note ? { note: cmd.note } : {}) }
       const next = { ...state, movements: [...state.movements, movement], nextId: state.nextId + 1 }
       return { state: next, message: `Recorded ${cmd.kind === 'deposit' ? 'deposit' : 'withdrawal'} of ${money(cmd.amount)}${cmd.note ? ` (${cmd.note})` : ''}. Bankroll ${money(summarize(next, nowMs).bankroll)}.` }
@@ -326,10 +389,11 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
       const p = state.positions.find(x => x.id === cmd.id)
       if (!p) throw new FundsError(`No position ${cmd.id}.`)
       if (p.status !== 'proposed') throw new FundsError(`${cmd.id} is ${p.status}; only a proposal can be approved.`)
+      if (state.halted) throw new FundsError(haltedMessage(state.halted))
       const s = summarize(state, nowMs)
       if (p.stake + p.feeEstimate > s.available + 1e-9) throw new FundsError(`${cmd.id} needs ${money(p.stake + p.feeEstimate)} but only ${money(s.available)} is available.`)
       const next = updatePosition(state, cmd.id, x => ({ ...x, status: 'approved', approvedAt: nowMs }))
-      return { state: next, message: `Approved ${cmd.id}: buy ${p.contracts} ${p.side.toUpperCase()} on ${p.venue} "${p.market}" at up to ${money(p.price)} (${money(p.stake)} + ~${money(p.feeEstimate)} fees). ForgeClaw does not place it: place the order on ${p.venue}, then type /funds placed ${cmd.id} <fill price>.` }
+      return { state: next, message: `Approved ${cmd.id}: buy ${p.contracts} ${p.side.toUpperCase()} on ${p.venue} "${p.market}" at up to ${money(p.price)} (${money(p.stake)} + ~${money(p.feeEstimate)} fees).\n${honestyLine(p)}\nForgeClaw does not place it: place the order on ${p.venue}, then type /funds placed ${cmd.id} <fill price>.` }
     }
     case 'reject': {
       const next = updatePosition(state, cmd.id, x => {
@@ -357,12 +421,41 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
       const limits = { ...state.limits, ...cmd.changes }
       return { state: { ...state, limits }, message: `Limits: ${formatLimits(limits)}.` }
     }
+    case 'resume': {
+      if (!state.halted) return { state, message: 'Not halted.' }
+      const rest: FundsState = { ...state }
+      delete rest.halted
+      return { state: rest, message: `Resumed. The halt was: ${state.halted.reason} Today's results stay in the record.` }
+    }
+    case 'rule': {
+      const rules = [...(state.rules ?? []), cmd.text.slice(0, 300)].slice(0, 30)
+      return { state: { ...state, rules }, message: `Rule ${rules.length} saved. Every funds plan gets your rules:\n${formatRules(rules)}` }
+    }
+    case 'unrule': {
+      const rules = state.rules ?? []
+      if (cmd.index > rules.length) throw new FundsError(`There is no rule ${cmd.index} (${rules.length} saved).`)
+      const next = rules.filter((_, i) => i !== cmd.index - 1)
+      return { state: { ...state, rules: next }, message: `Removed rule ${cmd.index}.${next.length ? `\n${formatRules(next)}` : ' No rules left.'}` }
+    }
+    case 'rules':
+      return { state, message: (state.rules ?? []).length ? `Your rules:\n${formatRules(state.rules!)}` : 'No rules yet. Add one: /funds rule <your rule>' }
   }
 }
 
 // ── Reporting ──────────────────────────────────────────────────────────────────
 
-const formatLimits = (L: FundsLimits) => `max stake ${L.maxStakePct}% · max exposure ${L.maxExposurePct}% · daily loss stop ${L.dailyLossPct}% · ${L.kellyFraction}x Kelly`
+const formatLimits = (L: FundsLimits) => `cap ${L.capAmount > 0 ? money(L.capAmount) : 'not set'} · paper bankroll ${money(L.paperBankroll)} · max stake ${L.maxStakePct}% · max exposure ${L.maxExposurePct}% · daily loss stop ${L.dailyLossPct}% (halts until you resume) · ${L.kellyFraction}x Kelly`
+const formatRules = (rules: string[]) => rules.map((r, i) => `${i + 1}. ${r}`).join('\n')
+
+/**
+ * The truth attached to every proposal and approval. At the market's own price the expected value is
+ * minus the fees; it is positive only if ForgeClaw's estimate is right and the market's is wrong.
+ */
+export function honestyLine(p: FundsPosition): string {
+  const price = p.fillPrice ?? p.price
+  const ifModel = p.contracts * (p.probability - price) - p.feeEstimate
+  return `Expected value after fees: ${money(-p.feeEstimate)} at the market's price (implied ${pct(price)}); ${money(ifModel)} only if ForgeClaw's ${pct(p.probability)} is right.`
+}
 
 /** Brier score (lower is better) of the model's probabilities and of the prices paid, on settled won/lost positions. */
 export function trackRecord(state: FundsState): { settled: number; won: number; modelBrier: number | null; marketBrier: number | null } {
@@ -391,21 +484,25 @@ export function formatFundsStatus(state: FundsState, nowMs: number): string {
   const record = t.settled
     ? `${t.won}/${t.settled} won; Brier score: your estimates ${t.modelBrier} vs prices paid ${t.marketBrier} (lower is better; estimates must beat prices for an edge to be real)`
     : 'no settled positions yet'
+  const rules = state.rules ?? []
   return [
+    ...(state.halted ? [haltedMessage(state.halted)] : []),
     `Funds ledger (ForgeClaw records funds; it never holds or moves money):`,
     `Bankroll ${money(s.bankroll)} = ${money(s.deposited)} in − ${money(s.withdrawn)} out + ${money(s.realizedPnl)} realized`,
-    `Available ${money(s.available)} · committed to open positions ${money(s.openStake)} · today ${money(s.settledToday)} · paper P/L ${money(s.paperPnl)}`,
+    `Available ${money(s.available)} · committed to open positions ${money(s.openStake)} · today ${money(s.settledToday)}`,
+    `Paper (optional, phantom money): bankroll ${money(s.paperBankroll)} (P/L ${money(s.paperPnl)}) · available ${money(s.paperAvailable)}`,
     `Limits: ${formatLimits(state.limits)}`,
     `Track record: ${record}`,
     open.length ? `Open positions:\n${open.map(formatPosition).join('\n')}` : 'Open positions: none',
+    rules.length ? `Owner's rules (follow every one; a proposal that breaks one must not be made):\n${formatRules(rules)}` : "Owner's rules: none set",
   ].join('\n')
 }
 
 export function formatProposal(position: FundsPosition, sizing: Sizing): string {
   const next = position.mode === 'paper'
-    ? 'Paper position: tracked now, no money involved.'
+    ? 'Paper position: tracked now against the phantom bankroll, no money involved.'
     : `Waiting for the owner: /funds approve ${position.id} or /funds reject ${position.id}. Nothing is placed until the owner places it on ${position.venue}.`
-  return `Proposed ${formatPosition(position)}\n   edge ${pct(sizing.edge)} per contract; expected profit ${money(sizing.expectedProfit)} after fees if your estimate is right; size limited by ${sizing.binding}\n   ${next}`
+  return `Proposed ${formatPosition(position)}\n   edge ${pct(sizing.edge)} per contract; size limited by ${sizing.binding}\n   ${honestyLine(position)}\n   ${next}`
 }
 
 // ── Storage ────────────────────────────────────────────────────────────────────
@@ -416,7 +513,7 @@ export function loadFunds(): FundsState {
   try {
     const parsed = JSON.parse(raw) as FundsState
     if (parsed?.version !== 1 || !Array.isArray(parsed.movements) || !Array.isArray(parsed.positions)) return emptyFunds()
-    return { ...emptyFunds(), ...parsed, limits: { ...DEFAULT_LIMITS, ...parsed.limits } }
+    return { ...emptyFunds(), ...parsed, limits: { ...DEFAULT_LIMITS, ...parsed.limits }, rules: Array.isArray(parsed.rules) ? parsed.rules.filter(r => typeof r === 'string') : [] }
   } catch {
     return emptyFunds()
   }
@@ -427,6 +524,12 @@ export function saveFunds(state: FundsState): boolean {
   const raw = JSON.stringify(state)
   safeSetItem(FUNDS_STORAGE_KEY, raw)
   return safeGetItem(FUNDS_STORAGE_KEY) === raw
+}
+
+/** The owner's rules for the plan prompt; empty when none are set. */
+export function ownerRulesPrompt(state: FundsState = loadFunds()): string {
+  const rules = state.rules ?? []
+  return rules.length ? `\nOwner's own rules for these funds (follow every one; never propose a position that breaks one, and say which rules each proposal satisfies):\n${formatRules(rules)}` : ''
 }
 
 export const NOT_SAVED_WARNING = '\n\n⚠ This change could NOT be saved in this browser (private mode or storage full). It will be lost on reload.'

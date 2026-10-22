@@ -113,14 +113,15 @@ export const RESEARCH_GUIDANCE =
 
 /** Planning with the owner's money: research, own probability vs price, sized proposals, owner decides. */
 export const FUNDS_GUIDANCE =
-  'Funds plan: you are planning with the owner\'s real money. 1) Call funds_status first: bankroll, available funds, limits, open positions and your track record. ' +
+  'Funds plan: you are planning with the owner\'s real money. 1) Call funds_status first: bankroll, available funds, limits, open positions, your track record and the owner\'s own rules, which override anything here. If it says HALTED, propose nothing real. ' +
   '2) Research before proposing: kalshi_markets for live prices and market rules, web_search and deep_research for evidence. Look for markets where public evidence ' +
   '(official data, schedules, forecasts, polls, injury reports) points away from the price. 3) For each candidate, state YOUR probability with the evidence behind it; ' +
   'do not anchor on the market price. Propose only where your probability beats the price after fees. 4) Propose each position with funds_propose; it sizes the ' +
   'stake from the bankroll and limits and refuses bets with no edge, so never invent a stake. 5) Then write the master plan: the goal, the proposals and how much ' +
   'of the bankroll they use, the timeline, what result would show the plan is wrong (your track record versus the prices paid), and when to stop or scale up. ' +
   '6) You cannot approve, place orders or move money. The owner approves with /funds approve <id>, places the order on the venue, and confirms with ' +
-  '/funds placed <id> <fill price>. Never say a position is placed unless funds_status shows it placed. 7) Settle placed Kalshi positions with funds_settle once the market has a result.'
+  '/funds placed <id> <fill price>. Never say a position is placed unless funds_status shows it placed. 7) Settle placed Kalshi positions with funds_settle (id "all" for every one) once markets have results. ' +
+  '8) The owner prefers short-term, quick-turnaround markets (settling within hours or days). Use mode=paper only when the owner asks to test an idea without money, and never describe paper results as real money.'
 
 /** How a hosted model improves ForgeClaw itself: evidence first, smallest safe proposal, PR only. */
 export const SELF_SCULPT_GUIDANCE =
