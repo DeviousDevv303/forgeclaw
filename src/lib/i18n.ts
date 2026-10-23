@@ -74,6 +74,15 @@ export const EN = {
   'resume.unknown': 'unknown',
   'resume.resume': 'RESUME TASK',
   'resume.dismiss': 'DISMISS',
+
+  // Report mode (requestLedger.ts): a numbered request renders every section, or names why one is missing.
+  'report.evidence': 'Evidence: {sources}',
+  'report.run': 'run {runId}',
+  'report.unavailable': 'section {n}: unavailable — {reason}',
+  'report.reason.toolFailed': '{tool} failed: {error}',
+  'report.reason.toolNotCalled': '{tool} was not called',
+  'report.reason.notRendered': 'the model did not render this section',
+  'report.incomplete': 'STATUS: INCOMPLETE — {missing} of {total} sections unavailable; not accepted as complete.',
   'chat.resumeInterrupted': '↻ RESUME',
   'chat.resumedLabel': '↻ resumed after ForgeClaw was closed',
 
@@ -495,6 +504,14 @@ const ES: Record<Key, string> = {
   'resume.unknown': 'desconocido',
   'resume.resume': 'REANUDAR TAREA',
   'resume.dismiss': 'DESCARTAR',
+
+  'report.evidence': 'Evidencia: {sources}',
+  'report.run': 'ejecución {runId}',
+  'report.unavailable': 'sección {n}: no disponible — {reason}',
+  'report.reason.toolFailed': '{tool} falló: {error}',
+  'report.reason.toolNotCalled': 'no se llamó a {tool}',
+  'report.reason.notRendered': 'el modelo no generó esta sección',
+  'report.incomplete': 'ESTADO: INCOMPLETO — {missing} de {total} secciones no disponibles; no se acepta como completo.',
   'chat.resumeInterrupted': '↻ REANUDAR',
   'chat.resumedLabel': '↻ reanudada después de cerrar ForgeClaw',
 
