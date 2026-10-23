@@ -680,7 +680,9 @@ export async function autoSettleKalshiPositions(deps: KalshiExecutionDeps = {}):
     if (!outcome || outcome === 'void') continue
     const costBasis = position.side === 'yes' ? settlement.yesTotalCostDollars : settlement.noTotalCostDollars
     const realPnl = settlement.revenueCents / 100 - costBasis - settlement.feeCostDollars
-    state = settlePosition(state, position.id, outcome, 'kalshi', now(), realPnl)
+    // Stamp the position with when Kalshi settled it, not when this open read it (never in the future).
+    const settledMs = Date.parse(settlement.settledTime)
+    state = settlePosition(state, position.id, outcome, 'kalshi', now(), realPnl, Number.isFinite(settledMs) ? Math.min(settledMs, now()) : undefined)
     notices.push({ id: position.id, market: position.market, outcome, pnl: Math.round(realPnl * 100) / 100 })
   }
   if (notices.length) persist(state)

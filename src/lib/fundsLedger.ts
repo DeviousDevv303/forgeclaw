@@ -363,12 +363,18 @@ function updatePosition(state: FundsState, id: string, change: (p: FundsPosition
   return { ...state, positions }
 }
 
-export function settlePosition(state: FundsState, id: string, outcome: PositionOutcome, by: 'owner' | 'kalshi', nowMs: number, realPnl?: number): FundsState {
+/**
+ * settledAtMs is when the result actually happened (Kalshi's settlement time, when the caller
+ * has it); nowMs is when the app learned of it and is what the loss-stop check runs at. They
+ * differ when a result is read on a later open: a loss from last night must count against last
+ * night, not halt a new day's trading.
+ */
+export function settlePosition(state: FundsState, id: string, outcome: PositionOutcome, by: 'owner' | 'kalshi', nowMs: number, realPnl?: number, settledAtMs?: number): FundsState {
   const next = updatePosition(state, id, p => {
     if (p.status !== 'placed') throw new FundsError(`${id} is ${p.status}; only a placed position can be settled.`)
     // Kalshi's own settlement (revenue minus the position's cost basis) is the money truth when
     // the caller has it; otherwise the ledger's fill-based computation stands.
-    return { ...p, status: 'settled', outcome, pnl: realPnl !== undefined ? cents(realPnl) : pnlFor(p, outcome), settledAt: nowMs, settledBy: by }
+    return { ...p, status: 'settled', outcome, pnl: realPnl !== undefined ? cents(realPnl) : pnlFor(p, outcome), settledAt: settledAtMs ?? nowMs, settledBy: by }
   })
   // The loss stop latches: it stays on past midnight until the owner resumes.
   if (!next.halted && dailyLossHit(next, nowMs)) {
