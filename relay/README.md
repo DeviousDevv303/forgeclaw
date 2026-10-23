@@ -70,7 +70,7 @@ Two honest limits of the minimal deploy:
   Every route refuses callers whose `Origin` is not in `ALLOWED_ORIGINS` (wrangler.toml);
   that check always applies, token or no token. The per-IP quotas are the only other brake,
   and they do nothing until `RATE` exists — skip the `kv namespace create RATE` step and
-  rate limiting is simply off. (With `RATE`, `/v1/kalshi` allows 120 calls an hour per IP.)
+  rate limiting is simply off. (With `RATE`, `/v1/kalshi` allows 120 calls an hour per IP. If the quota store itself errors, for example a Workers KV daily write limit on the free plan, Kalshi calls go through without a limit rather than failing; the model routes still fail closed.)
 - The model and research routes answer `503` until `GITHUB_TOKEN` is set, and visitor
   learning and error reports stay off until `LEARN` and `OWNER_KEY` exist. The full deploy
   below turns everything on.
