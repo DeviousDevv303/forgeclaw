@@ -3419,7 +3419,10 @@ function App() {
                       // F-008: the header WA dot reads `wa_credentials`, so the panel row must too —
                       // a hardcoded false disagrees with the dot whenever credentials exist.
                       { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: !!safeGetItem('wa_credentials') },
-                      { name: 'Kalshi', icon: '📈', key: 'fc_kalshi_key_id', connected: !!safeGetItem(KALSHI_KEY_ID_STORAGE) },
+                      // F-009: the approve path refuses ("no Kalshi private key saved…") when only the
+                      // key-ID half persisted, so the panel must read the same both-halves signal
+                      // (kalshiCredentialPresence) — a key-ID-only state is not connected.
+                      { name: 'Kalshi', icon: '📈', key: 'fc_kalshi_key_id', connected: (() => { const p = kalshiCredentialPresence(); return p.keyId && p.privateKey })() },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
