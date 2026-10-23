@@ -19,7 +19,7 @@ export function sanitizeChatText(text: string): string {
 
 /** The real cause, short and with anything token-shaped removed, so a generic line never hides what happened. */
 export function errorDetail(rawMessage: string): string {
-  const clean = rawMessage.replace(/\s+/g, ' ').replace(/\b(?:sk-[\w-]{8,}|gh[pousr]_\w{8,}|github_pat_\w{8,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{5,})/g, '[redacted]').trim()
+  const clean = rawMessage.replace(/\s+/g, ' ').replace(/\b(?:sk-[\w-]{8,}|gh[pousr]_\w{8,}|github_pat_\w{8,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{5,})|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[redacted]').trim()
   return clean.length > 160 ? `${clean.slice(0, 157)}...` : clean
 }
 

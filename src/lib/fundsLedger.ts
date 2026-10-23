@@ -57,6 +57,17 @@ export interface FundsPosition {
   kalshiOrderId?: string
   /** The real fee Kalshi charged for the fill, when ForgeClaw placed the order itself. */
   feePaid?: number
+  /**
+   * Placement attempt counter behind the Kalshi client_order_id (`fc-<id>-<attempt>`). It is
+   * persisted with the approval BEFORE the order is sent, and moves up only after a CONFIRMED
+   * terminal no-fill (Kalshi's own order record shows 0 fills, or a non-409 refusal) — so a
+   * retry after an ambiguous failure reuses the same key, and Kalshi's duplicate rejection
+   * (409, ALREADY_EXISTS) protects the position instead of defeating it. Never a timestamp:
+   * a fresh key per try is what turns a lost response into a second order.
+   */
+  orderAttempt?: number
+  /** The app run that placed (or last attempted to place) this order. Provenance only — never part of the order key. */
+  runId?: string
   settledAt?: number
   outcome?: PositionOutcome
   pnl?: number
@@ -313,13 +324,22 @@ export function recordKalshiFill(state: FundsState, id: string, fill: KalshiFill
 export function revertKalshiApproval(state: FundsState, id: string): FundsState {
   return updatePosition(state, id, p => {
     if (p.status !== 'approved') throw new FundsError(`${id} is ${p.status}; only an approved position can be reverted.`)
-    return { ...p, status: 'proposed', approvedAt: undefined, clientOrderId: undefined }
+    return { ...p, status: 'proposed', approvedAt: undefined, clientOrderId: undefined, runId: undefined }
   })
 }
 
 /** Attach the client order id an approval will place under, before the order is sent. */
 export function setClientOrderId(state: FundsState, id: string, clientOrderId: string): FundsState {
   return updatePosition(state, id, p => ({ ...p, clientOrderId }))
+}
+
+/**
+ * Record the order key for an approval BEFORE the order is sent: the client_order_id, the
+ * attempt it belongs to, and the placing run's id (provenance). Persisted atomically with
+ * the approval (the caller saves before sending), so two sends can never share an attempt.
+ */
+export function setOrderKey(state: FundsState, id: string, clientOrderId: string, attempt: number, runId?: string): FundsState {
+  return updatePosition(state, id, p => ({ ...p, clientOrderId, orderAttempt: attempt, ...(runId ? { runId } : {}) }))
 }
 
 // ── Owner commands (/funds …) ──────────────────────────────────────────────────

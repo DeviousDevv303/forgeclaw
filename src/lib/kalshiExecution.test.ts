@@ -6,8 +6,8 @@
 import { generateKeyPairSync, webcrypto } from 'node:crypto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { KalshiCredentials } from './kalshiAuth'
-import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, proposePosition, saveFunds } from './fundsLedger'
-import { autoSettleKalshiPositions, directThenRelayFetcher, runFundsCommandWithExecution } from './kalshiExecution'
+import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, proposePosition, recordKalshiFill, saveFunds } from './fundsLedger'
+import { autoSettleKalshiPositions, directThenRelayFetcher, runFundsCommandWithExecution, type KalshiFailureNote, type KalshiPlacedInfo } from './kalshiExecution'
 import { KalshiApiError, KalshiNetworkError, type KalshiClient, type KalshiOrderResult } from './kalshiTrade'
 
 // jsdom's WebCrypto has no Ed25519; Node's does (as in kalshiAuth.test.ts).
@@ -30,22 +30,31 @@ function seedProposal(side: 'yes' | 'no' = 'yes', price = 0.4, probability = 0.5
   return proposed.position.id
 }
 
+type FakeExisting = { fillCount: number; averageFillPrice?: number; totalFees?: number; orderId?: string; status?: string }
+
 interface FakeBehavior {
   quote?: { yesAsk: number | null; noAsk: number | null } | null
+  quoteStatus?: string
+  onQuote?: () => void
   balanceDollars?: number
-  onCreate?: (call: number, input: { clientOrderId: string }) => KalshiOrderResult
-  existing?: { fillCount: number; averageFillPrice?: number; totalFees?: number; orderId?: string; status?: string } | null
+  onCreate?: (call: number, input: { clientOrderId: string; count: number }) => KalshiOrderResult | Promise<KalshiOrderResult>
+  existing?: FakeExisting | null
+  onFind?: (call: number) => FakeExisting | null
   settlements?: Array<Record<string, unknown>>
 }
 
-function fakeClient(behavior: FakeBehavior): { client: KalshiClient; createCalls: Array<{ side: string; priceDollars: number; clientOrderId: string }> } {
+function fakeClient(behavior: FakeBehavior): { client: KalshiClient; createCalls: Array<{ side: string; priceDollars: number; clientOrderId: string }>; findCalls: string[] } {
   const createCalls: Array<{ side: string; priceDollars: number; clientOrderId: string }> = []
+  const findCalls: string[] = []
   const client: KalshiClient = {
     async getBalance() {
       return { balanceCents: Math.round((behavior.balanceDollars ?? 500) * 100), balanceDollars: behavior.balanceDollars ?? 500, portfolioValueCents: 0 }
     },
     async getMarketQuote() {
-      return behavior.quote === undefined ? { yesAsk: 0.42, noAsk: 0.44 } : behavior.quote
+      behavior.onQuote?.()
+      const base = behavior.quote === undefined ? { yesAsk: 0.42, noAsk: 0.44 } : behavior.quote
+      if (!base) return null
+      return { ...base, ...(behavior.quoteStatus ? { status: behavior.quoteStatus } : {}) }
     },
     async createOrder(input) {
       createCalls.push({ side: input.side, priceDollars: input.priceDollars, clientOrderId: input.clientOrderId })
@@ -53,22 +62,24 @@ function fakeClient(behavior: FakeBehavior): { client: KalshiClient; createCalls
       return { orderId: 'ord-1', clientOrderId: input.clientOrderId, fillCount: input.count, remainingCount: 0, averageFillPrice: 0.42, averageFeePaid: 0.0171 }
     },
     async findOrderByClientOrderId(clientOrderId) {
-      if (!behavior.existing) return null
+      findCalls.push(clientOrderId)
+      const found = behavior.onFind ? behavior.onFind(findCalls.length) : behavior.existing
+      if (!found) return null
       return {
-        orderId: behavior.existing.orderId ?? 'ord-found', clientOrderId, status: behavior.existing.status ?? 'executed',
-        fillCount: behavior.existing.fillCount, remainingCount: 0,
-        ...(behavior.existing.averageFillPrice !== undefined ? { averageFillPrice: behavior.existing.averageFillPrice } : {}),
-        ...(behavior.existing.totalFees !== undefined ? { totalFees: behavior.existing.totalFees } : {}),
+        orderId: found.orderId ?? 'ord-found', clientOrderId, status: found.status ?? 'executed',
+        fillCount: found.fillCount, remainingCount: 0,
+        ...(found.averageFillPrice !== undefined ? { averageFillPrice: found.averageFillPrice } : {}),
+        ...(found.totalFees !== undefined ? { totalFees: found.totalFees } : {}),
       }
     },
     async getSettlements() {
       return (behavior.settlements ?? []) as never
     },
   }
-  return { client, createCalls }
+  return { client, createCalls, findCalls }
 }
 
-const deps = (client: KalshiClient) => ({ creds, client, now: () => NOW, relayUrl: '' })
+const deps = (client: KalshiClient) => ({ creds, client, now: () => NOW, relayUrl: '', delay: async () => {} })
 
 beforeEach(() => { localStorage.clear() })
 
@@ -118,7 +129,7 @@ describe('approve places the order', () => {
     })
     const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
     expect(reply).toContain('filled 0 contracts')
-    expect(reply).toContain('nothing was spent')
+    expect(reply).toContain('Nothing was spent')
     expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
   })
 })
@@ -137,7 +148,7 @@ describe('re-quote at approval (item 8)', () => {
     const id = seedProposal('yes', 0.4, 0.5)
     const { client } = fakeClient({ quote: { yesAsk: 0.52, noAsk: 0.54 } })
     const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
-    expect(reply).toContain('the edge is gone')
+    expect(reply).toContain('after fees there is no edge')
   })
 
   it('refuses when nothing is offered on the side', async () => {
@@ -319,5 +330,162 @@ describe('auto-settle (item 9)', () => {
       }],
     })
     expect(await autoSettleKalshiPositions({ creds, client, now: () => NOW, relayUrl: '' })).toEqual([])
+  })
+})
+
+describe('review round: idempotency, reconcile, concurrency (PR #240 gate)', () => {
+  it('ALREADY_EXISTS reconciles: lost response, lookup miss, resend 409, delayed lookup finds the fill — placed, exactly 2 POSTs, never "nothing was spent"', async () => {
+    const id = seedProposal()
+    const { client, createCalls } = fakeClient({
+      onCreate: call => {
+        if (call === 1) throw new KalshiNetworkError('response lost')
+        throw new KalshiApiError(409, 'already_exists', 'Order with this client_order_id already exists.')
+      },
+      onFind: call => (call >= 2 ? { fillCount: 10, averageFillPrice: 0.42, totalFees: 0.17, orderId: 'ord-real' } : null),
+    })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
+    expect(createCalls).toHaveLength(2)
+    expect(createCalls[0].clientOrderId).toBe(`fc-${id}-1`)
+    expect(createCalls[1].clientOrderId).toBe(`fc-${id}-1`)
+    expect(reply).toContain('Placed')
+    expect(reply).not.toContain('Nothing was spent')
+    expect(reply).not.toContain('nothing was spent')
+    const p = loadFunds().positions.find(x => x.id === id)!
+    expect(p.status).toBe('placed')
+    expect(p.kalshiOrderId).toBe('ord-real')
+    expect(p.contracts).toBe(10)
+  })
+
+  it('when even the delayed lookups miss: Unknown, the approval stands, and a later re-approve reuses the stored key', async () => {
+    const id = seedProposal()
+    const first = fakeClient({ onCreate: () => { throw new KalshiNetworkError('socket closed') }, existing: null })
+    const reply1 = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(first.client))
+    expect(reply1).toContain('Unknown:')
+    const standing = loadFunds().positions.find(x => x.id === id)!
+    expect(standing.status).toBe('approved')
+    expect(standing.clientOrderId).toBe(`fc-${id}-1`)
+    const second = fakeClient({})
+    const reply2 = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(second.client))
+    expect(reply2).toContain('Placed')
+    expect(second.createCalls).toHaveLength(1)
+    expect(second.createCalls[0].clientOrderId).toBe(`fc-${id}-1`)
+  })
+
+  it('a confirmed zero fill consumes the attempt: the next approve mints attempt 2', async () => {
+    const id = seedProposal()
+    const zero = fakeClient({
+      onCreate: (_call, input) => ({ orderId: 'ord-zero', clientOrderId: input.clientOrderId, fillCount: 0, remainingCount: 99 }),
+    })
+    const reply1 = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(zero.client))
+    expect(reply1).toContain('filled 0 contracts')
+    expect(zero.createCalls[0].clientOrderId).toBe(`fc-${id}-1`)
+    expect(loadFunds().positions.find(x => x.id === id)!.status).toBe('proposed')
+    const ok = fakeClient({})
+    await runFundsCommandWithExecution(`/funds approve ${id}`, deps(ok.client))
+    expect(ok.createCalls[0].clientOrderId).toBe(`fc-${id}-2`)
+    expect(loadFunds().positions.find(x => x.id === id)!.status).toBe('placed')
+  })
+
+  it('a 409 on the FIRST post (a resumed key whose order landed) reconciles instead of reverting', async () => {
+    const id = seedProposal()
+    const { client, createCalls } = fakeClient({
+      onCreate: () => { throw new KalshiApiError(409, 'already_exists', 'Order with this client_order_id already exists.') },
+      existing: { fillCount: 5, averageFillPrice: 0.42, totalFees: 0.09, orderId: 'ord-dup' },
+    })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
+    expect(createCalls).toHaveLength(1)
+    expect(reply).toContain('Placed')
+    expect(loadFunds().positions.find(x => x.id === id)!.status).toBe('placed')
+  })
+
+  it('a 5xx on the POST is ambiguous: it reconciles to Unknown, never a revert', async () => {
+    const id = seedProposal()
+    const { client } = fakeClient({
+      onCreate: () => { throw new KalshiApiError(500, 'internal', 'Internal error.') },
+      existing: null,
+    })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
+    expect(reply).toContain('Unknown:')
+    expect(loadFunds().positions.find(x => x.id === id)!.status).toBe('approved')
+  })
+
+  it('two approves at once: exactly one order is sent, the second is told it is already being placed', async () => {
+    const id = seedProposal()
+    const { client, createCalls } = fakeClient({
+      onCreate: async (_call, input) => {
+        await new Promise(r => setTimeout(r, 25))
+        return { orderId: 'ord-1', clientOrderId: input.clientOrderId, fillCount: input.count, remainingCount: 0, averageFillPrice: 0.42, averageFeePaid: 0.0171 }
+      },
+    })
+    const [r1, r2] = await Promise.all([
+      runFundsCommandWithExecution(`/funds approve ${id}`, deps(client)),
+      runFundsCommandWithExecution(`/funds approve ${id}`, deps(client)),
+    ])
+    expect(createCalls).toHaveLength(1)
+    expect([r1, r2].filter(r => r?.includes('already being placed'))).toHaveLength(1)
+    expect([r1, r2].filter(r => r?.startsWith('Placed'))).toHaveLength(1)
+  })
+
+  it('two tabs: if the position was placed while the price was checked, the approval write refuses', async () => {
+    const id = seedProposal()
+    const { client, createCalls } = fakeClient({
+      onQuote: () => {
+        // Another tab approves and places the same position mid-flight.
+        let s = loadFunds()
+        s = applyFundsCommand(s, { kind: 'approve', id }, NOW).state
+        s = recordKalshiFill(s, id, { fillCount: 3, avgFillPrice: 0.42, feePaid: 0.05, orderId: 'ord-other-tab', clientOrderId: 'fc-other' }, NOW)
+        saveFunds(s)
+      },
+    })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
+    expect(reply).toContain('was already placed')
+    expect(createCalls).toHaveLength(0)
+  })
+
+  it('refuses a market that is not active, naming its status', async () => {
+    const id = seedProposal()
+    const { client, createCalls } = fakeClient({ quoteStatus: 'closed' })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
+    expect(reply).toContain('closed')
+    expect(reply).toContain('not active')
+    expect(createCalls).toHaveLength(0)
+  })
+
+  it('the edge must survive the fee at the live price', async () => {
+    const id = seedProposal('yes', 0.53, 0.55)
+    const { client, createCalls } = fakeClient({ quote: { yesAsk: 0.54, noAsk: 0.56 } })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
+    expect(reply).toContain('after fees there is no edge')
+    expect(createCalls).toHaveLength(0)
+  })
+
+  it('visitor mode refuses placement and auto-settle', async () => {
+    const id = seedProposal()
+    const { client, createCalls } = fakeClient({ settlements: [{ ticker: 'KX-TEST', market_result: 'yes' }] })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, { ...deps(client), visitor: true })
+    expect(reply).toContain('visitor mode')
+    expect(createCalls).toHaveLength(0)
+    await expect(autoSettleKalshiPositions({ creds, client, visitor: true })).resolves.toEqual([])
+  })
+
+  it('failures report with context; placements report once, with the run id on the position', async () => {
+    const notes: KalshiFailureNote[] = []
+    const placed: KalshiPlacedInfo[] = []
+    const wire = (client: KalshiClient) => ({
+      ...deps(client), runId: 'run-123',
+      onFailure: (n: KalshiFailureNote) => { notes.push(n) },
+      onPlaced: (i: KalshiPlacedInfo) => { placed.push(i) },
+    })
+    const idA = seedProposal()
+    const refusing = fakeClient({ onCreate: () => { throw new KalshiApiError(400, 'bad_request', 'Nope.') } })
+    await runFundsCommandWithExecution(`/funds approve ${idA}`, wire(refusing.client))
+    expect(notes).toHaveLength(1)
+    expect(notes[0]).toMatchObject({ stage: 'place', httpStatus: 400, positionId: idA, ticker: 'KX-TEST', clientOrderId: `fc-${idA}-1`, runId: 'run-123' })
+    const idB = seedProposal()
+    const ok = fakeClient({})
+    await runFundsCommandWithExecution(`/funds approve ${idB}`, wire(ok.client))
+    expect(placed).toHaveLength(1)
+    expect(placed[0]).toMatchObject({ positionId: idB, clientOrderId: `fc-${idB}-1`, runId: 'run-123' })
+    expect(loadFunds().positions.find(x => x.id === idB)!.runId).toBe('run-123')
   })
 })

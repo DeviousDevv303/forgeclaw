@@ -25,11 +25,30 @@
 import { loadKalshiCredentials, type KalshiCredentials } from './kalshiAuth'
 import {
   applyFundsCommand, estimateFee, loadFunds, money, outcomeFromKalshiResult, parseFundsCommand,
-  recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setClientOrderId, settlePosition,
+  recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setOrderKey, settlePosition,
   NOT_SAVED_WARNING, type FundsState,
 } from './fundsLedger'
 import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, type KalshiClient, type KalshiFetcher } from './kalshiTrade'
 import { PUBLIC_RELAY_URL } from './publicRelay'
+
+export interface KalshiFailureNote {
+  stage: 'credentials' | 'quote' | 'balance' | 'approve' | 'place' | 'settle'
+  message: string
+  positionId?: string
+  ticker?: string
+  clientOrderId?: string
+  httpStatus?: number
+  runId?: string
+}
+
+export interface KalshiPlacedInfo {
+  positionId: string
+  ticker: string
+  clientOrderId: string
+  orderId: string
+  fillCount: number
+  runId?: string
+}
 
 export interface KalshiExecutionDeps {
   creds?: KalshiCredentials | null
@@ -37,6 +56,18 @@ export interface KalshiExecutionDeps {
   /** Relay base URL for the transport fallback; '' disables it. Defaults to the build's relay. */
   relayUrl?: string
   now?: () => number
+  /** Wait used before reconciling lookups (real time in the app; zero in tests). */
+  delay?: (ms: number) => Promise<void>
+  /** The app run driving this command. Provenance: stored on the position, the journal and
+   *  failure contexts — never inside the client_order_id (a re-approve from a new run must
+   *  reuse the same order key). */
+  runId?: string
+  /** Failure telemetry: every refusal and failure on the order path reports here. */
+  onFailure?: (note: KalshiFailureNote) => void
+  /** Fired once per placed order, after the fill is recorded. */
+  onPlaced?: (info: KalshiPlacedInfo) => void
+  /** Public-visitor mode: placement and auto-settle refuse outright. */
+  visitor?: boolean
 }
 
 /**
@@ -82,37 +113,85 @@ function persist(state: FundsState): boolean {
   return saveFunds(state)
 }
 
+/**
+ * Approvals currently placing, by position id. Two approves for the same position must
+ * never run at once: each loads the ledger, waits on Kalshi, and writes the approval from
+ * what it read — in parallel, both would send an order. The guard refuses the second one;
+ * the ledger re-read before the approval write (step 3) covers the two-TAB case, which a
+ * memory guard cannot see, and the attempt key is the last line of defence at Kalshi.
+ */
+const approvalsInFlight = new Set<string>()
+
 async function executeApprove(id: string, deps: KalshiExecutionDeps): Promise<string> {
+  if (approvalsInFlight.has(id)) {
+    try {
+      deps.onFailure?.({ stage: 'approve', message: `Duplicate approve for ${id} refused: a placement for it is already in flight.`, positionId: id, ...(deps.runId ? { runId: deps.runId } : {}) })
+    } catch { /* telemetry never blocks */ }
+    return `Not placed: ${id} is already being placed — wait for that attempt to finish before approving again. Nothing was sent.`
+  }
+  approvalsInFlight.add(id)
+  try {
+    return await executeApproveInner(id, deps)
+  } finally {
+    approvalsInFlight.delete(id)
+  }
+}
+
+async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promise<string> {
   const now = deps.now ?? Date.now
+  const delay = deps.delay ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
+  let state = loadFunds()
+  const position = state.positions.find(p => p.id === id)
+  if (!position) return runFundsCommand(`/funds approve ${id}`) ?? `Not done: no position ${id}.`
+
+  // Every refusal and failure on this path is reported to the failure log with its context
+  // (the App wires onFailure to the error bus). Telemetry never blocks the order path.
+  const note = (stage: KalshiFailureNote['stage'], message: string, extra?: Partial<KalshiFailureNote>) => {
+    try {
+      deps.onFailure?.({ stage, message, positionId: id, ticker: position.market, ...(deps.runId ? { runId: deps.runId } : {}), ...extra })
+    } catch { /* the order path outranks its own telemetry */ }
+  }
+
+  if (deps.visitor) {
+    note('credentials', `Kalshi placement refused for ${id}: visitor mode.`)
+    return `Not placed: Kalshi trading is off in visitor mode. The proposal is unchanged.`
+  }
   const resolved = resolveClient(deps)
   if (!resolved) {
+    note('credentials', `Kalshi placement refused for ${id}: no API key in this browser.`)
     return `Not placed: no Kalshi API key in this browser. Add your key ID and private key in Settings (the Kalshi section where the Brave key used to be) — a demo key first. The proposal is unchanged.`
   }
   const { creds, client } = resolved
   const envNote = creds.env === 'demo' ? ' (demo exchange — fake money)' : ''
-  let state = loadFunds()
-  const position = state.positions.find(p => p.id === id)
-  if (!position) return runFundsCommand(`/funds approve ${id}`) ?? `Not done: no position ${id}.`
 
   // 1. Re-quote at the live ask.
   let quote
   try {
     quote = await client.getMarketQuote(position.market)
   } catch (error) {
-    if (error instanceof KalshiNetworkError) return `Not placed: this browser could not reach Kalshi for a live price${deps.relayUrl === '' ? '' : ', and the relay fallback failed too'} (${error.message}). Nothing was spent; the proposal is unchanged.`
-    if (error instanceof KalshiApiError) return `Not placed: Kalshi refused the live price check (${error.code}: ${error.message}). Nothing was spent; the proposal is unchanged.`
+    if (error instanceof KalshiNetworkError) { note('quote', `No live price for ${position.market}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi for a live price${deps.relayUrl === '' ? '' : ', and the relay fallback failed too'} (${error.message}). Nothing was spent; the proposal is unchanged.` }
+    if (error instanceof KalshiApiError) { note('quote', `Kalshi refused the price check for ${position.market} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the live price check (${error.code}: ${error.message}). Nothing was spent; the proposal is unchanged.` }
     throw error
   }
-  if (!quote) return `Not placed: Kalshi has no market ${position.market}. Nothing was spent; the proposal is unchanged.`
+  if (!quote) { note('quote', `Kalshi has no market ${position.market}.`, {}); return `Not placed: Kalshi has no market ${position.market}. Nothing was spent; the proposal is unchanged.` }
+  if (quote.status && quote.status !== 'active') {
+    note('quote', `Market ${position.market} is ${quote.status}, not active.`, {})
+    return `Not placed: ${position.market} is ${quote.status} on Kalshi, not active — no order goes into a market that is not trading. Nothing was spent; the proposal is unchanged.`
+  }
   const livePrice = position.side === 'yes' ? quote.yesAsk : quote.noAsk
   if (livePrice === null || livePrice <= 0 || livePrice >= 1) {
+    note('quote', `No ${position.side} offers on ${position.market}.`, {})
     return `Not placed: no ${position.side.toUpperCase()} contracts are offered on ${position.market} right now. Nothing was spent; the proposal is unchanged.`
   }
-  if (position.probability - livePrice <= 0) {
-    return `Not placed: the edge is gone. Live price ${money(livePrice)} (${pct(livePrice)}) vs your estimate ${pct(position.probability)} — at the live price the expected value is fees only. Nothing was spent; the proposal is unchanged.`
+  // The edge must survive the fee at the live price — the same rule funds_propose applies.
+  const feeAtLive = estimateFee('kalshi', position.contracts, livePrice)
+  if (position.contracts * (position.probability - livePrice) <= feeAtLive + 1e-9) {
+    note('quote', `No edge after fees on ${position.market} at ${livePrice}.`, {})
+    return `Not placed: after fees there is no edge. Live price ${money(livePrice)} (${pct(livePrice)}) vs your estimate ${pct(position.probability)} — the expected gain on ${position.contracts} contracts does not cover the ~${money(feeAtLive)} fee. Nothing was spent; the proposal is unchanged.`
   }
   const tolerance = state.limits.toleranceCents / 100
   if (livePrice > position.price + tolerance + 1e-9) {
+    note('quote', `Price moved past tolerance on ${position.market}: ${position.price} -> ${livePrice}.`, {})
     return `Not placed: the price moved from ${money(position.price)} to ${money(livePrice)}, past your tolerance of ${state.limits.toleranceCents}¢ (change it with /funds limits tolerance=<cents>). Nothing was spent; the proposal is unchanged.`
   }
 
@@ -121,29 +200,60 @@ async function executeApprove(id: string, deps: KalshiExecutionDeps): Promise<st
   try {
     balanceDollars = (await client.getBalance()).balanceDollars
   } catch (error) {
-    if (error instanceof KalshiNetworkError) return `Not placed: this browser could not reach Kalshi to check your balance (${error.message}). Nothing was spent; the proposal is unchanged.`
-    if (error instanceof KalshiApiError) return `Not placed: Kalshi refused the balance check (${error.code}: ${error.message}). Nothing was spent; the proposal is unchanged.`
+    if (error instanceof KalshiNetworkError) { note('balance', `Balance check unreachable for ${id}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi to check your balance (${error.message}). Nothing was spent; the proposal is unchanged.` }
+    if (error instanceof KalshiApiError) { note('balance', `Kalshi refused the balance check for ${id} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the balance check (${error.code}: ${error.message}). Nothing was spent; the proposal is unchanged.` }
     throw error
   }
-  const feeEstimate = estimateFee('kalshi', position.contracts, livePrice)
-  const needed = position.contracts * livePrice + feeEstimate
+  const needed = position.contracts * livePrice + feeAtLive
   if (balanceDollars + 1e-9 < needed) {
-    return `Not placed: your Kalshi balance is ${money(balanceDollars)}${envNote} but this order needs about ${money(needed)} (${position.contracts} contracts at ${money(livePrice)} + ~${money(feeEstimate)} fees). Nothing was spent; the proposal is unchanged.`
+    note('balance', `Balance ${balanceDollars} cannot cover ${needed} for ${id}.`, {})
+    return `Not placed: your Kalshi balance is ${money(balanceDollars)}${envNote} but this order needs about ${money(needed)} (${position.contracts} contracts at ${money(livePrice)} + ~${money(feeAtLive)} fees). Nothing was spent; the proposal is unchanged.`
   }
 
-  // 3. Record the approval (with its client_order_id) BEFORE sending anything.
-  let approved: FundsState
-  try {
-    approved = applyFundsCommand(state, { kind: 'approve', id }, now()).state
-  } catch (error) {
-    return `Not placed: ${error instanceof Error ? error.message : String(error)}`
+  // 3. RE-READ the ledger, then record the approval and its order key and SAVE them —
+  //    all before anything is sent. The re-read closes the two-tab race: this function
+  //    loaded the ledger before two network waits, and another tab (or tap) may have
+  //    approved or placed the position meanwhile; writing from the stale read would
+  //    approve it twice. The attempt counter and the key move atomically with the
+  //    approval, so no two sends can ever share an attempt. A resumed approval (an
+  //    earlier attempt ended Unknown) reuses the stored key: Kalshi rejects a true
+  //    duplicate of it with 409 (ALREADY_EXISTS), which the placement path treats as
+  //    "the order exists — reconcile", never as a refusal.
+  const fresh = loadFunds()
+  const current = fresh.positions.find(p => p.id === id)
+  if (!current) return `Not done: no position ${id}.`
+  if (current.status === 'placed') {
+    note('approve', `${id} was already placed while its price was being checked; nothing sent.`, {})
+    return `Not placed: ${id} was already placed while its price was being checked. Nothing was sent.`
   }
-  const clientOrderId = `fc-${id}-${now()}`
-  approved = setClientOrderId(approved, id, clientOrderId)
-  if (!persist(approved)) {
-    return `Not placed: the ledger could not be saved in this browser, so no order was sent.${NOT_SAVED_WARNING}`
+  let clientOrderId: string
+  const resuming = current.status === 'approved' && !!current.clientOrderId
+  if (current.status !== 'proposed' && !resuming) {
+    note('approve', `${id} is ${current.status}, not waiting for approval; nothing sent.`, {})
+    return `Not placed: ${id} is ${current.status}, not waiting for approval. Nothing was sent.`
   }
-  state = approved
+  if (resuming) {
+    clientOrderId = current.clientOrderId!
+    const refreshed = setOrderKey(fresh, id, clientOrderId, current.orderAttempt ?? 1, deps.runId)
+    if (persist(refreshed)) state = refreshed
+    else state = fresh
+  } else {
+    let approved: FundsState
+    try {
+      approved = applyFundsCommand(fresh, { kind: 'approve', id }, now()).state
+    } catch (error) {
+      note('approve', `Approval refused for ${id}: ${error instanceof Error ? error.message : String(error)}`, {})
+      return `Not placed: ${error instanceof Error ? error.message : String(error)}`
+    }
+    const attempt = (current.orderAttempt ?? 0) + 1
+    clientOrderId = `fc-${id}-${attempt}`
+    approved = setOrderKey(approved, id, clientOrderId, attempt, deps.runId)
+    if (!persist(approved)) {
+      note('approve', `Ledger would not save before placing ${id}; no order sent.`, { clientOrderId })
+      return `Not placed: the ledger could not be saved in this browser, so no order was sent.${NOT_SAVED_WARNING}`
+    }
+    state = approved
+  }
 
   const order = orderForProposal({ side: position.side, livePrice, contracts: position.contracts })
   const placedMessage = (fillCount: number, avgPrice: number, feePaidTotal: number, orderId: string, recovered: boolean): string => {
@@ -153,50 +263,86 @@ async function executeApprove(id: string, deps: KalshiExecutionDeps): Promise<st
   const recordFill = (fillCount: number, avgPrice: number, feePaidTotal: number, orderId: string, recovered: boolean): string => {
     const next = recordKalshiFill(state, id, { fillCount, avgFillPrice: avgPrice, feePaid: feePaidTotal, orderId, clientOrderId }, now())
     const saved = persist(next)
+    try {
+      deps.onPlaced?.({ positionId: id, ticker: position.market, clientOrderId, orderId, fillCount, ...(deps.runId ? { runId: deps.runId } : {}) })
+    } catch { /* journaling never blocks the record */ }
     return placedMessage(fillCount, avgPrice, feePaidTotal, orderId, recovered) + (saved ? '' : NOT_SAVED_WARNING)
   }
-  const revertWith = (message: string): string => {
+  // A CONFIRMED terminal no-fill: Kalshi's own records show the order filled nothing, or
+  // Kalshi definitively refused it (non-409). Only then does the position go back to
+  // proposed (the attempt stays consumed, so the next approve mints the next attempt's key).
+  // "Nothing was spent" is claimed only from that evidence — never inferred from an error.
+  const confirmedNoFill = (message: string, extra?: Partial<KalshiFailureNote>): string => {
     persist(revertKalshiApproval(state, id))
+    note('place', message, { clientOrderId, ...extra })
     return message
   }
-
-  // 4. Send the order — once. An ambiguous failure is resolved by lookup, never by resending.
-  let result
-  try {
-    result = await client.createOrder({ ticker: position.market, side: order.side, count: order.count, priceDollars: order.priceDollars, clientOrderId })
-  } catch (error) {
-    if (error instanceof KalshiApiError) {
-      return revertWith(`Not placed: Kalshi refused the order (${error.code}: ${error.message}). Nothing was spent; the proposal is back to proposed.`)
+  const lookup = async () => {
+    try { return await client.findOrderByClientOrderId(clientOrderId, position.market) } catch { return null }
+  }
+  const resolveFound = (found: NonNullable<Awaited<ReturnType<typeof lookup>>>, recovered: boolean): string => {
+    if (found.fillCount > 0) {
+      return recordFill(found.fillCount, found.averageFillPrice ?? livePrice, found.totalFees ?? estimateFee('kalshi', found.fillCount, found.averageFillPrice ?? livePrice), found.orderId, recovered)
     }
-    if (error instanceof KalshiNetworkError) {
-      // No answer: the order may exist. Look before doing anything else.
-      let existing = null
-      try { existing = await client.findOrderByClientOrderId(clientOrderId, position.market) } catch { existing = null }
-      if (existing && existing.fillCount > 0) {
-        return recordFill(existing.fillCount, existing.averageFillPrice ?? livePrice, existing.totalFees ?? estimateFee('kalshi', existing.fillCount, existing.averageFillPrice ?? livePrice), existing.orderId, true)
-      }
-      if (existing) {
-        return revertWith(`Not placed: the order reached Kalshi (order ${existing.orderId}, status ${existing.status}) but filled nothing. Nothing was spent; the proposal is back to proposed.`)
-      }
-      // No order under that id: one resend with the SAME client_order_id, so even a late
-      // duplicate is detectable and Kalshi can dedupe on it.
-      try {
-        result = await client.createOrder({ ticker: position.market, side: order.side, count: order.count, priceDollars: order.priceDollars, clientOrderId })
-      } catch (retryError) {
-        if (retryError instanceof KalshiApiError) {
-          return revertWith(`Not placed: Kalshi refused the order (${retryError.code}: ${retryError.message}). Nothing was spent; the proposal is back to proposed.`)
-        }
-        return `Unknown: two attempts to place ${id} got no answer from Kalshi, and no order with id ${clientOrderId} exists yet. The approval stands — ${id} is approved, not placed. Check Kalshi, then either type /funds placed ${id} <fill price> if you place it there, or /funds reject ${id} to drop it. Nothing was resent a third time.`
-      }
-    } else {
+    return confirmedNoFill(`Not placed: the order did reach Kalshi (order ${found.orderId}, status ${found.status}) and filled nothing — confirmed from Kalshi's own order record. Nothing was spent; the proposal is back to proposed.`)
+  }
+  const unknownOutcome = (): string => {
+    note('place', `Order outcome unknown for ${id} after reconciling lookups; approval left standing.`, { clientOrderId })
+    return `Unknown: Kalshi gave no usable answer for ${id}, and no order with id ${clientOrderId} could be found yet. The approval stands — ${id} is approved, not placed, and its order key is kept. Check Kalshi; then type /funds approve ${id} again to reconcile under the same key, /funds placed ${id} <fill price> if you place it there yourself, or /funds reject ${id} to drop it. Nothing was resent blindly.`
+  }
+  // ALREADY_EXISTS (409) and every other ambiguous end state reconcile here: the first
+  // lookup raced Kalshi's own indexing, so look again with backoff before concluding
+  // anything. A rejection that means "order already exists" is reconciled, never read
+  // as "nothing was spent".
+  const reconcile = async (): Promise<string> => {
+    for (const waitMs of [2000, 4000]) {
+      await delay(waitMs)
+      const found = await lookup()
+      if (found) return resolveFound(found, true)
+    }
+    return unknownOutcome()
+  }
+
+  // A resumed approval reconciles before it sends anything new.
+  if (resuming) {
+    const found = await lookup()
+    if (found) return resolveFound(found, true)
+  }
+
+  // 4. Send — once, under the recorded key. A lost response is resolved by lookup; the one
+  //    resend uses the SAME key, so if the first order did land, Kalshi's 409 turns the
+  //    resend into a reconcile signal instead of a second order.
+  type PostOutcome =
+    | { kind: 'answered'; fillCount: number; avgPrice: number; feeTotal: number; orderId: string }
+    | { kind: 'api'; error: KalshiApiError }
+    | { kind: 'network' }
+  const tryPost = async (): Promise<PostOutcome> => {
+    try {
+      const r = await client.createOrder({ ticker: position.market, side: order.side, count: order.count, priceDollars: order.priceDollars, clientOrderId })
+      return { kind: 'answered', fillCount: r.fillCount, avgPrice: r.averageFillPrice ?? livePrice, feeTotal: Math.round((r.averageFeePaid ?? 0) * r.fillCount * 100) / 100, orderId: r.orderId }
+    } catch (error) {
+      if (error instanceof KalshiApiError) return { kind: 'api', error }
+      if (error instanceof KalshiNetworkError) return { kind: 'network' }
       throw error
     }
   }
-  if (result.fillCount <= 0) {
-    return revertWith(`Nothing placed: the order filled 0 contracts at ${money(livePrice)} (immediate-or-cancel) — nothing was spent. The proposal is back to proposed; approve again to retry at the then-live price.`)
+
+  let post = await tryPost()
+  if (post.kind === 'network') {
+    const found = await lookup()
+    if (found) return resolveFound(found, true)
+    post = await tryPost()
   }
-  const feePaidTotal = Math.round((result.averageFeePaid ?? 0) * result.fillCount * 100) / 100
-  return recordFill(result.fillCount, result.averageFillPrice ?? livePrice, feePaidTotal, result.orderId, false)
+  if (post.kind === 'answered') {
+    if (post.fillCount > 0) return recordFill(post.fillCount, post.avgPrice, post.feeTotal, post.orderId, false)
+    return confirmedNoFill(`Nothing placed: the order filled 0 contracts at ${money(livePrice)} (immediate-or-cancel) — Kalshi's own response confirms the zero fill. Nothing was spent. The proposal is back to proposed; approve again to retry at the then-live price.`)
+  }
+  if (post.kind === 'api') {
+    if (post.error.status === 409) return reconcile() // ALREADY_EXISTS: the order is real; go find it.
+    if (post.error.status >= 500) return reconcile() // A 5xx may hide a taken order; reconcile before claiming anything.
+    return confirmedNoFill(`Not placed: Kalshi refused the order (${post.error.code}: ${post.error.message}). Nothing was spent; the proposal is back to proposed.`, { httpStatus: post.error.status })
+  }
+  return reconcile() // The resend also got no answer: backoff lookups, then the Unknown state.
 }
 
 /**
@@ -210,7 +356,7 @@ export async function runFundsCommandWithExecution(text: string, deps: KalshiExe
   if (cmd.kind === 'approve') {
     const state = loadFunds()
     const position = state.positions.find(p => p.id === cmd.id)
-    if (position && position.mode === 'real' && position.status === 'proposed' && isKalshi(position.venue)) {
+    if (position && position.mode === 'real' && isKalshi(position.venue) && (position.status === 'proposed' || (position.status === 'approved' && !!position.clientOrderId))) {
       return executeApprove(cmd.id, deps)
     }
     return runFundsCommand(text)
@@ -239,14 +385,18 @@ export interface SettledNotice { id: string; market: string; outcome: 'won' | 'l
  * absorbed into the ledger by coincidence. Anything unmatched is left for the owner.
  */
 export async function autoSettleKalshiPositions(deps: KalshiExecutionDeps = {}): Promise<SettledNotice[]> {
+  if (deps.visitor) return [] // Visitor mode never touches the owner's settlements.
   const resolved = resolveClient(deps)
   if (!resolved) return []
   const now = deps.now ?? Date.now
   let settlements
   try {
     settlements = await resolved.client.getSettlements()
-  } catch {
-    return [] // Best effort on open; the next open retries. /funds errors stay named there.
+  } catch (error) {
+    try {
+      deps.onFailure?.({ stage: 'settle', message: `Kalshi settlements could not be read on open: ${error instanceof Error ? error.message : String(error)}`, ...(error instanceof KalshiApiError ? { httpStatus: error.status } : {}) })
+    } catch { /* best effort on open; the next open retries */ }
+    return []
   }
   let state = loadFunds()
   const notices: SettledNotice[] = []

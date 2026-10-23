@@ -11,6 +11,7 @@ export type FailureSeverity = 'info' | 'warning' | 'error' | 'critical'
 export type FailureSource =
   | 'forgemind' | 'repoagent' | 'github'
   | 'orchestrator'  // authority layer telemetry
+  | 'kalshi'        // funds execution: order-path refusals and failures
 
 export interface FailureEvent {
   id: string
