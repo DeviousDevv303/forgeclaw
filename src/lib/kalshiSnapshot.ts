@@ -15,7 +15,15 @@
 
 import type { KalshiMarket, KalshiQuery } from './kalshiMarkets'
 
-/** Default maximum snapshot age. Per-call override via KalshiDeps.maxSnapshotAgeMs. */
+/**
+ * Default maximum snapshot age. Per-call override via KalshiDeps.maxSnapshotAgeMs.
+ *
+ * Why 15 minutes (owner decision, 2026-10-23): the markets this was built for (KXHIGH* daily
+ * temperature buckets) reprice over hours, so 15 min of staleness is well inside their noise,
+ * while short enough that a snapshot cannot quietly stand in for a whole session of live reads.
+ * It is per call, not global, because faster markets will need a tighter limit — a hardcoded
+ * threshold becomes a law nobody remembers choosing.
+ */
 export const KALSHI_SNAPSHOT_MAX_AGE_MS = 15 * 60_000
 /** Distinct queries remembered; oldest dropped first. */
 export const KALSHI_SNAPSHOT_MAX_ENTRIES = 12

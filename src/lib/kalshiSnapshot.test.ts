@@ -3,7 +3,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  KALSHI_DISCLAIMER, KALSHI_STALE_DISCLAIMER, KalshiError, fetchKalshiMarket, resetKalshiReadSpacing, runKalshiMarkets,
+  KALSHI_DISCLAIMER, KALSHI_STALE_DISCLAIMER, KalshiError, fetchKalshiMarket, lastKalshiReadInfo, resetKalshiReadSpacing, runKalshiMarkets,
   type KalshiDeps, type KalshiMarket,
 } from './kalshiMarkets'
 import {
@@ -177,6 +177,36 @@ describe('read-failure attribution', () => {
     const kalshi = getErrorLog().filter(e => e.source === 'kalshi').reverse()
     expect(kalshi.map(e => e.message)).toEqual(['read HTTP 429 /markets', 'read HTTP 429 /markets', 'read HTTP 429 /markets'])
     expect(kalshi.map(e => e.details)).toEqual(['attempt 1 · Retry-After: 3', 'attempt 2 · Retry-After: none', 'attempt 3 · Retry-After: none'])
+  })
+
+  it('lastKalshiReadInfo reports the observed outcome: success, 429 with its header, then no answer', async () => {
+    const h = harness(memStore())
+    expect(lastKalshiReadInfo()).toBeNull()
+    await runKalshiMarkets({ series_ticker: 'KXHIGHNY' }, h.deps(async () => ok({ markets: [mk({})] })))
+    expect(lastKalshiReadInfo()).toMatchObject({ status: 200, retryAfter: null, path: '/markets' })
+    await runKalshiMarkets({ series_ticker: 'KXHIGHMIA' }, h.deps(async () => limited({ 'Retry-After': '7' }))).catch(() => undefined)
+    expect(lastKalshiReadInfo()).toMatchObject({ status: 429, retryAfter: '7' })
+    await runKalshiMarkets({ series_ticker: 'KXHIGHLAX' }, h.deps(async () => { throw new TypeError('Failed to fetch') })).catch(() => undefined)
+    expect(lastKalshiReadInfo()).toMatchObject({ status: null, retryAfter: null })
+  })
+
+  it('a returned copy cannot be used to rewrite the recorded outcome', async () => {
+    const h = harness(memStore())
+    await runKalshiMarkets({ series_ticker: 'KXHIGHNY' }, h.deps(async () => ok({ markets: [mk({})] })))
+    const info = lastKalshiReadInfo()!
+    info.status = 999
+    expect(lastKalshiReadInfo()!.status).toBe(200)
+  })
+
+  it('bad JSON and wrong-shape answers name the HTTP status that carried them', async () => {
+    const h = harness(memStore())
+    const badJson = { ok: true, status: 200, headers: new Headers(), json: async () => { throw new SyntaxError('x') } } as unknown as Response
+    const e1 = await runKalshiMarkets({ series_ticker: 'A' }, h.deps(async () => badJson, { snapshots: null })).catch(e => e)
+    expect(e1.message).toMatch(/^Kalshi returned HTTP 200 on \/markets, but the response is not valid JSON\./)
+    expect(e1.httpStatus).toBe(200)
+    const e2 = await runKalshiMarkets({ series_ticker: 'A' }, h.deps(async () => ok({ nope: 1 }), { snapshots: null })).catch(e => e)
+    expect(e2.message).toMatch(/^Kalshi response had no "markets" array \(HTTP 200\)\./)
+    expect(e2.httpStatus).toBe(200)
   })
 
   it('a successful read logs nothing', async () => {
