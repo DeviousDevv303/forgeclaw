@@ -6,8 +6,9 @@
 import { generateKeyPairSync, webcrypto } from 'node:crypto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, type KalshiCredentials } from './kalshiAuth'
-import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, proposePosition, recordKalshiFill, saveFunds } from './fundsLedger'
-import { autoSettleKalshiPositions, directThenRelayFetcher, runFundsCommandWithExecution, type KalshiFailureNote, type KalshiPlacedInfo } from './kalshiExecution'
+import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, parseFundsCommand, proposePosition, recordKalshiFill, runFundsCommand, saveFunds } from './fundsLedger'
+import { saveOwnerScaffold } from './ownerScaffold'
+import { autoSettleKalshiPositions, directThenRelayFetcher, maybeAutoApprove, runFundsCommandWithExecution, type KalshiFailureNote, type KalshiPlacedInfo } from './kalshiExecution'
 import { KalshiApiError, KalshiNetworkError, type KalshiClient, type KalshiOrderResult } from './kalshiTrade'
 
 // jsdom's WebCrypto has no Ed25519; Node's does (as in kalshiAuth.test.ts).
@@ -36,6 +37,7 @@ interface FakeBehavior {
   quote?: { yesAsk: number | null; noAsk: number | null } | null
   quoteStatus?: string
   onQuote?: () => void
+  quoteByTicker?: Record<string, { yesAsk: number | null; noAsk: number | null } | null>
   balanceDollars?: number
   onCreate?: (call: number, input: { clientOrderId: string; count: number }) => KalshiOrderResult | Promise<KalshiOrderResult>
   existing?: FakeExisting | null
@@ -51,9 +53,11 @@ function fakeClient(behavior: FakeBehavior): { client: KalshiClient; createCalls
     async getBalance() {
       return { balanceCents: Math.round((behavior.balanceDollars ?? 500) * 100), balanceDollars: behavior.balanceDollars ?? 500, portfolioValueCents: 0 }
     },
-    async getMarketQuote() {
+    async getMarketQuote(ticker: string) {
       behavior.onQuote?.()
-      const base = behavior.quote === undefined ? { yesAsk: 0.42, noAsk: 0.44 } : behavior.quote
+      const base = behavior.quoteByTicker && ticker in behavior.quoteByTicker
+        ? behavior.quoteByTicker[ticker]
+        : behavior.quote === undefined ? { yesAsk: 0.42, noAsk: 0.44 } : behavior.quote
       if (!base) return null
       return { ...base, ...(behavior.quoteStatus ? { status: behavior.quoteStatus } : {}) }
     },
@@ -606,5 +610,218 @@ describe('review round: idempotency, reconcile, concurrency (PR #240 gate)', () 
     expect(placed).toHaveLength(1)
     expect(placed[0]).toMatchObject({ positionId: idB, clientOrderId: `fc-${idB}-1`, runId: 'run-123' })
     expect(loadFunds().positions.find(x => x.id === idB)!.runId).toBe('run-123')
+  })
+})
+
+function seedMore(market: string, venue = 'kalshi'): string {
+  const proposed = proposePosition(loadFunds(), {
+    venue, market, side: 'yes', price: 0.4, probability: 0.55,
+    rationale: 'NWS forecast gives 60% rain for the window and three models agree; market lags the update.',
+    sources: ['https://weather.gov/forecast'],
+  }, NOW)
+  saveFunds(proposed.state)
+  return proposed.position.id
+}
+
+const setAutoApprove = (dollars: number) =>
+  saveFunds(applyFundsCommand(loadFunds(), { kind: 'limits', changes: { autoApproveUnder: dollars } }, NOW).state)
+
+describe('approve-all (item 10)', () => {
+  it('places every waiting proposal, one order each, in order', async () => {
+    const a = seedProposal()
+    const b = seedMore('KX-TEST-2')
+    const { client, createCalls } = fakeClient({})
+    const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
+    expect(reply).toContain('Approve-all: 2 placed, 0 refused, 0 unknown of 2 proposals.')
+    expect(reply).toContain(`Placed ${a}`)
+    expect(reply).toContain(`Placed ${b}`)
+    expect(createCalls).toHaveLength(2)
+    expect(createCalls[0].clientOrderId).toContain(a)
+    expect(createCalls[1].clientOrderId).toContain(b)
+    const positions = loadFunds().positions
+    expect(positions.find(p => p.id === a)!.status).toBe('placed')
+    expect(positions.find(p => p.id === b)!.status).toBe('placed')
+  })
+
+  it('a refused proposal (edge gone) does not stop the rest', async () => {
+    const gone = seedProposal()
+    const ok = seedMore('KX-TEST-2')
+    const { client, createCalls } = fakeClient({ quoteByTicker: { 'KX-TEST': { yesAsk: 0.56, noAsk: 0.58 } } })
+    const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
+    expect(reply).toContain('Approve-all: 1 placed, 1 refused, 0 unknown of 2 proposals.')
+    expect(reply).toContain('after fees there is no edge')
+    expect(createCalls).toHaveLength(1)
+    const positions = loadFunds().positions
+    expect(positions.find(p => p.id === gone)!.status).toBe('proposed')
+    expect(positions.find(p => p.id === ok)!.status).toBe('placed')
+  })
+
+  it('a Kalshi refusal on one order does not stop the rest', async () => {
+    const refused = seedProposal()
+    const ok = seedMore('KX-TEST-2')
+    const { client } = fakeClient({
+      onCreate: (n, input) => {
+        if (n === 1) throw new KalshiApiError(400, 'insufficient_balance', 'Insufficient balance.')
+        return { orderId: 'ord-2', clientOrderId: input.clientOrderId, fillCount: 10, remainingCount: 0, averageFillPrice: 0.42, averageFeePaid: 0.0171 }
+      },
+    })
+    const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
+    expect(reply).toContain('Approve-all: 1 placed, 1 refused, 0 unknown of 2 proposals.')
+    const positions = loadFunds().positions
+    expect(positions.find(p => p.id === refused)!.status).toBe('proposed')
+    expect(positions.find(p => p.id === ok)!.status).toBe('placed')
+  })
+
+  it('an unknown outcome is reported as unknown and the batch continues', async () => {
+    const lost = seedProposal()
+    const ok = seedMore('KX-TEST-2')
+    const { client, createCalls } = fakeClient({
+      onCreate: (n, input) => {
+        if (n === 1) throw new KalshiNetworkError('socket closed')
+        return { orderId: 'ord-3', clientOrderId: input.clientOrderId, fillCount: 10, remainingCount: 0, averageFillPrice: 0.42, averageFeePaid: 0.0171 }
+      },
+      existing: null,
+    })
+    const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
+    expect(reply).toContain('Approve-all: 1 placed, 0 refused, 1 unknown of 2 proposals.')
+    expect(reply).toContain('Unknown:')
+    expect(createCalls).toHaveLength(2) // the lost position's one attempt (a lost response reconciles by lookup, never a resend), then the next position's one
+    const positions = loadFunds().positions
+    expect(positions.find(p => p.id === lost)!.status).toBe('approved')
+    expect(positions.find(p => p.id === ok)!.status).toBe('placed')
+  })
+
+  it('with nothing waiting it says so and sends nothing', async () => {
+    const { client, createCalls } = fakeClient({})
+    const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
+    expect(reply).toBe('Approve-all: no proposals are waiting.')
+    expect(createCalls).toHaveLength(0)
+  })
+
+  it('without credentials (a visitor browser holds none) every position is refused by name', async () => {
+    const a = seedProposal()
+    const b = seedMore('KX-TEST-2')
+    const reply = await runFundsCommandWithExecution('/funds approve-all', { creds: null, now: () => NOW, relayUrl: '' })
+    expect(reply).toContain('Approve-all: 0 placed, 2 refused, 0 unknown of 2 proposals.')
+    expect(reply).toContain('no Kalshi API key in this browser')
+    const positions = loadFunds().positions
+    expect(positions.find(p => p.id === a)!.status).toBe('proposed')
+    expect(positions.find(p => p.id === b)!.status).toBe('proposed')
+  })
+})
+
+describe('auto-approve under a limit (item 10)', () => {
+  it('default off: a proposal waits for the owner, untouched', async () => {
+    const id = seedProposal()
+    const position = loadFunds().positions.find(p => p.id === id)!
+    const { client, createCalls } = fakeClient({})
+    expect(await maybeAutoApprove(position, deps(client))).toBeNull()
+    expect(createCalls).toHaveLength(0)
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+
+  it('on: a proposal at the threshold is placed through the same approve path', async () => {
+    const id = seedProposal()
+    const position = loadFunds().positions.find(p => p.id === id)!
+    setAutoApprove(position.stake) // exactly at the stake: at-or-under must fire
+    const { client, createCalls } = fakeClient({})
+    const reply = await maybeAutoApprove(position, deps(client))
+    expect(reply).toContain(`Placed ${id}`)
+    expect(createCalls).toHaveLength(1)
+    const placed = loadFunds().positions.find(p => p.id === id)!
+    expect(placed.status).toBe('placed')
+    expect(placed.kalshiOrderId).toBe('ord-1')
+  })
+
+  it('on: a proposal over the threshold stays proposed', async () => {
+    const id = seedProposal()
+    const position = loadFunds().positions.find(p => p.id === id)!
+    setAutoApprove(position.stake - 0.01)
+    const { client, createCalls } = fakeClient({})
+    expect(await maybeAutoApprove(position, deps(client))).toBeNull()
+    expect(createCalls).toHaveLength(0)
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+
+  it('never fires for a non-Kalshi venue, however high the limit', async () => {
+    seedProposal()
+    const id = seedMore('Chiefs ML Sunday', 'sportsbook')
+    setAutoApprove(100000)
+    const position = loadFunds().positions.find(p => p.id === id)!
+    const { client, createCalls } = fakeClient({})
+    expect(await maybeAutoApprove(position, deps(client))).toBeNull()
+    expect(createCalls).toHaveLength(0)
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+})
+
+describe('funds plan (PR B item 13)', () => {
+  // A clearly synthetic stand-in framework, stored through the same Settings key the
+  // real code reads. It is invented for this test and resembles no one's framework.
+  const SYNTHETIC_SCAFFOLD = [
+    '# Phase One: Survey',
+    'Look at everything before touching anything.',
+    '# Phase Two: Commit',
+    'Act only on what the survey supports.',
+  ].join('\n')
+
+  it('parses as its own command, and the ledger alone refuses it — the app layer builds the plan', () => {
+    expect(parseFundsCommand('/funds plan')).toEqual({ kind: 'plan' })
+    const reply = runFundsCommand('/funds plan', NOW)
+    expect(reply).toMatch(/^Not done:/)
+    expect(reply).toContain('built by the app')
+  })
+
+  it('renders the header snapshot, one section per framework phase, and the per-bet blocks', async () => {
+    seedProposal()
+    saveOwnerScaffold(SYNTHETIC_SCAFFOLD)
+    const plan = (await runFundsCommandWithExecution('/funds plan', { now: () => NOW, relayUrl: '' }))!
+    expect(plan).toContain('Funds master plan — Kalshi demo exchange (fake money)')
+    expect(plan).toContain('Bankroll $1000.00')
+    expect(plan).toContain('Limits:')
+    expect(plan).toContain('1 proposed')
+    expect(plan.indexOf('Phase One: Survey')).toBeGreaterThanOrEqual(0)
+    expect(plan.indexOf('Phase One: Survey')).toBeLessThan(plan.indexOf('Phase Two: Commit'))
+    // The bets walk every phase: the seeded proposal's block appears once per phase.
+    expect(plan.match(/KX-TEST/g)).toHaveLength(2)
+    expect(plan).toContain('evidence: NWS forecast gives 60% rain')
+    expect(plan).toContain('sources: https://weather.gov/forecast')
+    expect(plan).toContain('confidence: 55%')
+    expect(plan).toContain('falsifier: missing — not recorded on this position')
+  })
+
+  it('refuses plainly when no framework text is saved — no fallback template', async () => {
+    seedProposal()
+    const reply = (await runFundsCommandWithExecution('/funds plan', { now: () => NOW, relayUrl: '' }))!
+    expect(reply).toContain('no framework text is saved in Settings')
+    expect(reply).not.toContain('Phase One')
+    expect(reply).not.toContain('confidence:')
+  })
+
+  it('a position with no recorded evidence says none recorded; the header carries the category record', async () => {
+    const state = emptyFunds()
+    state.limits = { ...state.limits, capAmount: 100000 }
+    state.movements = [{ id: 'm1', at: NOW, kind: 'deposit', amount: 1000 }]
+    state.positions = [
+      { id: 'p1', createdAt: NOW, mode: 'real', venue: 'kalshi', market: 'KXHIGHNY-26OCT23-T75', side: 'yes', price: 0.5, probability: 0.6, contracts: 10, stake: 5, feeEstimate: 0.18, rationale: '', sources: [], status: 'proposed' },
+      { id: 'p2', createdAt: NOW, mode: 'real', venue: 'kalshi', market: 'KXHIGHNY-26OCT22-T75', side: 'yes', price: 0.5, probability: 0.6, contracts: 10, stake: 5, feeEstimate: 0.18, rationale: 'settled already', sources: ['https://example.com/result'], status: 'settled', outcome: 'won', pnl: 4.82, settledAt: NOW },
+    ]
+    state.nextId = 3
+    saveFunds(state)
+    saveOwnerScaffold(SYNTHETIC_SCAFFOLD)
+    const plan = (await runFundsCommandWithExecution('/funds plan', { now: () => NOW, relayUrl: '' }))!
+    expect(plan).toContain('Category records: KXHIGHNY 1/1 won, $4.82 net')
+    expect(plan).toContain('evidence: none recorded')
+    expect(plan).toContain('falsifier: missing — not recorded on this position')
+    expect(plan).not.toContain('settled already') // settled positions get no per-bet block
+  })
+
+  it('a framework with no phase structure: the plan says so and lists the bets unsectioned', async () => {
+    seedProposal()
+    saveOwnerScaffold('Work the problem from the facts.\nWrite down what would change your mind.')
+    const plan = (await runFundsCommandWithExecution('/funds plan', { now: () => NOW, relayUrl: '' }))!
+    expect(plan).toContain('No phase structure found in the saved framework')
+    expect(plan).toContain('KX-TEST')
+    expect(plan.match(/KX-TEST/g)).toHaveLength(1)
   })
 })

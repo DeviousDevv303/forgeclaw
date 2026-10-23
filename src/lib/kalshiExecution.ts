@@ -22,12 +22,14 @@
  * (relay/ route /v1/kalshi). Kalshi's signature does not cover the host, so it stays valid.
  */
 
-import { effectiveKalshiRelayUrl, kalshiCredentialPresence, loadKalshiCredentials, type KalshiCredentials } from './kalshiAuth'
+import { effectiveKalshiRelayUrl, kalshiCredentialPresence, loadKalshiCredentials, loadKalshiEnv, type KalshiCredentials } from './kalshiAuth'
 import {
-  applyFundsCommand, estimateFee, loadFunds, money, outcomeFromKalshiResult, parseFundsCommand,
-  recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setOrderKey, settlePosition,
-  NOT_SAVED_WARNING, type FundsState,
+  applyFundsCommand, categoryOfMarket, categoryRecords, categoryStakeMultiplier, estimateFee, formatLimits,
+  haltedMessage, loadFunds, money, outcomeFromKalshiResult, parseFundsCommand,
+  recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setOrderKey, settlePosition, summarize,
+  NOT_SAVED_WARNING, type FundsPosition, type FundsState,
 } from './fundsLedger'
+import { loadOwnerScaffold, scaffoldPhases } from './ownerScaffold'
 import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, relayFallbackFetcher, type KalshiClient, type KalshiExistingOrder, type KalshiFetcher, type KalshiOrderLookup } from './kalshiTrade'
 
 export interface KalshiFailureNote {
@@ -368,6 +370,123 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
 }
 
 /**
+ * `/funds approve-all` (directive item 10): approve every waiting proposal, one at a time,
+ * each through the exact single-approve path above — same re-quote, balance gate and
+ * ledger rules, never a batch shortcut. Sequential on purpose: each approval re-reads the
+ * ledger and Kalshi's balance, so an early fill shrinks what later approvals may spend.
+ * One position's refusal or failure is reported in its own line and never stops the rest.
+ */
+async function executeApproveAll(deps: KalshiExecutionDeps): Promise<string> {
+  const ids = loadFunds().positions.filter(p => p.status === 'proposed').map(p => p.id)
+  if (!ids.length) return 'Approve-all: no proposals are waiting.'
+  const lines: string[] = []
+  let placed = 0
+  let approved = 0
+  let refused = 0
+  let unknown = 0
+  for (const id of ids) {
+    let reply: string
+    try {
+      reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps) ?? `Not done: no position ${id}.`
+    } catch (error) {
+      // executeApprove turns every expected failure into a reply; an unexpected throw is
+      // still just this position's outcome — the rest of the batch must not lose its turn.
+      reply = `Not placed: ${error instanceof Error ? error.message : String(error)}`
+    }
+    // The single-approve replies carry stable outcome prefixes (the same convention
+    // App.tsx uses to mark a funds reply complete or blocked); count by them.
+    if (reply.startsWith('Placed ')) placed++
+    else if (reply.startsWith('Approved ')) approved++ // non-Kalshi: ledger approval, the owner places it on the venue
+    else if (reply.startsWith('Unknown:')) unknown++
+    else refused++
+    lines.push(reply)
+  }
+  const counts = [`${placed} placed`, ...(approved ? [`${approved} approved (place on the venue yourself)`] : []), `${refused} refused`, `${unknown} unknown`]
+  return [`Approve-all: ${counts.join(', ')} of ${ids.length} proposals.`, ...lines].join('\n')
+}
+
+/**
+ * Auto-approve (directive item 10): when the owner has set `/funds limits autoapprove=<dollars>`
+ * above zero, a real Kalshi proposal at or under that stake goes through the very same
+ * approve-and-place path as the owner's typed `/funds approve <id>` — including the re-quote
+ * and the balance gate — the moment it is proposed. Returns the execution reply, or null
+ * when auto-approve does not apply (off, over the threshold, paper, or not Kalshi: those
+ * keep waiting for the owner). Called only from the funds_propose tool, after the proposal
+ * is saved; the model cannot set the limit, so this stays the owner's standing instruction.
+ */
+export async function maybeAutoApprove(position: FundsPosition, deps: KalshiExecutionDeps = {}): Promise<string | null> {
+  if (position.mode !== 'real' || position.status !== 'proposed' || !isKalshi(position.venue)) return null
+  const threshold = loadFunds().limits.autoApproveUnder
+  if (!(threshold > 0)) return null
+  // Compare in whole cents: stakes and limits are both cent amounts, and a float hair
+  // under the threshold must not read as over it.
+  if (Math.round(position.stake * 100) > Math.round(threshold * 100)) return null
+  return runFundsCommandWithExecution(`/funds approve ${position.id}`, deps)
+}
+
+/**
+ * One proposal as the master plan shows it: the bet, its sized stake, and the record it
+ * stands on. The ledger carries no confidence or falsifier fields — the confidence shown
+ * is the model's recorded probability, named as such, and the falsifier is reported
+ * missing rather than invented. A proposal whose evidence was never recorded says so;
+ * the plan exposing the gap is the point.
+ */
+function formatPlanBet(p: FundsPosition): string {
+  const lines = [
+    `${p.id} — ${p.venue} "${p.market}" ${p.side.toUpperCase()} x${p.contracts} @ ${money(p.price)} (proposed price)`,
+    `  stake ${money(p.stake)} + ~${money(p.feeEstimate)} fees · category ${categoryOfMarket(p.market)}`,
+  ]
+  if (p.rationale.trim()) lines.push(`  evidence: ${p.rationale.trim()}`)
+  if (p.sources.length) lines.push(`  sources: ${p.sources.join('; ')}`)
+  if (!p.rationale.trim() && !p.sources.length) lines.push('  evidence: none recorded')
+  lines.push(`  confidence: ${pct(p.probability)} (the model's recorded probability that this side wins)`)
+  lines.push('  falsifier: missing — not recorded on this position')
+  return lines.join('\n')
+}
+
+/**
+ * `/funds plan` (directive item 13): the master plan, organized by the phases of the
+ * owner's own framework, read from Settings at runtime (ownerScaffold.ts) — the phase
+ * labels are the owner's; this code supplies only the funds facts under them. Read-only:
+ * no orders, no money movement, not even a network call — the live re-quote belongs to
+ * approve. Without framework text there is no plan: the command refuses plainly instead
+ * of falling back to a template the owner never wrote.
+ */
+export function buildFundsPlan(deps: KalshiExecutionDeps = {}): string {
+  const now = deps.now ?? Date.now
+  const scaffold = loadOwnerScaffold()
+  if (!scaffold.trim()) {
+    return 'Funds plan: not built — the master plan is organized by the phases of your own framework, and no framework text is saved in Settings. Paste your framework into Settings first, then run /funds plan again.'
+  }
+  const state = loadFunds()
+  const s = summarize(state, now())
+  const env = deps.creds?.env ?? loadKalshiEnv()
+  const count = (status: FundsPosition['status']) => state.positions.filter(p => p.status === status).length
+  const cats = categoryRecords(state)
+  const header = [
+    env === 'demo' ? 'Funds master plan — Kalshi demo exchange (fake money)' : 'Funds master plan — Kalshi PRODUCTION (real money)',
+    ...(state.halted ? [haltedMessage(state.halted)] : []),
+    `Bankroll ${money(s.bankroll)} · available ${money(s.available)} · committed to open positions ${money(s.openStake)} · today ${money(s.settledToday)}`,
+    `Limits: ${formatLimits(state.limits)}`,
+    cats.length
+      ? `Category records: ${cats.map(c => `${c.category} ${c.won}/${c.settled} won, ${money(c.netPnl)} net → stake ×${categoryStakeMultiplier(state, c.category)}`).join('; ')}`
+      : 'Category records: none yet',
+    `Open positions: ${count('proposed')} proposed · ${count('approved')} approved · ${count('placed')} placed · ${count('settled')} settled`,
+  ]
+  const proposed = state.positions.filter(p => p.status === 'proposed')
+  const blocks = proposed.length ? proposed.map(formatPlanBet).join('\n') : 'No proposed positions.'
+  const phases = scaffoldPhases(scaffold)
+  if (!phases.length) {
+    return [...header, 'No phase structure found in the saved framework, so the proposals are listed without phase sections:', blocks].join('\n')
+  }
+  // The framework is a reasoning pass over the whole plan, so every phase section walks
+  // every proposal: this code cannot know which phase a bet belongs to without
+  // reconstructing the framework's meaning, and the framework's meaning is the owner's.
+  const sections = phases.map(phase => `${phase}\n${blocks}`)
+  return [...header, ...sections].join('\n')
+}
+
+/**
  * The /funds entry point the app uses: identical to runFundsCommand, except approving a
  * Kalshi proposal executes the order (executeApprove) and bare status appends Kalshi's live
  * balance when a key is present.
@@ -375,6 +494,12 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
 export async function runFundsCommandWithExecution(text: string, deps: KalshiExecutionDeps = {}): Promise<string | null> {
   const cmd = parseFundsCommand(text)
   if (!cmd) return null
+  if (cmd.kind === 'approve-all') {
+    return executeApproveAll(deps)
+  }
+  if (cmd.kind === 'plan') {
+    return buildFundsPlan(deps)
+  }
   if (cmd.kind === 'approve') {
     const state = loadFunds()
     const position = state.positions.find(p => p.id === cmd.id)

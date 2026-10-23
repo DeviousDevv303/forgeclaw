@@ -213,6 +213,7 @@ import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
 import { autoSettleKalshiPositions, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
+import { FundsPanel } from './components/FundsPanel'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiCredentialPresence, kalshiKeyUsable, loadKalshiEnv, loadKalshiRelayUrl, saveKalshiCredentials, saveKalshiEnv, saveKalshiRelayUrl, type KalshiEnv } from './lib/kalshiAuth'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/pageVisibility'
@@ -737,6 +738,8 @@ function App() {
   const [kalshiPrivateKeyText, setKalshiPrivateKeyText] = useState(() => safeGetItem(KALSHI_PRIVATE_KEY_STORAGE) || '')
   // Kalshi settlements applied on open (kalshiExecution.ts), shown as pop-ups until dismissed.
   const [settledNotices, setSettledNotices] = useState<SettledNotice[]>([])
+  // Bumped after every /funds command so the FundsPanel re-reads the ledger (PR B item 6).
+  const [fundsTick, setFundsTick] = useState(0)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const moonshotKeyVerified = useMemo(() => isKeyVerified('moonshot', moonshotApiKey), [moonshotApiKey, keyVerifyTick])
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
@@ -1566,6 +1569,7 @@ function App() {
       if (fundsReply !== null) {
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         const fundsOk = !(fundsReply.startsWith('Not done:') || fundsReply.startsWith('Not placed:') || fundsReply.startsWith('Unknown:'))
+        setFundsTick(t => t + 1)
         setMessages(prev => prev.map(message => message.id === msgId
           ? { ...message, content: fundsReply, streaming: false, agentPhase: fundsOk ? 'COMPLETE' : 'BLOCKED' }
           : message))
@@ -3343,6 +3347,11 @@ function App() {
                   <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.busyNotice')}</div>
                 )}
                 <ConnectionToast notice={connectionNotice} reconnectingText={t('chat.reconnecting')} backText={t('chat.reconnected')} />
+                {/* Funds panel (PR B item 6): hidden in visitor mode, like the Kalshi
+                    trading keys below — a public visitor never sees the owner's ledger. */}
+                {!isPublicVisitor(ghToken) && (
+                  <FundsPanel onCommand={text => { void sendPromptRef.current(text) }} refreshKey={fundsTick} />
+                )}
                 {/* Kalshi auto-settle pop-ups (item: settled from Kalshi on open) */}
                 {settledNotices.length > 0 && (
                   <div role="status" style={{ position: 'absolute', bottom: '64px', left: '12px', right: '12px', zIndex: 60, background: '#0d1f16', border: '1px solid #1e4633', borderRadius: '8px', padding: '10px 12px' }}>
