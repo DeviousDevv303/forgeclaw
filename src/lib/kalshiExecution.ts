@@ -200,70 +200,87 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
   const { creds, client } = resolved
   const envNote = creds.env === 'demo' ? ' (demo exchange — fake money)' : ''
 
-  // 1. Re-quote at the live ask.
-  let quote
-  try {
-    quote = await client.getMarketQuote(position.market)
-  } catch (error) {
-    if (error instanceof KalshiNetworkError) { note('quote', `No live price for ${position.market}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi for a live price${deps.relayUrl === '' ? '' : ', and the relay fallback failed too'} (${error.message}). Nothing was spent; the proposal is unchanged.` }
-    if (error instanceof KalshiApiError) { note('quote', `Kalshi refused the price check for ${position.market} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the live price check (${error.code}: ${error.message}). Nothing was spent; the proposal is unchanged.` }
-    throw error
-  }
-  if (!quote) { note('quote', `Kalshi has no market ${position.market}.`, {}); return `Not placed: Kalshi has no market ${position.market}. Nothing was spent; the proposal is unchanged.` }
-  if (quote.status && quote.status !== 'active') {
-    note('quote', `Market ${position.market} is ${quote.status}, not active.`, {})
-    return `Not placed: ${position.market} is ${quote.status} on Kalshi, not active — no order goes into a market that is not trading. Nothing was spent; the proposal is unchanged.`
-  }
-  const livePrice = position.side === 'yes' ? quote.yesAsk : quote.noAsk
-  if (livePrice === null || livePrice <= 0 || livePrice >= 1) {
-    note('quote', `No ${position.side} offers on ${position.market}.`, {})
-    return `Not placed: no ${position.side.toUpperCase()} contracts are offered on ${position.market} right now. Nothing was spent; the proposal is unchanged.`
-  }
-  // The edge must survive the fee at the live price — the same rule funds_propose applies.
-  const feeAtLive = estimateFee('kalshi', position.contracts, livePrice)
-  if (position.contracts * (position.probability - livePrice) <= feeAtLive + 1e-9) {
-    note('quote', `No edge after fees on ${position.market} at ${livePrice}.`, {})
-    return `Not placed: after fees there is no edge. Live price ${money(livePrice)} (${pct(livePrice)}) vs your estimate ${pct(position.probability)} — the expected gain on ${position.contracts} contracts does not cover the ~${money(feeAtLive)} fee. Nothing was spent; the proposal is unchanged.`
-  }
-  const tolerance = state.limits.toleranceCents / 100
-  if (livePrice > position.price + tolerance + 1e-9) {
-    note('quote', `Price moved past tolerance on ${position.market}: ${position.price} -> ${livePrice}.`, {})
-    return `Not placed: the price moved from ${money(position.price)} to ${money(livePrice)}, past your tolerance of ${state.limits.toleranceCents}¢ (change it with /funds limits tolerance=<cents>). Nothing was spent; the proposal is unchanged.`
-  }
+  // A resumed approval (an earlier attempt ended Unknown: approved, order key kept) never
+  // sends, so the checks that protect a send — live price, edge, tolerance, Kalshi balance,
+  // shard balance — do not apply to it, and must not stand in front of its reconciliation:
+  // the earlier order may have landed, and a refusal saying "Nothing was spent" about a
+  // position whose order is live is false (the fault-matrix harness found exactly that).
+  // For a resume the price below is only the fallback for a fill price Kalshi's own record
+  // lacks; a fresh approval replaces it with the live ask once the gates pass.
+  const resumingEarly = position.status === 'approved' && !!position.clientOrderId
+  let livePrice = position.price
+  const preSendGates = async (): Promise<string | null> => {
+    // 1. Re-quote at the live ask.
+    let quote
+    try {
+      quote = await client.getMarketQuote(position.market)
+    } catch (error) {
+      if (error instanceof KalshiNetworkError) { note('quote', `No live price for ${position.market}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi for a live price${deps.relayUrl === '' ? '' : ', and the relay fallback failed too'} (${error.message}). Nothing was spent; the proposal is unchanged.` }
+      if (error instanceof KalshiApiError) { note('quote', `Kalshi refused the price check for ${position.market} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the live price check (${error.code}: ${error.message}). Nothing was spent; the proposal is unchanged.` }
+      throw error
+    }
+    if (!quote) { note('quote', `Kalshi has no market ${position.market}.`, {}); return `Not placed: Kalshi has no market ${position.market}. Nothing was spent; the proposal is unchanged.` }
+    if (quote.status && quote.status !== 'active') {
+      note('quote', `Market ${position.market} is ${quote.status}, not active.`, {})
+      return `Not placed: ${position.market} is ${quote.status} on Kalshi, not active — no order goes into a market that is not trading. Nothing was spent; the proposal is unchanged.`
+    }
+    const quotedPrice = position.side === 'yes' ? quote.yesAsk : quote.noAsk
+    if (quotedPrice === null || quotedPrice <= 0 || quotedPrice >= 1) {
+      note('quote', `No ${position.side} offers on ${position.market}.`, {})
+      return `Not placed: no ${position.side.toUpperCase()} contracts are offered on ${position.market} right now. Nothing was spent; the proposal is unchanged.`
+    }
+    // The edge must survive the fee at the live price — the same rule funds_propose applies.
+    const feeAtLive = estimateFee('kalshi', position.contracts, quotedPrice)
+    if (position.contracts * (position.probability - quotedPrice) <= feeAtLive + 1e-9) {
+      note('quote', `No edge after fees on ${position.market} at ${quotedPrice}.`, {})
+      return `Not placed: after fees there is no edge. Live price ${money(quotedPrice)} (${pct(quotedPrice)}) vs your estimate ${pct(position.probability)} — the expected gain on ${position.contracts} contracts does not cover the ~${money(feeAtLive)} fee. Nothing was spent; the proposal is unchanged.`
+    }
+    const tolerance = state.limits.toleranceCents / 100
+    if (quotedPrice > position.price + tolerance + 1e-9) {
+      note('quote', `Price moved past tolerance on ${position.market}: ${position.price} -> ${quotedPrice}.`, {})
+      return `Not placed: the price moved from ${money(position.price)} to ${money(quotedPrice)}, past your tolerance of ${state.limits.toleranceCents}¢ (change it with /funds limits tolerance=<cents>). Nothing was spent; the proposal is unchanged.`
+    }
 
-  // 2. Balance gate against Kalshi's real balance.
-  let balanceDollars: number
-  try {
-    balanceDollars = (await client.getBalance()).balanceDollars
-  } catch (error) {
-    if (error instanceof KalshiNetworkError) { note('balance', `Balance check unreachable for ${id}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi to check your balance (${error.message}). Nothing was spent; the proposal is unchanged.` }
-    if (error instanceof KalshiApiError) { note('balance', `Kalshi refused the balance check for ${id} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the balance check (${error.code}: ${error.message}). Nothing was spent; the proposal is unchanged.` }
-    throw error
-  }
-  const needed = position.contracts * livePrice + feeAtLive
-  if (balanceDollars + 1e-9 < needed) {
-    note('balance', `Balance ${balanceDollars} cannot cover ${needed} for ${id}.`, {})
-    return `Not placed: your Kalshi balance is ${money(balanceDollars)}${envNote} but this order needs about ${money(needed)} (${position.contracts} contracts at ${money(livePrice)} + ~${money(feeAtLive)} fees). Nothing was spent; the proposal is unchanged.`
-  }
+    // 2. Balance gate against Kalshi's real balance.
+    let balanceDollars: number
+    try {
+      balanceDollars = (await client.getBalance()).balanceDollars
+    } catch (error) {
+      if (error instanceof KalshiNetworkError) { note('balance', `Balance check unreachable for ${id}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi to check your balance (${error.message}). Nothing was spent; the proposal is unchanged.` }
+      if (error instanceof KalshiApiError) { note('balance', `Kalshi refused the balance check for ${id} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the balance check (${error.code}: ${error.message}). Nothing was spent; the proposal is unchanged.` }
+      throw error
+    }
+    const needed = position.contracts * quotedPrice + feeAtLive
+    if (balanceDollars + 1e-9 < needed) {
+      note('balance', `Balance ${balanceDollars} cannot cover ${needed} for ${id}.`, {})
+      return `Not placed: your Kalshi balance is ${money(balanceDollars)}${envNote} but this order needs about ${money(needed)} (${position.contracts} contracts at ${money(quotedPrice)} + ~${money(feeAtLive)} fees). Nothing was spent; the proposal is unchanged.`
+    }
 
-  // 2b. Shard gate: Kalshi partitions the balance by exchange shard (the market
-  // record's exchange_index), and an order draws only on its own market's shard —
-  // the aggregate read above cannot prove that shard holds anything. Read the
-  // market's shard and hold the same stake + fees against it. A shard whose
-  // balance cannot be read is unverified, and an unverified shard is never
-  // treated as funded: no order is sent either way.
-  const shardIndex = quote.exchangeIndex
-  let shardBalanceDollars: number
-  try {
-    shardBalanceDollars = (await client.getBalance(shardIndex)).balanceDollars
-  } catch (error) {
-    if (error instanceof KalshiNetworkError) { note('balance', `Shard ${shardIndex} balance check unreachable for ${id}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi to verify your balance on shard ${shardIndex} (${error.message}). A shard whose balance cannot be verified is never treated as funded. Nothing was spent; the proposal is unchanged.` }
-    if (error instanceof KalshiApiError) { note('balance', `Kalshi refused the shard ${shardIndex} balance check for ${id} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the balance check for shard ${shardIndex} (${error.code}: ${error.message}), so that shard's balance could not be verified. Nothing was spent; the proposal is unchanged.` }
-    throw error
+    // 2b. Shard gate: Kalshi partitions the balance by exchange shard (the market
+    // record's exchange_index), and an order draws only on its own market's shard —
+    // the aggregate read above cannot prove that shard holds anything. Read the
+    // market's shard and hold the same stake + fees against it. A shard whose
+    // balance cannot be read is unverified, and an unverified shard is never
+    // treated as funded: no order is sent either way.
+    const shardIndex = quote.exchangeIndex
+    let shardBalanceDollars: number
+    try {
+      shardBalanceDollars = (await client.getBalance(shardIndex)).balanceDollars
+    } catch (error) {
+      if (error instanceof KalshiNetworkError) { note('balance', `Shard ${shardIndex} balance check unreachable for ${id}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi to verify your balance on shard ${shardIndex} (${error.message}). A shard whose balance cannot be verified is never treated as funded. Nothing was spent; the proposal is unchanged.` }
+      if (error instanceof KalshiApiError) { note('balance', `Kalshi refused the shard ${shardIndex} balance check for ${id} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the balance check for shard ${shardIndex} (${error.code}: ${error.message}), so that shard's balance could not be verified. Nothing was spent; the proposal is unchanged.` }
+      throw error
+    }
+    if (shardBalanceDollars + 1e-9 < needed) {
+      note('balance', `Shard ${shardIndex} balance ${shardBalanceDollars} cannot cover ${needed} for ${id} (aggregate ${balanceDollars}).`, {})
+      return `Not placed: Kalshi splits your balance across exchange shards, and ${position.market} trades on shard ${shardIndex}, which holds ${money(shardBalanceDollars)}${envNote}. This order needs about ${money(needed)} (${position.contracts} contracts at ${money(quotedPrice)} + ~${money(feeAtLive)} fees). Your balance across all shards is ${money(balanceDollars)}, but an order can only draw on its own market's shard — the funds for this one sit on a different shard. ForgeClaw never moves funds between shards automatically (the Kalshi app moves them for you when you trade there). Nothing was spent; the proposal is unchanged.`
+    }
+    livePrice = quotedPrice
+    return null
   }
-  if (shardBalanceDollars + 1e-9 < needed) {
-    note('balance', `Shard ${shardIndex} balance ${shardBalanceDollars} cannot cover ${needed} for ${id} (aggregate ${balanceDollars}).`, {})
-    return `Not placed: Kalshi splits your balance across exchange shards, and ${position.market} trades on shard ${shardIndex}, which holds ${money(shardBalanceDollars)}${envNote}. This order needs about ${money(needed)} (${position.contracts} contracts at ${money(livePrice)} + ~${money(feeAtLive)} fees). Your balance across all shards is ${money(balanceDollars)}, but an order can only draw on its own market's shard — the funds for this one sit on a different shard. ForgeClaw never moves funds between shards automatically (the Kalshi app moves them for you when you trade there). Nothing was spent; the proposal is unchanged.`
+  if (!resumingEarly) {
+    const refusal = await preSendGates()
+    if (refusal) return refusal
   }
 
   // 3. RE-READ the ledger, then record the approval and its order key and SAVE them —
@@ -283,6 +300,12 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
   }
   let clientOrderId: string
   const resuming = current.status === 'approved' && !!current.clientOrderId
+  // The gates were skipped because this started as a resume. If another tab has meanwhile put the
+  // position back to proposed, this would now be a fresh send that never passed them: refuse.
+  if (resumingEarly && !resuming && current.status === 'proposed') {
+    note('approve', `${id} changed in another tab while it was being reconciled; nothing sent.`, {})
+    return `Not placed: ${id} changed in another tab while it was being reconciled, so no order was sent. Type /funds approve ${id} again.`
+  }
   if (current.status !== 'proposed' && !resuming) {
     note('approve', `${id} is ${current.status}, not waiting for approval; nothing sent.`, {})
     return `Not placed: ${id} is ${current.status}, not waiting for approval. Nothing was sent.`
@@ -680,7 +703,9 @@ export async function autoSettleKalshiPositions(deps: KalshiExecutionDeps = {}):
     if (!outcome || outcome === 'void') continue
     const costBasis = position.side === 'yes' ? settlement.yesTotalCostDollars : settlement.noTotalCostDollars
     const realPnl = settlement.revenueCents / 100 - costBasis - settlement.feeCostDollars
-    state = settlePosition(state, position.id, outcome, 'kalshi', now(), realPnl)
+    // Stamp the position with when Kalshi settled it, not when this open read it (never in the future).
+    const settledMs = Date.parse(settlement.settledTime)
+    state = settlePosition(state, position.id, outcome, 'kalshi', now(), realPnl, Number.isFinite(settledMs) ? Math.min(settledMs, now()) : undefined)
     notices.push({ id: position.id, market: position.market, outcome, pnl: Math.round(realPnl * 100) / 100 })
   }
   if (notices.length) persist(state)

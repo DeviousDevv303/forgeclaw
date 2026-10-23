@@ -282,3 +282,75 @@ describe('relay worker', () => {
   })
 })
 
+
+describe('relay worker — /v1/kalshi forwarding', () => {
+  const DEMO_BALANCE = 'https://external-api.demo.kalshi.co/trade-api/v2/portfolio/balance'
+  const forward = (over: Record<string, unknown> = {}) => JSON.stringify({
+    method: 'GET', url: DEMO_BALANCE,
+    headers: { 'KALSHI-ACCESS-KEY': 'k', 'KALSHI-ACCESS-TIMESTAMP': '1700000000000', 'KALSHI-ACCESS-SIGNATURE': 'sig', Cookie: 'session=1', Authorization: 'Bearer x' },
+    ...over,
+  })
+  const post = (body: string, e = env()) => worker.fetch(req('/v1/kalshi', { method: 'POST', body }), e)
+  function stubKalshi() {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => { calls.push({ url: String(url), init }); return new Response('{"balance":100}', { status: 200 }) }))
+    return calls
+  }
+
+  it('forwards a signed GET with only the four allowed headers and returns the {status, body} envelope', async () => {
+    const calls = stubKalshi()
+    const res = await post(forward())
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: 200, body: '{"balance":100}' })
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe(DEMO_BALANCE)
+    expect(calls[0].init?.headers).toEqual({ 'KALSHI-ACCESS-KEY': 'k', 'KALSHI-ACCESS-TIMESTAMP': '1700000000000', 'KALSHI-ACCESS-SIGNATURE': 'sig' })
+  })
+
+  it.each([
+    ['another host', 'https://evil.example/trade-api/v2/portfolio/balance'],
+    ['a lookalike suffix host', 'https://external-api.kalshi.com.evil.example/trade-api/v2/x'],
+    ['the userinfo trick', 'https://external-api.kalshi.com@evil.example/trade-api/v2/x'],
+    ['a path outside /trade-api/v2/', 'https://external-api.kalshi.com/other/x'],
+    ['a near-miss prefix', 'https://external-api.kalshi.com/trade-api/v2evil/x'],
+    ['dot-segment traversal', 'https://external-api.kalshi.com/trade-api/v2/../../admin'],
+    ['encoded dot-segment traversal', 'https://external-api.kalshi.com/trade-api/v2/%2e%2e/%2e%2e/admin'],
+    ['plaintext http', 'http://external-api.kalshi.com/trade-api/v2/portfolio/balance'],
+    ['an explicit port', 'https://external-api.kalshi.com:8443/trade-api/v2/portfolio/balance'],
+  ])('refuses %s and sends nothing', async (_name, url) => {
+    const calls = stubKalshi()
+    const res = await post(forward({ url }))
+    expect(res.status).toBe(400)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('allows only GET and POST', async () => {
+    const calls = stubKalshi()
+    for (const method of ['DELETE', 'PUT', 'PATCH', '']) expect((await post(forward({ method }))).status).toBe(400)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('a request that fails validation does not spend quota', async () => {
+    stubKalshi()
+    const e = env()
+    expect((await post(forward({ url: 'https://evil.example/x' }), e)).status).toBe(400)
+    expect(e.RATE.store.size).toBe(0)
+    expect((await post(forward(), e)).status).toBe(200)
+    expect(e.RATE.store.size).toBe(1)
+  })
+
+  it('is limited to 120 calls an hour per IP', async () => {
+    stubKalshi()
+    const e = env()
+    for (let i = 0; i < 120; i++) expect((await post(forward(), e)).status).toBe(200)
+    expect((await post(forward(), e)).status).toBe(429)
+  })
+
+  it('a broken quota store fails open for Kalshi: the brake must not take the route down', async () => {
+    const calls = stubKalshi()
+    const broken = { get: async () => { throw new Error('KV get() failed') }, put: async () => { throw new Error('KV put() failed') } }
+    const res = await post(forward(), env({ RATE: broken }))
+    expect(res.status).toBe(200)
+    expect(calls).toHaveLength(1)
+  })
+})

@@ -441,3 +441,45 @@ describe('category learning (PR B item 11)', () => {
     expect(out).toContain('KXHIGHNY 0/5 won, -$15.00 net → stake ×0.25')
   })
 })
+
+describe('settlePosition: when it happened versus when the app learned of it', () => {
+  it('stamps settledAtMs when given, and still runs the loss stop at the time the app learned of it', () => {
+    let st = applyFundsCommand(funded(1000), { kind: 'limits', changes: { dailyLossPct: 2 } }, NOW).state
+    const proposed = proposePosition(st, proposal(), NOW)
+    st = applyFundsCommand(proposed.state, { kind: 'approve', id: proposed.position.id }, NOW).state
+    st = applyFundsCommand(st, { kind: 'placed', id: proposed.position.id, fillPrice: 0.4 }, NOW).state
+    const yesterday = NOW - 26 * 3_600_000
+    const settled = settlePosition(st, proposed.position.id, 'lost', 'kalshi', NOW, -30, yesterday)
+    expect(settled.positions[0].settledAt).toBe(yesterday)
+    expect(summarize(settled, NOW).settledToday).toBe(0)
+    expect(settled.halted).toBeUndefined()
+    // Without the stamp the same call counts the loss against the day it was read.
+    expect(settlePosition(st, proposed.position.id, 'lost', 'kalshi', NOW, -30).halted?.reason).toMatch(/Daily loss limit hit/)
+  })
+})
+
+describe('guards pinned by mutation testing', () => {
+  it('Kelly is the binding cap when the edge is small: the stake follows quarter Kelly, not the 5% stake cap', () => {
+    // price 0.5, probability 0.53: Kelly f* = 0.06, quarter Kelly = 1.5% of 1000 = 15, below the 5% stake cap (50).
+    // The unproven-category multiplier then halves the budget to 7.5.
+    const s = sizePosition(proposal({ price: 0.5, probability: 0.53 }), funded(), NOW)
+    expect(s.kellyFull).toBeCloseTo(0.06)
+    expect(s.binding).toMatch(/0\.25x Kelly/)
+    expect(s.stake + s.fee).toBeLessThanOrEqual(7.5 + 1e-9)
+  })
+
+  it('a bet whose fee eats its edge is refused for the fee, with contracts to spare', () => {
+    // price 0.5, probability 0.505: 2 contracts fit the budget, edge 0.01 total, fee 0.04 — expected profit is negative.
+    expect(() => proposePosition(funded(), proposal({ price: 0.5, probability: 0.505 }), NOW)).toThrow(/Edge is eaten by fees/)
+  })
+
+  it('a budget below one contract is refused as zero contracts, not as an edge problem', () => {
+    expect(() => proposePosition(funded(10), proposal({ price: 0.5, probability: 0.505 }), NOW)).toThrow(/rounds to zero contracts/)
+  })
+
+  it('approve re-checks available funds: money withdrawn after the proposal cannot back it', () => {
+    const proposed = proposePosition(funded(), proposal(), NOW)
+    const withdrawn = applyFundsCommand(proposed.state, { kind: 'withdraw', amount: 990 }, NOW).state
+    expect(() => applyFundsCommand(withdrawn, { kind: 'approve', id: proposed.position.id }, NOW)).toThrow(/needs .* but only .* is available/)
+  })
+})

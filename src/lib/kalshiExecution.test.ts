@@ -6,7 +6,7 @@
 import { generateKeyPairSync, webcrypto } from 'node:crypto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, type KalshiCredentials } from './kalshiAuth'
-import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, parseFundsCommand, proposePosition, recordKalshiFill, runFundsCommand, saveFunds } from './fundsLedger'
+import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, parseFundsCommand, proposePosition, recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, summarize } from './fundsLedger'
 import { saveOwnerScaffold } from './ownerScaffold'
 import { autoApproveHoldNote, autoSettleKalshiPositions, directThenRelayFetcher, maybeAutoApprove, runFundsCommandWithExecution, type KalshiFailureNote, type KalshiPlacedInfo } from './kalshiExecution'
 import { KalshiApiError, KalshiNetworkError, type KalshiClient, type KalshiOrderResult } from './kalshiTrade'
@@ -449,6 +449,48 @@ describe('auto-settle (item 9)', () => {
     expect(settled.settledBy).toBe('kalshi')
   })
 
+  it('a loss Kalshi settled yesterday is stamped yesterday: it does not halt the day the app is opened', async () => {
+    const id = seedProposal()
+    let state = applyFundsCommand(loadFunds(), { kind: 'limits', changes: { dailyLossPct: 2 } }, NOW).state
+    state = applyFundsCommand(state, { kind: 'approve', id }, NOW).state
+    state = applyFundsCommand(state, { kind: 'placed', id, fillPrice: 0.42 }, NOW).state
+    saveFunds(state)
+    const placed = loadFunds().positions.find(p => p.id === id)!
+    const { client } = fakeClient({
+      settlements: [{
+        ticker: 'KX-TEST', marketResult: 'no', yesCount: placed.contracts, noCount: 0,
+        yesTotalCostDollars: placed.contracts * 0.42, noTotalCostDollars: 0,
+        revenueCents: 0, feeCostDollars: 0.5, settledTime: '2026-10-23T22:00:00Z',
+      }],
+    })
+    const OPENED = NOW + 26 * 3_600_000 // the app is opened the next day
+    const notices = await autoSettleKalshiPositions({ creds, client, now: () => OPENED, relayUrl: '' })
+    expect(notices).toHaveLength(1)
+    const after = loadFunds()
+    expect(after.positions.find(p => p.id === id)!.settledAt).toBe(Date.parse('2026-10-23T22:00:00Z'))
+    expect(summarize(after, OPENED).settledToday).toBe(0)
+    expect(after.halted).toBeUndefined()
+  })
+
+  it('a loss that settled today and breaches the limit still halts', async () => {
+    const id = seedProposal()
+    let state = applyFundsCommand(loadFunds(), { kind: 'limits', changes: { dailyLossPct: 2 } }, NOW).state
+    state = applyFundsCommand(state, { kind: 'approve', id }, NOW).state
+    state = applyFundsCommand(state, { kind: 'placed', id, fillPrice: 0.42 }, NOW).state
+    saveFunds(state)
+    const placed = loadFunds().positions.find(p => p.id === id)!
+    const settledTime = new Date(NOW + 3_600_000).toISOString()
+    const { client } = fakeClient({
+      settlements: [{
+        ticker: 'KX-TEST', marketResult: 'no', yesCount: placed.contracts, noCount: 0,
+        yesTotalCostDollars: placed.contracts * 0.42, noTotalCostDollars: 0,
+        revenueCents: 0, feeCostDollars: 0.5, settledTime,
+      }],
+    })
+    await autoSettleKalshiPositions({ creds, client, now: () => NOW + 2 * 3_600_000, relayUrl: '' })
+    expect(loadFunds().halted?.reason).toMatch(/Daily loss limit hit/)
+  })
+
   it('skips count mismatches (a manual trade on the same ticker is not absorbed)', async () => {
     const id = seedPlaced()
     const { client } = fakeClient({
@@ -568,6 +610,60 @@ describe('review round: idempotency, reconcile, concurrency (PR #240 gate)', () 
     const after = loadFunds().positions.find(x => x.id === id)!
     expect(after.status).toBe('approved')
     expect(after.clientOrderId).toBe(`fc-${id}-1`)
+  })
+
+  describe('a resumed approval reconciles first: the send-protecting gates never stand in front of it', () => {
+    async function unknownFirst(): Promise<string> {
+      const id = seedProposal()
+      const first = fakeClient({ onCreate: () => { throw new KalshiNetworkError('socket closed') }, existing: null })
+      expect(await runFundsCommandWithExecution(`/funds approve ${id}`, deps(first.client))).toContain('Unknown:')
+      expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('approved')
+      return id
+    }
+
+    it('with the live price unreachable, the earlier order is still recovered by lookup', async () => {
+      const id = await unknownFirst()
+      let quoteCalls = 0
+      const second = fakeClient({ onQuote: () => { quoteCalls++; throw new KalshiNetworkError('quote unreachable') }, existing: { fillCount: 10, orderId: 'ord-e' } })
+      const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(second.client))
+      expect(reply).toContain(`Placed ${id}`)
+      expect(reply).toContain('recovered by lookup')
+      expect(quoteCalls).toBe(0)
+      expect(second.createCalls).toHaveLength(0)
+      expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('placed')
+    })
+
+    it('with the price now past tolerance, a landed order is still found and recorded', async () => {
+      const id = await unknownFirst()
+      const second = fakeClient({ quote: { yesAsk: 0.9, noAsk: 0.1 }, existing: { fillCount: 7, orderId: 'ord-m' } })
+      const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(second.client))
+      expect(reply).toContain(`Placed ${id}`)
+      expect(second.createCalls).toHaveLength(0)
+    })
+
+    it('with the balance now too low (the fill spent it) and an unreadable lookup, it ends at Unknown — never "Nothing was spent"', async () => {
+      const id = await unknownFirst()
+      const second = fakeClient({ balanceDollars: 0.5, lookupUnknown: true })
+      const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(second.client))
+      expect(reply?.startsWith('Unknown:')).toBe(true)
+      expect(reply).not.toContain('Nothing was spent')
+      expect(second.createCalls).toHaveLength(0)
+      expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('approved')
+    })
+
+    it('a resume that another tab puts back to proposed before the re-read is refused, never sent without the gates', async () => {
+      const id = await unknownFirst()
+      const second = fakeClient({})
+      // The getter runs after the first ledger read and before the re-read: another tab's write, exactly there.
+      let reverted = false
+      const racing = {
+        client: second.client, now: () => NOW, relayUrl: '', delay: async () => {},
+        get creds() { if (!reverted) { reverted = true; saveFunds(revertKalshiApproval(loadFunds(), id)) } return creds },
+      }
+      const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, racing)
+      expect(reply).toContain('changed in another tab')
+      expect(second.createCalls).toHaveLength(0)
+    })
   })
 
   it('a confirmed zero fill consumes the attempt: the next approve mints attempt 2', async () => {

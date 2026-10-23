@@ -70,14 +70,22 @@ async function publicRunsInProgress(env, workflow = WORKFLOW) {
   return count
 }
 
-async function overQuota(request, env, bucket = 'ip', limit = Number(env.MAX_PER_HOUR || 10)) {
+// failOpen: a quota store that errors (KV daily or per-key write limits, an outage) is an abuse brake
+// that broke, not a reason to refuse. The Kalshi route opts in, because the owner's orders ride it;
+// the model routes keep failing closed, because their quota is what bounds workflow-dispatch spend.
+async function overQuota(request, env, bucket = 'ip', limit = Number(env.MAX_PER_HOUR || 10), failOpen = false) {
   if (!env.RATE) return false
-  const ip = request.headers.get('CF-Connecting-IP') || 'unknown'
-  const key = `${bucket}:${ip}:${new Date().toISOString().slice(0, 13)}`
-  const used = Number(await env.RATE.get(key)) || 0
-  if (used >= limit) return true
-  await env.RATE.put(key, String(used + 1), { expirationTtl: 3700 })
-  return false
+  try {
+    const ip = request.headers.get('CF-Connecting-IP') || 'unknown'
+    const key = `${bucket}:${ip}:${new Date().toISOString().slice(0, 13)}`
+    const used = Number(await env.RATE.get(key)) || 0
+    if (used >= limit) return true
+    await env.RATE.put(key, String(used + 1), { expirationTtl: 3700 })
+    return false
+  } catch (error) {
+    if (failOpen) return false
+    throw error
+  }
 }
 
 const hex = buffer => [...new Uint8Array(buffer)].map(b => b.toString(16).padStart(2, '0')).join('')
@@ -364,14 +372,17 @@ async function exportRecords(request, env, cors, prefix) {
 const KALSHI_HOSTS = new Set(['external-api.kalshi.com', 'external-api.demo.kalshi.co'])
 
 async function forwardKalshi(request, env, cors) {
-  if (await overQuota(request, env, 'kalshi', 120)) return json({ error: 'relay rate limit' }, 429, cors)
   const body = await request.json().catch(() => null)
   const method = String(body?.method || '').toUpperCase()
   let target
   try { target = new URL(String(body?.url || '')) } catch { target = null }
-  if (!['GET', 'POST'].includes(method) || !target || !KALSHI_HOSTS.has(target.hostname) || !target.pathname.startsWith('/trade-api/v2/')) {
+  // https on the default port only: the caller picks the URL, so the scheme and port are pinned here
+  // (new URL() has already normalized the host and resolved any dot-segments in the path).
+  if (!['GET', 'POST'].includes(method) || !target || target.protocol !== 'https:' || target.port !== '' || !KALSHI_HOSTS.has(target.hostname) || !target.pathname.startsWith('/trade-api/v2/')) {
     return json({ error: 'bad kalshi forward request' }, 400, cors)
   }
+  // After validation, so a malformed request never spends a quota write.
+  if (await overQuota(request, env, 'kalshi', 120, true)) return json({ error: 'relay rate limit' }, 429, cors)
   const headers = {}
   for (const name of ['KALSHI-ACCESS-KEY', 'KALSHI-ACCESS-TIMESTAMP', 'KALSHI-ACCESS-SIGNATURE', 'Content-Type']) {
     const v = body.headers?.[name] ?? body.headers?.[name.toLowerCase()]
