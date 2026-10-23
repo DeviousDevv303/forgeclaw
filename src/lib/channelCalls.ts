@@ -1,0 +1,165 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+// Built with love for Cristian Jr., Layla, and Jozae.
+
+/**
+ * Channel calls: how the Channel Watch wakes ForgeClaw with work.
+ *
+ * A call is a comment on the Muse↔Claude channel (issue #235) whose body carries a
+ * machine marker line — `<!-- forgeclaw-call:v1 id=<callId> -->` — next to a visible
+ * `@ForgeClaw` address line for humans. The app polls the issue while it is open,
+ * surfaces every call it has not seen before in the Activity surface, and records
+ * how far it has read in a watermark. A static PWA cannot be woken while closed:
+ * calls are picked up on open and on the poll interval, never pushed.
+ *
+ * Trust rule: only comments authored by the repo owner count, and only with the
+ * marker — a stray "@ForgeClaw" in anyone's prose is not a call. The watermark is
+ * written through the strict storage helpers and read back before it is believed:
+ * a "seen" the browser never persisted must not be claimed (the F-001 disease).
+ */
+
+import { describeGithubHttpFailure, toolFetch } from './githubFetch'
+import { strictGetItem, strictSetItem } from './storage'
+
+export const CHANNEL_OWNER = 'DeviousDevv303'
+export const CHANNEL_REPO = 'forgeclaw'
+export const CHANNEL_ISSUE_NUMBER = 235
+/** Only the owner's own comments can call the app — every agent on the channel posts as him. */
+export const CHANNEL_CALL_AUTHOR = 'DeviousDevv303'
+export const CHANNEL_CALL_WATERMARK_KEY = 'fc_channel_call_watermark'
+
+/**
+ * 15 minutes: the channel is a human/agent loop that moves in minutes-to-hours, and
+ * the GitHub API budget is shared with the app's own workflow polling.
+ */
+export const CHANNEL_CALL_POLL_MS = 15 * 60_000
+
+/**
+ * A poll reads at most this many 100-comment pages (2,000 comments), walking from the
+ * newest page down. The watermark stop makes the common case a single page; the cap
+ * bounds the work when the watermark is far behind.
+ */
+const MAX_PAGES_PER_POLL = 20
+
+const MARKER_RE = /<!--\s*forgeclaw-call:v1\s+id=([A-Za-z0-9._-]+)\s*-->/
+
+export interface ChannelCall {
+  callId: string
+  commentId: number
+  createdAt: string
+  taskText: string
+}
+
+/** The slice of a GitHub issue-comment object this feature reads. */
+export interface GithubIssueCommentLike {
+  id: number
+  body?: string | null
+  created_at: string
+  user?: { login?: string } | null
+}
+
+/**
+ * Pure parser: one raw issue comment → a channel call, or null when it is not one.
+ * A call needs BOTH the owner as author AND the v1 marker; the task text is the body
+ * with the marker line removed, trimmed.
+ */
+export function parseChannelCall(comment: GithubIssueCommentLike): ChannelCall | null {
+  if (comment.user?.login !== CHANNEL_CALL_AUTHOR) return null
+  const body = comment.body ?? ''
+  const marker = MARKER_RE.exec(body)
+  if (!marker) return null
+  return {
+    callId: marker[1],
+    commentId: comment.id,
+    createdAt: comment.created_at,
+    taskText: body.replace(MARKER_RE, '').trim(),
+  }
+}
+
+/** Parse a page (or the whole thread) of comments into calls, oldest first. */
+export function parseChannelCalls(comments: readonly GithubIssueCommentLike[]): ChannelCall[] {
+  const calls: ChannelCall[] = []
+  for (const comment of comments) {
+    const call = parseChannelCall(comment)
+    if (call) calls.push(call)
+  }
+  return calls.sort((a, b) => a.commentId - b.commentId)
+}
+
+/** Pure watermark filter: only calls strictly newer than the watermark are new. */
+export function filterNewChannelCalls(calls: readonly ChannelCall[], watermark: number): ChannelCall[] {
+  return calls.filter(call => call.commentId > watermark)
+}
+
+/** The highest comment id the app has surfaced, read back from storage; 0 when none/unreadable. */
+export function readChannelCallWatermark(): number {
+  const read = strictGetItem(CHANNEL_CALL_WATERMARK_KEY)
+  if (!read.ok || !read.value) return 0
+  const parsed = Number.parseInt(read.value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+/**
+ * Advance the watermark past every call in `calls` and prove the write landed:
+ * strictSetItem reports a refused write, and the value is read back and compared
+ * before true is returned. Returns false when storage would not hold the mark —
+ * the calls then resurface on the next poll instead of being silently dropped.
+ */
+export function acknowledgeChannelCalls(calls: readonly ChannelCall[]): boolean {
+  if (!calls.length) return true
+  const next = Math.max(readChannelCallWatermark(), ...calls.map(call => call.commentId))
+  const value = String(next)
+  const write = strictSetItem(CHANNEL_CALL_WATERMARK_KEY, value)
+  if (!write.ok) return false
+  const back = strictGetItem(CHANNEL_CALL_WATERMARK_KEY)
+  return back.ok && back.value === value
+}
+
+function lastPageFromLink(link: string): number {
+  const match = /<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/.exec(link)
+  const parsed = match ? Number.parseInt(match[1], 10) : 1
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 1
+}
+
+async function getCommentsPage(token: string, page: number): Promise<{ items: GithubIssueCommentLike[]; link: string }> {
+  const url = `https://api.github.com/repos/${CHANNEL_OWNER}/${CHANNEL_REPO}/issues/${CHANNEL_ISSUE_NUMBER}/comments?per_page=100&page=${page}`
+  const headers: Record<string, string> = { Accept: 'application/vnd.github+json' }
+  // Same auth scheme as githubPublish: the owner's token when this browser has one;
+  // unauthenticated reads still work (the repo is public), just rate-limited harder.
+  if (token) headers.Authorization = `token ${token}`
+  const res = await toolFetch({}, url, { headers })
+  if (!res.ok) throw new Error(describeGithubHttpFailure('Channel calls', res.status, res.statusText))
+  const items = (await res.json()) as GithubIssueCommentLike[]
+  return { items, link: res.headers.get('link') ?? '' }
+}
+
+/**
+ * Read the channel's comments, newest pages first, stopping as soon as a page is
+ * entirely at or below `watermark` (older pages cannot hold newer calls).
+ */
+async function fetchChannelComments(token: string, watermark: number): Promise<GithubIssueCommentLike[]> {
+  const first = await getCommentsPage(token, 1)
+  const collected = [...first.items]
+  const seenPages = new Set<number>([1])
+  const lastPage = lastPageFromLink(first.link)
+  for (let page = lastPage; page >= 2 && seenPages.size < MAX_PAGES_PER_POLL; page--) {
+    const { items } = await getCommentsPage(token, page)
+    seenPages.add(page)
+    collected.push(...items)
+    if (items.length && Math.max(...items.map(item => item.id)) <= watermark) break
+  }
+  return collected
+}
+
+/** Every call currently on the channel, oldest first. Throws a stage-labelled error on HTTP failure. */
+export async function fetchChannelCalls(options: { token?: string } = {}): Promise<ChannelCall[]> {
+  const comments = await fetchChannelComments((options.token ?? '').trim(), 0)
+  return parseChannelCalls(comments)
+}
+
+/** Only the calls this browser has not surfaced yet (comment id above the stored watermark). */
+export async function fetchNewChannelCalls(options: { token?: string } = {}): Promise<ChannelCall[]> {
+  const watermark = readChannelCallWatermark()
+  const comments = await fetchChannelComments((options.token ?? '').trim(), watermark)
+  return filterNewChannelCalls(parseChannelCalls(comments), watermark)
+}
