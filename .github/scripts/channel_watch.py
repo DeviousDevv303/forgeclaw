@@ -33,12 +33,14 @@ _INLINE = re.compile(r"`[^`\n]*`")
 _QUOTE = re.compile(r"^\s*>.*$", re.MULTILINE)
 _MENTION = re.compile(r"(?<![\w@./-])@(" + "|".join(HANDLES) + r")\b", re.IGNORECASE)
 
+# Every handle in the notice is in backticks: claude, muse and Kimi are real GitHub accounts, and a bare @name notifies
+# them. The owner's own mention already pinged them once; the notice must not ping them again.
 LINES = {
-    "claude": "- @claude starts the Claude Code workflow (`claude.yml`) when the owner or a collaborator writes it; "
+    "claude": "- `@claude` starts the Claude Code workflow (`claude.yml`) when the owner or a collaborator writes it; "
               "its run, and any failure, shows under Actions → Claude Code.",
-    "kimi": "- @kimi is not connected to this repository. Nothing was delivered; Kimi sees this only if someone relays it.",
-    "chatgpt": "- @chatgpt is not connected to this repository. Nothing was delivered; ChatGPT sees this only if someone relays it.",
-    "muse": "- @muse is not connected to this repository. Nothing was delivered; Muse sees this only if someone relays it.",
+    "kimi": "- `@kimi` is not connected to this repository. Nothing was delivered; Kimi sees this only if someone relays it.",
+    "chatgpt": "- `@chatgpt` is not connected to this repository. Nothing was delivered; ChatGPT sees this only if someone relays it.",
+    "muse": "- `@muse` is not connected to this repository. Nothing was delivered; Muse sees this only if someone relays it.",
 }
 
 
@@ -70,7 +72,7 @@ def notice(event, env):
     if not found:
         return None
     return "\n".join([
-        f"Channel Watch: {', '.join('@' + h for h in found)} "
+        f"Channel Watch: {', '.join('`@' + h + '`' for h in found)} "
         + ("is a mention, not a delivered request." if len(found) == 1 else "are mentions, not delivered requests."),
         "",
         *[LINES[h] for h in found],

@@ -33,13 +33,18 @@ class Mentions(unittest.TestCase):
 class Notice(unittest.TestCase):
     def test_owner_mention_gets_one_line_per_handle_and_the_marker(self):
         body = w.notice("issue_comment", env(COMMENT_BODY="@kimi and @claude, please"))
-        self.assertIn("@kimi, @claude are mentions, not delivered requests.", body)
+        self.assertIn("`@kimi`, `@claude` are mentions, not delivered requests.", body)
         single = w.notice("issue_comment", env(COMMENT_BODY="@muse?"))
-        self.assertIn("Channel Watch: @muse is a mention, not a delivered request.", single)
-        self.assertIn("- @kimi is not connected to this repository.", body)
-        self.assertIn("- @claude starts the Claude Code workflow", body)
+        self.assertIn("Channel Watch: `@muse` is a mention, not a delivered request.", single)
+        self.assertIn("- `@kimi` is not connected to this repository.", body)
+        self.assertIn("- `@claude` starts the Claude Code workflow", body)
         self.assertNotIn("@muse", body)
         self.assertTrue(body.endswith(w.ACK_MARKER))
+
+    def test_the_notice_itself_mentions_no_one(self):
+        # claude, muse and Kimi are real GitHub accounts: a bare @handle in the notice would notify them.
+        body = w.notice("issue_comment", env(COMMENT_BODY="@claude @kimi @chatgpt @muse"))
+        self.assertEqual(w.mentions(body), [])
 
     def test_no_mention_no_notice(self):
         self.assertIsNone(w.notice("issue_comment", env(COMMENT_BODY="no handles here")))
