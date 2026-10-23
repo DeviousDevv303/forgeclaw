@@ -34,7 +34,9 @@ function stubFetch() {
     if (url === `${DEMO}/markets/KX-TEST`) {
       return Response.json({ market: { yes_ask_dollars: yesAsk, no_ask_dollars: '0.4400', status: 'active' } })
     }
-    if (url === `${DEMO}/portfolio/balance`) {
+    // The balance endpoint also serves the approve flow's per-shard read, which adds
+    // ?exchange_index=N to the same path — match the endpoint, not the exact URL.
+    if (url.startsWith(`${DEMO}/portfolio/balance`)) {
       return Response.json({ balance: 50000, balance_dollars: '500.0000', portfolio_value: 0 })
     }
     if (url === `${DEMO}/portfolio/events/orders` && init?.method === 'POST') {
@@ -81,7 +83,9 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.resetModules(); delete (window as unknown as Record<string, unknown>).forgeCore })
 
 async function send(text: string) {
-  const box = screen.getByRole('textbox') as HTMLTextAreaElement
+  // The chat box is the page's TEXTAREA; the funds panel adds a text INPUT (its
+  // add-funds box) whenever a proposal waits, so role alone is ambiguous (PR B).
+  const box = screen.getAllByRole('textbox').find(el => el.tagName === 'TEXTAREA') as HTMLTextAreaElement
   fireEvent.change(box, { target: { value: text } })
   fireEvent.keyDown(box, { key: 'Enter' })
 }

@@ -89,6 +89,13 @@ export interface FundsLimits {
   paperBankroll: number
   /** How far above the approved price the live price may be at approval before ForgeClaw refuses to place (cents). */
   toleranceCents: number
+  /**
+   * Proposals whose stake is at or under this many dollars are approved (and, on Kalshi,
+   * placed) the moment they are proposed, through the same execution path as a manual
+   * approve. 0 = off: every proposal waits for the owner. The owner opted in by setting it;
+   * only a /funds limits command can change it, never a tool.
+   */
+  autoApproveUnder: number
 }
 
 export interface FundsState {
@@ -103,7 +110,7 @@ export interface FundsState {
   rules?: string[]
 }
 
-export const DEFAULT_LIMITS: FundsLimits = { maxStakePct: 5, maxExposurePct: 30, dailyLossPct: 10, kellyFraction: 0.25, capAmount: 0, paperBankroll: 1000, toleranceCents: 2 }
+export const DEFAULT_LIMITS: FundsLimits = { maxStakePct: 5, maxExposurePct: 30, dailyLossPct: 10, kellyFraction: 0.25, capAmount: 0, paperBankroll: 1000, toleranceCents: 2, autoApproveUnder: 0 }
 
 export function emptyFunds(): FundsState {
   return { version: 1, movements: [], positions: [], limits: { ...DEFAULT_LIMITS }, nextId: 1, rules: [] }
@@ -165,6 +172,73 @@ export function summarize(state: FundsState, nowMs: number): FundsSummary {
   }
 }
 
+// ── Category learning (PR B item 11) ───────────────────────────────────────────
+
+/**
+ * A position's category is its market series: the ticker segment before the first '-'
+ * (KXHIGHNY-26OCT23-T75 → KXHIGHNY) — the same series kalshi_markets filters by with
+ * series_ticker. A market string with no '-' (a free-text market on another venue) is
+ * its own category.
+ */
+export function categoryOfMarket(market: string): string {
+  const t = market.trim()
+  const dash = t.indexOf('-')
+  return dash > 0 ? t.slice(0, dash) : t
+}
+
+export interface CategoryRecord {
+  category: string
+  settled: number
+  won: number
+  netPnl: number
+}
+
+/**
+ * The settled record per category, from won/lost positions (void excluded, like
+ * trackRecord). Paper positions count: they settle from the same published results,
+ * so they are evidence about the model's probabilities in that series too.
+ */
+export function categoryRecords(state: FundsState): CategoryRecord[] {
+  const byCategory = new Map<string, CategoryRecord>()
+  for (const p of state.positions) {
+    if (p.status !== 'settled' || (p.outcome !== 'won' && p.outcome !== 'lost')) continue
+    const category = categoryOfMarket(p.market)
+    const r = byCategory.get(category) ?? { category, settled: 0, won: 0, netPnl: 0 }
+    r.settled++
+    if (p.outcome === 'won') r.won++
+    r.netPnl = cents(r.netPnl + (p.pnl ?? 0))
+    byCategory.set(category, r)
+  }
+  return [...byCategory.values()].sort((a, b) => a.category.localeCompare(b.category))
+}
+
+/** Fewer settled positions than this in a series is luck, not a record: the series is unproven. */
+export const CATEGORY_MIN_SAMPLE = 5
+/**
+ * Unproven series are staked at half: the model earns full size in a series only with
+ * settled evidence, so a new market type cannot be sized like a proven one on day one.
+ */
+export const CATEGORY_UNPROVEN_MULTIPLIER = 0.5
+/**
+ * A series that lost money over a real sample drops to a quarter until its net P/L turns
+ * non-negative: losses compound, so a proven loser shrinks harder than an unproven series.
+ */
+export const CATEGORY_LOSING_MULTIPLIER = 0.25
+
+/**
+ * The stake multiplier a category's record earns. Learning may only shrink stakes —
+ * the best record returns exactly 1, so sizing never exceeds what the cage (Kelly,
+ * stake/exposure caps) already allows.
+ */
+export function stakeMultiplierFor(record: Pick<CategoryRecord, 'settled' | 'netPnl'> | undefined): number {
+  if (!record || record.settled < CATEGORY_MIN_SAMPLE) return CATEGORY_UNPROVEN_MULTIPLIER
+  return record.netPnl < 0 ? CATEGORY_LOSING_MULTIPLIER : 1
+}
+
+export function categoryStakeMultiplier(state: FundsState, category: string): number {
+  return stakeMultiplierFor(categoryRecords(state).find(r => r.category === category))
+}
+
 // ── Sizing ─────────────────────────────────────────────────────────────────────
 
 export interface ProposalInput {
@@ -188,6 +262,10 @@ export interface Sizing {
   fee: number
   expectedProfit: number
   binding: string
+  /** The market series this proposal belongs to (see categoryOfMarket). */
+  category: string
+  /** Stake multiplier from the category's settled record: 1, or less while unproven or losing. */
+  categoryMultiplier: number
 }
 
 /** Kelly for a $1 binary bought at price P with win chance p: f* = (p - P) / (1 - P). */
@@ -210,13 +288,19 @@ export function sizePosition(input: ProposalInput, state: FundsState, nowMs: num
     [paper ? 'available paper funds' : 'available funds', available],
   ]
   if (input.maxStake !== undefined && input.maxStake > 0) caps.push(['requested max stake', input.maxStake])
-  const [binding, budget] = caps.reduce((min, c) => (c[1] < min[1] ? c : min))
+  const [capName, capBudget] = caps.reduce((min, c) => (c[1] < min[1] ? c : min))
+  // Learning stakes (item 11): the category's settled record scales the budget down while the
+  // series is unproven or losing. It only ever shrinks the cage's answer, never grows it.
+  const category = categoryOfMarket(input.market)
+  const categoryMultiplier = categoryStakeMultiplier(state, category)
+  const budget = capBudget * categoryMultiplier
+  const binding = categoryMultiplier < 1 ? `${capName} × ${categoryMultiplier} category record (${category})` : capName
   // Fees come out of the same budget, so shrink until stake + fee fits.
   let contracts = Math.max(0, Math.floor(budget / P))
   while (contracts > 0 && contracts * P + estimateFee(input.venue, contracts, P) > budget + 1e-9) contracts--
   const fee = estimateFee(input.venue, contracts, P)
   const stake = cents(contracts * P)
-  return { edge, kellyFull, contracts, stake, fee, expectedProfit: cents(contracts * edge - fee), binding }
+  return { edge, kellyFull, contracts, stake, fee, expectedProfit: cents(contracts * edge - fee), binding, category, categoryMultiplier }
 }
 
 // ── Model actions ──────────────────────────────────────────────────────────────
@@ -225,6 +309,9 @@ export const haltedMessage = (h: { reason: string }) => `HALTED: ${h.reason} No 
 
 /** True once today's settled real losses reach the daily limit (of the bankroll at the start of the day). */
 export function dailyLossHit(state: FundsState, nowMs: number): boolean {
+  // daily=0 means the owner turned the loss stop off (directive item 7); without this guard
+  // the formula below halts on any losing day, the opposite of off.
+  if (state.limits.dailyLossPct <= 0) return false
   const s = summarize(state, nowMs)
   return s.settledToday < 0 && -s.settledToday >= (state.limits.dailyLossPct / 100) * (s.bankroll - s.settledToday)
 }
@@ -348,6 +435,8 @@ export type FundsCommand =
   | { kind: 'status' }
   | { kind: 'deposit' | 'withdraw'; amount: number; note?: string }
   | { kind: 'approve' | 'reject'; id: string }
+  | { kind: 'approve-all' }
+  | { kind: 'plan' }
   | { kind: 'placed'; id: string; fillPrice?: number }
   | { kind: 'settle'; id: string; outcome: PositionOutcome }
   | { kind: 'limits'; changes: Partial<FundsLimits> }
@@ -363,9 +452,11 @@ export const FUNDS_USAGE = [
   '/funds add <amount> [where it is held] — record money you put in (it stays at your venue)',
   '/funds withdraw <amount> [note]',
   '/funds approve <id> | /funds reject <id> — decide on a proposal (approving a Kalshi proposal places the order on Kalshi at the live price)',
+  '/funds approve-all — approve every waiting proposal, one by one, each through the same live-price checks as a single approve',
+  '/funds plan — the master plan, organized by the phases of your framework in Settings: snapshot, then every proposal with its evidence, confidence and falsifier',
   '/funds placed <id> [fill price] — confirm you placed the order on the venue yourself',
   '/funds settle <id> won|lost|void — record the result (Kalshi positions can also settle from Kalshi)',
-  '/funds limits [cap=1000] [paper=1000] [stake=5] [exposure=30] [daily=10] [kelly=0.25] [tolerance=2] — cap and paper bankroll in dollars; others % of bankroll; kelly a fraction; tolerance in cents',
+  '/funds limits [cap=1000] [paper=1000] [stake=5] [exposure=30] [daily=10] [kelly=0.25] [tolerance=2] [autoapprove=25] — cap, paper bankroll and autoapprove in dollars; others % of bankroll; kelly a fraction; tolerance in cents; autoapprove 0 = off',
   '/funds resume — lift a loss-stop halt (only you can)',
   '/funds rule <your rule> · /funds rules · /funds unrule <n> — your own rules, given to every plan',
 ].join('\n')
@@ -380,6 +471,8 @@ export function parseFundsCommand(text: string): FundsCommand | null {
   const usage = (why: string): FundsCommand => ({ kind: 'usage', message: `${why}\n\n${FUNDS_USAGE}` })
   if (!verb || verb === 'status') return { kind: 'status' }
   if (verb === 'help') return usage('Funds ledger.')
+  if (verb === 'approve-all') return { kind: 'approve-all' }
+  if (verb === 'plan') return { kind: 'plan' }
   if (verb === 'add' || verb === 'deposit' || verb === 'withdraw') {
     const amount = Number((rest[0] ?? '').replace(/[$,]/g, ''))
     if (!Number.isFinite(amount) || amount <= 0 || amount > 1e9) return usage('Give a positive amount, e.g. /funds add 500 kalshi')
@@ -413,15 +506,17 @@ export function parseFundsCommand(text: string): FundsCommand | null {
     return { kind: 'unrule', index }
   }
   if (verb === 'limits') {
-    const keys: Record<string, keyof FundsLimits> = { cap: 'capAmount', paper: 'paperBankroll', stake: 'maxStakePct', exposure: 'maxExposurePct', daily: 'dailyLossPct', kelly: 'kellyFraction', tolerance: 'toleranceCents' }
+    const keys: Record<string, keyof FundsLimits> = { cap: 'capAmount', paper: 'paperBankroll', stake: 'maxStakePct', exposure: 'maxExposurePct', daily: 'dailyLossPct', kelly: 'kellyFraction', tolerance: 'toleranceCents', autoapprove: 'autoApproveUnder' }
     const changes: Partial<FundsLimits> = {}
     for (const part of rest) {
       const [k, v] = part.split('=')
       const key = keys[(k ?? '').toLowerCase()]
       const n = Number(v)
-      // tolerance=0 is meaningful (place only at exactly the approved price), unlike the others.
-      if (!key || !Number.isFinite(n) || (key === 'toleranceCents' ? n < 0 : n <= 0)) return usage(`Bad limit "${part}".`)
-      if (key === 'capAmount' || key === 'paperBankroll' ? n > 1e9 : key === 'kellyFraction' ? n > 1 : key === 'toleranceCents' ? n > 99 : n > 100) return usage(`"${part}" is out of range (percentages up to 100, kelly up to 1, tolerance up to 99 cents).`)
+      // Zero is meaningful for tolerance (place only at exactly the approved price), cap (no cap),
+      // daily (loss stop off) and autoapprove (auto-approve off) — the owner's locks are optional (directive item 7).
+      const zeroOk = key === 'toleranceCents' || key === 'capAmount' || key === 'dailyLossPct' || key === 'autoApproveUnder'
+      if (!key || !Number.isFinite(n) || (zeroOk ? n < 0 : n <= 0)) return usage(`Bad limit "${part}".`)
+      if (key === 'capAmount' || key === 'paperBankroll' || key === 'autoApproveUnder' ? n > 1e9 : key === 'kellyFraction' ? n > 1 : key === 'toleranceCents' ? n > 99 : n > 100) return usage(`"${part}" is out of range (percentages up to 100, kelly up to 1, tolerance up to 99 cents).`)
       changes[key] = n
     }
     return { kind: 'limits', changes }
@@ -439,9 +534,6 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
       if (cmd.kind === 'withdraw' && cmd.amount > summarize(state, nowMs).available + 1e-9) {
         throw new FundsError(`Only ${money(summarize(state, nowMs).available)} is available (the rest backs open positions).`)
       }
-      if (cmd.kind === 'deposit' && state.limits.capAmount <= 0) {
-        throw new FundsError('Set your cap first: /funds limits cap=<amount>. The cap has to exist before the money does.')
-      }
       if (cmd.kind === 'deposit' && state.limits.capAmount > 0) {
         const s = summarize(state, nowMs)
         const netIn = s.deposited - s.withdrawn
@@ -453,6 +545,20 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
       const next = { ...state, movements: [...state.movements, movement], nextId: state.nextId + 1 }
       return { state: next, message: `Recorded ${cmd.kind === 'deposit' ? 'deposit' : 'withdrawal'} of ${money(cmd.amount)}${cmd.note ? ` (${cmd.note})` : ''}. Bankroll ${money(summarize(next, nowMs).bankroll)}.` }
     }
+    case 'approve-all':
+      // Approving a Kalshi proposal means placing a live order, which only the app's
+      // execution layer (kalshiExecution.ts) can do — it intercepts this command before
+      // runFundsCommand ever sees it. Reaching the ledger means a caller skipped that
+      // layer; refuse rather than approve on paper what was asked to be placed for real.
+      throw new FundsError('Approve-all is run by the app: it approves each proposal one by one at its live price. Nothing was approved.')
+    case 'plan':
+      // The master plan is organized by the owner's framework text and reads the Kalshi
+      // environment setting — both live outside this ledger (ownerScaffold.ts,
+      // kalshiAuth.ts), so the app's execution layer builds it (kalshiExecution.ts
+      // intercepts this command before runFundsCommand ever sees it, like approve-all).
+      // Reaching the ledger means a caller skipped that layer; refuse rather than emit
+      // a plan organized by a structure this layer cannot see.
+      throw new FundsError('The funds plan is built by the app from your framework in Settings. Nothing was planned.')
     case 'approve': {
       const p = state.positions.find(x => x.id === cmd.id)
       if (!p) throw new FundsError(`No position ${cmd.id}.`)
@@ -518,7 +624,7 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
 
 // ── Reporting ──────────────────────────────────────────────────────────────────
 
-const formatLimits = (L: FundsLimits) => `cap ${L.capAmount > 0 ? money(L.capAmount) : 'not set'} · paper bankroll ${money(L.paperBankroll)} · max stake ${L.maxStakePct}% · max exposure ${L.maxExposurePct}% · daily loss stop ${L.dailyLossPct}% (halts until you resume) · ${L.kellyFraction}x Kelly · requote tolerance ${L.toleranceCents}¢`
+export const formatLimits = (L: FundsLimits) => `cap ${L.capAmount > 0 ? money(L.capAmount) : 'not set'} · paper bankroll ${money(L.paperBankroll)} · max stake ${L.maxStakePct}% · max exposure ${L.maxExposurePct}% · daily loss stop ${L.dailyLossPct > 0 ? `${L.dailyLossPct}% (halts until you resume)` : 'off'} · ${L.kellyFraction}x Kelly · requote tolerance ${L.toleranceCents}¢ · auto-approve ${L.autoApproveUnder > 0 ? `up to ${money(L.autoApproveUnder)}` : 'off'}`
 const formatRules = (rules: string[]) => rules.map((r, i) => `${i + 1}. ${r}`).join('\n')
 
 /**
@@ -559,6 +665,7 @@ export function formatFundsStatus(state: FundsState, nowMs: number): string {
     ? `${t.won}/${t.settled} won; Brier score: your estimates ${t.modelBrier} vs prices paid ${t.marketBrier} (lower is better; estimates must beat prices for an edge to be real)`
     : 'no settled positions yet'
   const rules = state.rules ?? []
+  const cats = categoryRecords(state)
   return [
     ...(state.halted ? [haltedMessage(state.halted)] : []),
     `Funds ledger (ForgeClaw records funds; it never holds or moves money):`,
@@ -567,6 +674,7 @@ export function formatFundsStatus(state: FundsState, nowMs: number): string {
     `Paper (optional, phantom money): bankroll ${money(s.paperBankroll)} (P/L ${money(s.paperPnl)}) · available ${money(s.paperAvailable)}`,
     `Limits: ${formatLimits(state.limits)}`,
     `Track record: ${record}`,
+    ...(cats.length ? [`Stakes by category (learning stakes: an unproven series is sized ×${CATEGORY_UNPROVEN_MULTIPLIER}, a losing one ×${CATEGORY_LOSING_MULTIPLIER}, never above ×1): ${cats.map(c => `${c.category} ${c.won}/${c.settled} won, ${money(c.netPnl)} net → stake ×${stakeMultiplierFor(c)}`).join('; ')}`] : []),
     open.length ? `Open positions:\n${open.map(formatPosition).join('\n')}` : 'Open positions: none',
     rules.length ? `Owner's rules (follow every one; a proposal that breaks one must not be made):\n${formatRules(rules)}` : "Owner's rules: none set",
   ].join('\n')

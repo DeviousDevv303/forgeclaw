@@ -38,3 +38,34 @@ describe('self-modification guidance', () => {
     expect(SELF_SCULPT_GUIDANCE).toMatch(/step marked success is not proof/)
   })
 })
+
+describe('funds guidance playbook (PR B item 12)', () => {
+  it('teaches weather first, with the named spread skip rule and the thin-book skip', async () => {
+    const { FUNDS_GUIDANCE, FUNDS_WEATHER_MAX_SPREAD_CENTS } = await import('./toolExposure')
+    expect(FUNDS_GUIDANCE).toContain('weather_forecast')
+    expect(FUNDS_GUIDANCE).toContain('KXHIGH')
+    expect(FUNDS_GUIDANCE).toContain(`wider than ${FUNDS_WEATHER_MAX_SPREAD_CENTS} cents`)
+    expect(FUNDS_GUIDANCE).toMatch(/24h volume and open interest/)
+  })
+
+  it('econ second: a release needs its release time and a falsifier', async () => {
+    const { FUNDS_GUIDANCE } = await import('./toolExposure')
+    expect(FUNDS_GUIDANCE).toContain('CPI')
+    expect(FUNDS_GUIDANCE).toMatch(/release time and a falsifier/)
+    expect(FUNDS_GUIDANCE).toMatch(/no falsifier, no proposal/)
+  })
+
+  it('sizing learns per series: unproven or losing series are staked down', async () => {
+    const { FUNDS_GUIDANCE } = await import('./toolExposure')
+    expect(FUNDS_GUIDANCE).toMatch(/fewer than 5 settled positions is staked at half/)
+    expect(FUNDS_GUIDANCE).toMatch(/lost money over 5 or more at a quarter/)
+  })
+
+  it('every bet carries evidence, a stated confidence and a falsifier (item 13)', async () => {
+    const { FUNDS_GUIDANCE } = await import('./toolExposure')
+    expect(FUNDS_GUIDANCE).toContain('deep_research')
+    expect(FUNDS_GUIDANCE).toMatch(/structured data/)
+    expect(FUNDS_GUIDANCE).toMatch(/a stated confidence, and a falsifier/)
+    expect(FUNDS_GUIDANCE).toMatch(/does not belong in a plan/)
+  })
+})

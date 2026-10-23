@@ -36,7 +36,7 @@ describe('funds tools', () => {
     expect(await propose()).toMatch(/TOOL ERROR.*No funds/)
     fundAndOpenGate()
     const out = await propose()
-    expect(out).toMatch(/Proposed p2 \[real, proposed\] kalshi "KX-RAIN-OCT" YES x119 @ \$0\.40/)
+    expect(out).toMatch(/Proposed p2 \[real, proposed\] kalshi "KX-RAIN-OCT" YES x59 @ \$0\.40/)
     expect(out).toMatch(/\/funds approve p2/)
     expect(loadFunds().positions.find(p => p.id === 'p2')!.status).toBe('proposed')
     expect(await call('funds_status', {})).toContain('p2 [real, proposed]')
@@ -68,7 +68,7 @@ describe('funds tools', () => {
 
   it('a Kalshi settlement can trip the loss stop, and no tool can lift it', async () => {
     fundAndOpenGate()
-    runFundsCommand('/funds limits daily=3')
+    runFundsCommand('/funds limits daily=2')
     await propose()
     runFundsCommand('/funds approve p2')
     runFundsCommand('/funds placed p2')
@@ -86,6 +86,24 @@ describe('funds tools', () => {
     runFundsCommand('/funds approve p2')
     runFundsCommand('/funds placed p2')
     expect(await call('funds_settle', { id: 'p2' })).toMatch(/owner settles it with \/funds settle p2/)
+  })
+
+  it('auto-approve off by default: a proposal simply waits, with no auto-approve note', async () => {
+    fundAndOpenGate()
+    const out = await propose()
+    expect(out).not.toMatch(/Auto-approve/)
+    expect(loadFunds().positions.find(p => p.id === 'p2')!.status).toBe('proposed')
+  })
+
+  it('auto-approve on: proposing runs the execution layer at once (it refuses here: no Kalshi key in this browser)', async () => {
+    fundAndOpenGate()
+    runFundsCommand('/funds limits autoapprove=100')
+    const out = await propose()
+    // The hook fired and routed through kalshiExecution's approve path: its named refusal
+    // is reported, and the refusal leaves the proposal standing, exactly like a typed approve.
+    expect(out).toMatch(/Auto-approve \(the owner's \/funds limits autoapprove setting\)/)
+    expect(out).toMatch(/no Kalshi API key in this browser/)
+    expect(loadFunds().positions.find(p => p.id === 'p2')!.status).toBe('proposed')
   })
 
   it('settle "all" settles every placed Kalshi position that has a result, paper included', async () => {
