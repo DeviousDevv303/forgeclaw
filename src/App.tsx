@@ -1448,6 +1448,7 @@ function App() {
       'review_code': ['code review', 'review this code', 'review my code'],
       'weather_forecast': ['weather', 'forecast', 'temperature', 'rain', 'snow', 'how hot', 'how cold'],
       'kalshi_markets': ['kalshi', 'prediction market', 'polymarket odds', 'contract price', 'implied probability', 'multiply', 'my funds', 'my money', 'bankroll', 'master plan', 'game plan', 'betting', 'bets'],
+      'kalshi_owner_prices': ['kalshi', 'prediction market', 'contract price', 'my prices', 'the prices are', 'priced at', 'betting', 'bets'],
       // The owner's money: planning, proposals and settlement (fundsLedger.ts). Approving and placing stay owner commands.
       'funds_status': ['multiply', 'my funds', 'my money', 'the funds', 'bankroll', 'grow my', 'master plan', 'game plan', 'invest', 'betting', 'bets', 'kalshi', 'prediction market', 'position', '/funds'],
       'funds_propose': ['multiply', 'my funds', 'my money', 'the funds', 'bankroll', 'grow my', 'master plan', 'game plan', 'invest', 'betting', 'bets', 'kalshi', 'prediction market', 'position', '/funds'],

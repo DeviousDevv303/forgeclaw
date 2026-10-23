@@ -68,6 +68,8 @@ export const NOT_EVIDENCE_TOOLS: ReadonlySet<string> = new Set([
   'coding_task_update', 'memory_write', 'memory_read', 'memory_list',
   // The funds ledger is the app's own record, not evidence about the world (funds_settle reads Kalshi and is).
   'funds_status', 'funds_propose',
+  // Prices the owner typed, not read from Kalshi: usable for research, never evidence (owner condition, 2026-10-23).
+  'kalshi_owner_prices',
 ])
 
 /** How a final answer is recorded: blocked, verified (a successful evidence tool backs it), or merely completed. */
