@@ -13,11 +13,12 @@
  * so the ledger rules, the cage and the Kalshi execution layer all apply unchanged — the
  * panel is a keyboard shortcut, never a second door. It renders only while at least one
  * proposal is waiting, and re-reads the ledger whenever `refreshKey` changes (App bumps it
- * after every funds command).
+ * after every funds command) or the ledger itself broadcasts a save — so a proposal saved
+ * by a model tool outside a /funds command shows its OK / No buttons at once.
  */
 
-import { useMemo, useState } from 'react'
-import { loadFunds, money, type FundsPosition } from '../lib/fundsLedger'
+import { useEffect, useMemo, useState } from 'react'
+import { FUNDS_CHANGED_EVENT, loadFunds, money, type FundsPosition } from '../lib/fundsLedger'
 
 const panelStyle: React.CSSProperties = {
   margin: '8px 12px 0', background: '#101408', border: '1px solid #2a3319', borderRadius: '8px', padding: '10px 12px',
@@ -51,13 +52,23 @@ function ProposalRow({ p, onCommand }: { p: FundsPosition; onCommand: (text: str
 export function FundsPanel({ onCommand, refreshKey }: { onCommand: (text: string) => void; refreshKey: number }) {
   const [amount, setAmount] = useState('')
   // The ledger lives outside React (localStorage), so the panel re-reads it whenever
-  // refreshKey changes — App bumps it after every funds command (see the header note).
+  // refreshKey changes — App bumps it after every funds command — and whenever the
+  // ledger broadcasts a save (FUNDS_CHANGED_EVENT): a model tool's funds_propose saves
+  // outside any /funds command, and without this subscription its proposal would show
+  // no OK / No buttons until the next command or tab switch.
+  const [ledgerTick, setLedgerTick] = useState(0)
+  useEffect(() => {
+    const bump = () => setLedgerTick(t => t + 1)
+    window.addEventListener(FUNDS_CHANGED_EVENT, bump)
+    return () => window.removeEventListener(FUNDS_CHANGED_EVENT, bump)
+  }, [])
   const proposed = useMemo(
     () => {
       void refreshKey // the trigger itself: a new key means the ledger changed under us
+      void ledgerTick // or the ledger broadcast a save from outside a /funds command
       return loadFunds().positions.filter(p => p.status === 'proposed')
     },
-    [refreshKey],
+    [refreshKey, ledgerTick],
   )
 
   if (proposed.length === 0) return null

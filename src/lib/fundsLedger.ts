@@ -702,10 +702,27 @@ export function loadFunds(): FundsState {
 }
 
 /** Save and read back: a failed write (private mode, full storage) is reported, never silent. */
+/**
+ * Broadcast when the funds ledger is saved, so UI that reads the ledger outside React
+ * (FundsPanel) learns about saves that happen outside a /funds command — a model tool
+ * can save a proposal mid-run, and App only bumps its refresh tick on typed commands.
+ * A refused save dispatches nothing: the ledger did not change. The event name is the
+ * constant so the panel and the ledger can never drift apart.
+ */
+export const FUNDS_CHANGED_EVENT = 'forgeclaw:funds-changed'
+
+function notifyFundsChanged(): void {
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent(FUNDS_CHANGED_EVENT))
+  }
+}
+
 export function saveFunds(state: FundsState): boolean {
   const raw = JSON.stringify(state)
   safeSetItem(FUNDS_STORAGE_KEY, raw)
-  return safeGetItem(FUNDS_STORAGE_KEY) === raw
+  const saved = safeGetItem(FUNDS_STORAGE_KEY) === raw
+  if (saved) notifyFundsChanged()
+  return saved
 }
 
 /** The owner's rules for the plan prompt; empty when none are set. */

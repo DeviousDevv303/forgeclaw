@@ -129,8 +129,10 @@ export const FUNDS_GUIDANCE =
   'until its record improves; funds_status shows each series\' record and multiplier. Never rename a series to dodge a shrink — the shrink is the system learning. ' +
   '5) Then write the master plan: the goal, the proposals and how much ' +
   'of the bankroll they use, the timeline, what result would show the plan is wrong (your track record versus the prices paid), and when to stop or scale up. ' +
-  '6) You cannot approve, place orders or move money. The owner approves with /funds approve <id>, places the order on the venue, and confirms with ' +
-  '/funds placed <id> <fill price>. Never say a position is placed unless funds_status shows it placed. 7) Settle placed Kalshi positions with funds_settle (id "all" for every one) once markets have results. ' +
+  '6) Only the owner approves, places orders or moves money — except when the owner has set /funds limits autoapprove above zero: then funds_propose reports the placement in its own output, ' +
+  'because that auto-approval is the owner\'s standing instruction. Never say a position is placed unless funds_status shows it placed or the funds_propose output says it was ' +
+  'placed. After any outcome other than Placed, do not re-propose that market — the earlier proposal is still the live one, and re-proposing would stack a second order on it. ' +
+  '7) Settle placed Kalshi positions with funds_settle (id "all" for every one) once markets have results. ' +
   '8) The owner prefers short-term, quick-turnaround markets (settling within hours or days). Use mode=paper only when the owner asks to test an idea without money, and never describe paper results as real money. ' +
   '9) Playbook — weather first: daily high-temperature markets (series starting KXHIGH) settle on one station\'s official high; call weather_forecast for that city, ' +
   'form your probability from the forecast, and propose only when it beats the kalshi_markets price after fees. Skip thin or wide books: if the spread kalshi_markets ' +

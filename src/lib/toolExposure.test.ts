@@ -68,4 +68,15 @@ describe('funds guidance playbook (PR B item 12)', () => {
     expect(FUNDS_GUIDANCE).toMatch(/a stated confidence, and a falsifier/)
     expect(FUNDS_GUIDANCE).toMatch(/does not belong in a plan/)
   })
+
+  it('point 6 is true when autoapprove is set: the model must not re-propose after a non-Placed outcome', async () => {
+    // Claude's B2 fix: the old "You cannot approve, place orders or move money" was false
+    // once the owner's autoapprove limit lets funds_propose place.
+    const { FUNDS_GUIDANCE } = await import('./toolExposure')
+    expect(FUNDS_GUIDANCE).not.toContain('You cannot approve, place orders or move money')
+    expect(FUNDS_GUIDANCE).toMatch(/autoapprove above zero/)
+    expect(FUNDS_GUIDANCE).toMatch(/funds_propose reports the placement in its own output/)
+    expect(FUNDS_GUIDANCE).toMatch(/do not re-propose that market/)
+    expect(FUNDS_GUIDANCE).toMatch(/stack a second order/)
+  })
 })

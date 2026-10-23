@@ -56,6 +56,18 @@ export interface KalshiPlacedInfo {
   runId?: string
 }
 
+/**
+ * The irreversible journal entry every placed Kalshi order writes — one label for the
+ * same event whether the order came from the owner's typed /funds approve (App) or from
+ * the owner's autoapprove standing instruction (the funds_propose tool path).
+ */
+export function kalshiOrderPlacedJournalEntry(info: KalshiPlacedInfo): { kind: 'irreversible'; label: string } {
+  return {
+    kind: 'irreversible',
+    label: `kalshi order ${info.orderId} placed (${info.ticker}, ${info.fillCount} contracts, client_order_id ${info.clientOrderId}) — a real order on the venue; it cannot be recalled, only settled or sold there`,
+  }
+}
+
 export interface KalshiExecutionDeps {
   creds?: KalshiCredentials | null
   client?: KalshiClient
@@ -108,6 +120,29 @@ function missingCredentialsRefusal(): string {
 
 const isKalshi = (venue: string) => venue.trim().toLowerCase() === 'kalshi'
 const pct = (n: number) => `${Math.round(n * 1000) / 10}%`
+
+/**
+ * Why two status sets: auto-approve lets the model be the only decision-maker, so even
+ * a merely-proposed sibling holds the auto-order — the owner has not reviewed this
+ * market yet and a second order would stack. Approve-all processes a batch the owner
+ * already asked to approve, so only a sibling with a committed order blocks it: a
+ * sibling that is approved (an order may be live or Unknown at Kalshi under its kept
+ * key) or placed (Kalshi filled it) is exposure — a merely-proposed sibling has
+ * ordered nothing and may still take its turn later in the same pass.
+ */
+const AUTO_SIBLING_HOLD_STATUSES: ReadonlySet<FundsPosition['status']> = new Set(['proposed', 'approved', 'placed'])
+const APPROVE_ALL_SIBLING_SKIP_STATUSES: ReadonlySet<FundsPosition['status']> = new Set(['approved', 'placed'])
+
+/** Another position on the same venue and market in one of the given statuses. */
+function siblingOnMarket(state: FundsState, position: FundsPosition, statuses: ReadonlySet<FundsPosition['status']>): FundsPosition | undefined {
+  const venue = position.venue.trim().toLowerCase()
+  const market = position.market.trim().toLowerCase()
+  return state.positions.find(p =>
+    p.id !== position.id &&
+    p.venue.trim().toLowerCase() === venue &&
+    p.market.trim().toLowerCase() === market &&
+    statuses.has(p.status))
+}
 
 /** Persist, and say so when the browser would not keep it. Returns false when unsaved. */
 function persist(state: FundsState): boolean {
@@ -228,7 +263,7 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
   }
   if (shardBalanceDollars + 1e-9 < needed) {
     note('balance', `Shard ${shardIndex} balance ${shardBalanceDollars} cannot cover ${needed} for ${id} (aggregate ${balanceDollars}).`, {})
-    return `Not placed: Kalshi splits your balance across exchange shards, and ${position.market} trades on shard ${shardIndex}, which holds ${money(shardBalanceDollars)}${envNote}. This order needs about ${money(needed)} (${position.contracts} contracts at ${money(livePrice)} + ~${money(feeAtLive)} fees). Your balance across all shards is ${money(balanceDollars)}, but an order can only draw on its own market's shard — the funds for this one sit on a different shard, and the API does not move funds between shards (the Kalshi app does, when you trade there). Nothing was spent; the proposal is unchanged.`
+    return `Not placed: Kalshi splits your balance across exchange shards, and ${position.market} trades on shard ${shardIndex}, which holds ${money(shardBalanceDollars)}${envNote}. This order needs about ${money(needed)} (${position.contracts} contracts at ${money(livePrice)} + ~${money(feeAtLive)} fees). Your balance across all shards is ${money(balanceDollars)}, but an order can only draw on its own market's shard — the funds for this one sit on a different shard. ForgeClaw never moves funds between shards automatically (the Kalshi app moves them for you when you trade there). Nothing was spent; the proposal is unchanged.`
   }
 
   // 3. RE-READ the ledger, then record the approval and its order key and SAVE them —
@@ -400,6 +435,9 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
  * ledger rules, never a batch shortcut. Sequential on purpose: each approval re-reads the
  * ledger and Kalshi's balance, so an early fill shrinks what later approvals may spend.
  * One position's refusal or failure is reported in its own line and never stops the rest.
+ * One order per market per pass: a proposal whose market already has a committed order
+ * (approved or placed — including one placed earlier in this same pass) is skipped with
+ * a named line, never a second POST.
  */
 async function executeApproveAll(deps: KalshiExecutionDeps): Promise<string> {
   const ids = loadFunds().positions.filter(p => p.status === 'proposed').map(p => p.id)
@@ -410,6 +448,21 @@ async function executeApproveAll(deps: KalshiExecutionDeps): Promise<string> {
   let refused = 0
   let unknown = 0
   for (const id of ids) {
+    // One order per market per pass: a batch is approved blind, so a real Kalshi
+    // proposal whose market already has a committed order (approved or placed —
+    // including one placed earlier in this same pass) is skipped with a named line,
+    // never a second POST. A merely-proposed sibling has ordered nothing and may
+    // still take its turn later in the pass.
+    const snap = loadFunds()
+    const current = snap.positions.find(p => p.id === id)
+    const sibling = current && current.mode === 'real' && isKalshi(current.venue)
+      ? siblingOnMarket(snap, current, APPROVE_ALL_SIBLING_SKIP_STATUSES)
+      : undefined
+    if (current && sibling) {
+      refused++
+      lines.push(`Not placed: ${id} — another position (${sibling.id}) on ${current.market} is already ${sibling.status}, so this one was not ordered (one order per market per pass). The proposal is unchanged.`)
+      continue
+    }
     let reply: string
     try {
       reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps) ?? `Not done: no position ${id}.`
@@ -427,7 +480,21 @@ async function executeApproveAll(deps: KalshiExecutionDeps): Promise<string> {
     lines.push(reply)
   }
   const counts = [`${placed} placed`, ...(approved ? [`${approved} approved (place on the venue yourself)`] : []), `${refused} refused`, `${unknown} unknown`]
-  return [`Approve-all: ${counts.join(', ')} of ${ids.length} proposals.`, ...lines].join('\n')
+  const countsLine = `${counts.join(', ')} of ${ids.length} proposals.`
+  // Why the lead moves: the batch lead is also the app's completion signal —
+  // App.tsx marks a funds reply BLOCKED when it starts with 'Unknown:' or
+  // 'Not placed:'. A batch containing any Unknown must never read complete,
+  // because the owner's Unknown rule (never re-approve an Unknown blind; the
+  // owner reconciles under the same kept key) only fires on a blocked reply.
+  // A batch that placed or ledger-approved nothing but refused something is
+  // blocked for the same reason. The counts line stays after the lead so no
+  // information is lost.
+  const lead = unknown > 0
+    ? `Unknown: ${countsLine}`
+    : placed === 0 && approved === 0 && refused > 0
+      ? `Not placed: ${countsLine}`
+      : `Approve-all: ${countsLine}`
+  return [lead, ...lines].join('\n')
 }
 
 /**
@@ -435,18 +502,48 @@ async function executeApproveAll(deps: KalshiExecutionDeps): Promise<string> {
  * above zero, a real Kalshi proposal at or under that stake goes through the very same
  * approve-and-place path as the owner's typed `/funds approve <id>` — including the re-quote
  * and the balance gate — the moment it is proposed. Returns the execution reply, or null
- * when auto-approve does not apply (off, over the threshold, paper, or not Kalshi: those
- * keep waiting for the owner). Called only from the funds_propose tool, after the proposal
+ * when auto-approve does not apply (off, over the threshold, paper, not Kalshi, or a
+ * sibling on the same market is already proposed/approved/placed: those keep waiting
+ * for the owner). Called only from the funds_propose tool, after the proposal
  * is saved; the model cannot set the limit, so this stays the owner's standing instruction.
  */
-export async function maybeAutoApprove(position: FundsPosition, deps: KalshiExecutionDeps = {}): Promise<string | null> {
-  if (position.mode !== 'real' || position.status !== 'proposed' || !isKalshi(position.venue)) return null
+/**
+ * The auto-approve preconditions in one place (directive item 10): the owner's standing
+ * instruction fires only for a real Kalshi proposal, waiting for approval, at or under
+ * the set limit. The model cannot set the limit, only the owner can (/funds limits), so
+ * this stays the owner's instruction.
+ */
+function autoApprovePreconditions(position: FundsPosition): boolean {
+  if (position.mode !== 'real' || position.status !== 'proposed' || !isKalshi(position.venue)) return false
   const threshold = loadFunds().limits.autoApproveUnder
-  if (!(threshold > 0)) return null
+  if (!(threshold > 0)) return false
   // Compare in whole cents: stakes and limits are both cent amounts, and a float hair
   // under the threshold must not read as over it.
-  if (Math.round(position.stake * 100) > Math.round(threshold * 100)) return null
+  if (Math.round(position.stake * 100) > Math.round(threshold * 100)) return false
+  return true
+}
+
+export async function maybeAutoApprove(position: FundsPosition, deps: KalshiExecutionDeps = {}): Promise<string | null> {
+  if (!autoApprovePreconditions(position)) return null
+  // The model is the only decision-maker here, so a sibling on the same market in any
+  // live state holds the auto-order: the proposal waits for the owner's tap, and the
+  // tool path explains why through autoApproveHoldNote (re-proposing would stack a
+  // second order on the market).
+  if (siblingOnMarket(loadFunds(), position, AUTO_SIBLING_HOLD_STATUSES)) return null
   return runFundsCommandWithExecution(`/funds approve ${position.id}`, deps)
+}
+
+/**
+ * Why the auto-approve did not fire, for the funds_propose output: mirrors
+ * maybeAutoApprove's preconditions, so a proposal that was never auto-eligible says
+ * nothing. When the owner set a limit and the proposal would otherwise have fired,
+ * the model is told — once, plainly — to wait and not to re-propose the market.
+ */
+export function autoApproveHoldNote(position: FundsPosition): string | null {
+  if (!autoApprovePreconditions(position)) return null
+  const sibling = siblingOnMarket(loadFunds(), position, AUTO_SIBLING_HOLD_STATUSES)
+  if (!sibling) return null
+  return `Auto-approve held this proposal: ${sibling.id} on ${position.venue} "${position.market}" is already ${sibling.status}, so this one waits for the owner's /funds approve (one order per market). Do not re-propose this market — that would stack a second order on it.`
 }
 
 /**
