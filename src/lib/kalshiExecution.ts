@@ -27,7 +27,7 @@
  * (relay/ route /v1/kalshi). Kalshi's signature does not cover the host, so it stays valid.
  */
 
-import { effectiveKalshiRelayUrl, loadKalshiCredentials, loadKalshiEnv, type KalshiCredentials } from './kalshiAuth'
+import { effectiveKalshiRelayUrl, kalshiCredentialPresence, loadKalshiCredentials, loadKalshiEnv, type KalshiCredentials } from './kalshiAuth'
 import {
   applyFundsCommand, categoryOfMarket, categoryRecords, categoryStakeMultiplier, estimateFee, formatLimits,
   haltedMessage, loadFunds, money, outcomeFromKalshiResult, parseFundsCommand,
@@ -92,6 +92,20 @@ function resolveClient(deps: KalshiExecutionDeps): { creds: KalshiCredentials; c
   return { creds, client }
 }
 
+/**
+ * The no-credentials refusal names which half is missing: a typed-but-unsaved half is
+ * the failure this wording exists for (Settings showed the key as entered while storage
+ * never kept it), so the owner is told exactly what to re-save instead of a blanket
+ * "no key" for a pair he can see on screen.
+ */
+function missingCredentialsRefusal(): string {
+  const guidance = 'in Settings (the Kalshi section where the Brave key used to be) — a demo key first. The proposal is unchanged.'
+  const presence = kalshiCredentialPresence()
+  if (presence.keyId && !presence.privateKey) return `Not placed: no Kalshi private key saved in this browser (key ID is saved). Add your private key ${guidance}`
+  if (!presence.keyId && presence.privateKey) return `Not placed: no Kalshi key ID saved in this browser (private key is saved). Add your key ID ${guidance}`
+  return `Not placed: no Kalshi API key in this browser. Add your key ID and private key ${guidance}`
+}
+
 const isKalshi = (venue: string) => venue.trim().toLowerCase() === 'kalshi'
 const pct = (n: number) => `${Math.round(n * 1000) / 10}%`
 
@@ -146,7 +160,7 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
   const resolved = resolveClient(deps)
   if (!resolved) {
     note('credentials', `Kalshi placement refused for ${id}: no API key in this browser.`)
-    return `Not placed: no Kalshi API key in this browser. Add your key ID and private key in Settings (the Kalshi section where the Brave key used to be) — a demo key first. The proposal is unchanged.`
+    return missingCredentialsRefusal()
   }
   const { creds, client } = resolved
   const envNote = creds.env === 'demo' ? ' (demo exchange — fake money)' : ''

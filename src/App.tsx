@@ -214,7 +214,7 @@ import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
 import { autoSettleKalshiPositions, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
 import { FundsPanel } from './components/FundsPanel'
-import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiKeyUsable, loadKalshiEnv, loadKalshiRelayUrl, saveKalshiCredentials, saveKalshiEnv, saveKalshiRelayUrl, type KalshiEnv } from './lib/kalshiAuth'
+import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiCredentialPresence, kalshiKeyUsable, loadKalshiEnv, loadKalshiRelayUrl, saveKalshiCredentials, saveKalshiEnv, saveKalshiRelayUrl, type KalshiEnv } from './lib/kalshiAuth'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/pageVisibility'
 import { DEEPSEEK_RUN_EXPIRED_NOTE, isDeepSeekRunResumable } from './lib/deepseekRunResume'
@@ -729,6 +729,13 @@ function App() {
   // Kalshi trading (kalshiAuth.ts): environment toggle + whether the pasted private key imports.
   const [kalshiEnv, setKalshiEnv] = useState<KalshiEnv>(() => loadKalshiEnv())
   const [kalshiKeyState, setKalshiKeyState] = useState<'' | 'ok' | 'bad'>('')
+  // Kalshi saved marks come from verified read-back only (kalshiCredentialPresence): a pasted
+  // key can parse as valid yet never persist when storage is full or blocked, so "valid" and
+  // "saved" are separate indicators and neither borrows the other's green. The text mirrors
+  // exist so a typed-but-unsaved half is visible as exactly that (entered ✓ / saved ✗).
+  const [kalshiSaved, setKalshiSaved] = useState(() => kalshiCredentialPresence())
+  const [kalshiKeyIdText, setKalshiKeyIdText] = useState(() => safeGetItem(KALSHI_KEY_ID_STORAGE) || '')
+  const [kalshiPrivateKeyText, setKalshiPrivateKeyText] = useState(() => safeGetItem(KALSHI_PRIVATE_KEY_STORAGE) || '')
   // Kalshi settlements applied on open (kalshiExecution.ts), shown as pop-ups until dismissed.
   const [settledNotices, setSettledNotices] = useState<SettledNotice[]>([])
   // Bumped after every /funds command so the FundsPanel re-reads the ledger (PR B item 6).
@@ -2910,7 +2917,8 @@ function App() {
                   placeholder={t('settings.kalshiKeyId')}
                   autoComplete="off"
                   defaultValue={safeGetItem(KALSHI_KEY_ID_STORAGE) || ''}
-                  onChange={e => saveKalshiCredentials(e.target.value, safeGetItem(KALSHI_PRIVATE_KEY_STORAGE) || '')}
+                  onChange={e => { setKalshiKeyIdText(e.target.value); saveKalshiCredentials(e.target.value, kalshiPrivateKeyText); setKalshiSaved(kalshiCredentialPresence()) }}
+                  onBlur={() => setKalshiSaved(kalshiCredentialPresence())}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', marginBottom: '6px' }}
                 />
                 <input
@@ -2918,13 +2926,26 @@ function App() {
                   placeholder={t('settings.kalshiPrivateKey')}
                   autoComplete="off"
                   defaultValue={safeGetItem(KALSHI_PRIVATE_KEY_STORAGE) || ''}
-                  onChange={e => { saveKalshiCredentials(safeGetItem(KALSHI_KEY_ID_STORAGE) || '', e.target.value); setKalshiKeyState('') }}
-                  onBlur={e => { const v = e.target.value.trim(); if (v) void kalshiKeyUsable(v).then(ok => setKalshiKeyState(ok ? 'ok' : 'bad')) }}
+                  onChange={e => { setKalshiPrivateKeyText(e.target.value); saveKalshiCredentials(kalshiKeyIdText, e.target.value); setKalshiKeyState(''); setKalshiSaved(kalshiCredentialPresence()) }}
+                  onBlur={e => { setKalshiSaved(kalshiCredentialPresence()); const v = e.target.value.trim(); if (v) void kalshiKeyUsable(v).then(ok => setKalshiKeyState(ok ? 'ok' : 'bad')) }}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
                 />
                 {kalshiKeyState && (
                   <div style={{ color: kalshiKeyState === 'ok' ? '#4caf7d' : '#e57373', fontSize: '10px', marginTop: '4px' }}>
                     {kalshiKeyState === 'ok' ? t('settings.kalshiKeyOk') : t('settings.kalshiKeyBad')}
+                  </div>
+                )}
+                {/* Saved is a separate claim from valid, per half, from read-back only: this is
+                    the line that would have named tonight's lie (valid ✓, saved ✗) on sight. */}
+                {(!!kalshiKeyIdText.trim() || !!kalshiPrivateKeyText.trim() || kalshiSaved.keyId || kalshiSaved.privateKey) && (
+                  <div style={{ fontSize: '10px', marginTop: '4px', color: '#888' }}>
+                    {t('settings.kalshiSavedLabel')}: {t('settings.kalshiKeyId')} <span style={{ color: kalshiSaved.keyId ? '#4caf7d' : '#e57373' }}>{kalshiSaved.keyId ? '✓' : '✗'}</span>
+                    {' · '}{t('settings.kalshiPrivateKeyShort')} <span style={{ color: kalshiSaved.privateKey ? '#4caf7d' : '#e57373' }}>{kalshiSaved.privateKey ? '✓' : '✗'}</span>
+                  </div>
+                )}
+                {((!!kalshiKeyIdText.trim() && !kalshiSaved.keyId) || (!!kalshiPrivateKeyText.trim() && !kalshiSaved.privateKey)) && (
+                  <div style={{ color: '#e57373', fontSize: '10px', marginTop: '4px' }}>
+                    {t('settings.kalshiKeySaveFailed')}
                   </div>
                 )}
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
