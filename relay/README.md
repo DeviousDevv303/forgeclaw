@@ -17,8 +17,7 @@ Cloudflare Worker (`worker.js`, free tier is enough). The model and research rou
 
 The logging routes:
 
-- `POST /v1/errors`: every ForgeClaw user's browser (yours too) sends its error log here
-  automatically. Secrets are stripped, the report is stored, and it is **emailed to you** via Resend.
+- `POST /v1/errors`: accepts a browser's error log. Secrets are stripped, the report is stored, and it is **emailed to you** via Resend when `RESEND_API_KEY` is set. (Note: the app's automatic send was removed 2026-10-21 — no current client posts this endpoint; the route stays live for manual or future use.)
 - `GET /v1/learning` and `GET /v1/errors` (owner only, needs `OWNER_KEY`): export the stored visitor
   conversations (import them into NEXUS from the NEXUS tab) and error reports.
 
@@ -70,7 +69,7 @@ Two honest limits of the minimal deploy:
   Every route refuses callers whose `Origin` is not in `ALLOWED_ORIGINS` (wrangler.toml);
   that check always applies, token or no token. The per-IP quotas are the only other brake,
   and they do nothing until `RATE` exists — skip the `kv namespace create RATE` step and
-  rate limiting is simply off. (With `RATE`, `/v1/kalshi` allows 120 calls an hour per IP. If the quota store itself errors, for example a Workers KV daily write limit on the free plan, Kalshi calls go through without a limit rather than failing; the model routes still fail closed.)
+  rate limiting is simply off. (With `RATE`, `/v1/kalshi` allows 120 calls an hour per IP.)
 - The model and research routes answer `503` until `GITHUB_TOKEN` is set, and visitor
   learning and error reports stay off until `LEARN` and `OWNER_KEY` exist. The full deploy
   below turns everything on.
@@ -101,7 +100,9 @@ Two honest limits of the minimal deploy:
 
 5. **In your ForgeClaw (owner browser):** NEXUS tab → *Visitors · learning & error reports* → paste the
    same `OWNER_KEY` → **IMPORT TO NEXUS** pulls visitor conversations in as unapproved candidates;
-   **ERROR REPORTS** shows what every user hit (the same reports arrive by email).
+   **ERROR REPORTS** shows what users hit (the same reports arrive by email when Resend is
+   configured). With the automatic browser send removed, this is empty unless reports are posted
+   manually.
 
 Friends and family need **nothing**: no account, no key, no setup. They open the link and type.
 
