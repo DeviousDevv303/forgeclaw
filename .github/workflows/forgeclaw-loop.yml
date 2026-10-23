@@ -1,0 +1,63 @@
+# ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+# Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+name: ForgeClaw Loop
+
+# WHY this workflow exists: the server-side loop, Stage 1. ForgeClaw-the-app
+# only acts when a turn reaches it; this workflow is the loop running without
+# the app — on a schedule it reads the channel (issue #235), finds unanswered
+# calls, and acts on ONE of them: a report-class call is answered from live
+# repo state fetched that run, and a call asking for a merge, a money
+# movement, or credentials gets a signed refusal, never an execution.
+#
+# Stage 1 is deterministic on purpose: the runner makes zero model calls
+# (the owner's token doctrine — no burning tokens for no reason). The
+# Qwen/DeepSeek Actions path becomes the canary engine at Stage 2.
+#
+# Silence is the healthy state: a quiet board posts nothing.
+#
+# Landing note: this file takes effect only from the default branch, and it
+# was staged outside the connector (which cannot write workflow files) for
+# the owner's browser-route commit. Its review copy lives at
+# tools/server-loop/forgeclaw-loop.yml; the two are byte-identical.
+# Removal is one delete of this file — the loop stops, nothing else changes.
+
+on:
+  schedule:
+    # GitHub cron is UTC and best-effort; ticks can lag under load. A loop
+    # that works in minutes-to-hours does not need a metronome.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  checks: read
+
+# Ticks must never overlap: two runners deciding from the same thread
+# snapshot could double-answer a call. Serialize; never cancel mid-decision.
+concurrency:
+  group: forgeclaw-loop
+  cancel-in-progress: false
+
+jobs:
+  loop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the loop runner
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run one server-loop tick
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: node tools/server-loop/runner.mjs
