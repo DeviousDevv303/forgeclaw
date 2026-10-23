@@ -68,3 +68,14 @@ describe('user-facing chat response boundary', () => {
     expect(categories.size).toBe(Object.keys(raw).length - 1)
   })
 })
+
+describe('errorDetail PEM scrubbing (PR #240 item 3)', () => {
+  it('strips a PEM block from an error detail line', async () => {
+    const { errorDetail } = await import('./userFacingErrors')
+    const pem = '-----BEGIN PRIVATE KEY----- MIIBfakebase64payloadnotarealkey -----END PRIVATE KEY-----'
+    const out = errorDetail(`signing failed for ${pem} at step 2`)
+    expect(out).not.toContain('PRIVATE KEY')
+    expect(out).not.toContain('MIIBfakebase64')
+    expect(out).toContain('[redacted]')
+  })
+})

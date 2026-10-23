@@ -170,10 +170,28 @@ export function createKalshiClient(creds: KalshiCredentials, fetcher: KalshiFetc
     },
 
     async findOrderByClientOrderId(clientOrderId, ticker) {
-      const raw = await request<{ orders?: Array<Record<string, unknown>> }>(
-        'GET', '/trade-api/v2/portfolio/orders', `ticker=${encodeURIComponent(ticker)}&limit=100`,
-      )
-      const found = (raw.orders ?? []).find(o => o.client_order_id === clientOrderId)
+      // The orders endpoint filters by status and the spec states no default, so an
+      // unfiltered query cannot be trusted to include executed or canceled orders — the
+      // two states a placed IOC order ends in. Scan all three explicitly. A scan that
+      // could not read every status is INCOMPLETE, not negative: it throws, so callers
+      // resolve to "unknown", never to "nothing was spent" (a miss is absence of
+      // evidence, and on the money path only evidence may clear an order). Orders older
+      // than Kalshi's historical cutoff live under /historical/orders; reconciliation
+      // here runs seconds after placement, far inside the recent window.
+      let found: Record<string, unknown> | undefined
+      let incomplete = false
+      for (const status of ['resting', 'canceled', 'executed']) {
+        try {
+          const raw = await request<{ orders?: Array<Record<string, unknown>> }>(
+            'GET', '/trade-api/v2/portfolio/orders', `ticker=${encodeURIComponent(ticker)}&status=${status}&limit=100`,
+          )
+          found = (raw.orders ?? []).find(o => o.client_order_id === clientOrderId)
+          if (found) break
+        } catch {
+          incomplete = true
+        }
+      }
+      if (!found && incomplete) throw new KalshiNetworkError(`The order lookup for ${clientOrderId} could not read every order status; the result is inconclusive.`)
       if (!found) return null
       const fillCount = num(found.fill_count_fp) ?? 0
       const fillCost = num(found.taker_fill_cost_dollars) ?? 0

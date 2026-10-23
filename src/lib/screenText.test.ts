@@ -19,3 +19,17 @@ describe('the screen-text capture redacts credentials', () => {
     expect(redactSecrets(hints)).toBe(hints)
   })
 })
+
+describe('PEM private keys (PR #240 item 3)', () => {
+  const PEM = ['-----BEGIN RSA PRIVATE KEY-----', 'MIIBOgIBAAJBAKfakebase64payloadnotarealkey00', '-----END RSA PRIVATE KEY-----'].join('\n')
+  it('redacts a whole PEM block, markers and body', () => {
+    const out = redactSecrets(`the owner pasted ${PEM} into the chat`)
+    expect(out).not.toContain('PRIVATE KEY')
+    expect(out).not.toContain('MIIBOgIBAAJBAK')
+    expect(out).toContain('[redacted]')
+  })
+  it('redacts an Ed25519 PKCS#8 block too', () => {
+    const out = redactSecrets(PEM.replaceAll('RSA PRIVATE KEY', 'PRIVATE KEY'))
+    expect(out).not.toContain('MIIBOgIBAAJBAK')
+  })
+})

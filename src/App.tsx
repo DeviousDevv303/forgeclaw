@@ -168,7 +168,7 @@ import {
   measureRequestMetrics,
 } from './lib/codingAgentRuntime'
 import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
-import { createRunJournal, formatRollbackReport, rollbackRun, setActiveRunJournal, type RunJournal } from './lib/runRollback'
+import { createRunJournal, formatRollbackReport, journalRecord, rollbackRun, setActiveRunJournal, type RunJournal } from './lib/runRollback'
 import { cleanOutput } from './lib/cleanOutput'
 import { extractThinking, type GuardianPosture } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
@@ -946,7 +946,10 @@ function App() {
   // Auto-settle placed Kalshi positions from Kalshi's own settlements, once per open.
   useEffect(() => {
     let cancelled = false
-    autoSettleKalshiPositions().then(notices => { if (!cancelled && notices.length) setSettledNotices(notices) }).catch(() => {})
+    autoSettleKalshiPositions({
+      visitor: isPublicVisitor(ghToken),
+      onFailure: n => emitFailure({ source: 'kalshi', severity: 'warning', message: n.message, context: { stage: n.stage } }),
+    }).then(notices => { if (!cancelled && notices.length) setSettledNotices(notices) }).catch(() => {})
     return () => { cancelled = true }
   }, [])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
@@ -1538,7 +1541,21 @@ function App() {
 
       // /funds: the owner's funds ledger (fundsLedger.ts). Owner-typed only: no model can add funds, approve or place.
       // Approving a Kalshi proposal executes the order (kalshiExecution.ts): re-quote, balance check, placement.
-      const fundsReply = await runFundsCommandWithExecution(promptText)
+      const fundsReply = await runFundsCommandWithExecution(promptText, {
+        runId: learningRunRef.current || undefined,
+        visitor: isPublicVisitor(ghToken),
+        onFailure: n => emitFailure({
+          source: 'kalshi', severity: 'warning', message: n.message,
+          context: {
+            runId: learningRunRef.current || undefined, positionId: n.positionId, ticker: n.ticker,
+            clientOrderId: n.clientOrderId, stage: n.stage, ...(n.httpStatus ? { httpStatus: n.httpStatus } : {}),
+          },
+        }),
+        onPlaced: info => {
+          journalRecord(activeRunRef.current?.journal, { kind: 'irreversible', label: `kalshi order ${info.orderId} placed (${info.ticker}, ${info.fillCount} contracts, client_order_id ${info.clientOrderId}) — a real order on the venue; it cannot be recalled, only settled or sold there` })
+          void recordLearning({ channel: 'tool', input: promptText, result: `Kalshi order placed: ${info.fillCount} contracts on ${info.ticker} (order ${info.orderId}, client_order_id ${info.clientOrderId}).`, outcome: 'completed', toolName: 'kalshi_order', actor: 'operator' })
+        },
+      })
       if (fundsReply !== null) {
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         const fundsOk = !(fundsReply.startsWith('Not done:') || fundsReply.startsWith('Not placed:') || fundsReply.startsWith('Unknown:'))
@@ -2859,8 +2876,9 @@ function App() {
               </div>
 
               {/* Kalshi trading keys — this section replaces the Brave key slot (owner removed
-                  Brave 2026-10-23: he does not use it; web_search falls back to DuckDuckGo). */}
-              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+                  Brave 2026-10-23: he does not use it; web_search falls back to DuckDuckGo).
+                  Hidden in visitor mode: a public visitor never sees the trading keys. */}
+              {!isPublicVisitor(ghToken) && (<div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   {t('settings.kalshiTitle')}
                 </label>
@@ -2897,7 +2915,7 @@ function App() {
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
                   {t('settings.kalshiHelp')}
                 </div>
-              </div>
+              </div>)}
 
               {/* Google OAuth Token */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
@@ -3324,6 +3342,7 @@ function App() {
                       { name: 'Gmail', icon: '📧', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: t('connectors.calendar'), icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
+                      { name: 'Kalshi', icon: '📈', key: 'fc_kalshi_key_id', connected: !!safeGetItem(KALSHI_KEY_ID_STORAGE) },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

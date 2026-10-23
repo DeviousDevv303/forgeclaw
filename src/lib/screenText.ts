@@ -18,7 +18,7 @@ export interface ScreenTextMeta {
 const MAX_CHARS = 60_000
 // Also Google OAuth (ya29.), Meta/WhatsApp (EAA) and Brave (BSA) tokens: long enough to be real, so the placeholder hints in
 // empty Settings fields ("ya29....", "EAAxx...", "BSA...") are left alone.
-const SECRET_SHAPES = /\b(?:sk-[\w-]{8,}|gh[pousr]_\w{8,}|github_pat_\w{8,}|AIza[\w-]{20,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{5,}|AKIA[0-9A-Z]{12,}|ya29\.[\w-]{20,}|EAA[A-Za-z0-9]{20,}|BSA[\w-]{20,})/g
+const SECRET_SHAPES = /\b(?:sk-[\w-]{8,}|gh[pousr]_\w{8,}|github_pat_\w{8,}|AIza[\w-]{20,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{5,}|AKIA[0-9A-Z]{12,}|ya29\.[\w-]{20,}|EAA[A-Za-z0-9]{20,}|BSA[\w-]{20,})|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g
 
 export function redactSecrets(text: string): string {
   return text.replace(SECRET_SHAPES, '[redacted]')

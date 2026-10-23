@@ -101,11 +101,25 @@ describe('findOrderByClientOrderId — the no-double-order lookup', () => {
     const { fetcher, calls } = fakeFetcher(() => ({ json: orders }))
     const found = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')
     expect(found).toEqual({ orderId: 'mine', clientOrderId: 'fc-p1-99', status: 'executed', fillCount: 10, remainingCount: 0, averageFillPrice: 0.56, totalFees: 0.173 })
-    expect(calls[0].url).toContain('/portfolio/orders?ticker=KX-1&limit=100')
+    expect(calls[0].url).toContain('/portfolio/orders?ticker=KX-1&status=resting&limit=100')
   })
-  it('returns null when no order carries the id (safe to place)', async () => {
-    const { fetcher } = fakeFetcher(() => ({ json: orders }))
+  it('returns null when no order carries the id in any status', async () => {
+    const { fetcher, calls } = fakeFetcher(() => ({ json: orders }))
     expect(await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-nope', 'KX-1')).toBeNull()
+    expect(calls.map(c => c.url)).toEqual([
+      expect.stringContaining('status=resting'),
+      expect.stringContaining('status=canceled'),
+      expect.stringContaining('status=executed'),
+    ])
+  })
+  it('finds an executed order even when the resting and canceled lists are empty', async () => {
+    const { fetcher } = fakeFetcher(call => ({ json: call.url.includes('status=executed') ? orders : { orders: [] } }))
+    const found = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')
+    expect(found?.orderId).toBe('mine')
+  })
+  it('a status it could not read makes the lookup inconclusive — it throws, never reports a miss', async () => {
+    const { fetcher } = fakeFetcher(call => (call.url.includes('status=canceled') ? 'throw' : { json: { orders: [] } }))
+    await expect(createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')).rejects.toThrow(/inconclusive/)
   })
 })
 
