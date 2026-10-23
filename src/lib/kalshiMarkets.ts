@@ -70,6 +70,40 @@ export interface KalshiDeps {
    * owner fix to name; with one, the error must say the relay was tried too.
    */
   relayUrl?: string
+  /** Waits between spaced reads and before a 429 retry (tests pass a fake clock). */
+  delay?: (ms: number, signal?: AbortSignal) => Promise<void>
+  /** The wall clock read spacing is measured on (defaults to Date.now). */
+  clock?: () => number
+}
+
+// 2026-10-23: one answer asked kalshi_markets for KXHIGHNY, KXHIGHMIA and KXHIGHLAX back to back (each up to
+// KALSHI_MAX_PAGES pages) and all three came back HTTP 429; the order path spaced its reads and retried
+// (kalshiTrade.ts), this path did neither. Public reads are now spaced, and a 429 is retried with backoff.
+// Module-level on purpose: the budget is Kalshi's per caller, not per tool call.
+export const KALSHI_PUBLIC_READ_INTERVAL_MS = 250
+/** Waits before each retry of a rate-limited read; reads are idempotent, so a retry cannot duplicate anything. */
+export const KALSHI_429_RETRY_DELAYS_MS = [1000, 2500] as const
+const KALSHI_RETRY_AFTER_CAP_MS = 5000
+let lastPublicReadAt = 0
+
+/** Test hook: forget the last read time so one test's spacing does not leak into the next. */
+export function resetKalshiReadSpacing(): void {
+  lastPublicReadAt = 0
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException('Aborted', 'AbortError'))
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, ms)
+    const onAbort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')) }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** Retry-After in seconds (Kalshi usually sends none), capped so one header cannot stall a run. */
+function retryAfterMs(res: Response, fallback: number): number {
+  const seconds = Number(res.headers.get('Retry-After'))
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, KALSHI_RETRY_AFTER_CAP_MS) : fallback
 }
 
 export class KalshiError extends Error {
@@ -173,9 +207,32 @@ export function formatMarkets(markets: KalshiMarket[], q: KalshiQuery, nowMs: nu
 }
 
 async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
+  // Spacing runs on the wall clock, never deps.now: that is the market-time clock (close times), which tests fix.
+  const now = deps.clock ?? Date.now
+  const delay = deps.delay ?? abortableDelay
   let res: Response
+  for (let attempt = 0; ; attempt++) {
+    const waitMs = KALSHI_PUBLIC_READ_INTERVAL_MS - (now() - lastPublicReadAt)
+    if (waitMs > 0) await delay(waitMs, deps.signal)
+    lastPublicReadAt = now()
+    res = await fetchOnce(deps, url)
+    if (res.status !== 429 || attempt >= KALSHI_429_RETRY_DELAYS_MS.length) break
+    await delay(retryAfterMs(res, KALSHI_429_RETRY_DELAYS_MS[attempt]), deps.signal)
+  }
+  if (res.status === 429) {
+    throw new KalshiError(`Kalshi rate-limited this read (HTTP 429 for ${url.split('?')[0]}) and was still limiting it after ${KALSHI_429_RETRY_DELAYS_MS.length} spaced retries. It is not an empty market list; wait a few seconds and ask again, or ask for fewer series at once.`)
+  }
+  if (!res.ok) throw new KalshiError(`Kalshi returned HTTP ${res.status} for ${url.split('?')[0]}.`)
   try {
-    res = await deps.fetcher(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: deps.signal })
+    return await res.json()
+  } catch {
+    throw new KalshiError('Kalshi returned a response that is not valid JSON.')
+  }
+}
+
+async function fetchOnce(deps: KalshiDeps, url: string): Promise<Response> {
+  try {
+    return await deps.fetcher(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: deps.signal })
   } catch (error) {
     if (deps.signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) throw error
     const detail = error instanceof Error ? error.message : String(error)
@@ -190,12 +247,6 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
     err.transportFailure = true
     err.relayMissing = !relay
     throw err
-  }
-  if (!res.ok) throw new KalshiError(`Kalshi returned HTTP ${res.status} for ${url.split('?')[0]}.`)
-  try {
-    return await res.json()
-  } catch {
-    throw new KalshiError('Kalshi returned a response that is not valid JSON.')
   }
 }
 
