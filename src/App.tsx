@@ -212,7 +212,7 @@ import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
-import { autoSettleKalshiPositions, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
+import { autoSettleKalshiPositions, kalshiOrderPlacedJournalEntry, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
 import { FundsPanel } from './components/FundsPanel'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiCredentialPresence, kalshiKeyUsable, loadKalshiEnv, loadKalshiRelayUrl, saveKalshiCredentials, saveKalshiEnv, saveKalshiRelayUrl, type KalshiEnv } from './lib/kalshiAuth'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
@@ -1562,7 +1562,7 @@ function App() {
           },
         }),
         onPlaced: info => {
-          journalRecord(activeRunRef.current?.journal, { kind: 'irreversible', label: `kalshi order ${info.orderId} placed (${info.ticker}, ${info.fillCount} contracts, client_order_id ${info.clientOrderId}) — a real order on the venue; it cannot be recalled, only settled or sold there` })
+          journalRecord(activeRunRef.current?.journal, kalshiOrderPlacedJournalEntry(info))
           void recordLearning({ channel: 'tool', input: promptText, result: `Kalshi order placed: ${info.fillCount} contracts on ${info.ticker} (order ${info.orderId}, client_order_id ${info.clientOrderId}).`, outcome: 'completed', toolName: 'kalshi_order', actor: 'operator' })
         },
       })
