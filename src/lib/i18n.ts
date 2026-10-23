@@ -116,6 +116,8 @@ export const EN = {
   'activity.failed': 'FAILED',
   'activity.ok': 'OK',
   'activity.computer': "Forge's computer",
+  'activity.channelCalls': 'CHANNEL CALLS',
+  'activity.channelCall': 'CHANNEL CALL',
 
 
 
@@ -534,6 +536,8 @@ const ES: Record<Key, string> = {
   'activity.failed': 'FALLÓ',
   'activity.ok': 'OK',
   'activity.computer': 'La computadora de Forge',
+  'activity.channelCalls': 'LLAMADAS DEL CANAL',
+  'activity.channelCall': 'LLAMADA DEL CANAL',
 
 
 
