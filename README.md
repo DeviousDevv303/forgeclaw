@@ -78,7 +78,7 @@ The NEXUS page ("My Logic Is Undeniable") counts outcomes, tracks per-tool relia
 
 ### Free mode for visitors
 
-A visitor with no GitHub token uses ForgeClaw's own model through the owner's relay (`relay/`, a Cloudflare Worker). Visitors never see the owner's keys, tools, NEXUS or chats. The relay can only run the model and research workflows. It enforces allowed origins, per-IP limits and a concurrency cap. Visitor conversations are stored for the owner to import into NEXUS, and every user's error reports, secret-stripped, are emailed to the owner.
+A visitor with no GitHub token uses ForgeClaw's own model through the owner's relay (`relay/`, a Cloudflare Worker). Visitors never see the owner's keys, tools, NEXUS or chats. The relay can only run the model and research workflows. It enforces allowed origins, per-IP limits and a concurrency cap. Visitor conversations are stored for the owner to import into NEXUS. The relay also accepts error reports at `POST /v1/errors` (secret-stripped, stored, and emailed to the owner when Resend is configured) — the app's automatic error-report send was removed (2026-10-21), so nothing in the current app posts them.
 
 ### Browser automation
 
