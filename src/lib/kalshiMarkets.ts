@@ -57,9 +57,21 @@ export interface KalshiDeps {
   fetcher: (url: string, init?: RequestInit) => Promise<Response>
   now?: () => number
   signal?: AbortSignal
+  /**
+   * The relay the fetcher falls back to when one is configured (the caller builds the
+   * fetcher with kalshiTrade's relayFallbackFetcher and passes the same URL here). Used
+   * only to word an unreachable-Kalshi error honestly: with no relay there is a concrete
+   * owner fix to name; with one, the error must say the relay was tried too.
+   */
+  relayUrl?: string
 }
 
-export class KalshiError extends Error {}
+export class KalshiError extends Error {
+  /** No HTTP answer arrived (offline, CORS, a relay that did not answer): transport, not a Kalshi refusal. */
+  transportFailure?: boolean
+  /** The transport failed and no relay was configured to fall back to. */
+  relayMissing?: boolean
+}
 
 /** "0.9500" -> 0.95; anything that is not a finite number in [0, 1] -> null. */
 export function parseDollars(value: unknown): number | null {
@@ -151,7 +163,18 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
     res = await deps.fetcher(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: deps.signal })
   } catch (error) {
     if (deps.signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) throw error
-    throw new KalshiError(`Kalshi could not be reached (${error instanceof Error ? error.message : String(error)}). From a browser this is usually a CORS block or no network; it is not an empty market list.`)
+    const detail = error instanceof Error ? error.message : String(error)
+    const relay = (deps.relayUrl ?? '').trim()
+    // An unreachable Kalshi is a setup fact, not a market fact, and the wording must carry
+    // the fix: with no relay configured there is exactly one (deploy the relay, paste its
+    // URL into Settings); with one, both paths failed and the message must not pretend the
+    // fallback was never tried. Neither may read as a bare "Failed to fetch".
+    const err = new KalshiError(relay
+      ? `Kalshi could not be reached (${detail}). The direct call failed and the configured relay (${relay}) did not answer either; it is not an empty market list.`
+      : `Kalshi could not be reached (${detail}). From a browser this is usually a CORS block — Kalshi does not answer direct browser calls — and no Kalshi relay is configured, so there is no fallback. To fix it: deploy the relay (the Kalshi-only steps in relay/README.md, about two minutes), then paste its workers.dev URL into Settings → Kalshi trading → Kalshi relay URL, and try again. It is not an empty market list.`)
+    err.transportFailure = true
+    err.relayMissing = !relay
+    throw err
   }
   if (!res.ok) throw new KalshiError(`Kalshi returned HTTP ${res.status} for ${url.split('?')[0]}.`)
   try {

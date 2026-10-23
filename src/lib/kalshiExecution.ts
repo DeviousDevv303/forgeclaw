@@ -22,14 +22,13 @@
  * (relay/ route /v1/kalshi). Kalshi's signature does not cover the host, so it stays valid.
  */
 
-import { loadKalshiCredentials, type KalshiCredentials } from './kalshiAuth'
+import { effectiveKalshiRelayUrl, loadKalshiCredentials, type KalshiCredentials } from './kalshiAuth'
 import {
   applyFundsCommand, estimateFee, loadFunds, money, outcomeFromKalshiResult, parseFundsCommand,
   recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setOrderKey, settlePosition,
   NOT_SAVED_WARNING, type FundsState,
 } from './fundsLedger'
-import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, type KalshiClient, type KalshiExistingOrder, type KalshiFetcher, type KalshiOrderLookup } from './kalshiTrade'
-import { PUBLIC_RELAY_URL } from './publicRelay'
+import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, relayFallbackFetcher, type KalshiClient, type KalshiExistingOrder, type KalshiFetcher, type KalshiOrderLookup } from './kalshiTrade'
 
 export interface KalshiFailureNote {
   stage: 'credentials' | 'quote' | 'balance' | 'approve' | 'place' | 'settle'
@@ -53,7 +52,7 @@ export interface KalshiPlacedInfo {
 export interface KalshiExecutionDeps {
   creds?: KalshiCredentials | null
   client?: KalshiClient
-  /** Relay base URL for the transport fallback; '' disables it. Defaults to the build's relay. */
+  /** Relay base URL for the transport fallback; '' disables it. Defaults to the Settings relay URL, then the build's relay. */
   relayUrl?: string
   now?: () => number
   /** Wait used before reconciling lookups (real time in the app; zero in tests). */
@@ -71,37 +70,18 @@ export interface KalshiExecutionDeps {
 }
 
 /**
- * Direct fetch, falling back to the relay on a transport failure. An HTTP answer — even an
- * error — is never retried through the relay: Kalshi already decided, and for order POSTs a
- * second send is exactly the double-order risk the client_order_id lookup exists to prevent.
+ * The order path's transport: the shared direct-then-relay fallback (kalshiTrade's
+ * relayFallbackFetcher) over the browser's global fetch. Kept as a named export here —
+ * the market-data path in forgeTools wraps the same helper around its own bounded fetch.
  */
 export function directThenRelayFetcher(relayUrl: string): KalshiFetcher {
-  return async (url, init) => {
-    try {
-      return await fetch(url, init)
-    } catch (directError) {
-      if (!relayUrl) throw directError
-      let response: Response
-      try {
-        response = await fetch(`${relayUrl}/v1/kalshi`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method: init.method, url, headers: init.headers, body: init.body }),
-        })
-      } catch {
-        throw directError
-      }
-      const payload = await response.json().catch(() => null) as { status?: number; body?: string } | null
-      if (!payload || typeof payload.status !== 'number') throw directError
-      return new Response(payload.body ?? '', { status: payload.status })
-    }
-  }
+  return relayFallbackFetcher((url, init) => fetch(url, init), relayUrl)
 }
 
 function resolveClient(deps: KalshiExecutionDeps): { creds: KalshiCredentials; client: KalshiClient } | null {
   const creds = deps.creds !== undefined ? deps.creds : loadKalshiCredentials()
   if (!creds) return null
-  const client = deps.client ?? createKalshiClient(creds, directThenRelayFetcher(deps.relayUrl ?? PUBLIC_RELAY_URL))
+  const client = deps.client ?? createKalshiClient(creds, directThenRelayFetcher(effectiveKalshiRelayUrl(deps.relayUrl)))
   return { creds, client }
 }
 
@@ -216,9 +196,8 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
   //    approved or placed the position meanwhile; writing from the stale read would
   //    approve it twice. The attempt counter and the key move atomically with the
   //    approval, so no two sends can ever share an attempt. A resumed approval (an
-  //    earlier attempt ended Unknown) reuses the stored key: Kalshi rejects a true
-  //    duplicate of it with 409 (ALREADY_EXISTS), which the placement path treats as
-  //    "the order exists — reconcile", never as a refusal.
+  //    earlier attempt ended Unknown) reuses the stored key for its lookup only —
+  //    it never sends under it again (the resume block below).
   const fresh = loadFunds()
   const current = fresh.positions.find(p => p.id === id)
   if (!current) return `Not done: no position ${id}.`
@@ -280,8 +259,8 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
   // The lookup is tri-state and its states are never merged: a lookup that could not
   // complete (UNKNOWN) is not a miss, and a complete NOT_FOUND is not proof after an
   // ambiguous POST — whether orders placed through the V2 endpoint appear in this
-  // lookup at all is unproven until the demo run, so NOT_FOUND authorizes exactly one
-  // thing in this file: the resume-path send under an already-kept key, below.
+  // lookup at all is unproven until the demo run, so NOT_FOUND authorizes nothing in
+  // this file: anything short of FOUND ends at Unknown.
   const lookupSinceMs = position.approvedAt ?? now()
   const lookup = async (): Promise<KalshiOrderLookup> => {
     try {
@@ -316,19 +295,23 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
       : `Kalshi's order lookup could not be completed for id ${clientOrderId} (${last.kind === 'unknown' ? last.reason : 'no answer'}), so whether the order landed is unknown.`)
   }
 
-  // A resumed approval reconciles before it sends anything new. FOUND resolves it;
-  // UNKNOWN refuses the send outright (never send blind on an unverifiable lookup);
-  // only a complete NOT_FOUND authorizes the one send under the stored key, below.
+  // A resumed approval NEVER sends. It looks the stored key up once: FOUND resolves
+  // it; UNKNOWN and NOT_FOUND both end at Unknown with the approval standing and the
+  // key kept. A complete miss cannot prove the first order never landed — whether
+  // orders placed through the V2 endpoint appear in this lookup at all is unproven
+  // until a demo run — so sending again could double the bet. To bet again, the
+  // owner rejects the position and re-proposes it as a fresh approval.
   if (resuming) {
     const result = await lookup()
     if (result.kind === 'found') return resolveFound(result.order, true)
     if (result.kind === 'unknown') return unknownOutcome(`Kalshi's order lookup could not be completed for id ${clientOrderId} (${result.reason}), so the stored key was NOT resent — whether the earlier order landed is unknown.`)
+    return unknownOutcome(`Kalshi's completed order lookup found no order under the kept key ${clientOrderId} — but a miss cannot prove the first order never landed: whether orders placed through the V2 endpoint appear in this lookup at all is unproven until a demo run, so nothing new was sent. To bet again, reject ${id} and re-propose it, so the bet goes through a fresh approval.`)
   }
 
-  // 4. Send — once, under the recorded key. A lost response is resolved by lookup, never
-  //    resent automatically. A resumed approval reaching this point sends under the same
-  //    kept key, so if the earlier order did land, Kalshi's 409 turns the send into a
-  //    reconcile signal instead of a second order.
+  // 4. Send — once, under the recorded key. Only a fresh approval reaches this point:
+  //    a resumed one returned in the block above and never sends. A lost response is
+  //    resolved by lookup, never resent automatically; a 409 on this send (the key
+  //    already exists at Kalshi) reconciles instead of reading as a refusal.
   type PostOutcome =
     | { kind: 'answered'; fillCount: number; avgPrice: number; feeTotal: number; orderId: string }
     | { kind: 'api'; error: KalshiApiError }
@@ -348,8 +331,9 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
   if (post.kind === 'network') {
     // No answer at all: the order may or may not have landed. There is NO automatic
     // resend — its safety rested on a duplicate-rejection guarantee nothing has proven
-    // yet, so the only resend this path allows is the owner's own re-approve under
-    // the same kept key. Reconcile by lookup; anything short of FOUND ends at Unknown.
+    // yet — and no manual one either: the owner's re-approve reconciles under the
+    // same kept key but never sends again. Reconcile by lookup; anything short of
+    // FOUND ends at Unknown.
     return reconcile()
   }
   if (post.kind === 'answered') {

@@ -18,10 +18,12 @@
  */
 
 import { safeGetItem, safeSetItem } from './storage'
+import { PUBLIC_RELAY_URL } from './publicRelay'
 
 export const KALSHI_KEY_ID_STORAGE = 'fc_kalshi_key_id'
 export const KALSHI_PRIVATE_KEY_STORAGE = 'fc_kalshi_private_key'
 export const KALSHI_ENV_STORAGE = 'fc_kalshi_env'
+export const KALSHI_RELAY_URL_STORAGE = 'fc_kalshi_relay_url'
 
 export type KalshiEnv = 'demo' | 'prod'
 
@@ -61,6 +63,34 @@ export function loadKalshiCredentials(): KalshiCredentials | null {
 export function saveKalshiCredentials(keyId: string, privateKeyPem: string): void {
   safeSetItem(KALSHI_KEY_ID_STORAGE, keyId.trim())
   safeSetItem(KALSHI_PRIVATE_KEY_STORAGE, privateKeyPem.trim())
+}
+
+// ── Relay URL (the Kalshi transport fallback) ──────────────────────────────────
+// Kalshi does not answer direct browser calls (CORS / blocked preflight on the signed
+// headers), so the relay is how the browser reaches Kalshi at all from some networks.
+// The owner can paste their own relay's URL in Settings instead of relying on the
+// build-time PUBLIC_RELAY_URL — no rebuild, no env var. This is the owner's own setting:
+// it has nothing to do with public-visitor mode, which is decided by token presence.
+
+const normalizeRelayUrl = (url: string): string => url.trim().replace(/\/+$/, '')
+
+/** The relay URL saved in Settings, normalized; '' when the owner never set one. */
+export function loadKalshiRelayUrl(): string {
+  return normalizeRelayUrl(safeGetItem(KALSHI_RELAY_URL_STORAGE) ?? '')
+}
+
+export function saveKalshiRelayUrl(url: string): void {
+  safeSetItem(KALSHI_RELAY_URL_STORAGE, normalizeRelayUrl(url))
+}
+
+/**
+ * Which relay Kalshi calls fall back to: an explicit caller value wins (including '',
+ * which the order path documents as "fallback disabled"), then the Settings value,
+ * then the build's PUBLIC_RELAY_URL ('' when the build has none).
+ */
+export function effectiveKalshiRelayUrl(explicit?: string): string {
+  if (explicit !== undefined) return normalizeRelayUrl(explicit)
+  return loadKalshiRelayUrl() || PUBLIC_RELAY_URL
 }
 
 // ── PEM / DER plumbing ─────────────────────────────────────────────────────────
