@@ -21,6 +21,12 @@ export const READ_ONLY_BASELINE_TOOLS = [
   'github_list_prs',
   'github_pr_info',
   'web_search',
+  // Read-only market, ledger and forecast reads, so a money question in any wording can be researched; nothing here
+  // proposes, approves or places. 2026-10-23: a "best bet on Kalshi" run priced high-temperature markets with no
+  // weather_forecast, because the prompt never said "weather".
+  'kalshi_markets',
+  'funds_status',
+  'weather_forecast',
 ] as const
 
 export function baselineToolNames(providerId: string): string[] {
