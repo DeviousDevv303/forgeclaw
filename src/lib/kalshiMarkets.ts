@@ -37,6 +37,12 @@ export interface KalshiMarket {
   rules_primary?: string
   /** "yes" / "no" once the market is determined; empty before. */
   result?: string
+  /**
+   * The exchange shard this market trades on. Kalshi partitions account balances by
+   * shard: an order on this market can only draw on this shard's funds, whatever the
+   * all-shards balance says. Absent on older payloads — Kalshi's own default is 0.
+   */
+  exchange_index?: number
 }
 
 export interface KalshiQuery {
@@ -84,6 +90,12 @@ export function parseCount(value: unknown): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null
   const n = Number(value)
   return Number.isFinite(n) && n >= 0 ? n : null
+}
+
+/** A market's exchange shard: a non-negative integer as Kalshi reports it; anything else is shard 0, Kalshi's own default. */
+export function parseExchangeIndex(value: unknown): number {
+  const n = typeof value === 'string' ? Number(value) : typeof value === 'number' ? value : NaN
+  return Number.isInteger(n) && n >= 0 ? n : 0
 }
 
 const usd = (n: number | null): string => (n === null ? 'n/a' : `$${n.toFixed(2)}`)

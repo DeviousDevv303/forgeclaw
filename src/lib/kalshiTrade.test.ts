@@ -41,6 +41,28 @@ describe('getBalance', () => {
     expect(calls[0].headers['KALSHI-ACCESS-KEY']).toBe('test-key-id')
     expect(calls[0].headers['KALSHI-ACCESS-SIGNATURE']).toBeTruthy()
   })
+
+  it('a shard read asks for that shard only: exchange_index rides the URL query, the signed path is unchanged', async () => {
+    const { fetcher, calls } = fakeFetcher(() => ({ json: { balance: 0, balance_dollars: '0.0000', portfolio_value: 0, updated_ts: 1 } }))
+    const balance = await createKalshiClient({ ...creds, keyId: 'shard-key' }, fetcher).getBalance(3)
+    expect(balance.balanceDollars).toBe(0)
+    expect(calls[0].url).toBe('https://external-api.demo.kalshi.co/trade-api/v2/portfolio/balance?exchange_index=3')
+    expect(calls[0].headers['KALSHI-ACCESS-SIGNATURE']).toBeTruthy()
+  })
+})
+
+describe('getMarketQuote', () => {
+  it('carries the market’s exchange_index from its record', async () => {
+    const { fetcher } = fakeFetcher(() => ({ json: { market: { yes_ask_dollars: '0.5100', no_ask_dollars: '0.5100', status: 'active', exchange_index: 3 } } }))
+    const quote = await createKalshiClient(creds, fetcher).getMarketQuote('KX-TENNIS')
+    expect(quote).toEqual({ yesAsk: 0.51, noAsk: 0.51, exchangeIndex: 3, status: 'active' })
+  })
+
+  it('defaults the shard to 0 when the record omits exchange_index', async () => {
+    const { fetcher } = fakeFetcher(() => ({ json: { market: { yes_ask_dollars: '0.5100', no_ask_dollars: '0.5100', status: 'active' } } }))
+    const quote = await createKalshiClient(creds, fetcher).getMarketQuote('KX-WEATHER')
+    expect(quote?.exchangeIndex).toBe(0)
+  })
 })
 
 describe('createOrder', () => {

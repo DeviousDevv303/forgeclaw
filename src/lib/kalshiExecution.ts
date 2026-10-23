@@ -13,6 +13,11 @@
  * 1. Re-quote: fetch the live ask. No edge left, or the price ran past the owner's tolerance
  *    (limits.toleranceCents, default 2¢), means NO order and a message saying exactly that.
  * 2. Balance: read Kalshi's real balance; refuse when it cannot cover stake + fees.
+ *    Then read the balance of the market's own exchange shard and hold the same
+ *    stake + fees against it — Kalshi partitions funds by shard and an order draws
+ *    only on its market's shard, so the all-shards total alone cannot prove the
+ *    order can be paid for (it read $100 while the market's shard held $0, and
+ *    Kalshi refused with insufficient_shard_balance).
  * 3. The approval is recorded in the ledger BEFORE the order is sent, under a unique
  *    client_order_id, so a lost response can be resolved by lookup — never by blind retry.
  * 4. The fill Kalshi reports (real contracts, price, fee) is what the ledger records.
@@ -204,6 +209,26 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
   if (balanceDollars + 1e-9 < needed) {
     note('balance', `Balance ${balanceDollars} cannot cover ${needed} for ${id}.`, {})
     return `Not placed: your Kalshi balance is ${money(balanceDollars)}${envNote} but this order needs about ${money(needed)} (${position.contracts} contracts at ${money(livePrice)} + ~${money(feeAtLive)} fees). Nothing was spent; the proposal is unchanged.`
+  }
+
+  // 2b. Shard gate: Kalshi partitions the balance by exchange shard (the market
+  // record's exchange_index), and an order draws only on its own market's shard —
+  // the aggregate read above cannot prove that shard holds anything. Read the
+  // market's shard and hold the same stake + fees against it. A shard whose
+  // balance cannot be read is unverified, and an unverified shard is never
+  // treated as funded: no order is sent either way.
+  const shardIndex = quote.exchangeIndex
+  let shardBalanceDollars: number
+  try {
+    shardBalanceDollars = (await client.getBalance(shardIndex)).balanceDollars
+  } catch (error) {
+    if (error instanceof KalshiNetworkError) { note('balance', `Shard ${shardIndex} balance check unreachable for ${id}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi to verify your balance on shard ${shardIndex} (${error.message}). A shard whose balance cannot be verified is never treated as funded. Nothing was spent; the proposal is unchanged.` }
+    if (error instanceof KalshiApiError) { note('balance', `Kalshi refused the shard ${shardIndex} balance check for ${id} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the balance check for shard ${shardIndex} (${error.code}: ${error.message}), so that shard's balance could not be verified. Nothing was spent; the proposal is unchanged.` }
+    throw error
+  }
+  if (shardBalanceDollars + 1e-9 < needed) {
+    note('balance', `Shard ${shardIndex} balance ${shardBalanceDollars} cannot cover ${needed} for ${id} (aggregate ${balanceDollars}).`, {})
+    return `Not placed: Kalshi splits your balance across exchange shards, and ${position.market} trades on shard ${shardIndex}, which holds ${money(shardBalanceDollars)}${envNote}. This order needs about ${money(needed)} (${position.contracts} contracts at ${money(livePrice)} + ~${money(feeAtLive)} fees). Your balance across all shards is ${money(balanceDollars)}, but an order can only draw on its own market's shard — the funds for this one sit on a different shard, and the API does not move funds between shards (the Kalshi app does, when you trade there). Nothing was spent; the proposal is unchanged.`
   }
 
   // 3. RE-READ the ledger, then record the approval and its order key and SAVE them —
