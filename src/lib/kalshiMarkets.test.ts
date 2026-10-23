@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, formatOrderbook, parseDollars, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
+  KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
   selectMarkets, type KalshiMarket,
 } from './kalshiMarkets'
 import { relayFallbackFetcher } from './kalshiTrade'
@@ -20,6 +20,27 @@ describe('parseDollars', () => {
     expect(parseDollars('abc')).toBeNull()
     expect(parseDollars('1.5')).toBeNull()
     expect(parseDollars(undefined)).toBeNull()
+  })
+})
+
+describe('parseExchangeIndex', () => {
+  it('reads the shard Kalshi reports and defaults everything else to shard 0', () => {
+    expect(parseExchangeIndex(3)).toBe(3)
+    expect(parseExchangeIndex('2')).toBe(2)
+    expect(parseExchangeIndex(0)).toBe(0)
+    expect(parseExchangeIndex(undefined)).toBe(0)
+    expect(parseExchangeIndex(null)).toBe(0)
+    expect(parseExchangeIndex(-1)).toBe(0)
+    expect(parseExchangeIndex(2.5)).toBe(0)
+    expect(parseExchangeIndex('x')).toBe(0)
+  })
+})
+
+describe('fetchKalshiMarket', () => {
+  it('carries the market record’s exchange_index through untouched', async () => {
+    const market = await fetchKalshiMarket('KX-A', { fetcher: async () => json({ markets: [mk({ exchange_index: 3 })] }) })
+    expect(market?.ticker).toBe('KX-A')
+    expect(market?.exchange_index).toBe(3)
   })
 })
 
