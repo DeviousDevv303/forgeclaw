@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   FUNDS_STORAGE_KEY, FundsError, applyFundsCommand, emptyFunds, estimateFee, formatFundsStatus, formatProposal, honestyLine, loadFunds, outcomeFromKalshiResult, ownerRulesPrompt,
-  parseFundsCommand, pnlFor, proposePosition, runFundsCommand, saveFunds, settlePosition, sizePosition, summarize, trackRecord,
+  parseFundsCommand, pnlFor, proposePosition, recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setClientOrderId, settlePosition, sizePosition, summarize, trackRecord,
   type FundsState, type ProposalInput,
 } from './fundsLedger'
 
@@ -254,5 +254,61 @@ describe('paper mode (optional)', () => {
     const r = proposePosition(funded(), proposal(), NOW)
     expect(saveFunds(r.state)).toBe(true)
     expect(loadFunds().positions.map(p => p.id)).toEqual(['p2'])
+  })
+})
+
+describe('Kalshi execution records (PR A)', () => {
+  // The id comes from the proposal itself: nextId is shared with money movements,
+  // so a deposit in funded() means the first position is not necessarily p1.
+  const approvedKalshi = (): { state: FundsState; id: string } => {
+    const r = proposePosition(funded(), proposal(), NOW)
+    return { state: applyFundsCommand(r.state, { kind: 'approve', id: r.position.id }, NOW + 1).state, id: r.position.id }
+  }
+
+  it('records a real fill: price, fee and the Kalshi order id; P&L prefers the real fee', () => {
+    const { state, id } = approvedKalshi()
+    const s = recordKalshiFill(state, id, { fillCount: 40, avgFillPrice: 0.41, feePaid: 0.68, orderId: 'ord-9', clientOrderId: 'fc-x-1' }, NOW + 2)
+    const p = s.positions[0]
+    expect(p.status).toBe('placed')
+    expect(p.contracts).toBe(40)
+    expect(p.fillPrice).toBe(0.41)
+    expect(p.feePaid).toBe(0.68)
+    expect(p.kalshiOrderId).toBe('ord-9')
+    expect(pnlFor(p, 'won')).toBeCloseTo(40 * (1 - 0.41) - 0.68, 6)
+  })
+
+  it('reverts a Kalshi approval back to proposed and clears the recorded order ids', () => {
+    const { state, id } = approvedKalshi()
+    let s = setClientOrderId(state, id, 'fc-x-1')
+    s = revertKalshiApproval(s, id)
+    expect(s.positions[0].status).toBe('proposed')
+    expect(s.positions[0].clientOrderId).toBeUndefined()
+  })
+
+  it('manual /funds placed clears the Kalshi order ids recorded at approval time', () => {
+    const { state, id } = approvedKalshi()
+    // kalshiExecution records the client order id on the approved position before it posts;
+    // if the owner then places the bet himself instead, the manual mark must not keep it.
+    let s = setClientOrderId(state, id, 'fc-x-1')
+    s = applyFundsCommand(s, { kind: 'placed', id, fillPrice: 0.43 }, NOW + 3).state
+    expect(s.positions[0].status).toBe('placed')
+    expect(s.positions[0].fillPrice).toBe(0.43)
+    expect(s.positions[0].clientOrderId).toBeUndefined()
+    expect(s.positions[0].kalshiOrderId).toBeUndefined()
+    expect(s.positions[0].feePaid).toBeUndefined()
+  })
+
+  it('settlePosition accepts the real Kalshi P&L when the caller computed it', () => {
+    const { state, id } = approvedKalshi()
+    let s = recordKalshiFill(state, id, { fillCount: 40, avgFillPrice: 0.41, feePaid: 0.68, orderId: 'ord-9', clientOrderId: 'fc-x-1' }, NOW + 2)
+    s = settlePosition(s, id, 'won', 'kalshi', NOW + 3, 12.34)
+    expect(s.positions[0].pnl).toBe(12.34)
+    expect(summarize(s, NOW + 3).bankroll).toBeCloseTo(1000 + 12.34, 6)
+  })
+
+  it('the requote tolerance is settable and shows in the status', () => {
+    const s = applyFundsCommand(funded(), { kind: 'limits', changes: { toleranceCents: 5 } }, NOW).state
+    expect(s.limits.toleranceCents).toBe(5)
+    expect(formatFundsStatus(s, NOW)).toContain('requote tolerance 5¢')
   })
 })

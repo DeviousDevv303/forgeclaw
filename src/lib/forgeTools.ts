@@ -812,7 +812,8 @@ export function loadToolContext(): ToolContext {
     waPhoneNumberId: wa.phoneNumberId,
     waAccessToken:   wa.accessToken,
     waRecipient:     wa.recipientNumber,
-    braveKey:        safeGetItem('fc_brave_key')     || undefined,
+    // No Brave key is read any more: the owner removed the Brave API key entry (2026-10-23)
+    // and web_search uses its DuckDuckGo path. The ctx.braveKey field stays for compatibility.
     googleToken:     safeGetItem('fc_google_token')  || undefined,
   }
 }

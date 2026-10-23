@@ -10,6 +10,10 @@ Cloudflare Worker (`worker.js`, free tier is enough). The model and research rou
 - `POST /v1/research {question}`: dispatch `deep-research.yml` (live web search and page reading,
   6 sources, mirror **off**), so visitors get current answers with citations.
 - `GET /v1/research/<id>`: read that run's report from its artifact.
+- `POST /v1/kalshi {method, url, headers, body}`: the owner's Kalshi transport fallback — forwards
+  an already-signed Kalshi request verbatim to Kalshi (only the two `external-api` hosts) and
+  returns its status and body, for when the browser cannot reach Kalshi directly. Nothing is
+  stored or logged; the signing headers pass through untouched.
 
 The logging routes:
 

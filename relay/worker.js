@@ -353,6 +353,34 @@ async function exportRecords(request, env, cors, prefix) {
   return json({ records, complete: list.list_complete !== false }, 200, cors)
 }
 
+/**
+ * The owner's Kalshi transport fallback: when the browser cannot reach Kalshi directly
+ * (offline middle-mile or CORS), the app sends its already-signed request here and this route
+ * forwards it verbatim to Kalshi, returning Kalshi's status and body. The signature does not
+ * cover the host, so it stays valid. Nothing is stored or logged: the KALSHI-ACCESS headers
+ * pass through untouched. Only the two Kalshi API hosts are reachable through this route, only
+ * from the configured origins, rate-limited per IP like the other routes.
+ */
+const KALSHI_HOSTS = new Set(['external-api.kalshi.com', 'external-api.demo.kalshi.co'])
+
+async function forwardKalshi(request, env, cors) {
+  if (await overQuota(request, env, 'kalshi', 120)) return json({ error: 'relay rate limit' }, 429, cors)
+  const body = await request.json().catch(() => null)
+  const method = String(body?.method || '').toUpperCase()
+  let target
+  try { target = new URL(String(body?.url || '')) } catch { target = null }
+  if (!['GET', 'POST'].includes(method) || !target || !KALSHI_HOSTS.has(target.hostname) || !target.pathname.startsWith('/trade-api/v2/')) {
+    return json({ error: 'bad kalshi forward request' }, 400, cors)
+  }
+  const headers = {}
+  for (const name of ['KALSHI-ACCESS-KEY', 'KALSHI-ACCESS-TIMESTAMP', 'KALSHI-ACCESS-SIGNATURE', 'Content-Type']) {
+    const v = body.headers?.[name] ?? body.headers?.[name.toLowerCase()]
+    if (v) headers[name] = String(v)
+  }
+  const res = await fetch(target.toString(), { method, headers, ...(body.body ? { body: String(body.body) } : {}) })
+  return json({ status: res.status, body: await res.text() }, 200, cors)
+}
+
 export default {
   async fetch(request, env) {
     const cors = corsHeaders(request, env)
@@ -367,6 +395,7 @@ export default {
       if (request.method === 'GET' && url.pathname === '/v1/learning') return await exportRecords(request, env, cors, 'learn:')
       if (request.method === 'GET' && url.pathname === '/v1/errors') return await exportRecords(request, env, cors, 'err:')
       if (request.method === 'POST' && url.pathname === '/v1/research') return await startResearch(request, env, cors)
+      if (request.method === 'POST' && url.pathname === '/v1/kalshi') return await forwardKalshi(request, env, cors)
       const m = /^\/v1\/reason\/([^/]+)$/.exec(url.pathname)
       if (request.method === 'GET' && m) return await readReasoning(m[1], env, cors)
       const r = /^\/v1\/research\/([^/]+)$/.exec(url.pathname)

@@ -52,6 +52,11 @@ export interface FundsPosition {
   approvedAt?: number
   placedAt?: number
   fillPrice?: number
+  /** Set when ForgeClaw itself placed the order on Kalshi (kalshiExecution.ts). */
+  clientOrderId?: string
+  kalshiOrderId?: string
+  /** The real fee Kalshi charged for the fill, when ForgeClaw placed the order itself. */
+  feePaid?: number
   settledAt?: number
   outcome?: PositionOutcome
   pnl?: number
@@ -71,6 +76,8 @@ export interface FundsLimits {
   capAmount: number
   /** Phantom bankroll paper positions are sized against (dollars). */
   paperBankroll: number
+  /** How far above the approved price the live price may be at approval before ForgeClaw refuses to place (cents). */
+  toleranceCents: number
 }
 
 export interface FundsState {
@@ -85,7 +92,7 @@ export interface FundsState {
   rules?: string[]
 }
 
-export const DEFAULT_LIMITS: FundsLimits = { maxStakePct: 5, maxExposurePct: 30, dailyLossPct: 10, kellyFraction: 0.25, capAmount: 0, paperBankroll: 1000 }
+export const DEFAULT_LIMITS: FundsLimits = { maxStakePct: 5, maxExposurePct: 30, dailyLossPct: 10, kellyFraction: 0.25, capAmount: 0, paperBankroll: 1000, toleranceCents: 2 }
 
 export function emptyFunds(): FundsState {
   return { version: 1, movements: [], positions: [], limits: { ...DEFAULT_LIMITS }, nextId: 1, rules: [] }
@@ -245,7 +252,9 @@ export function proposePosition(state: FundsState, input: ProposalInput, nowMs: 
 export function pnlFor(position: FundsPosition, outcome: PositionOutcome): number {
   if (outcome === 'void') return 0
   const fill = position.fillPrice ?? position.price
-  return cents(outcome === 'won' ? position.contracts * (1 - fill) - position.feeEstimate : -(position.contracts * fill) - position.feeEstimate)
+  // The real fee Kalshi charged beats the estimate whenever ForgeClaw placed the order itself.
+  const fee = position.feePaid ?? position.feeEstimate
+  return cents(outcome === 'won' ? position.contracts * (1 - fill) - fee : -(position.contracts * fill) - fee)
 }
 
 function updatePosition(state: FundsState, id: string, change: (p: FundsPosition) => FundsPosition): FundsState {
@@ -256,10 +265,12 @@ function updatePosition(state: FundsState, id: string, change: (p: FundsPosition
   return { ...state, positions }
 }
 
-export function settlePosition(state: FundsState, id: string, outcome: PositionOutcome, by: 'owner' | 'kalshi', nowMs: number): FundsState {
+export function settlePosition(state: FundsState, id: string, outcome: PositionOutcome, by: 'owner' | 'kalshi', nowMs: number, realPnl?: number): FundsState {
   const next = updatePosition(state, id, p => {
     if (p.status !== 'placed') throw new FundsError(`${id} is ${p.status}; only a placed position can be settled.`)
-    return { ...p, status: 'settled', outcome, pnl: pnlFor(p, outcome), settledAt: nowMs, settledBy: by }
+    // Kalshi's own settlement (revenue minus the position's cost basis) is the money truth when
+    // the caller has it; otherwise the ledger's fill-based computation stands.
+    return { ...p, status: 'settled', outcome, pnl: realPnl !== undefined ? cents(realPnl) : pnlFor(p, outcome), settledAt: nowMs, settledBy: by }
   })
   // The loss stop latches: it stays on past midnight until the owner resumes.
   if (!next.halted && dailyLossHit(next, nowMs)) {
@@ -273,6 +284,42 @@ export function settlePosition(state: FundsState, id: string, outcome: PositionO
 export function outcomeFromKalshiResult(position: FundsPosition, result: string | undefined): PositionOutcome | null {
   if (result !== 'yes' && result !== 'no') return null
   return result === position.side ? 'won' : 'lost'
+}
+
+// ── Kalshi self-placement records (written only by kalshiExecution.ts) ─────────
+
+export interface KalshiFillRecord {
+  fillCount: number
+  avgFillPrice: number
+  /** Total fee Kalshi charged for these fills, in dollars. */
+  feePaid: number
+  orderId: string
+  clientOrderId: string
+}
+
+/** Record what Kalshi actually filled for an approved position: real contracts, price and fee. */
+export function recordKalshiFill(state: FundsState, id: string, fill: KalshiFillRecord, nowMs: number): FundsState {
+  return updatePosition(state, id, p => {
+    if (p.status !== 'approved') throw new FundsError(`${id} is ${p.status}; only an approved position can be recorded as placed.`)
+    return {
+      ...p, status: 'placed', placedAt: nowMs, contracts: fill.fillCount, fillPrice: fill.avgFillPrice,
+      stake: cents(fill.fillCount * fill.avgFillPrice), feeEstimate: fill.feePaid, feePaid: fill.feePaid,
+      kalshiOrderId: fill.orderId, clientOrderId: fill.clientOrderId,
+    }
+  })
+}
+
+/** Undo an approval nothing came of (zero fill, or Kalshi refused): the proposal stands again. */
+export function revertKalshiApproval(state: FundsState, id: string): FundsState {
+  return updatePosition(state, id, p => {
+    if (p.status !== 'approved') throw new FundsError(`${id} is ${p.status}; only an approved position can be reverted.`)
+    return { ...p, status: 'proposed', approvedAt: undefined, clientOrderId: undefined }
+  })
+}
+
+/** Attach the client order id an approval will place under, before the order is sent. */
+export function setClientOrderId(state: FundsState, id: string, clientOrderId: string): FundsState {
+  return updatePosition(state, id, p => ({ ...p, clientOrderId }))
 }
 
 // ── Owner commands (/funds …) ──────────────────────────────────────────────────
@@ -295,10 +342,10 @@ export const FUNDS_USAGE = [
   '/funds — bankroll, open positions, track record',
   '/funds add <amount> [where it is held] — record money you put in (it stays at your venue)',
   '/funds withdraw <amount> [note]',
-  '/funds approve <id> | /funds reject <id> — decide on a proposal',
-  '/funds placed <id> [fill price] — confirm you placed the order on the venue',
+  '/funds approve <id> | /funds reject <id> — decide on a proposal (approving a Kalshi proposal places the order on Kalshi at the live price)',
+  '/funds placed <id> [fill price] — confirm you placed the order on the venue yourself',
   '/funds settle <id> won|lost|void — record the result (Kalshi positions can also settle from Kalshi)',
-  '/funds limits [cap=1000] [paper=1000] [stake=5] [exposure=30] [daily=10] [kelly=0.25] — cap and paper bankroll in dollars; others % of bankroll; kelly a fraction',
+  '/funds limits [cap=1000] [paper=1000] [stake=5] [exposure=30] [daily=10] [kelly=0.25] [tolerance=2] — cap and paper bankroll in dollars; others % of bankroll; kelly a fraction; tolerance in cents',
   '/funds resume — lift a loss-stop halt (only you can)',
   '/funds rule <your rule> · /funds rules · /funds unrule <n> — your own rules, given to every plan',
 ].join('\n')
@@ -346,14 +393,15 @@ export function parseFundsCommand(text: string): FundsCommand | null {
     return { kind: 'unrule', index }
   }
   if (verb === 'limits') {
-    const keys: Record<string, keyof FundsLimits> = { cap: 'capAmount', paper: 'paperBankroll', stake: 'maxStakePct', exposure: 'maxExposurePct', daily: 'dailyLossPct', kelly: 'kellyFraction' }
+    const keys: Record<string, keyof FundsLimits> = { cap: 'capAmount', paper: 'paperBankroll', stake: 'maxStakePct', exposure: 'maxExposurePct', daily: 'dailyLossPct', kelly: 'kellyFraction', tolerance: 'toleranceCents' }
     const changes: Partial<FundsLimits> = {}
     for (const part of rest) {
       const [k, v] = part.split('=')
       const key = keys[(k ?? '').toLowerCase()]
       const n = Number(v)
-      if (!key || !Number.isFinite(n) || n <= 0) return usage(`Bad limit "${part}".`)
-      if (key === 'capAmount' || key === 'paperBankroll' ? n > 1e9 : key === 'kellyFraction' ? n > 1 : n > 100) return usage(`"${part}" is out of range (percentages up to 100, kelly up to 1).`)
+      // tolerance=0 is meaningful (place only at exactly the approved price), unlike the others.
+      if (!key || !Number.isFinite(n) || (key === 'toleranceCents' ? n < 0 : n <= 0)) return usage(`Bad limit "${part}".`)
+      if (key === 'capAmount' || key === 'paperBankroll' ? n > 1e9 : key === 'kellyFraction' ? n > 1 : key === 'toleranceCents' ? n > 99 : n > 100) return usage(`"${part}" is out of range (percentages up to 100, kelly up to 1, tolerance up to 99 cents).`)
       changes[key] = n
     }
     return { kind: 'limits', changes }
@@ -393,7 +441,12 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
       const s = summarize(state, nowMs)
       if (p.stake + p.feeEstimate > s.available + 1e-9) throw new FundsError(`${cmd.id} needs ${money(p.stake + p.feeEstimate)} but only ${money(s.available)} is available.`)
       const next = updatePosition(state, cmd.id, x => ({ ...x, status: 'approved', approvedAt: nowMs }))
-      return { state: next, message: `Approved ${cmd.id}: buy ${p.contracts} ${p.side.toUpperCase()} on ${p.venue} "${p.market}" at up to ${money(p.price)} (${money(p.stake)} + ~${money(p.feeEstimate)} fees).\n${honestyLine(p)}\nForgeClaw does not place it: place the order on ${p.venue}, then type /funds placed ${cmd.id} <fill price>.` }
+      // Kalshi approvals placed from the app are executed by kalshiExecution.ts, which writes
+      // its own reply; this text is what a direct ledger approval says, and it stays truthful.
+      const tail = p.venue.trim().toLowerCase() === 'kalshi'
+        ? 'ForgeClaw places Kalshi orders itself when you approve in the app (live price, balance checked first).'
+        : `ForgeClaw does not place it: place the order on ${p.venue}, then type /funds placed ${cmd.id} <fill price>.`
+      return { state: next, message: `Approved ${cmd.id}: buy ${p.contracts} ${p.side.toUpperCase()} on ${p.venue} "${p.market}" at up to ${money(p.price)} (${money(p.stake)} + ~${money(p.feeEstimate)} fees).\n${honestyLine(p)}\n${tail}` }
     }
     case 'reject': {
       const next = updatePosition(state, cmd.id, x => {
@@ -407,7 +460,8 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
         if (x.status !== 'approved') throw new FundsError(`${cmd.id} is ${x.status}; approve it before marking it placed.`)
         const fill = cmd.fillPrice ?? x.price
         const fee = estimateFee(x.venue, x.contracts, fill)
-        return { ...x, status: 'placed', placedAt: nowMs, fillPrice: fill, stake: cents(x.contracts * fill), feeEstimate: fee }
+        // A manual placement supersedes any recorded Kalshi fill data for this position.
+        return { ...x, status: 'placed', placedAt: nowMs, fillPrice: fill, stake: cents(x.contracts * fill), feeEstimate: fee, feePaid: undefined, kalshiOrderId: undefined, clientOrderId: undefined }
       })
       const p = next.positions.find(x => x.id === cmd.id)!
       return { state: next, message: `${cmd.id} placed: ${p.contracts} ${p.side.toUpperCase()} at ${money(p.fillPrice!)} (${money(p.stake)} + ~${money(p.feeEstimate)} fees).` }
@@ -444,7 +498,7 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
 
 // ── Reporting ──────────────────────────────────────────────────────────────────
 
-const formatLimits = (L: FundsLimits) => `cap ${L.capAmount > 0 ? money(L.capAmount) : 'not set'} · paper bankroll ${money(L.paperBankroll)} · max stake ${L.maxStakePct}% · max exposure ${L.maxExposurePct}% · daily loss stop ${L.dailyLossPct}% (halts until you resume) · ${L.kellyFraction}x Kelly`
+const formatLimits = (L: FundsLimits) => `cap ${L.capAmount > 0 ? money(L.capAmount) : 'not set'} · paper bankroll ${money(L.paperBankroll)} · max stake ${L.maxStakePct}% · max exposure ${L.maxExposurePct}% · daily loss stop ${L.dailyLossPct}% (halts until you resume) · ${L.kellyFraction}x Kelly · requote tolerance ${L.toleranceCents}¢`
 const formatRules = (rules: string[]) => rules.map((r, i) => `${i + 1}. ${r}`).join('\n')
 
 /**
