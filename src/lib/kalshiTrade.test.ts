@@ -6,7 +6,7 @@
 import { generateKeyPairSync, webcrypto } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import type { KalshiCredentials } from './kalshiAuth'
-import { KalshiNetworkError, createKalshiClient, orderForProposal, type KalshiFetcher } from './kalshiTrade'
+import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, type KalshiFetcher } from './kalshiTrade'
 
 // jsdom's WebCrypto has no Ed25519; sign with Node's, as in kalshiAuth.test.ts.
 Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true })
@@ -100,12 +100,12 @@ describe('findOrderByClientOrderId — the no-double-order lookup', () => {
   it('finds the order and recovers its fill price and fees', async () => {
     const { fetcher, calls } = fakeFetcher(() => ({ json: orders }))
     const found = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')
-    expect(found).toEqual({ orderId: 'mine', clientOrderId: 'fc-p1-99', status: 'executed', fillCount: 10, remainingCount: 0, averageFillPrice: 0.56, totalFees: 0.173 })
-    expect(calls[0].url).toContain('/portfolio/orders?ticker=KX-1&status=resting&limit=100')
+    expect(found).toEqual({ kind: 'found', order: { orderId: 'mine', clientOrderId: 'fc-p1-99', status: 'executed', fillCount: 10, remainingCount: 0, averageFillPrice: 0.56, totalFees: 0.173 } })
+    expect(calls[0].url).toContain('/portfolio/orders?ticker=KX-1&status=resting&limit=1000')
   })
-  it('returns null when no order carries the id in any status', async () => {
+  it('reports NOT_FOUND only when no order carries the id in any status', async () => {
     const { fetcher, calls } = fakeFetcher(() => ({ json: orders }))
-    expect(await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-nope', 'KX-1')).toBeNull()
+    expect(await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-nope', 'KX-1')).toEqual({ kind: 'not_found' })
     expect(calls.map(c => c.url)).toEqual([
       expect.stringContaining('status=resting'),
       expect.stringContaining('status=canceled'),
@@ -115,11 +115,67 @@ describe('findOrderByClientOrderId — the no-double-order lookup', () => {
   it('finds an executed order even when the resting and canceled lists are empty', async () => {
     const { fetcher } = fakeFetcher(call => ({ json: call.url.includes('status=executed') ? orders : { orders: [] } }))
     const found = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')
-    expect(found?.orderId).toBe('mine')
+    expect(found).toMatchObject({ kind: 'found', order: { orderId: 'mine' } })
   })
-  it('a status it could not read makes the lookup inconclusive — it throws, never reports a miss', async () => {
+  it('a status it could not read makes the lookup UNKNOWN — never a reported miss', async () => {
     const { fetcher } = fakeFetcher(call => (call.url.includes('status=canceled') ? 'throw' : { json: { orders: [] } }))
-    await expect(createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')).rejects.toThrow(/inconclusive/)
+    const result = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')
+    expect(result.kind).toBe('unknown')
+  })
+  it('follows the cursor to the end of a status before concluding anything', async () => {
+    const { fetcher, calls } = fakeFetcher(call => {
+      if (!call.url.includes('status=resting')) return { json: { orders: [] } }
+      if (call.url.includes('cursor=c2')) return { json: orders }
+      return { json: { orders: [], cursor: 'c2' } }
+    })
+    const found = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')
+    expect(found).toMatchObject({ kind: 'found', order: { orderId: 'mine' } })
+    expect(calls.some(c => c.url.includes('cursor=c2'))).toBe(true)
+  })
+  it('a page that fails mid-scan makes the lookup UNKNOWN even after a clean first page', async () => {
+    const { fetcher } = fakeFetcher(call => {
+      if (call.url.includes('cursor=c2')) return 'throw'
+      if (call.url.includes('status=resting')) return { json: { orders: [], cursor: 'c2' } }
+      return { json: { orders: [] } }
+    })
+    const result = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')
+    expect(result.kind).toBe('unknown')
+  })
+  it('opens the scan window at the approval: min_ts is the approval second minus the skew allowance', async () => {
+    const { fetcher, calls } = fakeFetcher(() => ({ json: { orders: [] } }))
+    await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-nope', 'KX-1', 1_700_000_120_000)
+    expect(calls[0].url).toContain('min_ts=1700000060')
+  })
+})
+
+describe('rate limits (the balance budget and the 429 rules)', () => {
+  it('spaces balance reads one second apart per key, through the injected clock', async () => {
+    let t = 5_000_000
+    const delays: number[] = []
+    const { fetcher } = fakeFetcher(() => ({ json: { balance: 100, balance_dollars: '1.0000', portfolio_value: 100, updated_ts: 1 } }))
+    const client = createKalshiClient({ ...creds, keyId: 'spacing-key' }, fetcher, { now: () => t, delay: async ms => { delays.push(ms) } })
+    await client.getBalance()
+    await client.getBalance()
+    expect(delays).toEqual([1000])
+    t += 1000
+    await client.getBalance()
+    expect(delays).toEqual([1000])
+  })
+  it('a GET that meets a 429 gets one spaced retry — reads are idempotent', async () => {
+    let n = 0
+    const delays: number[] = []
+    const { fetcher, calls } = fakeFetcher(() => (++n === 1 ? { status: 429, json: { error: { code: 'rate_limited', message: 'Slow down.' } } } : { json: { balance: 200, balance_dollars: '2.0000', portfolio_value: 200, updated_ts: 1 } }))
+    const client = createKalshiClient({ ...creds, keyId: 'retry-key' }, fetcher, { now: () => 9_000_000, delay: async ms => { delays.push(ms) } })
+    const balance = await client.getBalance()
+    expect(balance.balanceCents).toBe(200)
+    expect(calls).toHaveLength(2)
+    expect(delays).toContain(1000)
+  })
+  it('a POST that meets a 429 is never retried here — it surfaces as a refusal', async () => {
+    const { fetcher, calls } = fakeFetcher(() => ({ status: 429, json: { error: { code: 'rate_limited', message: 'Slow down.' } } }))
+    const client = createKalshiClient({ ...creds, keyId: 'post-429-key' }, fetcher, { now: () => 9_500_000, delay: async () => {} })
+    await expect(client.createOrder({ ticker: 'KX-1', side: 'bid', count: 1, priceDollars: 0.5, clientOrderId: 'fc-p1-1' })).rejects.toBeInstanceOf(KalshiApiError)
+    expect(calls).toHaveLength(1)
   })
 })
 

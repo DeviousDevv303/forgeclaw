@@ -28,7 +28,7 @@ import {
   recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setOrderKey, settlePosition,
   NOT_SAVED_WARNING, type FundsState,
 } from './fundsLedger'
-import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, type KalshiClient, type KalshiFetcher } from './kalshiTrade'
+import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, type KalshiClient, type KalshiExistingOrder, type KalshiFetcher, type KalshiOrderLookup } from './kalshiTrade'
 import { PUBLIC_RELAY_URL } from './publicRelay'
 
 export interface KalshiFailureNote {
@@ -277,41 +277,58 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
     note('place', message, { clientOrderId, ...extra })
     return message
   }
-  const lookup = async () => {
-    try { return await client.findOrderByClientOrderId(clientOrderId, position.market) } catch { return null }
+  // The lookup is tri-state and its states are never merged: a lookup that could not
+  // complete (UNKNOWN) is not a miss, and a complete NOT_FOUND is not proof after an
+  // ambiguous POST — whether orders placed through the V2 endpoint appear in this
+  // lookup at all is unproven until the demo run, so NOT_FOUND authorizes exactly one
+  // thing in this file: the resume-path send under an already-kept key, below.
+  const lookupSinceMs = position.approvedAt ?? now()
+  const lookup = async (): Promise<KalshiOrderLookup> => {
+    try {
+      return await client.findOrderByClientOrderId(clientOrderId, position.market, lookupSinceMs)
+    } catch (error) {
+      return { kind: 'unknown', reason: error instanceof Error ? error.message : String(error) }
+    }
   }
-  const resolveFound = (found: NonNullable<Awaited<ReturnType<typeof lookup>>>, recovered: boolean): string => {
+  const resolveFound = (found: KalshiExistingOrder, recovered: boolean): string => {
     if (found.fillCount > 0) {
       return recordFill(found.fillCount, found.averageFillPrice ?? livePrice, found.totalFees ?? estimateFee('kalshi', found.fillCount, found.averageFillPrice ?? livePrice), found.orderId, recovered)
     }
     return confirmedNoFill(`Not placed: the order did reach Kalshi (order ${found.orderId}, status ${found.status}) and filled nothing — confirmed from Kalshi's own order record. Nothing was spent; the proposal is back to proposed.`)
   }
-  const unknownOutcome = (): string => {
-    note('place', `Order outcome unknown for ${id} after reconciling lookups; approval left standing.`, { clientOrderId })
-    return `Unknown: Kalshi gave no usable answer for ${id}, and no order with id ${clientOrderId} could be found yet. The approval stands — ${id} is approved, not placed, and its order key is kept. Check Kalshi; then type /funds approve ${id} again to reconcile under the same key, /funds placed ${id} <fill price> if you place it there yourself, or /funds reject ${id} to drop it. Nothing was resent blindly.`
+  const unknownOutcome = (detail: string): string => {
+    note('place', `Order outcome unknown for ${id}: ${detail}`, { clientOrderId })
+    return `Unknown: ${detail} The approval stands — ${id} is approved, not placed, and its order key (${clientOrderId}) is kept. Check Kalshi manually; then type /funds approve ${id} again to reconcile under the same key, /funds placed ${id} <fill price> if you place it there yourself, or /funds reject ${id} to drop it. Nothing was resent blindly.`
   }
   // ALREADY_EXISTS (409) and every other ambiguous end state reconcile here: the first
   // lookup raced Kalshi's own indexing, so look again with backoff before concluding
   // anything. A rejection that means "order already exists" is reconciled, never read
   // as "nothing was spent".
   const reconcile = async (): Promise<string> => {
+    let last: KalshiOrderLookup = { kind: 'unknown', reason: 'the lookup never ran' }
     for (const waitMs of [2000, 4000]) {
       await delay(waitMs)
-      const found = await lookup()
-      if (found) return resolveFound(found, true)
+      last = await lookup()
+      if (last.kind === 'found') return resolveFound(last.order, true)
     }
-    return unknownOutcome()
+    return unknownOutcome(last.kind === 'not_found'
+      ? `Kalshi's completed order lookup found no order with id ${clientOrderId} — but a completed miss is not proof the order never landed, so nothing is claimed about what was spent.`
+      : `Kalshi's order lookup could not be completed for id ${clientOrderId} (${last.kind === 'unknown' ? last.reason : 'no answer'}), so whether the order landed is unknown.`)
   }
 
-  // A resumed approval reconciles before it sends anything new.
+  // A resumed approval reconciles before it sends anything new. FOUND resolves it;
+  // UNKNOWN refuses the send outright (never send blind on an unverifiable lookup);
+  // only a complete NOT_FOUND authorizes the one send under the stored key, below.
   if (resuming) {
-    const found = await lookup()
-    if (found) return resolveFound(found, true)
+    const result = await lookup()
+    if (result.kind === 'found') return resolveFound(result.order, true)
+    if (result.kind === 'unknown') return unknownOutcome(`Kalshi's order lookup could not be completed for id ${clientOrderId} (${result.reason}), so the stored key was NOT resent — whether the earlier order landed is unknown.`)
   }
 
-  // 4. Send — once, under the recorded key. A lost response is resolved by lookup; the one
-  //    resend uses the SAME key, so if the first order did land, Kalshi's 409 turns the
-  //    resend into a reconcile signal instead of a second order.
+  // 4. Send — once, under the recorded key. A lost response is resolved by lookup, never
+  //    resent automatically. A resumed approval reaching this point sends under the same
+  //    kept key, so if the earlier order did land, Kalshi's 409 turns the send into a
+  //    reconcile signal instead of a second order.
   type PostOutcome =
     | { kind: 'answered'; fillCount: number; avgPrice: number; feeTotal: number; orderId: string }
     | { kind: 'api'; error: KalshiApiError }
@@ -327,11 +344,13 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
     }
   }
 
-  let post = await tryPost()
+  const post = await tryPost()
   if (post.kind === 'network') {
-    const found = await lookup()
-    if (found) return resolveFound(found, true)
-    post = await tryPost()
+    // No answer at all: the order may or may not have landed. There is NO automatic
+    // resend — its safety rested on a duplicate-rejection guarantee nothing has proven
+    // yet, so the only resend this path allows is the owner's own re-approve under
+    // the same kept key. Reconcile by lookup; anything short of FOUND ends at Unknown.
+    return reconcile()
   }
   if (post.kind === 'answered') {
     if (post.fillCount > 0) return recordFill(post.fillCount, post.avgPrice, post.feeTotal, post.orderId, false)
@@ -340,9 +359,14 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
   if (post.kind === 'api') {
     if (post.error.status === 409) return reconcile() // ALREADY_EXISTS: the order is real; go find it.
     if (post.error.status >= 500) return reconcile() // A 5xx may hide a taken order; reconcile before claiming anything.
+    if (post.error.status === 408) return reconcile() // A timeout answer proves nothing about whether the order was taken — same ambiguity class as a 5xx, never a refusal.
+    // A 429 is an answered refusal at Kalshi's gate, before matching (the rate_limits
+    // page budgets order creation too): unlike a 409 or 5xx it cannot hide a taken
+    // order, so it takes the confirmed-refusal path, not reconcile.
+    if (post.error.status === 429) return confirmedNoFill(`Not placed: Kalshi rate-limited the order (HTTP 429) before it reached the exchange — nothing was spent. The proposal is back to proposed; wait a few seconds and approve again.`, { httpStatus: 429 })
     return confirmedNoFill(`Not placed: Kalshi refused the order (${post.error.code}: ${post.error.message}). Nothing was spent; the proposal is back to proposed.`, { httpStatus: post.error.status })
   }
-  return reconcile() // The resend also got no answer: backoff lookups, then the Unknown state.
+  return reconcile() // Unreachable by the PostOutcome union; reconcile rather than claim anything.
 }
 
 /**
