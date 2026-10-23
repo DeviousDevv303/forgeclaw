@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  FUNDS_STORAGE_KEY, FundsError, applyFundsCommand, emptyFunds, estimateFee, formatFundsStatus, formatProposal, honestyLine, loadFunds, outcomeFromKalshiResult, ownerRulesPrompt,
-  parseFundsCommand, pnlFor, proposePosition, recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setClientOrderId, settlePosition, sizePosition, summarize, trackRecord,
-  type FundsState, type ProposalInput,
+  FUNDS_STORAGE_KEY, FundsError, applyFundsCommand, categoryOfMarket, categoryRecords, categoryStakeMultiplier, emptyFunds, estimateFee, formatFundsStatus, formatProposal, honestyLine, loadFunds, outcomeFromKalshiResult, ownerRulesPrompt,
+  dailyLossHit, parseFundsCommand, pnlFor, proposePosition, recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setClientOrderId, settlePosition, sizePosition, stakeMultiplierFor, summarize, trackRecord,
+  type FundsPosition, type FundsState, type ProposalInput,
 } from './fundsLedger'
 
 const NOW = Date.parse('2026-10-22T15:00:00Z')
@@ -27,14 +27,17 @@ describe('fees', () => {
 
 describe('sizing', () => {
   it('stakes a fraction of Kelly and never more than the stake cap', () => {
-    // Kelly f* = (0.55-0.4)/0.6 = 0.25; 0.25x Kelly = 6.25% of 1000 = 62.5; stake cap 5% = 50 binds.
+    // Kelly f* = (0.55-0.4)/0.6 = 0.25; 0.25x Kelly = 6.25% of 1000 = 62.5; stake cap 5% = 50 binds,
+    // then the unproven-category multiplier (item 11: no settled record for KX) halves the budget to 25.
     const s = sizePosition(proposal(), funded(), NOW)
     expect(s.kellyFull).toBeCloseTo(0.25)
     expect(s.binding).toMatch(/max stake 5%/)
-    expect(s.stake + s.fee).toBeLessThanOrEqual(50)
-    // Fee = ceil(0.07 x C x 0.24): 120 contracts = 48.00 + 2.02 = 50.02 (over); 119 = 47.60 + 2.00 = 49.60.
-    expect(s.contracts).toBe(119)
-    expect(s.fee).toBe(2)
+    expect(s.binding).toMatch(/× 0\.5 category record \(KX\)/)
+    expect(s.categoryMultiplier).toBe(0.5)
+    expect(s.stake + s.fee).toBeLessThanOrEqual(25)
+    // Fee = ceil(0.07 x C x 0.24): 60 contracts = 24.00 + 1.01 = 25.01 (over); 59 = 23.60 + 1.00 = 24.60.
+    expect(s.contracts).toBe(59)
+    expect(s.fee).toBe(1)
   })
   it('respects the exposure cap across open positions, then refuses', () => {
     let st = funded()
@@ -94,11 +97,11 @@ describe('owner flow and P/L', () => {
   })
   it('stops new real proposals for the day once the daily loss limit is hit', () => {
     let st = funded(1000)
-    st = applyFundsCommand(st, { kind: 'limits', changes: { dailyLossPct: 3 } }, NOW).state
+    st = applyFundsCommand(st, { kind: 'limits', changes: { dailyLossPct: 2 } }, NOW).state
     st = proposePosition(st, proposal(), NOW).state
     st = applyFundsCommand(st, { kind: 'approve', id: 'p2' }, NOW).state
     st = applyFundsCommand(st, { kind: 'placed', id: 'p2' }, NOW).state
-    st = settlePosition(st, 'p2', 'lost', 'owner', NOW) // about -50
+    st = settlePosition(st, 'p2', 'lost', 'owner', NOW) // about -25 (unproven-category half stake, item 11)
     expect(() => proposePosition(st, proposal({ market: 'next' }), NOW)).toThrow(/Daily loss limit/)
     expect(proposePosition(st, proposal({ market: 'next', mode: 'paper' }), NOW).position.status).toBe('placed')
   })
@@ -146,9 +149,10 @@ describe('commands', () => {
 describe('storage', () => {
   beforeEach(() => localStorage.clear())
   it('persists owner commands and reports refusals without changing anything', () => {
-    expect(runFundsCommand('/funds add 500 kalshi', NOW)).toMatch(/^Not done: Set your cap first/)
-    expect(runFundsCommand('/funds limits cap=1000', NOW)).toMatch(/cap \$1000\.00/)
     expect(runFundsCommand('/funds add 500 kalshi', NOW)).toMatch(/Recorded deposit of \$500\.00.*Bankroll \$500\.00/)
+    expect(loadFunds().movements).toHaveLength(1)
+    expect(runFundsCommand('/funds limits cap=1000', NOW)).toMatch(/cap \$1000\.00/)
+    expect(runFundsCommand('/funds add 600 kalshi', NOW)).toMatch(/^Not done: That would put \$1100\.00 in, over your cap/)
     expect(loadFunds().movements).toHaveLength(1)
     expect(runFundsCommand('/funds withdraw 900', NOW)).toMatch(/^Not done: Only \$500\.00 is available/)
     expect(loadFunds().movements).toHaveLength(1)
@@ -184,9 +188,9 @@ describe('cage rules', () => {
   })
 
   it('3. the loss stop halts real proposals AND approvals, survives midnight, and only /funds resume lifts it', () => {
-    let st = applyFundsCommand(funded(1000), { kind: 'limits', changes: { dailyLossPct: 3 } }, NOW).state
+    let st = applyFundsCommand(funded(1000), { kind: 'limits', changes: { dailyLossPct: 2 } }, NOW).state
     st = proposePosition(st, proposal({ market: 'pending' }), NOW).state // p2, waiting
-    st = settleLoss(st, 'loser') // about -50: over 3%
+    st = settleLoss(st, 'loser') // about -25: over 2%
     expect(st.halted?.reason).toMatch(/Daily loss limit hit/)
     const tomorrow = NOW + 36 * 3600_000
     expect(() => proposePosition(st, proposal({ market: 'next' }), tomorrow)).toThrow(/HALTED.*\/funds resume/)
@@ -208,7 +212,7 @@ describe('cage rules', () => {
 
   it('6. every proposal and approval carries the expected value at the market price and at ForgeClaw\'s estimate', () => {
     const { state, position, sizing } = proposePosition(funded(), proposal(), NOW)
-    expect(honestyLine(position)).toBe("Expected value after fees: -$2.00 at the market's price (implied 40%); $15.85 only if ForgeClaw's 55% is right.")
+    expect(honestyLine(position)).toBe("Expected value after fees: -$1.00 at the market's price (implied 40%); $7.85 only if ForgeClaw's 55% is right.")
     expect(formatProposal(position, sizing)).toContain(honestyLine(position))
     expect(applyFundsCommand(state, { kind: 'approve', id: position.id }, NOW).message).toContain("at the market's price (implied 40%)")
   })
@@ -245,8 +249,11 @@ describe('paper mode (optional)', () => {
     expect(summarize(r.state, NOW).available).toBe(0)
   })
 
-  it('the cap has to exist before the money does', () => {
-    expect(() => applyFundsCommand(emptyFunds(), { kind: 'deposit', amount: 100 }, NOW)).toThrow(/Set your cap first/)
+  it('deposits need no cap; the cap binds only once the owner sets one', () => {
+    const s = applyFundsCommand(emptyFunds(), { kind: 'deposit', amount: 100 }, NOW).state
+    expect(summarize(s, NOW).bankroll).toBe(100)
+    const cappedState = applyFundsCommand(s, { kind: 'limits', changes: { capAmount: 150 } }, NOW).state
+    expect(() => applyFundsCommand(cappedState, { kind: 'deposit', amount: 100 }, NOW)).toThrow(/over your cap/)
   })
 
   it('keeps the record across reloads', () => {
@@ -310,5 +317,127 @@ describe('Kalshi execution records (PR A)', () => {
     const s = applyFundsCommand(funded(), { kind: 'limits', changes: { toleranceCents: 5 } }, NOW).state
     expect(s.limits.toleranceCents).toBe(5)
     expect(formatFundsStatus(s, NOW)).toContain('requote tolerance 5¢')
+  })
+})
+
+describe('optional locks (PR B item 7)', () => {
+  it('the parser accepts cap=0 (no cap) and daily=0 (loss stop off)', () => {
+    expect(parseFundsCommand('/funds limits cap=0')).toMatchObject({ kind: 'limits', changes: { capAmount: 0 } })
+    expect(parseFundsCommand('/funds limits daily=0')).toMatchObject({ kind: 'limits', changes: { dailyLossPct: 0 } })
+  })
+
+  it('daily=0: a losing day never halts, and the status says the stop is off', () => {
+    let s = applyFundsCommand(funded(), { kind: 'limits', changes: { dailyLossPct: 0 } }, NOW).state
+    const r = proposePosition(s, proposal(), NOW)
+    s = applyFundsCommand(r.state, { kind: 'approve', id: r.position.id }, NOW + 1).state
+    s = recordKalshiFill(s, r.position.id, { fillCount: 10, avgFillPrice: 0.4, feePaid: 0.1, orderId: 'o1', clientOrderId: 'c1' }, NOW + 2)
+    s = settlePosition(s, r.position.id, 'lost', 'kalshi', NOW + 3, -50)
+    expect(s.halted).toBeUndefined()
+    expect(dailyLossHit(s, NOW + 3)).toBe(false)
+    expect(formatFundsStatus(s, NOW + 3)).toContain('daily loss stop off')
+  })
+})
+
+describe('approve-all + auto-approve limit (PR B item 10)', () => {
+  it('parses /funds approve-all as its own command', () => {
+    expect(parseFundsCommand('/funds approve-all')).toEqual({ kind: 'approve-all' })
+    expect(parseFundsCommand('/funds APPROVE-ALL')).toEqual({ kind: 'approve-all' })
+  })
+
+  it('the ledger itself refuses approve-all: placing belongs to the execution layer', () => {
+    expect(runFundsCommand('/funds approve-all')).toMatch(/^Not done: Approve-all is run by the app/)
+  })
+
+  it('autoapprove parses in dollars, 0 turns it back off, and the status shows the setting', () => {
+    expect(parseFundsCommand('/funds limits autoapprove=25')).toMatchObject({ kind: 'limits', changes: { autoApproveUnder: 25 } })
+    expect(parseFundsCommand('/funds limits autoapprove=0')).toMatchObject({ kind: 'limits', changes: { autoApproveUnder: 0 } })
+    expect(parseFundsCommand('/funds limits autoapprove=-5')).toMatchObject({ kind: 'usage' })
+    expect(emptyFunds().limits.autoApproveUnder).toBe(0)
+    expect(formatFundsStatus(funded(), NOW)).toContain('auto-approve off')
+    const s = applyFundsCommand(funded(), { kind: 'limits', changes: { autoApproveUnder: 25 } }, NOW).state
+    expect(formatFundsStatus(s, NOW)).toContain('auto-approve up to $25.00')
+  })
+})
+
+describe('category learning (PR B item 11)', () => {
+  const settledPos = (over: Partial<FundsPosition> = {}): FundsPosition => ({
+    id: 's1', createdAt: NOW, mode: 'real', venue: 'kalshi', market: 'KXHIGHNY-26OCT23-T75', side: 'yes',
+    price: 0.4, probability: 0.55, contracts: 10, stake: 4, feeEstimate: 0.1,
+    rationale: 'settled history', sources: ['https://weather.gov/forecast'], status: 'settled', outcome: 'won', pnl: 5, ...over,
+  })
+  const history = (positions: FundsPosition[]): FundsState => ({ ...funded(), positions })
+  const run = (n: number, over: Partial<FundsPosition>): FundsPosition[] =>
+    Array.from({ length: n }, (_, i) => settledPos({ id: `s${i}`, ...over }))
+
+  it('derives the category from the ticker series; a dashless market is its own category', () => {
+    expect(categoryOfMarket('KXHIGHNY-26OCT23-T75')).toBe('KXHIGHNY')
+    expect(categoryOfMarket('KX-RAIN-OCT')).toBe('KX')
+    expect(categoryOfMarket('Lakers moneyline')).toBe('Lakers moneyline')
+  })
+
+  it('aggregates settled count, wins and net P/L per category, ignoring void and unsettled', () => {
+    const st = history([
+      settledPos({ id: 'a', pnl: 5 }),
+      settledPos({ id: 'b', outcome: 'lost', pnl: -4.1 }),
+      settledPos({ id: 'c', market: 'KXCPI-26NOV', outcome: 'lost', pnl: -2 }),
+      settledPos({ id: 'd', outcome: 'void', pnl: 0 }),
+      settledPos({ id: 'e', status: 'placed', outcome: undefined, pnl: undefined }),
+    ])
+    expect(categoryRecords(st)).toEqual([
+      { category: 'KXCPI', settled: 1, won: 0, netPnl: -2 },
+      { category: 'KXHIGHNY', settled: 2, won: 1, netPnl: 0.9 },
+    ])
+  })
+
+  it('no settled history in the category → half stake', () => {
+    expect(categoryStakeMultiplier(funded(), 'KXHIGHNY')).toBe(0.5)
+    expect(stakeMultiplierFor(undefined)).toBe(0.5)
+  })
+
+  it('a small sample stays unproven even when it is winning', () => {
+    const st = history(run(3, { pnl: 5 }))
+    expect(categoryStakeMultiplier(st, 'KXHIGHNY')).toBe(0.5)
+  })
+
+  it('a category that lost money over a real sample → quarter stake', () => {
+    const st = history(run(5, { outcome: 'lost', pnl: -3 }))
+    expect(categoryStakeMultiplier(st, 'KXHIGHNY')).toBe(0.25)
+  })
+
+  it('a profitable category over a real sample → full stake, and the multiplier never exceeds 1', () => {
+    const st = history(run(6, { pnl: 2 }))
+    expect(categoryStakeMultiplier(st, 'KXHIGHNY')).toBe(1)
+    expect(stakeMultiplierFor({ settled: 500, netPnl: 1e6 })).toBe(1)
+  })
+
+  it('categories are isolated: a proven loser does not shrink a proven winner', () => {
+    const st = history([
+      ...run(5, { outcome: 'lost', pnl: -3 }),
+      ...run(5, { id: 'w', market: 'KXCPI-26NOV', pnl: 4 }),
+    ])
+    expect(categoryStakeMultiplier(st, 'KXHIGHNY')).toBe(0.25)
+    expect(categoryStakeMultiplier(st, 'KXCPI')).toBe(1)
+    expect(categoryStakeMultiplier(st, 'KXBTC')).toBe(0.5)
+  })
+
+  it('sizing enforces the multiplier and names it in the proposal output', () => {
+    const loser = history(run(5, { outcome: 'lost', pnl: -3 }))
+    const s = sizePosition(proposal({ market: 'KXHIGHNY-26OCT24-T72' }), loser, NOW)
+    expect(s.category).toBe('KXHIGHNY')
+    expect(s.categoryMultiplier).toBe(0.25)
+    expect(s.binding).toMatch(/× 0\.25 category record \(KXHIGHNY\)/)
+    // The same input on a clean ledger gets the unproven half, strictly more contracts.
+    const fresh = sizePosition(proposal({ market: 'KXHIGHNY-26OCT24-T72' }), funded(), NOW)
+    expect(fresh.categoryMultiplier).toBe(0.5)
+    expect(s.contracts).toBeLessThan(fresh.contracts)
+    const { position, sizing } = proposePosition(loser, proposal({ market: 'KXHIGHNY-26OCT24-T72' }), NOW)
+    expect(formatProposal(position, sizing)).toMatch(/size limited by .*category record \(KXHIGHNY\)/)
+  })
+
+  it('/funds status shows each category record and its multiplier', () => {
+    const st = history(run(5, { outcome: 'lost', pnl: -3 }))
+    const out = formatFundsStatus(st, NOW)
+    expect(out).toContain('Stakes by category')
+    expect(out).toContain('KXHIGHNY 0/5 won, -$15.00 net → stake ×0.25')
   })
 })

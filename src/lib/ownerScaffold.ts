@@ -32,6 +32,55 @@ export function saveOwnerScaffold(text: string, store: Store | undefined = brows
   return clean
 }
 
+/**
+ * A phase label is a heading, not a sentence: a longer "label" is prose the extractor
+ * misread, and printing it as a section title would shred the plan it organizes.
+ */
+const MAX_PHASE_LABEL_CHARS = 80
+/**
+ * A reasoning framework has a handful of phases. A match count past this is the
+ * structure of the prose (lists, labeled lines in body text), not of the framework.
+ */
+const MAX_SCAFFOLD_PHASES = 12
+
+/**
+ * The framework's phase labels, in order, read from its own structure — never from any
+ * wording this code expects. The owner's text is free-form, so the extractor reads only
+ * generic shape, in this order: markdown headings; numbered lead-ins ("1. …", "2) …");
+ * bold lead-ins ("**…**"); and colon labels ("Label: …") — the labeled-line shape this
+ * app itself asks the framework's phases to take (see operatingLoopFor). The looser
+ * shapes need at least two matches to count as structure; a lone match is prose. An
+ * empty result means no phase structure was found — callers say so rather than invent one.
+ */
+export function scaffoldPhases(text: string): string[] {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
+  const finish = (labels: string[]): string[] => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const raw of labels) {
+      const label = raw.replace(/\s+/g, ' ').trim()
+      if (!label || label.length > MAX_PHASE_LABEL_CHARS) continue
+      const key = label.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(label)
+      if (out.length >= MAX_SCAFFOLD_PHASES) break
+    }
+    return out
+  }
+  const headings = lines.filter(l => /^#{1,6}\s+\S/.test(l)).map(l => l.replace(/^#{1,6}\s+/, '').replace(/[*_`]+/g, '').trim())
+  if (headings.length) return finish(headings)
+  const numbered = lines.filter(l => /^\d{1,2}[.)]\s+\S/.test(l)).map(l => l.replace(/^\d{1,2}[.)]\s+/, '').trim())
+  if (numbered.length >= 2) return finish(numbered)
+  const bold = lines.filter(l => /^\*\*[^*]+\*\*/.test(l)).map(l => /^\*\*([^*]+)\*\*/.exec(l)![1].trim())
+  if (bold.length >= 2) return finish(bold)
+  const colon = lines
+    .filter(l => /^[^:]{2,60}:\s+\S/.test(l) && !/^https?:/i.test(l))
+    .map(l => l.slice(0, l.indexOf(':')).trim())
+  if (colon.length >= 2) return finish(colon)
+  return []
+}
+
 /** The system-prompt section that replaces the default operating loop while the owner's framework is set. */
 export function operatingLoopFor(scaffold: string, fallback: string): string {
   const text = scaffold.trim()

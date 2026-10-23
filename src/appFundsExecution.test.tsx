@@ -81,7 +81,9 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.resetModules(); delete (window as unknown as Record<string, unknown>).forgeCore })
 
 async function send(text: string) {
-  const box = screen.getByRole('textbox') as HTMLTextAreaElement
+  // The chat box is the page's TEXTAREA; the funds panel adds a text INPUT (its
+  // add-funds box) whenever a proposal waits, so role alone is ambiguous (PR B).
+  const box = screen.getAllByRole('textbox').find(el => el.tagName === 'TEXTAREA') as HTMLTextAreaElement
   fireEvent.change(box, { target: { value: text } })
   fireEvent.keyDown(box, { key: 'Enter' })
 }
