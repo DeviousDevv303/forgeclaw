@@ -111,17 +111,35 @@ export const RESEARCH_GUIDANCE =
   'If the evidence is thin or one-sided, say so, and call deep_research once more with sharper queries. End with a numbered Sources list. ' +
   'Never cite anything that deep_research did not return.'
 
+/**
+ * Widest Kalshi spread (in cents) worth crossing on a weather market. The taker fee peaks
+ * near 2¢ a contract and a forecast edge on a daily high is usually only a few cents, so
+ * past a 5¢ spread the fee plus crossing the spread eats the edge before the forecast pays.
+ */
+export const FUNDS_WEATHER_MAX_SPREAD_CENTS = 5
+
 /** Planning with the owner's money: research, own probability vs price, sized proposals, owner decides. */
 export const FUNDS_GUIDANCE =
   'Funds plan: you are planning with the owner\'s real money. 1) Call funds_status first: bankroll, available funds, limits, open positions, your track record and the owner\'s own rules, which override anything here. If it says HALTED, propose nothing real. ' +
   '2) Research before proposing: kalshi_markets for live prices and market rules, web_search and deep_research for evidence. Look for markets where public evidence ' +
   '(official data, schedules, forecasts, polls, injury reports) points away from the price. 3) For each candidate, state YOUR probability with the evidence behind it; ' +
   'do not anchor on the market price. Propose only where your probability beats the price after fees. 4) Propose each position with funds_propose; it sizes the ' +
-  'stake from the bankroll and limits and refuses bets with no edge, so never invent a stake. 5) Then write the master plan: the goal, the proposals and how much ' +
+  'stake from the bankroll and limits and refuses bets with no edge, so never invent a stake. Sizing also learns from your settled record per market series ' +
+  '(the ticker prefix, e.g. KXHIGHNY): a series with fewer than 5 settled positions is staked at half and one that has lost money over 5 or more at a quarter, ' +
+  'until its record improves; funds_status shows each series\' record and multiplier. Never rename a series to dodge a shrink — the shrink is the system learning. ' +
+  '5) Then write the master plan: the goal, the proposals and how much ' +
   'of the bankroll they use, the timeline, what result would show the plan is wrong (your track record versus the prices paid), and when to stop or scale up. ' +
   '6) You cannot approve, place orders or move money. The owner approves with /funds approve <id>, places the order on the venue, and confirms with ' +
   '/funds placed <id> <fill price>. Never say a position is placed unless funds_status shows it placed. 7) Settle placed Kalshi positions with funds_settle (id "all" for every one) once markets have results. ' +
-  '8) The owner prefers short-term, quick-turnaround markets (settling within hours or days). Use mode=paper only when the owner asks to test an idea without money, and never describe paper results as real money.'
+  '8) The owner prefers short-term, quick-turnaround markets (settling within hours or days). Use mode=paper only when the owner asks to test an idea without money, and never describe paper results as real money. ' +
+  '9) Playbook — weather first: daily high-temperature markets (series starting KXHIGH) settle on one station\'s official high; call weather_forecast for that city, ' +
+  'form your probability from the forecast, and propose only when it beats the kalshi_markets price after fees. Skip thin or wide books: if the spread kalshi_markets ' +
+  'prints (YES ask minus YES bid) is wider than ' + FUNDS_WEATHER_MAX_SPREAD_CENTS + ' cents, or the 24h volume and open interest are near zero, the price is not evidence and ' +
+  'crossing it eats a weather edge, which is only a few cents to begin with. Econ second: for scheduled releases (CPI, jobs reports, Fed decisions), your rationale ' +
+  'must name the release time and a falsifier — the print that would prove your estimate wrong; no falsifier, no proposal. ' +
+  '10) Every bet must carry its evidence on the record: deep_research citations and/or structured data (a weather_forecast, the kalshi_markets order book, price history), ' +
+  'a stated confidence, and a falsifier. Put them in funds_propose\'s rationale and sources — a bet without them does not belong in a plan, ' +
+  'and the owner reading it back with /funds plan sees the gap where they are missing.'
 
 /** How a hosted model improves ForgeClaw itself: evidence first, smallest safe proposal, PR only. */
 export const SELF_SCULPT_GUIDANCE =

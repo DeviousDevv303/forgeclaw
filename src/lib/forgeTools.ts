@@ -53,6 +53,7 @@ import { fetchKalshiMarket, KalshiError, runKalshiMarkets, runKalshiOrderbook, t
 import { relayFallbackFetcher } from './kalshiTrade'
 import { effectiveKalshiRelayUrl } from './kalshiAuth'
 import { formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
+import { maybeAutoApprove } from './kalshiExecution'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -1977,7 +1978,20 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
             rationale: String(input.rationale ?? ''), sources: rawSources.map(String),
             ...(input.max_stake !== undefined ? { maxStake: num(input.max_stake) } : {}),
           }, Date.now())
-          return formatProposal(position, sizing) + (saveFunds(state) ? '' : NOT_SAVED_WARNING)
+          const saved = saveFunds(state)
+          let autoNote = ''
+          if (saved) {
+            // Item 10: the owner's autoapprove limit is a standing owner instruction, so a
+            // small enough proposal is approved at once — through kalshiExecution's normal
+            // approve path, not here. A failed attempt never unmakes the proposal.
+            try {
+              const auto = await maybeAutoApprove(position)
+              if (auto) autoNote = `\nAuto-approve (the owner's /funds limits autoapprove setting) ran the same approval as /funds approve ${position.id}:\n${auto}`
+            } catch (error) {
+              autoNote = `\nAuto-approve attempt failed (${error instanceof Error ? error.message : String(error)}). The proposal still waits for /funds approve ${position.id}.`
+            }
+          }
+          return formatProposal(position, sizing) + (saved ? '' : NOT_SAVED_WARNING) + autoNote
         } catch (error) {
           if (error instanceof FundsError) throw new Error(`Not proposed: ${error.message}`)
           throw error

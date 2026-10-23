@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
-import { loadOwnerScaffold, MAX_SCAFFOLD_CHARS, operatingLoopFor, reasoningFormatReminder, saveOwnerScaffold } from './ownerScaffold'
+import { loadOwnerScaffold, MAX_SCAFFOLD_CHARS, operatingLoopFor, reasoningFormatReminder, saveOwnerScaffold, scaffoldPhases } from './ownerScaffold'
 
 const DEFAULT_LOOP = 'DEFAULT LOOP\n\n'
 
@@ -35,5 +35,23 @@ describe('the owner\'s private reasoning framework', () => {
     const broken = { getItem: () => { throw new Error('blocked') }, setItem: () => { throw new Error('blocked') }, removeItem: () => { throw new Error('blocked') } }
     expect(loadOwnerScaffold(broken)).toBe('')
     expect(saveOwnerScaffold('Phase A', broken)).toBe('Phase A')
+  })
+})
+
+describe('scaffoldPhases: phase labels from the framework\'s own structure (synthetic stand-ins)', () => {
+  it('reads markdown headings, in order', () => {
+    const text = ['# Phase One: Survey', 'Look at everything first.', '# Phase Two: Commit', 'Act only on what the survey supports.'].join('\n')
+    expect(scaffoldPhases(text)).toEqual(['Phase One: Survey', 'Phase Two: Commit'])
+  })
+  it('reads colon labels when there are no headings', () => {
+    expect(scaffoldPhases('Survey: look first\nCommit: then act')).toEqual(['Survey', 'Commit'])
+  })
+  it('reads numbered lead-ins', () => {
+    expect(scaffoldPhases('1. Survey the facts\n2. Commit to a side')).toEqual(['Survey the facts', 'Commit to a side'])
+  })
+  it('a single loose match is prose, not structure; plain prose has no phases', () => {
+    expect(scaffoldPhases('Note: just one labeled line in an essay.')).toEqual([])
+    expect(scaffoldPhases('Work the problem from the facts.\nWrite down what would change your mind.')).toEqual([])
+    expect(scaffoldPhases('')).toEqual([])
   })
 })
