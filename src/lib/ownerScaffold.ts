@@ -7,8 +7,13 @@
 // reasoning, never in the visible answer. It is sent to the model provider chosen for the chat, like the rest of the prompt.
 
 const KEY = 'fc_owner_scaffold_v1'
-/** Bounded, because it is sent on every request. */
-export const MAX_SCAFFOLD_CHARS = 3_000
+/**
+ * Bounded, because it is sent on every request (~3,000 tokens at the limit). Was 3,000 until 2026-10-23: the owner's full
+ * five-phase framework is longer, and the Settings box cut a paste there silently, so the later phases never reached the model.
+ */
+export const MAX_SCAFFOLD_CHARS = 12_000
+/** The previous limit: a framework saved at exactly this length was probably cut by it. */
+export const LEGACY_SCAFFOLD_LIMIT = 3_000
 
 type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 const browserStore = (): Store | undefined => { try { return globalThis.localStorage } catch { return undefined } }
