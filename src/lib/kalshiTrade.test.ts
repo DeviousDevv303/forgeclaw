@@ -6,7 +6,7 @@
 import { generateKeyPairSync, webcrypto } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import type { KalshiCredentials } from './kalshiAuth'
-import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, type KalshiFetcher } from './kalshiTrade'
+import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, relayFallbackFetcher, type KalshiBaseFetcher, type KalshiFetcher } from './kalshiTrade'
 
 // jsdom's WebCrypto has no Ed25519; sign with Node's, as in kalshiAuth.test.ts.
 Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true })
@@ -176,6 +176,42 @@ describe('rate limits (the balance budget and the 429 rules)', () => {
     const client = createKalshiClient({ ...creds, keyId: 'post-429-key' }, fetcher, { now: () => 9_500_000, delay: async () => {} })
     await expect(client.createOrder({ ticker: 'KX-1', side: 'bid', count: 1, priceDollars: 0.5, clientOrderId: 'fc-p1-1' })).rejects.toBeInstanceOf(KalshiApiError)
     expect(calls).toHaveLength(1)
+  })
+})
+
+describe('relayFallbackFetcher — the shared direct-then-relay transport', () => {
+  const throwing: KalshiBaseFetcher = async () => { throw new TypeError('Failed to fetch') }
+
+  it('a transport failure goes through the relay and rebuilds the response; the forwarded method defaults to GET', async () => {
+    const relayBodies: Array<Record<string, unknown>> = []
+    const relay: KalshiBaseFetcher = async (url, init) => {
+      expect(url).toBe('https://relay.example/v1/kalshi')
+      relayBodies.push(JSON.parse(String(init?.body)))
+      return Response.json({ status: 200, body: '{"markets":[]}' })
+    }
+    const fetcher = relayFallbackFetcher(throwing, 'https://relay.example', relay)
+    const res = await fetcher('https://external-api.kalshi.com/trade-api/v2/markets?limit=1000', { headers: { Accept: 'application/json' } })
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('{"markets":[]}')
+    expect(relayBodies).toHaveLength(1)
+    expect(relayBodies[0].method).toBe('GET') // the market read passes no method; the relay contract requires one
+    expect(relayBodies[0].url).toContain('/trade-api/v2/markets')
+  })
+
+  it('an HTTP answer — even an error — is never relayed', async () => {
+    let relayCalls = 0
+    const base: KalshiBaseFetcher = async () => new Response('Kalshi said no', { status: 403 })
+    const relay: KalshiBaseFetcher = async () => { relayCalls++; return Response.json({ status: 200, body: '{}' }) }
+    const res = await relayFallbackFetcher(base, 'https://relay.example', relay)('https://external-api.kalshi.com/trade-api/v2/markets')
+    expect(res.status).toBe(403)
+    expect(relayCalls).toBe(0)
+  })
+
+  it('with no relay configured the direct error propagates untouched; a broken relay never masks it either', async () => {
+    await expect(relayFallbackFetcher(throwing, '')('https://external-api.kalshi.com/trade-api/v2/markets')).rejects.toThrow('Failed to fetch')
+    const garbageRelay: KalshiBaseFetcher = async () => Response.json({ error: 'origin not allowed' })
+    await expect(relayFallbackFetcher(throwing, 'https://relay.example', garbageRelay)('https://external-api.kalshi.com/trade-api/v2/markets')).rejects.toThrow('Failed to fetch')
+    await expect(relayFallbackFetcher(throwing, 'https://relay.example', throwing)('https://external-api.kalshi.com/trade-api/v2/markets')).rejects.toThrow('Failed to fetch')
   })
 })
 

@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { executeTool, FORGE_TOOLS } from './forgeTools'
+import { getErrorLog } from './errorLog'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -33,6 +34,18 @@ describe('kalshi_markets tool', () => {
     expect(out).toMatch(/TOOL ERROR/)
     expect(out).toMatch(/could not be reached/)
     expect(out).not.toMatch(/No open Kalshi markets matched/)
+  })
+
+  it('a blocked fetch with no relay configured names the owner fix and is error-logged with the run id', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    const runCtx = { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', runId: 'run-kalshi-test', requestGuardianApproval: async () => true } as never
+    const out = await executeTool({ id: '1', name: 'kalshi_markets', input: { query: 'anything' } }, runCtx)
+    expect(out).toMatch(/TOOL ERROR/)
+    expect(out).toMatch(/no Kalshi relay is configured/)
+    expect(out).toMatch(/Settings → Kalshi trading → Kalshi relay URL/)
+    const entry = getErrorLog().find(e => e.source === 'kalshi' && (e.details ?? '').includes('run-kalshi-test'))
+    expect(entry).toBeDefined()
+    expect(entry!.message).toMatch(/no Kalshi relay is configured/)
   })
 
   it('shows the order book for a ticker and refuses one without a ticker', async () => {

@@ -224,6 +224,32 @@ describe('never double-order (item 5)', () => {
     expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('approved')
   })
 
+  it('a dropped response whose lookup FINDS the order with 0 fills: "nothing was spent" from Kalshi’s own record', async () => {
+    const id = seedProposal()
+    const { client, createCalls } = fakeClient({
+      onCreate: () => { throw new KalshiNetworkError('socket closed') },
+      existing: { fillCount: 0, orderId: 'ord-empty', status: 'canceled' },
+    })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
+    expect(reply).toContain('did reach Kalshi (order ord-empty, status canceled) and filled nothing')
+    expect(reply).toContain('Nothing was spent')
+    expect(createCalls).toHaveLength(1)
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+
+  it('a timed-out POST (no answer at all) ends at Unknown after reconcile — never resent, never a refusal', async () => {
+    const id = seedProposal()
+    const { client, createCalls } = fakeClient({
+      onCreate: () => { throw new KalshiNetworkError('No answer from Kalshi for POST /trade-api/v2/portfolio/events/orders: request timed out after 30000ms') },
+      existing: null,
+    })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
+    expect(reply).toContain('Unknown:')
+    expect(reply).not.toContain('nothing was spent')
+    expect(createCalls).toHaveLength(1)
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('approved')
+  })
+
   it('a Kalshi refusal reverts the approval and names Kalshi’s reason', async () => {
     const id = seedProposal()
     const { client } = fakeClient({
@@ -411,7 +437,7 @@ describe('review round: idempotency, reconcile, concurrency (PR #240 gate)', () 
     expect(loadFunds().positions.find(x => x.id === id)!.status).toBe('approved')
   })
 
-  it('when even the delayed lookups miss: Unknown, the approval stands, and a later re-approve reuses the stored key', async () => {
+  it('resumed approve with a complete lookup miss ends at Unknown and sends nothing', async () => {
     const id = seedProposal()
     const first = fakeClient({ onCreate: () => { throw new KalshiNetworkError('socket closed') }, existing: null })
     const reply1 = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(first.client))
@@ -420,11 +446,19 @@ describe('review round: idempotency, reconcile, concurrency (PR #240 gate)', () 
     const standing = loadFunds().positions.find(x => x.id === id)!
     expect(standing.status).toBe('approved')
     expect(standing.clientOrderId).toBe(`fc-${id}-1`)
+    // The re-approve is a resume: its lookup completes with a miss (NOT_FOUND). A resumed
+    // approve never sends — a miss cannot prove the first order never landed while
+    // V2-order visibility in the lookup is unproven — so it ends at Unknown, 0 POSTs.
     const second = fakeClient({})
     const reply2 = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(second.client))
-    expect(reply2).toContain('Placed')
-    expect(second.createCalls).toHaveLength(1)
-    expect(second.createCalls[0].clientOrderId).toBe(`fc-${id}-1`)
+    expect(reply2).toContain('Unknown:')
+    expect(reply2).toContain('found no order under the kept key')
+    expect(reply2).toContain('cannot prove the first order never landed')
+    expect(second.findCalls.length).toBeGreaterThan(0)
+    expect(second.createCalls).toHaveLength(0)
+    const after = loadFunds().positions.find(x => x.id === id)!
+    expect(after.status).toBe('approved')
+    expect(after.clientOrderId).toBe(`fc-${id}-1`)
   })
 
   it('a confirmed zero fill consumes the attempt: the next approve mints attempt 2', async () => {

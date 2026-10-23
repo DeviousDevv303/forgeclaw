@@ -42,6 +42,34 @@ visitors not to enter private information.
 - **Flags:** text that reads like instructions to a model is flagged (`instruction-like`, `many-links`, `encoded-blob`) and shown with ⚠ on the NEXUS page.
 - **In NEXUS:** imported records stay **unapproved**. One visitor counts once, however many runs they send. Visitor records **never reach a model's prompt**: prompts use only the owner's own runs and records the owner approved.
 
+## Kalshi-only deploy (just the transport fallback)
+
+If all you want is the Kalshi fallback — your browser cannot reach Kalshi directly (CORS, or
+the signed headers blocked at preflight) and you don't need public visitor mode — the relay
+needs **no GitHub token and no secrets**. The `/v1/kalshi` route works on its own:
+
+```bash
+cd relay
+npx wrangler@4 login
+npx wrangler@4 kv namespace create RATE   # paste the printed id into wrangler.toml, uncommenting the RATE block
+npx wrangler@4 deploy                     # prints https://forgeclaw-relay.<you>.workers.dev
+```
+
+Then paste the workers.dev URL into ForgeClaw: **Settings → Kalshi trading → Kalshi relay
+URL**. From then on, Kalshi calls the browser cannot make directly — market reads and the
+signed order path alike — go through the relay instead.
+
+Two honest limits of the minimal deploy:
+
+- **Without the `RATE` namespace the relay has no per-IP limit, only the origin check.**
+  Every route refuses callers whose `Origin` is not in `ALLOWED_ORIGINS` (wrangler.toml);
+  that check always applies, token or no token. The per-IP quotas are the only other brake,
+  and they do nothing until `RATE` exists — skip the `kv namespace create RATE` step and
+  rate limiting is simply off. (With `RATE`, `/v1/kalshi` allows 120 calls an hour per IP.)
+- The model and research routes answer `503` until `GITHUB_TOKEN` is set, and visitor
+  learning and error reports stay off until `LEARN` and `OWNER_KEY` exist. The full deploy
+  below turns everything on.
+
 ## Deploy (about 10 minutes, one time)
 
 1. **Create the token.** GitHub → Settings → Developer settings → Fine-grained tokens → Generate:

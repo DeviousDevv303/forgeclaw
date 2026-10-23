@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  KALSHI_DISCLAIMER, buildMarketsUrl, formatOrderbook, parseDollars, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
+  KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, formatOrderbook, parseDollars, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
   selectMarkets, type KalshiMarket,
 } from './kalshiMarkets'
+import { relayFallbackFetcher } from './kalshiTrade'
 
 const NOW = Date.parse('2026-10-22T12:00:00Z')
 const mk = (over: Partial<KalshiMarket>): KalshiMarket => ({
@@ -89,6 +90,40 @@ describe('runKalshiMarkets', () => {
   it('rethrows aborts untouched', async () => {
     const abort = new DOMException('stop', 'AbortError')
     await expect(runKalshiMarkets({}, { fetcher: async () => { throw abort } })).rejects.toBe(abort)
+  })
+  it('with no relay configured, an unreachable Kalshi names the owner fix, never a bare fetch error', async () => {
+    const failure = await runKalshiMarkets({}, { fetcher: async () => { throw new TypeError('Failed to fetch') } }).catch(e => e)
+    expect(failure).toBeInstanceOf(KalshiError)
+    expect(failure.message).toMatch(/could not be reached/)
+    expect(failure.message).toMatch(/no Kalshi relay is configured/)
+    expect(failure.message).toMatch(/relay\/README\.md/)
+    expect(failure.message).toMatch(/Settings → Kalshi trading → Kalshi relay URL/)
+    expect(failure.message).toMatch(/not an empty market list/)
+    expect(failure.transportFailure).toBe(true)
+    expect(failure.relayMissing).toBe(true)
+  })
+  it('with a relay configured, an unreachable Kalshi says the relay was tried too', async () => {
+    const failure = await runKalshiMarkets({}, {
+      fetcher: async () => { throw new TypeError('Failed to fetch') },
+      relayUrl: 'https://relay.example',
+    }).catch(e => e)
+    expect(failure).toBeInstanceOf(KalshiError)
+    expect(failure.message).toMatch(/configured relay \(https:\/\/relay\.example\) did not answer either/)
+    expect(failure.transportFailure).toBe(true)
+    expect(failure.relayMissing).toBe(false)
+  })
+  it('falls back to the relay on a transport failure and renders the markets', async () => {
+    const base = async (): Promise<Response> => { throw new TypeError('Failed to fetch') }
+    // The real relay answers with the {status, body} envelope; emulate its wire shape.
+    const wireRelay = async (url: string, init?: RequestInit): Promise<Response> => {
+      expect(url).toBe('https://relay.example/v1/kalshi')
+      expect(JSON.parse(String(init?.body)).url).toContain('/trade-api/v2/markets')
+      return new Response(JSON.stringify({ status: 200, body: JSON.stringify({ markets: [mk({})] }) }), { status: 200 })
+    }
+    const fetcher = relayFallbackFetcher(base, 'https://relay.example', wireRelay)
+    const out = await runKalshiMarkets({ query: 'a happen' }, { fetcher, relayUrl: 'https://relay.example', now: () => NOW })
+    expect(out).toContain('KX-A — Will A happen?')
+    expect(out).toContain('implied 92%')
   })
 })
 

@@ -11,11 +11,14 @@ Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: tr
 import { describe, expect, it } from 'vitest'
 import {
   KalshiAuthError,
+  effectiveKalshiRelayUrl,
   kalshiBaseUrl,
   loadKalshiCredentials,
   loadKalshiEnv,
+  loadKalshiRelayUrl,
   saveKalshiCredentials,
   saveKalshiEnv,
+  saveKalshiRelayUrl,
   signKalshiRequest,
   wrapPkcs1ToPkcs8,
   type KalshiCredentials,
@@ -123,5 +126,27 @@ describe('credential storage', () => {
     const creds: KalshiCredentials = { keyId: 'x', privateKeyPem: 'not a key at all', env: 'demo' }
     await expect(signKalshiRequest(creds, 'GET', PATH, TS)).rejects.toBeInstanceOf(KalshiAuthError)
     await expect(signKalshiRequest(creds, 'GET', PATH, TS)).rejects.toThrow(/not a PEM key/)
+  })
+})
+
+describe('relay URL storage and resolution', () => {
+  it('round-trips, normalized: whitespace and trailing slashes never survive', () => {
+    localStorage.clear()
+    expect(loadKalshiRelayUrl()).toBe('')
+    saveKalshiRelayUrl('  https://forgeclaw-relay.example.workers.dev// ')
+    expect(loadKalshiRelayUrl()).toBe('https://forgeclaw-relay.example.workers.dev')
+    saveKalshiRelayUrl('')
+    expect(loadKalshiRelayUrl()).toBe('')
+  })
+
+  it('precedence: explicit beats saved, saved beats the build default (empty in tests)', () => {
+    localStorage.clear()
+    expect(effectiveKalshiRelayUrl()).toBe('') // no explicit, no saved, PUBLIC_RELAY_URL unset here
+    saveKalshiRelayUrl('https://saved.example')
+    expect(effectiveKalshiRelayUrl()).toBe('https://saved.example')
+    expect(effectiveKalshiRelayUrl('https://explicit.example/')).toBe('https://explicit.example')
+    // An explicit '' is a real value (the order path's "fallback disabled"), not "unset".
+    expect(effectiveKalshiRelayUrl('')).toBe('')
+    localStorage.clear()
   })
 })

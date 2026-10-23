@@ -37,7 +37,7 @@ import { formatResearchResult, normalizeQueries, runDeepResearch } from './deepR
 import { findPullRequest, waitForCorrelatedRun } from './workflowRun'
 import { jobFailureEvidence } from './runDiagnosis'
 import { buildErrorReport } from './errorReport'
-import { getErrorLog } from './errorLog'
+import { getErrorLog, logError } from './errorLog'
 import { runBrowserRound } from './browserAgent'
 import { recordBrowserLearning } from './browserLearning'
 import { mergePullRequest } from './mergePr'
@@ -49,7 +49,9 @@ import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
 import { weatherForecast } from './weather'
-import { fetchKalshiMarket, runKalshiMarkets, runKalshiOrderbook } from './kalshiMarkets'
+import { fetchKalshiMarket, KalshiError, runKalshiMarkets, runKalshiOrderbook, type KalshiDeps } from './kalshiMarkets'
+import { relayFallbackFetcher } from './kalshiTrade'
+import { effectiveKalshiRelayUrl } from './kalshiAuth'
 import { formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
@@ -824,6 +826,19 @@ export function loadToolContext(): ToolContext {
 // behaviour as every other GitHub tool. Re-exported here for existing callers.
 
 export { toolFetch } from './githubFetch'
+
+/**
+ * Deps for the read-only Kalshi market calls (kalshi_markets, funds_settle): the same
+ * direct-then-relay transport as the order path — kalshiTrade's relayFallbackFetcher —
+ * wrapped around this run's bounded fetch, so a browser Kalshi's CORS shuts out falls
+ * back to the owner's relay instead of reporting "no markets". The relay URL is the
+ * owner's Settings value (then the build's), never visitor mode's.
+ */
+function kalshiToolDeps(ctx: ToolContext): KalshiDeps {
+  const relayUrl = effectiveKalshiRelayUrl()
+  const base = (url: string, init?: RequestInit) => toolFetch(ctx, url, init)
+  return { fetcher: relayFallbackFetcher(base, relayUrl), signal: ctx.signal, relayUrl }
+}
 
 /**
  * Format the user-visible deepseek_reason success output.
@@ -1912,24 +1927,38 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       }
 
       case 'kalshi_markets': {
-        // Keyless public market data. A direct browser call may be blocked by CORS; that is reported by name, never as "no markets".
-        const deps = { fetcher: (url: string, init?: RequestInit) => toolFetch(ctx, url, init), signal: ctx.signal }
+        // Keyless public market data, over the same direct-then-relay transport as the
+        // order path. A browser Kalshi's CORS blocks is reported by name (and, with no
+        // relay configured, with the owner's fix), never as "no markets".
+        const deps = kalshiToolDeps(ctx)
         const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
         const numeric = (v: unknown) => (v === undefined || v === null || v === '' || !Number.isFinite(Number(v)) ? undefined : Number(v))
         const ticker = text(input.ticker)
-        if (input.orderbook === true || input.orderbook === 'true') {
-          if (!ticker) throw new Error('kalshi_markets orderbook needs a ticker. List markets first to find it.')
-          return await runKalshiOrderbook(ticker, deps)
+        try {
+          if (input.orderbook === true || input.orderbook === 'true') {
+            if (!ticker) throw new Error('kalshi_markets orderbook needs a ticker. List markets first to find it.')
+            return await runKalshiOrderbook(ticker, deps)
+          }
+          return await runKalshiMarkets({
+            ticker,
+            query: text(input.query),
+            event_ticker: text(input.event_ticker),
+            series_ticker: text(input.series_ticker),
+            closes_within_hours: numeric(input.closes_within_hours),
+            min_yes_ask: numeric(input.min_yes_ask),
+            limit: numeric(input.limit),
+          }, deps)
+        } catch (error) {
+          // The no-relay failure is an owner fix (deploy the relay, paste its URL into
+          // Settings), so it is written to the error log with the run id. The failure
+          // LEDGER (forgeclaw_failure_ledger) has no tool-level writer — its only writer
+          // is App's error-bus hook — so the tool-level error log (errorLog.ts, the log
+          // the error_report tool reads) is where this lands.
+          if (error instanceof KalshiError && error.transportFailure && error.relayMissing) {
+            logError('kalshi', error.message, ctx.runId ? `run ${ctx.runId}` : undefined)
+          }
+          throw error
         }
-        return await runKalshiMarkets({
-          ticker,
-          query: text(input.query),
-          event_ticker: text(input.event_ticker),
-          series_ticker: text(input.series_ticker),
-          closes_within_hours: numeric(input.closes_within_hours),
-          min_yes_ask: numeric(input.min_yes_ask),
-          limit: numeric(input.limit),
-        }, deps)
       }
 
       case 'funds_status':
@@ -1957,7 +1986,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
 
       case 'funds_settle': {
         // Settles from Kalshi's published result only. id "all" settles every placed Kalshi position (paper and real).
-        const deps = { fetcher: (url: string, init?: RequestInit) => toolFetch(ctx, url, init), signal: ctx.signal }
+        const deps = kalshiToolDeps(ctx)
         const id = String(input.id ?? '').toLowerCase()
         let ledger = loadFunds()
         const targets = id === 'all'

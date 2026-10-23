@@ -213,7 +213,7 @@ import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
 import { autoSettleKalshiPositions, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
-import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiKeyUsable, loadKalshiEnv, saveKalshiCredentials, saveKalshiEnv, type KalshiEnv } from './lib/kalshiAuth'
+import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiKeyUsable, loadKalshiEnv, loadKalshiRelayUrl, saveKalshiCredentials, saveKalshiEnv, saveKalshiRelayUrl, type KalshiEnv } from './lib/kalshiAuth'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/pageVisibility'
 import { DEEPSEEK_RUN_EXPIRED_NOTE, isDeepSeekRunResumable } from './lib/deepseekRunResume'
@@ -2890,6 +2890,17 @@ function App() {
                   <option value="demo">{t('settings.kalshiEnvDemo')}</option>
                   <option value="prod">{t('settings.kalshiEnvProd')}</option>
                 </select>
+                <input
+                  type="text"
+                  placeholder={t('settings.kalshiRelayUrl')}
+                  autoComplete="off"
+                  defaultValue={loadKalshiRelayUrl()}
+                  onChange={e => saveKalshiRelayUrl(e.target.value)}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', marginBottom: '6px' }}
+                />
+                <div style={{ color: '#333', fontSize: '10px', marginTop: '-2px', marginBottom: '6px' }}>
+                  {t('settings.kalshiRelayHelp')}
+                </div>
                 <input
                   type="text"
                   placeholder={t('settings.kalshiKeyId')}

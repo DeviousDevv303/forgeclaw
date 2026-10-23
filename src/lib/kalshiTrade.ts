@@ -42,6 +42,45 @@ export type KalshiFetcher = (url: string, init: { method: string; headers: Recor
 
 const defaultFetcher: KalshiFetcher = (url, init) => fetch(url, init)
 
+/** A plain fetch-shaped transport: the global fetch, a run's bounded fetch, a test double. */
+export type KalshiBaseFetcher = (url: string, init?: RequestInit) => Promise<Response>
+
+/**
+ * The one direct-then-relay Kalshi transport, shared by the signed order path
+ * (kalshiExecution) and the read-only market data path (forgeTools' kalshi_markets /
+ * funds_settle): try the base fetcher directly; on a TRANSPORT failure only (no HTTP
+ * answer arrived — offline, or the browser blocked by CORS), send the same request
+ * through the owner's relay (relay/ route /v1/kalshi), which forwards it verbatim and
+ * returns {status, body}. An HTTP answer — even an error — is never relayed: Kalshi
+ * already decided, and for order POSTs a second send is exactly the double-order risk
+ * the client_order_id lookup exists to prevent. An empty relayUrl disables the fallback
+ * (the direct error propagates untouched). If the relay leg fails or answers garbage,
+ * the ORIGINAL direct error is what propagates — it is the honest one.
+ */
+export function relayFallbackFetcher(baseFetcher: KalshiBaseFetcher, relayUrl: string, relayFetcher: KalshiBaseFetcher = baseFetcher): KalshiBaseFetcher {
+  return async (url, init = {}) => {
+    try {
+      return await baseFetcher(url, init)
+    } catch (directError) {
+      if (!relayUrl) throw directError
+      let response: Response
+      try {
+        response = await relayFetcher(`${relayUrl}/v1/kalshi`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ method: init.method ?? 'GET', url, headers: init.headers, body: init.body }),
+          ...(init.signal ? { signal: init.signal } : {}),
+        })
+      } catch {
+        throw directError
+      }
+      const payload = await response.json().catch(() => null) as { status?: number; body?: string } | null
+      if (!payload || typeof payload.status !== 'number') throw directError
+      return new Response(payload.body ?? '', { status: payload.status })
+    }
+  }
+}
+
 export interface KalshiBalance {
   /** Available balance in whole cents (Kalshi's `balance`). */
   balanceCents: number
