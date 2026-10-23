@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { SHELL_EXEC_GUIDANCE } from './toolExposure'
+import { baselineToolNames, SHELL_EXEC_GUIDANCE } from './toolExposure'
 
 // SHELL_EXEC_GUIDANCE makes factual claims about .github/workflows/shell-exec.yml. If the workflow
 // changes (installs deps, deepens the checkout, persists credentials, changes the limit), this fails so
@@ -158,5 +158,21 @@ describe('funds guidance — Master Money Multiplier, Module 1 (research-backed,
     expect(FUNDS_GUIDANCE).toMatch(/Brier score and calibration/)
     expect(FUNDS_GUIDANCE).toMatch(/fewer than 400 settled trades/)
     expect(FUNDS_GUIDANCE).toMatch(/proves nothing/)
+  })
+})
+
+describe('read-only money baseline', () => {
+  it('a hosted model always gets the market, ledger and forecast reads, so any wording of a money question can be researched', () => {
+    for (const provider of ['moonshot', 'anthropic']) {
+      expect(baselineToolNames(provider)).toEqual(expect.arrayContaining(['kalshi_markets', 'funds_status', 'weather_forecast']))
+    }
+  })
+  it('nothing in the baseline proposes, settles, approves or places', () => {
+    const writes = ['funds_propose', 'funds_settle', 'github_write_file', 'github_merge_pr', 'shell_exec']
+    expect(baselineToolNames('moonshot').filter(name => writes.includes(name))).toEqual([])
+  })
+  it('local and DeepSeek models get no baseline', () => {
+    expect(baselineToolNames('local')).toEqual([])
+    expect(baselineToolNames('deepseek')).toEqual([])
   })
 })

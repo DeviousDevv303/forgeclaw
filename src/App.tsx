@@ -130,7 +130,7 @@ import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from '.
 import type { AIMessage } from './lib/ai/types'
 import { sendViaRouter, isDeepSeekProvider, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
-import { diagKeyFormatValid } from './lib/diagKeyFormat'
+import { diagKeyFormat } from './lib/diagKeyFormat'
 import { isToolFailureOutput } from './lib/toolOutcome'
 import { createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
 import { answerOutcome } from './lib/nexusConvergence'
@@ -860,6 +860,13 @@ function App() {
     lastRequestMetrics: null,
     buildVersion: BUILD_COMMIT,
   })
+  // The Diagnostics key hint: the verdict from the provider's own gate, the reason from the same rule (diagKeyFormat.ts).
+  const keyFormatHint = (): string => {
+    const { valid, problem } = diagKeyFormat(activeProvider, anthropicApiKey, moonshotApiKey, diagnostics.keyPresent)
+    if (valid) return t('diag.keyFormatValid')
+    if (problem?.kind === 'length') return t('diag.keyFormatTooShort', { prefix: problem.prefix, length: problem.length, min: problem.minLength })
+    return t('diag.keyFormatInvalid', { prefix: problem?.prefix ?? '' })
+  }
 
   interface PendingCoSign {
     id: string
@@ -3089,7 +3096,7 @@ function App() {
                       {isDeepSeekProvider(activeProvider) ? t('diag.githubWorkflowToken') : diagnostics.keyPresent ? t('diag.present') : t('diag.missing')}
                     </div>
                     <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                      {isDeepSeekProvider(activeProvider) ? (safeGetItem('gh_token') ? t('diag.workflowTokenSaved') : t('diag.workflowTokenNeeded')) : diagnostics.keyPresent ? (diagKeyFormatValid(activeProvider, anthropicApiKey, moonshotApiKey, diagnostics.keyPresent) ? t('diag.keyFormatValid') : t('diag.keyFormatInvalid', { prefix: activeProvider === 'anthropic' ? 'sk-ant-' : 'sk-' })) : t('diag.enterKeyAbove')}
+                      {isDeepSeekProvider(activeProvider) ? (safeGetItem('gh_token') ? t('diag.workflowTokenSaved') : t('diag.workflowTokenNeeded')) : diagnostics.keyPresent ? keyFormatHint() : t('diag.enterKeyAbove')}
                     </div>
                   </div>
 

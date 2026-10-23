@@ -74,7 +74,7 @@ Claude and Kimi receive the attached picture directly. With DeepSeek, the pictur
 
 ### NEXUS recursive learning
 
-The NEXUS page ("My Logic Is Undeniable") counts outcomes, tracks per-tool reliability and recurring failure lessons, and feeds those lessons back into prompts as labelled evidence. Every run, including failures and Guardian blocks, becomes an unapproved candidate. Admission needs the owner's signed authorization. NEXUS also mines the owner's own rules of thumb from what he types (approved ones are given to every model) and learns his visual taste from his 🔥 👍 👎 on pictures, measured in the browser with nothing to set up. The NEXUS tab is owner-only.
+The NEXUS page ("My Logic Is Undeniable") counts outcomes, tracks per-tool reliability and recurring failure lessons, and feeds those lessons back into prompts as labelled evidence. Every run, including failures and Guardian blocks, becomes an unapproved candidate. Knowledge converges on its own when a record passes the evidence gate on the owner's five phases (Assumptions, Heuristics, First Principles, Extension, Convergence) and is marked AUTO-ADDED (`nexus-convergence`); failed or blocked runs, visitors' input, and evidence-free answers never converge. The signed-admission path exists in code but has no trusted key in the app, so it is not the live route. NEXUS also mines the owner's own rules of thumb from what he types (approved ones are given to every model) and learns his visual taste from his 🔥 👍 👎 on pictures, measured in the browser with nothing to set up. The NEXUS tab is owner-only.
 
 ### Free mode for visitors
 
