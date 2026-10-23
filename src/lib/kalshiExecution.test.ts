@@ -6,7 +6,7 @@
 import { generateKeyPairSync, webcrypto } from 'node:crypto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, type KalshiCredentials } from './kalshiAuth'
-import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, parseFundsCommand, proposePosition, recordKalshiFill, runFundsCommand, saveFunds } from './fundsLedger'
+import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, parseFundsCommand, proposePosition, recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds } from './fundsLedger'
 import { saveOwnerScaffold } from './ownerScaffold'
 import { autoApproveHoldNote, autoSettleKalshiPositions, directThenRelayFetcher, maybeAutoApprove, runFundsCommandWithExecution, type KalshiFailureNote, type KalshiPlacedInfo } from './kalshiExecution'
 import { KalshiApiError, KalshiNetworkError, type KalshiClient, type KalshiOrderResult } from './kalshiTrade'
@@ -568,6 +568,60 @@ describe('review round: idempotency, reconcile, concurrency (PR #240 gate)', () 
     const after = loadFunds().positions.find(x => x.id === id)!
     expect(after.status).toBe('approved')
     expect(after.clientOrderId).toBe(`fc-${id}-1`)
+  })
+
+  describe('a resumed approval reconciles first: the send-protecting gates never stand in front of it', () => {
+    async function unknownFirst(): Promise<string> {
+      const id = seedProposal()
+      const first = fakeClient({ onCreate: () => { throw new KalshiNetworkError('socket closed') }, existing: null })
+      expect(await runFundsCommandWithExecution(`/funds approve ${id}`, deps(first.client))).toContain('Unknown:')
+      expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('approved')
+      return id
+    }
+
+    it('with the live price unreachable, the earlier order is still recovered by lookup', async () => {
+      const id = await unknownFirst()
+      let quoteCalls = 0
+      const second = fakeClient({ onQuote: () => { quoteCalls++; throw new KalshiNetworkError('quote unreachable') }, existing: { fillCount: 10, orderId: 'ord-e' } })
+      const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(second.client))
+      expect(reply).toContain(`Placed ${id}`)
+      expect(reply).toContain('recovered by lookup')
+      expect(quoteCalls).toBe(0)
+      expect(second.createCalls).toHaveLength(0)
+      expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('placed')
+    })
+
+    it('with the price now past tolerance, a landed order is still found and recorded', async () => {
+      const id = await unknownFirst()
+      const second = fakeClient({ quote: { yesAsk: 0.9, noAsk: 0.1 }, existing: { fillCount: 7, orderId: 'ord-m' } })
+      const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(second.client))
+      expect(reply).toContain(`Placed ${id}`)
+      expect(second.createCalls).toHaveLength(0)
+    })
+
+    it('with the balance now too low (the fill spent it) and an unreadable lookup, it ends at Unknown — never "Nothing was spent"', async () => {
+      const id = await unknownFirst()
+      const second = fakeClient({ balanceDollars: 0.5, lookupUnknown: true })
+      const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(second.client))
+      expect(reply?.startsWith('Unknown:')).toBe(true)
+      expect(reply).not.toContain('Nothing was spent')
+      expect(second.createCalls).toHaveLength(0)
+      expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('approved')
+    })
+
+    it('a resume that another tab puts back to proposed before the re-read is refused, never sent without the gates', async () => {
+      const id = await unknownFirst()
+      const second = fakeClient({})
+      // The getter runs after the first ledger read and before the re-read: another tab's write, exactly there.
+      let reverted = false
+      const racing = {
+        client: second.client, now: () => NOW, relayUrl: '', delay: async () => {},
+        get creds() { if (!reverted) { reverted = true; saveFunds(revertKalshiApproval(loadFunds(), id)) } return creds },
+      }
+      const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, racing)
+      expect(reply).toContain('changed in another tab')
+      expect(second.createCalls).toHaveLength(0)
+    })
   })
 
   it('a confirmed zero fill consumes the attempt: the next approve mints attempt 2', async () => {
