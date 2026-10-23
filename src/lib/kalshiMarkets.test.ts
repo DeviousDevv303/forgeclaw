@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
+  KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
   selectMarkets, type KalshiMarket,
 } from './kalshiMarkets'
 import { relayFallbackFetcher } from './kalshiTrade'
@@ -12,6 +12,18 @@ const mk = (over: Partial<KalshiMarket>): KalshiMarket => ({
   volume_fp: '5000.00', volume_24h_fp: '100.00', open_interest_fp: '2500.00', ...over,
 })
 const json = (body: unknown, status = 200) => ({ ok: status < 400, status, json: async () => body }) as unknown as Response
+
+describe('formatMarket shard', () => {
+  it('prints the exchange shard Kalshi reports, so an order can be matched to the shard that must hold the funds', () => {
+    expect(formatMarket(mk({ exchange_index: 3 }), NOW)).toContain('status active; shard 3; closes')
+    expect(formatMarket(mk({ exchange_index: 0 }), NOW)).toContain('shard 0;')
+  })
+  it('says n/a when the record omits or garbles it — never a guessed shard 0', () => {
+    expect(formatMarket(mk({}), NOW)).toContain('shard n/a;')
+    expect(formatMarket(mk({ exchange_index: -1 }), NOW)).toContain('shard n/a;')
+    expect(formatMarket(mk({ exchange_index: '2' as unknown as number }), NOW)).toContain('shard n/a;')
+  })
+})
 
 describe('parseDollars', () => {
   it('reads fixed-point dollar strings and rejects junk or out-of-range values', () => {
