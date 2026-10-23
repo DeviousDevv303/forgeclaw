@@ -163,6 +163,15 @@ describe('findOrderByClientOrderId — the no-double-order lookup', () => {
     const result = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')
     expect(result.kind).toBe('unknown')
   })
+  it('a cursor that never ends hits the page cap and the lookup is UNKNOWN, never a miss — and the scan is bounded', async () => {
+    const { fetcher, calls } = fakeFetcher(call => {
+      if (call.url.includes('status=resting')) return { json: { orders: [], cursor: 'more' } }
+      return { json: { orders: [] } }
+    })
+    const result = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-98', 'KX-1')
+    expect(result.kind).toBe('unknown')
+    expect(calls.filter(c => c.url.includes('status=resting')).length).toBe(10)
+  })
   it('opens the scan window at the approval: min_ts is the approval second minus the skew allowance', async () => {
     const { fetcher, calls } = fakeFetcher(() => ({ json: { orders: [] } }))
     await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-nope', 'KX-1', 1_700_000_120_000)
