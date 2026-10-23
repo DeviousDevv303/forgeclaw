@@ -300,7 +300,7 @@ describe('Kalshi execution records (PR A)', () => {
 
   it('settlePosition accepts the real Kalshi P&L when the caller computed it', () => {
     const { state, id } = approvedKalshi()
-    let s = recordKalshiFill(state, id, { contracts: 40, fillPrice: 0.41, feePaid: 0.68 }, NOW + 2)
+    let s = recordKalshiFill(state, id, { fillCount: 40, avgFillPrice: 0.41, feePaid: 0.68, orderId: 'ord-9', clientOrderId: 'fc-x-1' }, NOW + 2)
     s = settlePosition(s, id, 'won', 'kalshi', NOW + 3, 12.34)
     expect(s.positions[0].pnl).toBe(12.34)
     expect(summarize(s, NOW + 3).bankroll).toBeCloseTo(1000 + 12.34, 6)
@@ -309,6 +309,6 @@ describe('Kalshi execution records (PR A)', () => {
   it('the requote tolerance is settable and shows in the status', () => {
     const s = applyFundsCommand(funded(), { kind: 'limits', changes: { toleranceCents: 5 } }, NOW).state
     expect(s.limits.toleranceCents).toBe(5)
-    expect(formatFundsStatus(s)).toContain('requote tolerance 5¢')
+    expect(formatFundsStatus(s, NOW)).toContain('requote tolerance 5¢')
   })
 })
