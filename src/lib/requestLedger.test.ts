@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { jsonToTable, owedItems, parseRequestLedger, settleLedger, splitPipeTables, findRenderedSections } from './requestLedger'
+import { jsonToTable, ledgerContinuationLimit, owedItems, parseRequestLedger, settleLedger, splitPipeTables, findRenderedSections } from './requestLedger'
 
 const TOOLS = ['github_repo_state', 'github_list_prs', 'github_read_file', 'github_search_code', 'shell_exec']
 // The shape of the 2026-10-23 repro: five numbered sections, each naming its tool.
@@ -99,6 +99,46 @@ describe('settleLedger', () => {
     const reply = fullReply.replace('none open', '```json\n[{"number":1,"title":"a"},{"number":2,"title":"b"}]\n```')
     const settled = settleLedger(ledger, [reply], all, { lang: 'en', runId: 'r' })
     expect(settled.text).toContain('| number | title |\n| --- | --- |\n| 1 | a |\n| 2 | b |')
+  })
+})
+
+describe('evidence is keyed by tool name and arguments', () => {
+  // Sections 2–4 share github_read_file; only README.md was read (and docs/a.md failed). Keyed by name alone, all three
+  // rendered as backed, so section 4 claimed a file the run never fetched.
+  const SHARED = [
+    'Report:',
+    '1. HEAD (github_repo_state)',
+    '2. README (github_read_file README.md)',
+    '3. docs/a.md (github_read_file docs/a.md)',
+    '4. docs/b.md (github_read_file docs/b.md)',
+  ].join('\n')
+  const ledger = parseRequestLedger(SHARED, TOOLS)!
+  const results = [
+    { name: 'github_repo_state', output: 'HEAD aaa', isError: false, input: {} },
+    { name: 'github_read_file', output: '# ForgeClaw', isError: false, input: { path: 'README.md' } },
+    { name: 'github_read_file', output: '[TOOL ERROR] GitHub 404 — docs/a.md not found', isError: true, input: { path: './docs/a.md' } },
+  ]
+  const reply = '## 1. HEAD\naaa\n## 2. README\nForgeClaw\n## 3. docs/a.md\nsomething\n## 4. docs/b.md\nsomething else'
+
+  it('a call backs only the section whose text names its arguments', () => {
+    const settled = settleLedger(ledger, [reply], results, { lang: 'en', runId: 'r' })
+    expect(settled.items.map(i => [i.n, i.status])).toEqual([[1, 'rendered'], [2, 'rendered'], [3, 'unavailable'], [4, 'unavailable']])
+    expect(settled.items[2].reason).toBe('github_read_file failed: GitHub 404 — docs/a.md not found')
+    expect(settled.items[3].reason).toBe("github_read_file was not called with this section's arguments")
+    expect(settled.text).not.toContain('something else')
+  })
+
+  it('a shared-tool call whose arguments no section names backs none of them', () => {
+    const stray = [results[0], { name: 'github_read_file', output: 'x', isError: false, input: { path: 'LICENSE' } }]
+    const settled = settleLedger(ledger, [reply], stray, { lang: 'en', runId: 'r' })
+    expect(settled.items.slice(1).map(i => i.status)).toEqual(['unavailable', 'unavailable', 'unavailable'])
+  })
+})
+
+describe('continuation limit', () => {
+  it('hosted models get two re-asks, DeepSeek one', () => {
+    expect(ledgerContinuationLimit(false)).toBe(2)
+    expect(ledgerContinuationLimit(true)).toBe(1)
   })
 })
 

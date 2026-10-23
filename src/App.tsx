@@ -170,7 +170,7 @@ import {
 import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
 import { createRunJournal, formatRollbackReport, journalRecord, rollbackRun, setActiveRunJournal, type RunJournal } from './lib/runRollback'
 import { cleanOutput } from './lib/cleanOutput'
-import { MAX_LEDGER_CONTINUATIONS, ledgerContinuationPrompt, owedItems, parseRequestLedger, reportFormatInstruction, settleLedger, splitPipeTables, type SettledItem } from './lib/requestLedger'
+import { ledgerContinuationLimit, ledgerContinuationPrompt, owedItems, parseRequestLedger, reportFormatInstruction, settleLedger, splitPipeTables, type SettledItem } from './lib/requestLedger'
 import { extractThinking, type GuardianPosture } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { takeGeneratedImage } from './lib/imageArtifact'
@@ -1818,6 +1818,9 @@ function App() {
       // Every reply text of this run, for the ledger: a section rendered beside a tool call still counts.
       const ledgerRounds: string[] = []
       let ledgerContinuations = 0
+      const ledgerReasks = ledgerContinuationLimit(isDeepSeekProvider(activeProvider))
+      // Each call's arguments, so the ledger keys evidence by tool name and arguments (requestLedger.ts).
+      const callInputs = new Map<string, Record<string, unknown>>()
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -1937,9 +1940,9 @@ function App() {
               const owed = owedItems(ledgerRounds, requestLedger)
               // The first answer is not the end of a numbered request: while items are owed and the run may go on,
               // the model is told which ones and continues. Bounded, so a model that never renders them cannot loop.
-              if (owed.length > 0 && !isLastIter && ledgerContinuations < MAX_LEDGER_CONTINUATIONS) {
+              if (owed.length > 0 && !isLastIter && ledgerContinuations < ledgerReasks) {
                 ledgerContinuations++
-                emitFailure({ source: 'forgemind', severity: 'info', message: `Reply rendered ${requestLedger.items.length - owed.length} of ${requestLedger.items.length} numbered sections; asking for sections ${owed.map(item => item.n).join(', ')} (${ledgerContinuations}/${MAX_LEDGER_CONTINUATIONS})` })
+                emitFailure({ source: 'forgemind', severity: 'info', message: `Reply rendered ${requestLedger.items.length - owed.length} of ${requestLedger.items.length} numbered sections; asking for sections ${owed.map(item => item.n).join(', ')} (${ledgerContinuations}/${ledgerReasks})` })
                 conversationMessages.push({ role: 'assistant', content: finalText, ...(result.reasoningContent ? { reasoning_content: result.reasoningContent } : {}) })
                 conversationMessages.push({ role: 'user', content: ledgerContinuationPrompt(requestLedger, owed) })
                 setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
@@ -1950,6 +1953,7 @@ function App() {
           }
         }
         if (requestLedger && result.text) ledgerRounds.push(ledgerText(result.text))
+        for (const call of result.toolCalls) callInputs.set(call.id, call.input)
 
         // Tool calls → executeTool owns Guardian enforcement and side effects.
         const iterResults: ToolResult[] = []
@@ -2114,7 +2118,7 @@ function App() {
       // Settled against the request's numbered items: each one rendered, or a named unavailable line. A partial
       // enumeration is never complete, whatever the model's STATUS says.
       const settledLedger = requestLedger
-        ? settleLedger(requestLedger, ledgerRounds, allToolResults, { lang: selectedLanguage, runId })
+        ? settleLedger(requestLedger, ledgerRounds, allToolResults.map(r => ({ ...r, input: callInputs.get(r.toolCallId) })), { lang: selectedLanguage, runId })
         : null
       const ledgerIncomplete = Boolean(settledLedger && !settledLedger.complete)
       const effectiveAgentPhase: AgentPhase =

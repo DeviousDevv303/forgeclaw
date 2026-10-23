@@ -14,6 +14,8 @@ export interface LedgerItem {
   title: string
   /** Tool names the request names for this item, in the order they appear. */
   tools: string[]
+  /** The item's own text in the request (its line and any lines under it), for matching tool arguments. */
+  text: string
 }
 
 export interface RequestLedger {
@@ -42,10 +44,18 @@ export interface LedgerToolResult {
   name: string
   output: string
   isError?: boolean
+  /** The call's arguments: a result backs a section only when they match what that section asked for. */
+  input?: Record<string, unknown>
 }
 
 /** Model rounds may re-ask for owed sections at most this many times per run, so a model that never renders cannot loop. */
 export const MAX_LEDGER_CONTINUATIONS = 2
+/** DeepSeek's CPU workflow takes 9–23 min per model step; one re-ask keeps a free-mode report from doubling its worst case. */
+export const MAX_LEDGER_CONTINUATIONS_DEEPSEEK = 1
+
+export function ledgerContinuationLimit(deepSeek: boolean): number {
+  return deepSeek ? MAX_LEDGER_CONTINUATIONS_DEEPSEEK : MAX_LEDGER_CONTINUATIONS
+}
 
 const ITEM_WORD = '(?:section|secci[oó]n|step|paso|item|punto)'
 const PROMPT_ITEM_RE = new RegExp(`^\\s{0,3}(?:#{1,4}\\s*)?(?:\\*\\*)?\\s*(?:${ITEM_WORD}\\s+)?(\\d{1,2})\\s*[.):]\\s*(?:\\*\\*)?\\s*(.*)$`, 'i')
@@ -76,7 +86,7 @@ export function parseRequestLedger(prompt: string, toolNames: readonly string[])
       .filter(found => found.at >= 0)
       .sort((a, b) => a.at - b.at)
       .map(found => found.name)
-    return { n: start.n, title: cleanTitle(start.title) || `#${start.n}`, tools }
+    return { n: start.n, title: cleanTitle(start.title) || `#${start.n}`, tools, text: block }
   })
   return { items }
 }
@@ -173,12 +183,45 @@ export function ledgerContinuationPrompt(ledger: RequestLedger, owed: readonly L
 
 type ToolOutcome = 'ok' | 'failed' | 'not-called'
 
-function toolOutcome(name: string, results: readonly LedgerToolResult[]): { outcome: ToolOutcome; error?: string } {
+function normalizeArg(value: string): string {
+  return value.trim().replace(/^\.?\//, '').toLowerCase()
+}
+
+/** The call's string arguments worth matching against request text (a path, a query, a PR number). */
+function argValues(input: Record<string, unknown> | undefined): string[] {
+  return Object.values(input ?? {})
+    .filter((value): value is string | number => typeof value === 'string' || typeof value === 'number')
+    .map(value => normalizeArg(String(value)))
+    .filter(value => value.length >= 2)
+}
+
+function mentions(text: string, value: string): boolean {
+  return text.toLowerCase().includes(value)
+}
+
+/**
+ * The results of `name` that back this item. Evidence is keyed by tool name AND arguments: when several items name the
+ * same tool, a call backs only the item whose text names its arguments (section 4 never borrows section 2's file).
+ * A call whose arguments no item names backs an item only when that item is the sole one naming the tool.
+ */
+function resultsForItem(item: LedgerItem, name: string, ledger: RequestLedger, results: readonly LedgerToolResult[]): LedgerToolResult[] {
   const own = results.filter(result => result.name === name)
+  const sharing = ledger.items.filter(other => other.tools.includes(name))
+  return own.filter(result => {
+    const values = argValues(result.input)
+    if (values.some(value => mentions(item.text, value))) return true
+    if (sharing.length === 1) return true
+    // Shared tool: an argument-less call, or one whose arguments no sharing item names, cannot be attributed.
+    return false
+  })
+}
+
+function toolOutcome(item: LedgerItem, name: string, ledger: RequestLedger, results: readonly LedgerToolResult[]): { outcome: ToolOutcome; error?: string; calledElsewhere?: boolean } {
+  const own = resultsForItem(item, name, ledger, results)
   if (own.some(result => !result.isError)) return { outcome: 'ok' }
   const failed = own.find(result => result.isError)
   if (failed) return { outcome: 'failed', error: firstLine(failed.output) }
-  return { outcome: 'not-called' }
+  return { outcome: 'not-called', calledElsewhere: results.some(result => result.name === name) }
 }
 
 function firstLine(output: string): string {
@@ -204,7 +247,7 @@ export function settleLedger(
   const sections = collectSections(rounds, ledger)
   const blocks: string[] = []
   const items: SettledItem[] = ledger.items.map(item => {
-    const outcomes = item.tools.map(name => ({ name, ...toolOutcome(name, results) }))
+    const outcomes = item.tools.map(name => ({ name, ...toolOutcome(item, name, ledger, results) }))
     const evidence = [
       ...outcomes.map(o => `${o.name} ${o.outcome === 'ok' ? '✓' : o.outcome === 'failed' ? '✗' : '—'}`),
       translate(lang, 'report.run', { runId }),
@@ -215,17 +258,15 @@ export function settleLedger(
       return { n: item.n, title: item.title, status: 'unavailable', reason, evidence }
     }
     const failed = outcomes.find(o => o.outcome === 'failed')
-    // Prose for a section whose every named tool failed is not evidence; the failure is what is reported.
-    if (outcomes.length > 0 && !outcomes.some(o => o.outcome === 'ok') && failed) {
-      return unavailable(translate(lang, 'report.reason.toolFailed', { tool: failed.name, error: failed.error || '?' }))
-    }
+    const missing = outcomes.find(o => o.outcome === 'not-called')
+    const toolReason = () => failed
+      ? translate(lang, 'report.reason.toolFailed', { tool: failed.name, error: failed.error || '?' })
+      : translate(lang, missing!.calledElsewhere ? 'report.reason.toolNotCalledFor' : 'report.reason.toolNotCalled', { tool: missing!.name })
+    // A section whose named tools returned nothing for it (failed, or never called with its arguments) has no
+    // evidence; the model's prose for it is not reported as data.
+    if (outcomes.length > 0 && !outcomes.some(o => o.outcome === 'ok')) return unavailable(toolReason())
     const body = sections.get(item.n)
-    if (body === undefined) {
-      if (failed) return unavailable(translate(lang, 'report.reason.toolFailed', { tool: failed.name, error: failed.error || '?' }))
-      const missing = outcomes.find(o => o.outcome === 'not-called')
-      if (missing) return unavailable(translate(lang, 'report.reason.toolNotCalled', { tool: missing.name }))
-      return unavailable(translate(lang, 'report.reason.notRendered'))
-    }
+    if (body === undefined) return unavailable(translate(lang, 'report.reason.notRendered'))
     const lines = body.split('\n')
     // The header's own text is kept only when it says more than the request's title.
     if (normalize(lines[0] || '') === normalize(item.title)) lines.shift()
