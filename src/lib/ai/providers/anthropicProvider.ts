@@ -6,6 +6,7 @@
 
 import { isSendableImage, parseImageDataUrl } from '../../imageInput'
 import type { AIMessage, AIProvider, AIRequest, AIResponse, AIToolCall } from '../types'
+import { keyFormatProblem, type KeyFormatRule } from '../keyFormat'
 
 const ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1/messages'
 const ANTHROPIC_VERSION = '2023-06-01'
@@ -49,9 +50,11 @@ function cleanApiKey(apiKey: string): string {
   return apiKey.trim()
 }
 
+/** The key format send() enforces; the Diagnostics panel words its reason from the same rule (keyFormat.ts). */
+export const ANTHROPIC_KEY_FORMAT: KeyFormatRule = { prefix: 'sk-ant-', minLength: 21 }
+
 function isConfigured(apiKey: string): boolean {
-  const key = cleanApiKey(apiKey)
-  return key.startsWith('sk-ant-') && key.length > 20
+  return keyFormatProblem(cleanApiKey(apiKey), ANTHROPIC_KEY_FORMAT) === null
 }
 
 /**

@@ -10,6 +10,7 @@
 
 import { isSendableImage } from '../../imageInput'
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
+import { keyFormatProblem, type KeyFormatRule } from '../keyFormat'
 
 // Always use direct API URL in the browser — the proxy path (/api/moonshot)
 // only works when the ForgeMind engine backend is running, which isn't the
@@ -57,9 +58,11 @@ function cleanApiKey(apiKey: string): string {
   return apiKey.trim()
 }
 
+/** The key format send() enforces; the Diagnostics panel words its reason from the same rule (keyFormat.ts). */
+export const MOONSHOT_KEY_FORMAT: KeyFormatRule = { prefix: 'sk-', minLength: 21 }
+
 function isConfigured(apiKey: string): boolean {
-  const key = cleanApiKey(apiKey)
-  return key.startsWith('sk-') && key.length > 20
+  return keyFormatProblem(cleanApiKey(apiKey), MOONSHOT_KEY_FORMAT) === null
 }
 
 type MoonshotContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }
