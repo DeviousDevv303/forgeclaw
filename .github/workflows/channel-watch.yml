@@ -1,0 +1,78 @@
+name: Channel Watch
+
+# A GitHub @mention is text. On this repository only @claude starts anything (claude.yml); @kimi, @chatgpt and
+# @muse are connected to nothing here. When the owner or a collaborator mentions one of them, this posts one notice
+# saying what that mention reaches, so nobody waits on a reply that cannot come. It never claims a review, approval
+# or execution. The decision and wording live in .github/scripts/channel_watch.py (tested there).
+#
+# Only "created/opened/submitted" events: an edit never re-posts. Comments this workflow posts use GITHUB_TOKEN,
+# which does not trigger workflows, and carry <!-- channel-watch:ack --> besides, so it cannot answer itself.
+# Discussions are off on this repository; this does not watch them.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: channel-watch-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    # Cheap pre-filter so ordinary comments do not start a runner; the script makes the real decision.
+    if: >-
+      github.event.sender.type != 'Bot' && (
+        contains(github.event.comment.body, '@') ||
+        contains(github.event.review.body, '@') ||
+        (github.event_name == 'issues' && (contains(github.event.issue.title, '@') || contains(github.event.issue.body, '@'))) ||
+        (github.event_name == 'pull_request' && contains(github.event.pull_request.body, '@'))
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the watch script
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          fetch-depth: 1
+
+      - name: Decide and post the notice
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          SENDER_TYPE: ${{ github.event.sender.type }}
+          # Each event's own text and author association, passed as data — never interpolated into the script.
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+          REVIEW_ASSOCIATION: ${{ github.event.review.author_association }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_ASSOCIATION: ${{ github.event.issue.author_association }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+        run: |
+          set -euo pipefail
+          export ISSUE_TEXT="${ISSUE_TITLE:-}"$'\n'"${ISSUE_BODY:-}"
+          python3 -B .github/scripts/channel_watch.py > "$RUNNER_TEMP/notice.md"
+          if [[ ! -s "$RUNNER_TEMP/notice.md" ]]; then
+            echo "No notice due (no agent mention in prose by the owner or a collaborator)."
+            exit 0
+          fi
+          python3 -c 'import json, sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' "$RUNNER_TEMP/notice.md" > "$RUNNER_TEMP/payload.json"
+          # A failed post fails the job, with GitHub's own status and message in the log.
+          gh api --method POST "repos/${REPO}/issues/${NUMBER}/comments" --input "$RUNNER_TEMP/payload.json" --jq '"Posted notice: " + .html_url'
