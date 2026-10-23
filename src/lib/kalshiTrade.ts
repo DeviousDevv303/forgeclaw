@@ -99,38 +99,88 @@ export interface KalshiMarketQuote {
   result?: string
 }
 
+/**
+ * The order lookup's answer is tri-state, and the distinction is load-bearing on the
+ * money path: NOT_FOUND may only be reported when every status scan completed (all
+ * pages read), because only then is "no order carries this key" evidence. Any read
+ * failure — one status, one page — makes the answer UNKNOWN, and UNKNOWN must never
+ * be read as "the order isn't there": absence of evidence is not evidence of absence.
+ */
+export type KalshiOrderLookup =
+  | { kind: 'found'; order: KalshiExistingOrder }
+  | { kind: 'not_found' }
+  | { kind: 'unknown'; reason: string }
+
 export interface KalshiClient {
   getBalance(): Promise<KalshiBalance>
   createOrder(input: { ticker: string; side: 'bid' | 'ask'; count: number; priceDollars: number; clientOrderId: string }): Promise<KalshiOrderResult>
-  findOrderByClientOrderId(clientOrderId: string, ticker: string): Promise<KalshiExistingOrder | null>
+  findOrderByClientOrderId(clientOrderId: string, ticker: string, sinceMs?: number): Promise<KalshiOrderLookup>
   getSettlements(): Promise<KalshiSettlement[]>
   /** Public market data (unsigned) over the same transport, for the approval re-quote. */
   getMarketQuote(ticker: string): Promise<KalshiMarketQuote | null>
 }
 
-export function createKalshiClient(creds: KalshiCredentials, fetcher: KalshiFetcher = defaultFetcher): KalshiClient {
+export interface KalshiClientOptions {
+  now?: () => number
+  delay?: (ms: number) => Promise<void>
+}
+
+// Kalshi's rate_limits page budgets GET /portfolio/balance at one read per second on the
+// Basic tier, and a 429 carries no Retry-After header — so the spacing lives here, in the
+// client, where every caller (single approve, approve-all, auto-approve) inherits it.
+const BALANCE_READ_INTERVAL_MS = 1000
+// Module-level on purpose: the app constructs a client per operation, and the budget is
+// per API key, not per client instance.
+const lastBalanceReadAt = new Map<string, number>()
+// One balance window can page at most this far before the scan is called inconclusive:
+// 10 pages x the 1000-row page cap, inside a window that starts at the approval, is past
+// any plausible burst — the cap exists so a misbehaving cursor cannot loop the money path.
+const MAX_LOOKUP_PAGES = 10
+// min_ts is whole seconds; the window opens this far before the approval so a just-placed
+// order can never fall outside it over clock skew between this browser and Kalshi.
+const LOOKUP_SKEW_SECONDS = 60
+
+export function createKalshiClient(creds: KalshiCredentials, fetcher: KalshiFetcher = defaultFetcher, opts: KalshiClientOptions = {}): KalshiClient {
   const base = kalshiBaseUrl(creds.env)
 
+  const nowFn = opts.now ?? Date.now
+  const delayFn = opts.delay ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)))
+
   async function request<T>(method: string, path: string, query?: string, body?: unknown): Promise<T> {
-    const headers = await signKalshiRequest(creds, method, path)
-    let response: Response
-    try {
-      response = await fetcher(`${base}${path.slice('/trade-api/v2'.length)}${query ? `?${query}` : ''}`, {
-        method,
-        headers: { ...headers, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      })
-    } catch (error) {
-      throw new KalshiNetworkError(`No answer from Kalshi for ${method} ${path}: ${error instanceof Error ? error.message : String(error)}`)
+    // Balance reads are spaced to the documented budget before the request goes out.
+    if (method === 'GET' && path === '/trade-api/v2/portfolio/balance') {
+      const waitMs = BALANCE_READ_INTERVAL_MS - (nowFn() - (lastBalanceReadAt.get(creds.keyId) ?? 0))
+      if (waitMs > 0) await delayFn(waitMs)
+      lastBalanceReadAt.set(creds.keyId, nowFn())
     }
-    const text = await response.text().catch(() => '')
-    let parsed: unknown = null
-    try { parsed = text ? JSON.parse(text) : null } catch { parsed = null }
-    if (!response.ok) {
-      const err = (parsed as { error?: { code?: string; message?: string } } | null)?.error
-      throw new KalshiApiError(response.status, err?.code ?? `http-${response.status}`, err?.message ?? `Kalshi refused ${method} ${path} (HTTP ${response.status}).`)
+    // A GET that meets a 429 gets exactly one spaced retry — reads are idempotent, so the
+    // retry cannot duplicate anything. POSTs are never retried in this module: a resent
+    // order POST is how duplicates happen (the execution layer reconciles instead).
+    for (let attempt = 1; ; attempt++) {
+      const headers = await signKalshiRequest(creds, method, path)
+      let response: Response
+      try {
+        response = await fetcher(`${base}${path.slice('/trade-api/v2'.length)}${query ? `?${query}` : ''}`, {
+          method,
+          headers: { ...headers, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+          ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+        })
+      } catch (error) {
+        throw new KalshiNetworkError(`No answer from Kalshi for ${method} ${path}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+      const text = await response.text().catch(() => '')
+      let parsed: unknown = null
+      try { parsed = text ? JSON.parse(text) : null } catch { parsed = null }
+      if (!response.ok) {
+        if (response.status === 429 && method === 'GET' && attempt === 1) {
+          await delayFn(BALANCE_READ_INTERVAL_MS)
+          continue
+        }
+        const err = (parsed as { error?: { code?: string; message?: string } } | null)?.error
+        throw new KalshiApiError(response.status, err?.code ?? `http-${response.status}`, err?.message ?? `Kalshi refused ${method} ${path} (HTTP ${response.status}).`)
+      }
+      return parsed as T
     }
-    return parsed as T
   }
 
   return {
@@ -169,41 +219,61 @@ export function createKalshiClient(creds: KalshiCredentials, fetcher: KalshiFetc
       }
     },
 
-    async findOrderByClientOrderId(clientOrderId, ticker) {
+    async findOrderByClientOrderId(clientOrderId, ticker, sinceMs) {
       // The orders endpoint filters by status and the spec states no default, so an
       // unfiltered query cannot be trusted to include executed or canceled orders — the
       // two states a placed IOC order ends in. Scan all three explicitly. A scan that
-      // could not read every status is INCOMPLETE, not negative: it throws, so callers
-      // resolve to "unknown", never to "nothing was spent" (a miss is absence of
-      // evidence, and on the money path only evidence may clear an order). Orders older
+      // could not read every status is INCOMPLETE, not negative: it resolves to the
+      // tri-state's UNKNOWN, never to NOT_FOUND, so no caller can turn it into "nothing
+      // was spent" (a miss is absence of evidence, and only evidence clears an order). Orders older
       // than Kalshi's historical cutoff live under /historical/orders; reconciliation
       // here runs seconds after placement, far inside the recent window.
+      // The spec also gives no sort order, so each status is read at the maximum page
+      // size and the cursor is followed to the end — a match sitting past the first
+      // page must never read as a miss. min_ts opens the window at the approval (an
+      // order carrying this key cannot predate it), which keeps the page count small.
+      const sinceSec = sinceMs !== undefined ? Math.max(0, Math.floor(sinceMs / 1000) - LOOKUP_SKEW_SECONDS) : undefined
       let found: Record<string, unknown> | undefined
       let incomplete = false
       for (const status of ['resting', 'canceled', 'executed']) {
-        try {
-          const raw = await request<{ orders?: Array<Record<string, unknown>> }>(
-            'GET', '/trade-api/v2/portfolio/orders', `ticker=${encodeURIComponent(ticker)}&status=${status}&limit=100`,
-          )
+        let cursor: string | undefined
+        for (let page = 1; ; page++) {
+          let raw: { orders?: Array<Record<string, unknown>>; cursor?: string }
+          try {
+            raw = await request<{ orders?: Array<Record<string, unknown>>; cursor?: string }>(
+              'GET', '/trade-api/v2/portfolio/orders',
+              `ticker=${encodeURIComponent(ticker)}&status=${status}&limit=1000${sinceSec !== undefined ? `&min_ts=${sinceSec}` : ''}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+            )
+          } catch {
+            incomplete = true
+            break
+          }
           found = (raw.orders ?? []).find(o => o.client_order_id === clientOrderId)
           if (found) break
-        } catch {
-          incomplete = true
+          cursor = raw.cursor || undefined
+          if (!cursor) break
+          if (page >= MAX_LOOKUP_PAGES) { incomplete = true; break }
         }
+        if (found) break
       }
-      if (!found && incomplete) throw new KalshiNetworkError(`The order lookup for ${clientOrderId} could not read every order status; the result is inconclusive.`)
-      if (!found) return null
+      if (!found) {
+        if (incomplete) return { kind: 'unknown', reason: `The order lookup for ${clientOrderId} could not read every order status and page; whether the order exists is unknown.` }
+        return { kind: 'not_found' }
+      }
       const fillCount = num(found.fill_count_fp) ?? 0
       const fillCost = num(found.taker_fill_cost_dollars) ?? 0
       const fees = (num(found.taker_fees_dollars) ?? 0) + (num(found.maker_fees_dollars) ?? 0)
       return {
-        orderId: String(found.order_id ?? ''),
-        clientOrderId,
-        status: String(found.status ?? ''),
-        fillCount,
-        remainingCount: num(found.remaining_count_fp) ?? 0,
-        ...(fillCount > 0 && fillCost > 0 ? { averageFillPrice: Math.round((fillCost / fillCount) * 10000) / 10000 } : {}),
-        ...(fillCount > 0 ? { totalFees: fees } : {}),
+        kind: 'found',
+        order: {
+          orderId: String(found.order_id ?? ''),
+          clientOrderId,
+          status: String(found.status ?? ''),
+          fillCount,
+          remainingCount: num(found.remaining_count_fp) ?? 0,
+          ...(fillCount > 0 && fillCost > 0 ? { averageFillPrice: Math.round((fillCost / fillCount) * 10000) / 10000 } : {}),
+          ...(fillCount > 0 ? { totalFees: fees } : {}),
+        },
       }
     },
 
