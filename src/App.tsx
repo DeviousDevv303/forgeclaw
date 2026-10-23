@@ -3416,7 +3416,9 @@ function App() {
                       { name: 'GitHub', icon: '⚙️', key: 'gh_token', connected: !!ghToken },
                       { name: 'Gmail', icon: '📧', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: t('connectors.calendar'), icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
-                      { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
+                      // F-008: the header WA dot reads `wa_credentials`, so the panel row must too —
+                      // a hardcoded false disagrees with the dot whenever credentials exist.
+                      { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: !!safeGetItem('wa_credentials') },
                       { name: 'Kalshi', icon: '📈', key: 'fc_kalshi_key_id', connected: !!safeGetItem(KALSHI_KEY_ID_STORAGE) },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>
