@@ -211,7 +211,9 @@ import { loadOwnerScaffold, operatingLoopFor, reasoningFormatReminder } from './
 import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
-import { ownerRulesPrompt, parseFundsCommand, runFundsCommand } from './lib/fundsLedger'
+import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
+import { autoSettleKalshiPositions, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
+import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiKeyUsable, loadKalshiEnv, saveKalshiCredentials, saveKalshiEnv, type KalshiEnv } from './lib/kalshiAuth'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/pageVisibility'
 import { DEEPSEEK_RUN_EXPIRED_NOTE, isDeepSeekRunResumable } from './lib/deepseekRunResume'
@@ -723,6 +725,11 @@ function App() {
   const [anthropicModel, setAnthropicModel] = useState<string>(() => readAnthropicModel())
   const [anthropicWorkspaceId, setAnthropicWorkspaceId] = useState<string>(() => readAnthropicWorkspaceId())
   const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
+  // Kalshi trading (kalshiAuth.ts): environment toggle + whether the pasted private key imports.
+  const [kalshiEnv, setKalshiEnv] = useState<KalshiEnv>(() => loadKalshiEnv())
+  const [kalshiKeyState, setKalshiKeyState] = useState<'' | 'ok' | 'bad'>('')
+  // Kalshi settlements applied on open (kalshiExecution.ts), shown as pop-ups until dismissed.
+  const [settledNotices, setSettledNotices] = useState<SettledNotice[]>([])
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const moonshotKeyVerified = useMemo(() => isKeyVerified('moonshot', moonshotApiKey), [moonshotApiKey, keyVerifyTick])
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
@@ -936,6 +943,12 @@ function App() {
   }, [activeTab])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { installErrorHandlers() }, [])
+  // Auto-settle placed Kalshi positions from Kalshi's own settlements, once per open.
+  useEffect(() => {
+    let cancelled = false
+    autoSettleKalshiPositions().then(notices => { if (!cancelled && notices.length) setSettledNotices(notices) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
   useEffect(() => { safeSetItem('fm_anthropic_model', anthropicModel) }, [anthropicModel])
@@ -1524,10 +1537,11 @@ function App() {
       }
 
       // /funds: the owner's funds ledger (fundsLedger.ts). Owner-typed only: no model can add funds, approve or place.
-      const fundsReply = runFundsCommand(promptText)
+      // Approving a Kalshi proposal executes the order (kalshiExecution.ts): re-quote, balance check, placement.
+      const fundsReply = await runFundsCommandWithExecution(promptText)
       if (fundsReply !== null) {
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
-        const fundsOk = !fundsReply.startsWith('Not done:')
+        const fundsOk = !(fundsReply.startsWith('Not done:') || fundsReply.startsWith('Not placed:') || fundsReply.startsWith('Unknown:'))
         setMessages(prev => prev.map(message => message.id === msgId
           ? { ...message, content: fundsReply, streaming: false, agentPhase: fundsOk ? 'COMPLETE' : 'BLOCKED' }
           : message))
@@ -2844,20 +2858,44 @@ function App() {
                 </div>
               </div>
 
-              {/* Web Search API key */}
+              {/* Kalshi trading keys — this section replaces the Brave key slot (owner removed
+                  Brave 2026-10-23: he does not use it; web_search falls back to DuckDuckGo). */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  {t('settings.braveKey')}
+                  {t('settings.kalshiTitle')}
                 </label>
+                <select
+                  value={kalshiEnv}
+                  onChange={e => { const env = e.target.value as KalshiEnv; setKalshiEnv(env); saveKalshiEnv(env) }}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', outline: 'none', boxSizing: 'border-box', marginBottom: '6px' }}
+                >
+                  <option value="demo">{t('settings.kalshiEnvDemo')}</option>
+                  <option value="prod">{t('settings.kalshiEnvProd')}</option>
+                </select>
+                <input
+                  type="text"
+                  placeholder={t('settings.kalshiKeyId')}
+                  autoComplete="off"
+                  defaultValue={safeGetItem(KALSHI_KEY_ID_STORAGE) || ''}
+                  onChange={e => saveKalshiCredentials(e.target.value, safeGetItem(KALSHI_PRIVATE_KEY_STORAGE) || '')}
+                  style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box', marginBottom: '6px' }}
+                />
                 <input
                   type="password"
-                  placeholder="BSA..."
-                  defaultValue={safeGetItem('fc_brave_key') || ''}
-                  onChange={e => safeSetItem('fc_brave_key', e.target.value)}
+                  placeholder={t('settings.kalshiPrivateKey')}
+                  autoComplete="off"
+                  defaultValue={safeGetItem(KALSHI_PRIVATE_KEY_STORAGE) || ''}
+                  onChange={e => { saveKalshiCredentials(safeGetItem(KALSHI_KEY_ID_STORAGE) || '', e.target.value); setKalshiKeyState('') }}
+                  onBlur={e => { const v = e.target.value.trim(); if (v) void kalshiKeyUsable(v).then(ok => setKalshiKeyState(ok ? 'ok' : 'bad')) }}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '7px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
                 />
+                {kalshiKeyState && (
+                  <div style={{ color: kalshiKeyState === 'ok' ? '#4caf7d' : '#e57373', fontSize: '10px', marginTop: '4px' }}>
+                    {kalshiKeyState === 'ok' ? t('settings.kalshiKeyOk') : t('settings.kalshiKeyBad')}
+                  </div>
+                )}
                 <div style={{ color: '#333', fontSize: '10px', marginTop: '4px' }}>
-                  {t('settings.braveKeyHelp')}
+                  {t('settings.kalshiHelp')}
                 </div>
               </div>
 
@@ -3255,6 +3293,20 @@ function App() {
                   <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.busyNotice')}</div>
                 )}
                 <ConnectionToast notice={connectionNotice} reconnectingText={t('chat.reconnecting')} backText={t('chat.reconnected')} />
+                {/* Kalshi auto-settle pop-ups (item: settled from Kalshi on open) */}
+                {settledNotices.length > 0 && (
+                  <div role="status" style={{ position: 'absolute', bottom: '64px', left: '12px', right: '12px', zIndex: 60, background: '#0d1f16', border: '1px solid #1e4633', borderRadius: '8px', padding: '10px 12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ color: '#7ddba3', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Kalshi — settled</span>
+                      <button onClick={() => setSettledNotices([])} style={{ background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: '16px' }}>×</button>
+                    </div>
+                    {settledNotices.map(n => (
+                      <div key={n.id} style={{ color: '#ccc', fontSize: '12px', marginTop: '4px', fontFamily: 'monospace' }}>
+                        {n.id} "{n.market}": settled — {n.outcome} {n.pnl >= 0 ? '+' : '−'}${Math.abs(n.pnl).toFixed(2)}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {/* Connectors panel — quick-toggle sheet */}
                 {showConnectors && (
                   <div style={{
@@ -3271,7 +3323,6 @@ function App() {
                       { name: 'GitHub', icon: '⚙️', key: 'gh_token', connected: !!ghToken },
                       { name: 'Gmail', icon: '📧', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       { name: t('connectors.calendar'), icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
-                      { name: t('connectors.webSearch'), icon: '🔍', key: 'fc_brave_key', connected: !!safeGetItem('fc_brave_key') },
                       { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: false },
                     ].map(conn => (
                       <div key={conn.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #111' }}>

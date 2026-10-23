@@ -1,0 +1,130 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+// Built with love for Cristian Jr., Layla, and Jozae.
+
+// @vitest-environment jsdom
+import { generateKeyPairSync, webcrypto } from 'node:crypto'
+import { describe, expect, it } from 'vitest'
+import type { KalshiCredentials } from './kalshiAuth'
+import { KalshiNetworkError, createKalshiClient, orderForProposal, type KalshiFetcher } from './kalshiTrade'
+
+// jsdom's WebCrypto has no Ed25519; sign with Node's, as in kalshiAuth.test.ts.
+Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true })
+
+const { privateKey } = generateKeyPairSync('ed25519')
+const creds: KalshiCredentials = {
+  keyId: 'test-key-id',
+  privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+  env: 'demo',
+}
+
+interface Captured { url: string; method: string; headers: Record<string, string>; body?: string }
+
+function fakeFetcher(handler: (call: Captured) => { status?: number; json?: unknown } | 'throw'): { fetcher: KalshiFetcher; calls: Captured[] } {
+  const calls: Captured[] = []
+  const fetcher: KalshiFetcher = async (url, init) => {
+    const call: Captured = { url, method: init.method, headers: init.headers, body: init.body }
+    calls.push(call)
+    const result = handler(call)
+    if (result === 'throw') throw new TypeError('Failed to fetch')
+    return new Response(JSON.stringify(result.json ?? {}), { status: result.status ?? 200 })
+  }
+  return { fetcher, calls }
+}
+
+describe('getBalance', () => {
+  it('parses cents and the dollar string, and signs the queryless path', async () => {
+    const { fetcher, calls } = fakeFetcher(() => ({ json: { balance: 12345, balance_dollars: '123.4500', portfolio_value: 13000, updated_ts: 1 } }))
+    const balance = await createKalshiClient(creds, fetcher).getBalance()
+    expect(balance).toEqual({ balanceCents: 12345, balanceDollars: 123.45, portfolioValueCents: 13000 })
+    expect(calls[0].url).toBe('https://external-api.demo.kalshi.co/trade-api/v2/portfolio/balance')
+    expect(calls[0].headers['KALSHI-ACCESS-KEY']).toBe('test-key-id')
+    expect(calls[0].headers['KALSHI-ACCESS-SIGNATURE']).toBeTruthy()
+  })
+})
+
+describe('createOrder', () => {
+  it('sends the V2 body: fixed-point strings, IOC, taker_at_cross, the client order id', async () => {
+    const { fetcher, calls } = fakeFetcher(() => ({
+      status: 201,
+      json: { order_id: 'o1', client_order_id: 'fc-p1-99', fill_count: '10.00', remaining_count: '0.00', average_fill_price: '0.5600', average_fee_paid: '0.0173', ts_ms: 1 },
+    }))
+    const result = await createKalshiClient(creds, fetcher).createOrder({ ticker: 'KX-1', side: 'bid', count: 10, priceDollars: 0.56, clientOrderId: 'fc-p1-99' })
+    const body = JSON.parse(calls[0].body!)
+    expect(body).toEqual({
+      ticker: 'KX-1', client_order_id: 'fc-p1-99', side: 'bid', count: '10.00', price: '0.5600',
+      time_in_force: 'immediate_or_cancel', self_trade_prevention_type: 'taker_at_cross',
+    })
+    expect(result).toEqual({ orderId: 'o1', clientOrderId: 'fc-p1-99', fillCount: 10, remainingCount: 0, averageFillPrice: 0.56, averageFeePaid: 0.0173 })
+  })
+
+  it('a zero fill parses with no average fields (Kalshi omits them)', async () => {
+    const { fetcher } = fakeFetcher(() => ({ status: 201, json: { order_id: 'o2', client_order_id: 'c', fill_count: '0.00', remaining_count: '5.00', ts_ms: 1 } }))
+    const result = await createKalshiClient(creds, fetcher).createOrder({ ticker: 'KX-1', side: 'ask', count: 5, priceDollars: 0.6, clientOrderId: 'c' })
+    expect(result.fillCount).toBe(0)
+    expect(result.averageFillPrice).toBeUndefined()
+    expect(result.averageFeePaid).toBeUndefined()
+  })
+
+  it('a refusal is a KalshiApiError carrying Kalshi’s own code and message', async () => {
+    const { fetcher } = fakeFetcher(() => ({ status: 400, json: { error: { code: 'insufficient_balance', message: 'Insufficient balance.' } } }))
+    await expect(createKalshiClient(creds, fetcher).createOrder({ ticker: 'KX-1', side: 'bid', count: 1, priceDollars: 0.5, clientOrderId: 'c' }))
+      .rejects.toMatchObject({ name: 'KalshiApiError', status: 400, code: 'insufficient_balance', message: 'Insufficient balance.' })
+  })
+
+  it('no answer at all is a KalshiNetworkError (ambiguous — caller must look before retrying)', async () => {
+    const { fetcher, calls } = fakeFetcher(() => 'throw')
+    await expect(createKalshiClient(creds, fetcher).createOrder({ ticker: 'KX-1', side: 'bid', count: 1, priceDollars: 0.5, clientOrderId: 'c' }))
+      .rejects.toBeInstanceOf(KalshiNetworkError)
+    expect(calls).toHaveLength(1) // the client itself never retries a POST
+  })
+})
+
+describe('orderForProposal — the single-book mapping', () => {
+  it('YES is a bid at the YES price', () => {
+    expect(orderForProposal({ side: 'yes', livePrice: 0.56, contracts: 10 })).toEqual({ side: 'bid', priceDollars: 0.56, count: 10 })
+  })
+  it('NO is an ask at 1 − the NO price (selling YES)', () => {
+    expect(orderForProposal({ side: 'no', livePrice: 0.4, contracts: 3 })).toEqual({ side: 'ask', priceDollars: 0.6, count: 3 })
+    expect(orderForProposal({ side: 'no', livePrice: 0.333, contracts: 1 }).priceDollars).toBe(0.667)
+  })
+})
+
+describe('findOrderByClientOrderId — the no-double-order lookup', () => {
+  const orders = {
+    orders: [
+      { order_id: 'other', client_order_id: 'fc-p9-1', ticker: 'KX-1', status: 'executed', fill_count_fp: '2.00', remaining_count_fp: '0.00', taker_fill_cost_dollars: '1.1200', taker_fees_dollars: '0.0300', maker_fees_dollars: '0.0000' },
+      { order_id: 'mine', client_order_id: 'fc-p1-99', ticker: 'KX-1', status: 'executed', fill_count_fp: '10.00', remaining_count_fp: '0.00', taker_fill_cost_dollars: '5.6000', taker_fees_dollars: '0.1730', maker_fees_dollars: '0.0000' },
+    ],
+  }
+  it('finds the order and recovers its fill price and fees', async () => {
+    const { fetcher, calls } = fakeFetcher(() => ({ json: orders }))
+    const found = await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-p1-99', 'KX-1')
+    expect(found).toEqual({ orderId: 'mine', clientOrderId: 'fc-p1-99', status: 'executed', fillCount: 10, remainingCount: 0, averageFillPrice: 0.56, totalFees: 0.173 })
+    expect(calls[0].url).toContain('/portfolio/orders?ticker=KX-1&limit=100')
+  })
+  it('returns null when no order carries the id (safe to place)', async () => {
+    const { fetcher } = fakeFetcher(() => ({ json: orders }))
+    expect(await createKalshiClient(creds, fetcher).findOrderByClientOrderId('fc-nope', 'KX-1')).toBeNull()
+  })
+})
+
+describe('getSettlements', () => {
+  it('parses the settlement rows auto-settle reconciles against', async () => {
+    const { fetcher } = fakeFetcher(() => ({
+      json: {
+        settlements: [{
+          ticker: 'KX-1', event_ticker: 'KX', exchange_index: 0, market_result: 'yes',
+          yes_count_fp: '10.00', yes_total_cost_dollars: '5.6000', no_count_fp: '0.00', no_total_cost_dollars: '0.0000',
+          revenue: 1000, fee_cost: '0.1730', settled_time: '2026-10-23T00:00:00Z',
+        }],
+        cursor: '',
+      },
+    }))
+    const settlements = await createKalshiClient(creds, fetcher).getSettlements()
+    expect(settlements).toEqual([{
+      ticker: 'KX-1', marketResult: 'yes', yesCount: 10, noCount: 0, yesTotalCostDollars: 5.6,
+      noTotalCostDollars: 0, revenueCents: 1000, feeCostDollars: 0.173, settledTime: '2026-10-23T00:00:00Z',
+    }])
+  })
+})
