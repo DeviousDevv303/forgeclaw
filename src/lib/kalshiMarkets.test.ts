@@ -212,7 +212,7 @@ describe('rate limits on public market reads', () => {
     let calls = 0
     const err = await runKalshiMarkets({ series_ticker: 'KXHIGHNY' }, { fetcher: async () => { calls++; return limited() }, now: () => NOW, ...time }).catch(e => e)
     expect(err).toBeInstanceOf(KalshiError)
-    expect(err.message).toMatch(/rate-limited this read \(HTTP 429.*still limiting it after 2 spaced retries\. It is not an empty market list/)
+    expect(err.message).toMatch(/rate-limited this read: HTTP 429 on \/markets after 2 spaced retries · Retry-After: none · not an empty market list\./)
     expect(calls).toBe(1 + KALSHI_429_RETRY_DELAYS_MS.length)
     expect(time.waits).toEqual([...KALSHI_429_RETRY_DELAYS_MS])
   })
