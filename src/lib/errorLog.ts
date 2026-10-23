@@ -40,7 +40,19 @@ function persist() {
   }
 }
 
+// 2026-10-23: memoryLog starts empty on every page load and persisted entries were only read back by
+// getErrorLog — so the first write after a reload persisted [that one entry] and erased the saved
+// history. Every failure count read from this log after a reload was an undercount. Writers now
+// merge the persisted log in before their first write.
+let hydrated = false
+function hydrate() {
+  if (hydrated) return
+  memoryLog = [...loadPersisted(), ...memoryLog].slice(-MAX_ENTRIES)
+  hydrated = true
+}
+
 export function logError(source: string, message: string, details?: string) {
+  hydrate()
   const entry: ErrorLogEntry = {
     timestamp: Date.now(),
     level: 'error',
@@ -54,6 +66,7 @@ export function logError(source: string, message: string, details?: string) {
 }
 
 export function logWarning(source: string, message: string, details?: string) {
+  hydrate()
   const entry: ErrorLogEntry = {
     timestamp: Date.now(),
     level: 'warn',
@@ -67,14 +80,13 @@ export function logWarning(source: string, message: string, details?: string) {
 }
 
 export function getErrorLog(): ErrorLogEntry[] {
-  if (memoryLog.length === 0) {
-    memoryLog = loadPersisted()
-  }
+  hydrate()
   return [...memoryLog].reverse() // newest first
 }
 
 export function clearErrorLog() {
   memoryLog = []
+  hydrated = true
   try {
     localStorage.removeItem(STORAGE_KEY)
   } catch {
