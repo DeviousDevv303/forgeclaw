@@ -204,7 +204,7 @@ import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
 import { isPublicVisitor } from './lib/publicRelay'
-import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, type ChannelCall } from './lib/channelCalls'
+import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, mergeChannelCalls, readPendingChannelCalls, savePendingChannelCalls, type ChannelCall } from './lib/channelCalls'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { ReasoningFrameworkPanel } from './components/ReasoningFrameworkPanel'
@@ -820,7 +820,7 @@ function App() {
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
 
   // Channel calls — work the Channel Watch @'d this app with on issue #235 (lib/channelCalls)
-  const [channelCalls, setChannelCalls] = useState<ChannelCall[]>([])
+  const [channelCalls, setChannelCalls] = useState<ChannelCall[]>(() => readPendingChannelCalls())
 
   // Diagnostics — operator visibility panel
   interface DiagnosticsState {
@@ -979,14 +979,13 @@ function App() {
       try {
         const calls = await fetchNewChannelCalls({ token })
         if (cancelled || !calls.length) return
-        setChannelCalls(prev => {
-          const seen = new Set(prev.map(c => c.commentId))
-          const fresh = calls.filter(c => !seen.has(c.commentId))
-          return fresh.length ? [...prev, ...fresh] : prev
-        })
-        // Advance only after surfacing. A refused write returns false, and the calls
-        // then resurface on a later poll instead of being marked seen on a claim.
-        acknowledgeChannelCalls(calls)
+        // Surfaced in memory AND persisted until the owner dismisses them: the watermark may
+        // only advance once the pending list is proven stored, so a reload before the owner
+        // looked cannot drop a call.
+        const merged = mergeChannelCalls(readPendingChannelCalls(), calls)
+        const persisted = savePendingChannelCalls(merged)
+        setChannelCalls(prev => mergeChannelCalls(prev, merged))
+        if (persisted) acknowledgeChannelCalls(calls)
       } catch {
         // A failed poll is not an app failure — the next interval retries.
       }
@@ -3498,6 +3497,10 @@ function App() {
                         {timeStr && <span style={{ color: '#333', fontSize: '8px', flexShrink: 0 }}>{timeStr}</span>}
                       </div>
                       <div style={{ color: '#999', fontSize: '10px', whiteSpace: 'pre-wrap', marginTop: '3px' }}>{call.taskText}</div>
+                      <button
+                        onClick={() => { const next = channelCalls.filter(c => c.commentId !== call.commentId); savePendingChannelCalls(next); setChannelCalls(next) }}
+                        style={{ marginTop: '4px', background: 'none', border: '1px solid #222', color: '#666', fontSize: '8px', letterSpacing: '1px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer' }}
+                      >{t('activity.channelCallDismiss')}</button>
                     </div>
                   )
                 })}
