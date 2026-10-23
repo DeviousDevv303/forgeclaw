@@ -38,6 +38,12 @@ export interface KalshiMarket {
   /** "yes" / "no" once the market is determined; empty before. */
   result?: string
   /**
+   * Set only on markets served from the last-good cache after a live read failed (see
+   * runKalshiMarkets): a one-line warning naming the failure and the age of the prices.
+   * Live reads never set it, so its presence is the stale signal — renderers must show it.
+   */
+  stale_notice?: string
+  /**
    * The exchange shard this market trades on. Kalshi partitions account balances by
    * shard: an order on this market can only draw on this shard's funds, whatever the
    * all-shards balance says. Absent on older payloads — Kalshi's own default is 0.
@@ -74,6 +80,11 @@ export interface KalshiDeps {
   delay?: (ms: number, signal?: AbortSignal) => Promise<void>
   /** The wall clock read spacing is measured on (defaults to Date.now). */
   clock?: () => number
+  /**
+   * How old a last-good cached market list may be and still be served (stamped STALE)
+   * when a live read fails. Defaults to KALSHI_MARKETS_MAX_STALE_MS.
+   */
+  maxStaleMs?: number
 }
 
 // 2026-10-23: one answer asked kalshi_markets for KXHIGHNY, KXHIGHMIA and KXHIGHLAX back to back (each up to
@@ -100,10 +111,43 @@ function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/** The raw Retry-After header value, or null when the response carries none. Defensive: a
+ * non-conforming transport (or a test double) may lack Headers entirely. */
+function retryAfterHeader(res: Response): string | null {
+  try {
+    return res.headers?.get('Retry-After') ?? null
+  } catch {
+    return null
+  }
+}
+
 /** Retry-After in seconds (Kalshi usually sends none), capped so one header cannot stall a run. */
 function retryAfterMs(res: Response, fallback: number): number {
-  const seconds = Number(res.headers.get('Retry-After'))
+  const seconds = Number(retryAfterHeader(res))
   return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1000, KALSHI_RETRY_AFTER_CAP_MS) : fallback
+}
+
+export interface KalshiReadInfo {
+  /** HTTP status of the last read response; null when no response arrived (transport failure) or no read has run yet. */
+  status: number | null
+  /** The Retry-After header value the last response carried; null when it sent none. */
+  retryAfter: string | null
+  /** When the last read outcome was recorded, on the read clock (deps.clock, default Date.now). */
+  at: number
+}
+
+// Every read outcome is recorded here as it happens, so a claim like "Kalshi is rate-limiting
+// us" rests on an observed status and header — never on an inference from a count of failures.
+let lastReadInfo: KalshiReadInfo = { status: null, retryAfter: null, at: 0 }
+
+/** The most recent Kalshi read outcome (success or failure), for diagnostics and tests. */
+export function lastKalshiReadInfo(): KalshiReadInfo {
+  return { ...lastReadInfo }
+}
+
+/** One-line suffix every thrown read error carries: the observed Retry-After, or that none arrived. */
+function retryAfterSuffix(): string {
+  return `Retry-After: ${lastReadInfo.retryAfter ?? 'absent'}`
 }
 
 export class KalshiError extends Error {
@@ -186,11 +230,14 @@ export function formatMarket(m: KalshiMarket, nowMs: number): string {
   // Orders draw only on their market's exchange shard, so the shard is shown as Kalshi reports it —
   // 'n/a' when the record omits it, never a guessed 0 (the approve path's own default is not evidence).
   const shard = typeof m.exchange_index === 'number' && Number.isInteger(m.exchange_index) && m.exchange_index >= 0 ? String(m.exchange_index) : 'n/a'
-  return [
+  const lines = [
     `${m.ticker} — ${title}`,
     `   YES: bid ${usd(yesBid)} / ask ${usd(yesAsk)} (implied ${pct(yesAsk)}); NO ask ${usd(noAsk)}; last ${usd(last)}; spread ${usd(spread)}`,
     `   volume ${num(parseCount(m.volume_fp))} (24h ${num(parseCount(m.volume_24h_fp))}); open interest ${num(parseCount(m.open_interest_fp))}; status ${m.status ?? 'n/a'}; shard ${shard}; closes ${closes}`,
-  ].join('\n')
+  ]
+  // A stale-served market must say so where its prices are read, not just in a data field.
+  if (m.stale_notice) lines.push(`   ${m.stale_notice}`)
+  return lines.join('\n')
 }
 
 export const KALSHI_DISCLAIMER =
@@ -215,19 +262,32 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
     const waitMs = KALSHI_PUBLIC_READ_INTERVAL_MS - (now() - lastPublicReadAt)
     if (waitMs > 0) await delay(waitMs, deps.signal)
     lastPublicReadAt = now()
-    res = await fetchOnce(deps, url)
+    try {
+      res = await fetchOnce(deps, url)
+    } catch (error) {
+      // No HTTP answer arrived: the outcome is "no response", recorded as such before the error travels on.
+      lastReadInfo = { status: null, retryAfter: null, at: now() }
+      throw error
+    }
+    lastReadInfo = { status: res.status, retryAfter: retryAfterHeader(res), at: now() }
     if (res.status !== 429 || attempt >= KALSHI_429_RETRY_DELAYS_MS.length) break
     await delay(retryAfterMs(res, KALSHI_429_RETRY_DELAYS_MS[attempt]), deps.signal)
   }
   if (res.status === 429) {
-    throw new KalshiError(`Kalshi rate-limited this read (HTTP 429 for ${url.split('?')[0]}) and was still limiting it after ${KALSHI_429_RETRY_DELAYS_MS.length} spaced retries. It is not an empty market list; wait a few seconds and ask again, or ask for fewer series at once.`)
+    throw new KalshiError(`Kalshi rate-limited this read (HTTP 429 for ${url.split('?')[0]}) and was still limiting it after ${KALSHI_429_RETRY_DELAYS_MS.length} spaced retries. It is not an empty market list; wait a few seconds and ask again, or ask for fewer series at once. ${retryAfterSuffix()}`)
   }
-  if (!res.ok) throw new KalshiError(`Kalshi returned HTTP ${res.status} for ${url.split('?')[0]}.`)
+  if (!res.ok) throw new KalshiError(`Kalshi returned HTTP ${res.status} for ${url.split('?')[0]}. ${retryAfterSuffix()}`)
   try {
     return await res.json()
   } catch {
-    throw new KalshiError('Kalshi returned a response that is not valid JSON.')
+    throw new KalshiError(`Kalshi returned a response that is not valid JSON (HTTP ${res.status}). ${retryAfterSuffix()}`)
   }
+}
+
+/** One-line shape error for a parsed body that lacks what the caller asked for; carries the
+ * observed HTTP status of the response it came from, like every other read error. */
+function shapeError(what: string): KalshiError {
+  return new KalshiError(`Kalshi response had no ${what} (HTTP ${lastReadInfo.status ?? 'unknown'}). ${retryAfterSuffix()}`)
 }
 
 async function fetchOnce(deps: KalshiDeps, url: string): Promise<Response> {
@@ -242,25 +302,102 @@ async function fetchOnce(deps: KalshiDeps, url: string): Promise<Response> {
     // URL into Settings); with one, both paths failed and the message must not pretend the
     // fallback was never tried. Neither may read as a bare "Failed to fetch".
     const err = new KalshiError(relay
-      ? `Kalshi could not be reached (${detail}). The direct call failed and the configured relay (${relay}) did not answer either; it is not an empty market list.`
-      : `Kalshi could not be reached (${detail}). From a browser this is usually a CORS block — Kalshi does not answer direct browser calls — and no Kalshi relay is configured, so there is no fallback. To fix it: deploy the relay (the Kalshi-only steps in relay/README.md, about two minutes), then paste its workers.dev URL into Settings → Kalshi trading → Kalshi relay URL, and try again. It is not an empty market list.`)
+      ? `Kalshi could not be reached (${detail}). The direct call failed and the configured relay (${relay}) did not answer either; it is not an empty market list. Retry-After: absent.`
+      : `Kalshi could not be reached (${detail}). From a browser this is usually a CORS block — Kalshi does not answer direct browser calls — and no Kalshi relay is configured, so there is no fallback. To fix it: deploy the relay (the Kalshi-only steps in relay/README.md, about two minutes), then paste its workers.dev URL into Settings → Kalshi trading → Kalshi relay URL, and try again. It is not an empty market list. Retry-After: absent.`)
     err.transportFailure = true
     err.relayMissing = !relay
     throw err
   }
 }
 
-/** Fetch open markets (up to KALSHI_MAX_PAGES pages), filter and format them. */
-export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promise<string> {
-  const now = deps.now ?? Date.now
+/**
+ * How old a last-good market list may be and still be served (stamped STALE) when a live
+ * read fails. 15 minutes, by the owner's call (2026-10-23): the weather buckets this app
+ * mostly reads move on hours, so a quarter-hour-old price still beats a dead end — but
+ * faster markets will need tighter, which is why callers can narrow it per read via
+ * KalshiDeps.maxStaleMs instead of editing this constant.
+ */
+export const KALSHI_MARKETS_MAX_STALE_MS = 900_000
+
+/** Versioned storage prefix for last-good market lists; bump the version if the entry shape changes. */
+const KALSHI_CACHE_KEY_PREFIX = 'fc_kalshi_cache_v1:'
+
+interface KalshiCacheEntry { at: number; payload: KalshiMarket[] }
+
+/** The fetch is fully determined by the page-1 URL's query string (client-side filters run
+ * after the fetch), so that string is the cache identity for a query. */
+function marketsCacheKey(q: KalshiQuery): string {
+  return KALSHI_CACHE_KEY_PREFIX + new URL(buildMarketsUrl(q)).search
+}
+
+function cacheStore(): Storage | null {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : null
+  } catch {
+    return null
+  }
+}
+
+function writeMarketsCache(key: string, markets: KalshiMarket[], atMs: number): void {
+  // A cache write must never break a good read: storage can be full, blocked, or absent
+  // (private mode, non-browser runtimes), and a cache that can throw would turn a successful
+  // live read into a failure — strictly worse than no cache. Write failures are therefore
+  // swallowed here, and only here, by design.
+  try {
+    cacheStore()?.setItem(key, JSON.stringify({ at: atMs, payload: markets } satisfies KalshiCacheEntry))
+  } catch { /* see above */ }
+}
+
+function readMarketsCache(key: string): KalshiCacheEntry | null {
+  try {
+    const raw = cacheStore()?.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<KalshiCacheEntry>
+    if (typeof parsed?.at !== 'number' || !Array.isArray(parsed?.payload)) return null
+    return { at: parsed.at, payload: parsed.payload }
+  } catch {
+    return null
+  }
+}
+
+/** The paginated /markets list read, raw: every page, unfiltered. */
+async function fetchAllMarkets(q: KalshiQuery, deps: KalshiDeps): Promise<KalshiMarket[]> {
   const all: KalshiMarket[] = []
   let cursor: string | undefined
   for (let page = 0; page < KALSHI_MAX_PAGES; page++) {
     const data = await getJson(deps, buildMarketsUrl(q, cursor)) as { markets?: KalshiMarket[]; cursor?: string }
-    if (!Array.isArray(data?.markets)) throw new KalshiError('Kalshi response had no "markets" array.')
+    if (!Array.isArray(data?.markets)) throw shapeError('"markets" array')
     all.push(...data.markets)
     cursor = data.cursor || undefined
     if (!cursor || q.ticker) break
+  }
+  return all
+}
+
+/**
+ * Fetch open markets (up to KALSHI_MAX_PAGES pages), filter and format them.
+ *
+ * Degrade path: a successful read is kept as the last-good list for its query. When a later
+ * live read of the same query fails, the cached list is served instead of a dead end — each
+ * market stamped with a stale_notice naming the failure and the age of the prices — as long
+ * as the cache is no older than maxStaleMs. With no usable cache, the read's one-line error
+ * is thrown unchanged. An abort is never degraded: the caller cancelled on purpose.
+ */
+export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promise<string> {
+  const now = deps.now ?? Date.now
+  const cacheKey = marketsCacheKey(q)
+  let all: KalshiMarket[]
+  try {
+    all = await fetchAllMarkets(q, deps)
+    writeMarketsCache(cacheKey, all, now())
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    const cached = readMarketsCache(cacheKey)
+    const ageMs = cached ? now() - cached.at : Number.POSITIVE_INFINITY
+    if (!cached || ageMs > (deps.maxStaleMs ?? KALSHI_MARKETS_MAX_STALE_MS)) throw error
+    const reason = error instanceof Error ? error.message : String(error)
+    const notice = `STALE — live Kalshi read failed (${reason}); these prices are from ${new Date(cached.at).toISOString()}, ${Math.round(ageMs / 60_000)} min old. Say they are stale if you use them.`
+    all = cached.payload.map(m => ({ ...m, stale_notice: notice }))
   }
   const nowMs = now()
   return formatMarkets(selectMarkets(all, q, nowMs), q, nowMs, all.length)
@@ -270,7 +407,7 @@ export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promis
 export async function fetchKalshiMarket(ticker: string, deps: KalshiDeps): Promise<KalshiMarket | null> {
   if (!/^[A-Za-z0-9_.-]{1,80}$/.test(ticker)) throw new KalshiError('Invalid Kalshi ticker.')
   const data = await getJson(deps, buildMarketsUrl({ ticker })) as { markets?: KalshiMarket[] }
-  if (!Array.isArray(data?.markets)) throw new KalshiError('Kalshi response had no "markets" array.')
+  if (!Array.isArray(data?.markets)) throw shapeError('"markets" array')
   return data.markets.find(m => m?.ticker === ticker) ?? null
 }
 
@@ -303,6 +440,6 @@ export async function runKalshiOrderbook(ticker: string, deps: KalshiDeps): Prom
   if (!/^[A-Za-z0-9_.-]{1,80}$/.test(ticker)) throw new KalshiError('Invalid Kalshi ticker.')
   const data = await getJson(deps, `${KALSHI_BASE_URL}/markets/${encodeURIComponent(ticker)}/orderbook`)
   const book = parseOrderbook(data)
-  if (!book) throw new KalshiError('Kalshi response had no "orderbook_fp".')
+  if (!book) throw shapeError('"orderbook_fp"')
   return formatOrderbook(ticker, book)
 }

@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
-  selectMarkets, type KalshiMarket, KALSHI_429_RETRY_DELAYS_MS, KALSHI_PUBLIC_READ_INTERVAL_MS, resetKalshiReadSpacing,
+  selectMarkets, type KalshiMarket, KALSHI_429_RETRY_DELAYS_MS, KALSHI_MARKETS_MAX_STALE_MS, KALSHI_PUBLIC_READ_INTERVAL_MS, lastKalshiReadInfo, resetKalshiReadSpacing,
 } from './kalshiMarkets'
 import { relayFallbackFetcher } from './kalshiTrade'
 
@@ -240,5 +240,115 @@ describe('rate limits on public market reads', () => {
     const pending = runKalshiMarkets({ ticker: 'KX-A' }, { fetcher: async () => replies.shift() ?? json({ markets: [] }), now: () => NOW, signal: controller.signal })
     controller.abort()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  })
+})
+
+// 2026-10-23: on the owner's network the public reads died on HTTP 429 and the tool hard-blocked
+// with nothing to show. The degrade path serves the last-good list (stamped STALE, with its age)
+// when a live read fails, and every read outcome is recorded so failure claims are observed —
+// status and Retry-After — rather than inferred from a count of failures.
+describe('read-outcome logging and last-good cache (degrade path)', () => {
+  // In-memory localStorage stand-in: the node test environment has none, and the module reads
+  // the global at call time, so installing one here exercises the real cache path.
+  let store: Map<string, string>
+  beforeEach(() => {
+    store = new Map()
+    const stub = {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => { store.set(k, String(v)) },
+      removeItem: (k: string) => { store.delete(k) },
+      clear: () => { store.clear() },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() { return store.size },
+    }
+    Object.defineProperty(globalThis, 'localStorage', { value: stub, configurable: true })
+    resetKalshiReadSpacing()
+  })
+  afterEach(() => {
+    Reflect.deleteProperty(globalThis, 'localStorage')
+  })
+
+  const fakeTime = () => {
+    let t = 1_000_000
+    const waits: number[] = []
+    return { waits, clock: () => t, delay: async (ms: number) => { waits.push(ms); t += ms } }
+  }
+  const http = (status: number, body: unknown = {}, headers: Record<string, string> = {}) =>
+    ({ ok: status < 400, status, headers: new Headers(headers), json: async () => body }) as unknown as Response
+
+  const SERIES = { series_ticker: 'KXSTALE' }
+  const CACHE_KEY = 'fc_kalshi_cache_v1:' + new URL(buildMarketsUrl(SERIES)).search
+
+  it('the default staleness window is the owner-set 15 minutes', () => {
+    expect(KALSHI_MARKETS_MAX_STALE_MS).toBe(900_000)
+  })
+
+  it('a successful read writes the last-good cache and returns markets with no stale stamp', async () => {
+    const time = fakeTime()
+    const out = await runKalshiMarkets(SERIES, { fetcher: async () => json({ markets: [mk({})] }), now: () => NOW, ...time })
+    expect(out).toContain('KX-A — Will A happen?')
+    expect(out).not.toContain('STALE')
+    const entry = JSON.parse(store.get(CACHE_KEY)!)
+    expect(entry.at).toBe(NOW)
+    expect(entry.payload).toHaveLength(1)
+    expect(entry.payload[0].ticker).toBe('KX-A')
+    expect(entry.payload[0].stale_notice).toBeUndefined()
+  })
+
+  it('a failed live read serves the last-good list within the window, every market stamped with the failure and the age', async () => {
+    const time = fakeTime()
+    store.set(CACHE_KEY, JSON.stringify({ at: NOW - 5 * 60_000, payload: [mk({}), mk({ ticker: 'KX-B', title: 'Will B happen?' })] }))
+    const out = await runKalshiMarkets(SERIES, { fetcher: async () => http(503), now: () => NOW, ...time })
+    expect(out).toContain('KX-A — Will A happen?')
+    expect(out).toContain('KX-B — Will B happen?')
+    expect(out).toContain('STALE — live Kalshi read failed (Kalshi returned HTTP 503')
+    expect(out).toContain('Retry-After: absent')
+    expect(out).toContain(`these prices are from ${new Date(NOW - 5 * 60_000).toISOString()}, 5 min old. Say they are stale if you use them.`)
+    expect(out.match(/STALE —/g)).toHaveLength(2)
+  })
+
+  it('a failed live read with a cache older than maxStaleMs throws the live error instead', async () => {
+    const time = fakeTime()
+    store.set(CACHE_KEY, JSON.stringify({ at: NOW - 61_000, payload: [mk({})] }))
+    const err = await runKalshiMarkets(SERIES, { fetcher: async () => http(503), now: () => NOW, maxStaleMs: 60_000, ...time }).catch(e => e)
+    expect(err).toBeInstanceOf(KalshiError)
+    expect(err.message).toContain('HTTP 503')
+  })
+
+  it('a failed live read with no cache throws the one-line error carrying the status and the Retry-After observation', async () => {
+    const time = fakeTime()
+    const err = await runKalshiMarkets(SERIES, { fetcher: async () => http(503), now: () => NOW, ...time }).catch(e => e)
+    expect(err).toBeInstanceOf(KalshiError)
+    expect(err.message).toContain('HTTP 503')
+    expect(err.message).toContain('Retry-After: absent')
+    expect(err.message).not.toContain('\n')
+  })
+
+  it('a 429 carrying Retry-After reports the observed value in the error and the read record', async () => {
+    const time = fakeTime()
+    const err = await runKalshiMarkets(SERIES, { fetcher: async () => http(429, {}, { 'Retry-After': '7' }), now: () => NOW, ...time }).catch(e => e)
+    expect(err).toBeInstanceOf(KalshiError)
+    expect(err.message).toContain('HTTP 429')
+    expect(err.message).toContain('Retry-After: 7')
+    expect(lastKalshiReadInfo()).toEqual({ status: 429, retryAfter: '7', at: expect.any(Number) })
+  })
+
+  it('an invalid-JSON body fails with the observed status on the line', async () => {
+    const time = fakeTime()
+    const bad = { ok: true, status: 200, headers: new Headers(), json: async () => { throw new SyntaxError('Unexpected token') } } as unknown as Response
+    const err = await runKalshiMarkets(SERIES, { fetcher: async () => bad, now: () => NOW, ...time }).catch(e => e)
+    expect(err).toBeInstanceOf(KalshiError)
+    expect(err.message).toContain('not valid JSON (HTTP 200)')
+    expect(err.message).toContain('Retry-After: absent')
+  })
+
+  it('lastKalshiReadInfo reflects the last read outcome, success then failure', async () => {
+    const time = fakeTime()
+    await runKalshiMarkets(SERIES, { fetcher: async () => json({ markets: [mk({})] }), now: () => NOW, ...time })
+    expect(lastKalshiReadInfo()).toEqual({ status: 200, retryAfter: null, at: 1_000_000 })
+    await runKalshiMarkets({ series_ticker: 'KXOTHER' }, { fetcher: async () => http(503), now: () => NOW, ...time }).catch(() => undefined)
+    const info = lastKalshiReadInfo()
+    expect(info.status).toBe(503)
+    expect(info.retryAfter).toBeNull()
   })
 })
