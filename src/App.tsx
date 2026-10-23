@@ -171,6 +171,7 @@ import {
 import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
 import { createRunJournal, formatRollbackReport, journalRecord, rollbackRun, setActiveRunJournal, type RunJournal } from './lib/runRollback'
 import { cleanOutput } from './lib/cleanOutput'
+import { ledgerContinuationLimit, ledgerContinuationPrompt, owedItems, parseRequestLedger, reportFormatInstruction, settleLedger, splitPipeTables, type SettledItem } from './lib/requestLedger'
 import { extractThinking, type GuardianPosture } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { takeGeneratedImage } from './lib/imageArtifact'
@@ -255,6 +256,7 @@ interface Message {
   streaming?: boolean          // true while tokens are arriving
   plan?: string                // extracted PLAN: section for plan panel
   agentPhase?: AgentPhase      // current phase in the agent loop
+  reportLedger?: SettledItem[] // numbered request: each item rendered, or named unavailable (requestLedger.ts)
   resumedAfterInterrupt?: boolean // user message: a re-run of a task the page died on
   resumeOf?: string            // interrupted reply: the user message RESUME re-runs
 }
@@ -432,6 +434,12 @@ function formatScaffoldTrace(text: string): string | undefined {
   return sections.map(([label, value]) => `${label}: ${value}`).join('\n')
 }
 
+/** The part of a reply the ledger reads: the public answer, without the reasoning scaffold or a trailing trace. */
+function ledgerText(text: string): string {
+  const visible = text.split(/\[FM:(?:THINK|TRACE)\]/i)[0]
+  return extractPublicAnswer(visible) || formatScaffoldFallback(visible) || visible
+}
+
 function cleanVisibleResponse(text: string): string {
   const publicAnswer = extractPublicAnswer(text)
   return sanitizeChatText(cleanOutput(publicAnswer || formatScaffoldFallback(text) || text))
@@ -522,7 +530,15 @@ function renderMessageContent(text: string, onCopy: (code: string) => void, copi
       )
     }
     // Long URLs and paths wrap inside the bubble instead of running past its edge; links are tappable.
-    return <span key={i} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{renderWithLinks(part)}</span>
+    // A markdown pipe table renders as a table (report mode puts list-shaped data in one), scrolling inside the bubble.
+    return splitPipeTables(part).map((segment, j) => segment.kind === 'table' ? (
+      <div key={`${i}-${j}`} style={{ overflowX: 'auto', margin: '6px 0' }}>
+        <table style={{ borderCollapse: 'collapse', fontStyle: 'normal', fontSize: '13px', fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>
+          <thead><tr>{segment.header.map((cell, k) => <th key={k} style={{ border: '1px solid #333', padding: '3px 8px', textAlign: 'left', color: '#f97316' }}>{cell}</th>)}</tr></thead>
+          <tbody>{segment.rows.map((row, r) => <tr key={r}>{row.map((cell, k) => <td key={k} style={{ border: '1px solid #2a2a2a', padding: '3px 8px', verticalAlign: 'top' }}>{renderWithLinks(cell)}</td>)}</tr>)}</tbody>
+        </table>
+      </div>
+    ) : <span key={`${i}-${j}`} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{renderWithLinks(segment.text)}</span>)
   })
 }
 
@@ -1518,10 +1534,13 @@ function App() {
     // Native function calling is not required: the router injects a compact
     // manual protocol when runtimeTools are present and the App loop parses it.
     const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.\n${NO_TOOLS_NOTICE}`
-    const activeSystemPrompt = runtimeTools.length === 0
+    // A numbered request is a ledger: every item it enumerates is owed a section before the run may end (requestLedger.ts).
+    const requestLedger = parseRequestLedger(promptText, FORGE_TOOLS.map(tool => tool.name))
+    const ledgerInstruction = requestLedger ? `\n\n${reportFormatInstruction(requestLedger)}` : ''
+    const activeSystemPrompt = (runtimeTools.length === 0
       ? conversationalSystemPrompt
       // The owner's reasoning format is repeated last, after lessons and past interactions, nearest to where reasoning starts.
-      : finalSystemPrompt + reasoningFormatReminder(ownerScaffold)
+      : finalSystemPrompt + reasoningFormatReminder(ownerScaffold)) + ledgerInstruction
 
     // ── Runtime-owned repository identity ────────────────────────────────────
     // Do not pre-read or serialize HEAD/repository contents into the prompt. The
@@ -1797,6 +1816,12 @@ function App() {
       const supportsTools = providerSupportsTools(normalizedActiveModel, activeProvider)
       // Model steps re-asked after the owner left the app mid-step (bounded, so a flaky connection cannot loop forever).
       let pageReturnRetries = 0
+      // Every reply text of this run, for the ledger: a section rendered beside a tool call still counts.
+      const ledgerRounds: string[] = []
+      let ledgerContinuations = 0
+      const ledgerReasks = ledgerContinuationLimit(isDeepSeekProvider(activeProvider))
+      // Each call's arguments, so the ledger keys evidence by tool name and arguments (requestLedger.ts).
+      const callInputs = new Map<string, Record<string, unknown>>()
 
       for (let iter = 0; iter < MAX_AGENT_ITERATIONS; iter++) {
         const isLastIter = iter === MAX_AGENT_ITERATIONS - 1
@@ -1911,9 +1936,25 @@ function App() {
           
           if (!result.toolCalls?.length) {
             finalText = result.text || streamBuffer
+            if (requestLedger) {
+              ledgerRounds.push(ledgerText(finalText))
+              const owed = owedItems(ledgerRounds, requestLedger)
+              // The first answer is not the end of a numbered request: while items are owed and the run may go on,
+              // the model is told which ones and continues. Bounded, so a model that never renders them cannot loop.
+              if (owed.length > 0 && !isLastIter && ledgerContinuations < ledgerReasks) {
+                ledgerContinuations++
+                emitFailure({ source: 'forgemind', severity: 'info', message: `Reply rendered ${requestLedger.items.length - owed.length} of ${requestLedger.items.length} numbered sections; asking for sections ${owed.map(item => item.n).join(', ')} (${ledgerContinuations}/${ledgerReasks})` })
+                conversationMessages.push({ role: 'assistant', content: finalText, ...(result.reasoningContent ? { reasoning_content: result.reasoningContent } : {}) })
+                conversationMessages.push({ role: 'user', content: ledgerContinuationPrompt(requestLedger, owed) })
+                setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
+                continue
+              }
+            }
             break
           }
         }
+        if (requestLedger && result.text) ledgerRounds.push(ledgerText(result.text))
+        for (const call of result.toolCalls) callInputs.set(call.id, call.input)
 
         // Tool calls → executeTool owns Guardian enforcement and side effects.
         const iterResults: ToolResult[] = []
@@ -1966,7 +2007,8 @@ function App() {
           setActivityLog(prev => [...prev.slice(-99), { id: actEntryId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
           emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
           emitForge({ type: 'TOOL_START', tool: call.name, iter })
-          const repositoryHeadVerified = isRepositoryHeadQuestion(promptText) && allToolResults.some(toolResult =>
+          // A numbered report owes every section its own tool: one verified HEAD does not stand in for them.
+          const repositoryHeadVerified = !requestLedger && isRepositoryHeadQuestion(promptText) && allToolResults.some(toolResult =>
             toolResult.name === 'github_repo_state' && !toolResult.isError,
           )
           const output = call.name === 'shell_exec' && repositoryHeadVerified
@@ -2074,8 +2116,14 @@ function App() {
           (failedAttempt?.input === TRUNCATED_ATTEMPT || toolAttempts[laterIndex]?.input === failedAttempt?.input)
         )
       })
+      // Settled against the request's numbered items: each one rendered, or a named unavailable line. A partial
+      // enumeration is never complete, whatever the model's STATUS says.
+      const settledLedger = requestLedger
+        ? settleLedger(requestLedger, ledgerRounds, allToolResults.map(r => ({ ...r, input: callInputs.get(r.toolCallId) })), { lang: selectedLanguage, runId })
+        : null
+      const ledgerIncomplete = Boolean(settledLedger && !settledLedger.complete)
       const effectiveAgentPhase: AgentPhase =
-        completionBlocked || hasUnresolvedToolFailure ? 'BLOCKED' : agentPhase
+        completionBlocked || hasUnresolvedToolFailure || ledgerIncomplete ? 'BLOCKED' : agentPhase
       // Deterministic tool requests: when the required repository evidence was
       // obtained from a real tool result and nothing failed, the work is complete
       // even if the model did not emit an explicit STATUS: COMPLETE tag. This
@@ -2084,6 +2132,7 @@ function App() {
       const deterministicComplete =
         !completionBlocked &&
         !hasUnresolvedToolFailure &&
+        !ledgerIncomplete &&
         repositoryEvidenceRequired &&
         repositoryEvidenceObserved &&
         !nextAction
@@ -2098,21 +2147,26 @@ function App() {
       // a successful tool result behind it is 'verified', which NEXUS lets converge into knowledge (nexusConvergence.ts).
       // A model's own reasoning (deepseek_reason and the like) is not evidence; only real tool results make an answer 'verified'.
       const recordedOutcome = answerOutcome(completionPhase === 'BLOCKED', allToolResults)
-      await logToCorpus(promptText, cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`, { outcome: recordedOutcome })
+      await logToCorpus(promptText, settledLedger?.text || cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`, { outcome: recordedOutcome })
       // Sync plan to ForgeOps + emit terminal event
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (completionBlocked) emitForge({ type: 'MISSION_BLOCKED', reason: 'Repository evidence required, but no GitHub tool returned successfully' })
       else if (hasUnresolvedToolFailure) emitForge({ type: 'MISSION_BLOCKED', reason: 'A requested tool execution failed and was not successfully resolved' })
+      else if (ledgerIncomplete) emitForge({ type: 'MISSION_BLOCKED', reason: `${settledLedger!.items.filter(item => item.status !== 'rendered').length} of ${settledLedger!.items.length} numbered sections unavailable` })
       else if (agentPhase === 'BLOCKED') emitForge({ type: 'MISSION_BLOCKED', reason: 'Agent reported BLOCKED status' })
       else emitForge({ type: 'MISSION_COMPLETE' })
       const verifiedRepoState = allToolResults.find(result => result.name === 'github_repo_state' && !result.isError)
       const verifiedRepoHead = verifiedRepoState ? parseRepoState(verifiedRepoState.output).headSha : ''
-      const authoritativeRepositoryAnswer = isRepositoryHeadQuestion(promptText) && /^[0-9a-f]{40}$/i.test(verifiedRepoHead)
+      // A one-line HEAD answer is for a HEAD question; a numbered report renders HEAD into its own section instead.
+      const authoritativeRepositoryAnswer = !requestLedger && isRepositoryHeadQuestion(promptText) && /^[0-9a-f]{40}$/i.test(verifiedRepoHead)
         ? `Current main commit SHA: ${verifiedRepoHead}`
         : ''
       const visibleText = directImageCompleted
         ? ''
-        : authoritativeRepositoryAnswer || cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)'
+        // A reply that rendered no numbered section at all (prose for a numbered coding task) is kept above the ledger, never replaced by it.
+        : settledLedger && !settledLedger.items.some(item => item.status === 'rendered') && cleanText
+          ? `${cleanText}\n\n${settledLedger.text}`
+          : settledLedger?.text || authoritativeRepositoryAnswer || cleanText || cleanOutput(stripToolSyntax(finalText)) || '(empty response)'
       const messageContent = withForgeClawSignature([visibleText, completionSafetyNotice, secondarySynthesisNotice].filter(Boolean).join('\n\n'))
       const messageReasoning = chainSteps.length ? { id: `chain_${msgId}`, rootLabel: `Agentic execution via ${resolvedProvider}`, steps: chainSteps, startedAt: chainStartedAt, completedAt: new Date().toISOString() } : undefined
       const messageToolResults = allToolResults.length ? allToolResults : undefined
@@ -2121,10 +2175,10 @@ function App() {
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase: effectiveAgentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
 
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: messageContent, imageUrl: generatedImageUrl, plan, agentPhase: effectiveAgentPhase, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: resolvedProvider, model: resolvedModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
+        ? { ...m, content: messageContent, imageUrl: generatedImageUrl, plan, agentPhase: effectiveAgentPhase, reportLedger: settledLedger?.items, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: resolvedProvider, model: resolvedModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
-      setRequestStatus(completionBlocked || hasUnresolvedToolFailure ? 'blocked' : 'success')
+      setRequestStatus(completionBlocked || hasUnresolvedToolFailure || ledgerIncomplete ? 'blocked' : 'success')
       setLastRequestError('')
       setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
       // Persist the outcome so the next session resumes instead of restarting.
@@ -2135,7 +2189,7 @@ function App() {
         }
         setCodingAgentState(recordTaskOutcome(
           completionPhase === 'COMPLETE' ? 'complete' : completionPhase === 'BLOCKED' ? 'blocked' : 'in_progress',
-          completionBlocked ? 'Repository evidence required, but no GitHub tool returned successfully.' : nextAction || undefined,
+          completionBlocked ? 'Repository evidence required, but no GitHub tool returned successfully.' : ledgerIncomplete ? 'Numbered sections still unavailable; see the report.' : nextAction || undefined,
         ))
       }
       resolveTask(taskId)
@@ -3158,7 +3212,7 @@ function App() {
                         </div>
                       )}
                       {/* Message bubble — clean response only */}
-                      <div style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined, minWidth: 0, boxSizing: 'border-box', overflowWrap: 'anywhere' }}>
+                      <div data-report-ledger={rawMsg.reportLedger ? JSON.stringify(rawMsg.reportLedger) : undefined} data-agent-phase={rawMsg.role === 'assistant' && !rawMsg.streaming ? rawMsg.agentPhase : undefined} style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined, minWidth: 0, boxSizing: 'border-box', overflowWrap: 'anywhere' }}>
                         {msg.imageUrl && (
                           <img src={msg.imageUrl} alt={t('chat.uploadedAlt')} style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
                         )}
