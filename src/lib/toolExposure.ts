@@ -25,6 +25,8 @@ export const READ_ONLY_BASELINE_TOOLS = [
   // proposes, approves or places. 2026-10-23: a "best bet on Kalshi" run priced high-temperature markets with no
   // weather_forecast, because the prompt never said "weather".
   'kalshi_markets',
+  // The owner's typed prices, for when kalshi_markets cannot read Kalshi. Formats only; never evidence (nexusConvergence.ts).
+  'kalshi_owner_prices',
   'funds_status',
   'weather_forecast',
 ] as const

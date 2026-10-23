@@ -375,7 +375,7 @@ export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promis
     const nowMs = now()
     const snap = store ? findSnapshot(store, q, nowMs, maxAgeMs) : null
     if (!snap) {
-      error.message = `${error.message} No snapshot within ${formatAge(maxAgeMs)} to fall back to; ask again in a minute, ask for fewer series at once, or use prices the owner supplies (labelled as theirs).`
+      error.message = `${error.message} No snapshot within ${formatAge(maxAgeMs)} to fall back to; ask again in a minute, ask for fewer series at once, or ask the owner for the prices they see and pass them to kalshi_owner_prices.`
       throw error
     }
     const selected = selectMarkets(snap.markets, q, nowMs)
