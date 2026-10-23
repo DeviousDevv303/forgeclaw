@@ -52,10 +52,20 @@ remembered, inferred, or phrased by a model.
 Workflow files can only take effect from `.github/workflows/` on the
 default branch, and the connector's GitHub App cannot write that directory
 (403 — the installation lacks the Workflows permission). So the workflow
-ships in this PR as a review copy and is landed by the owner: commit
-`forgeclaw-loop.yml` to `.github/workflows/forgeclaw-loop.yml` on `main`
-(web upload or git), then Actions → ForgeClaw Loop → Run workflow to seed
-the first tick; after that it self-runs every 30 minutes.
+shipped in #259 as a review copy, to be landed separately.
+
+**As landed (2026-10-23, F-020):** the plan above was an owner commit
+through the browser. The file actually landed by a direct agent push to
+`main` (`b7982d9`), on the owner's explicit authorization, after a
+byte-for-byte comparison against this review copy. That push bypassed the
+required `build` check, which was disclosed at the time: a workflow file
+has nothing to build. The workflow's own header comment still describes
+the browser route; correcting it needs a named OK for `.github/` and is
+left for the next change to that file.
+
+After landing, Actions → ForgeClaw Loop → Run workflow seeds the first
+tick; after that it runs on its 30-minute schedule (GitHub's scheduler is
+best-effort, and a new workflow's first scheduled tick can lag).
 
 ## Removing it
 

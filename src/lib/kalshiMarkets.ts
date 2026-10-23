@@ -103,9 +103,28 @@ export const KALSHI_429_RETRY_DELAYS_MS = [1000, 2500] as const
 const KALSHI_RETRY_AFTER_CAP_MS = 5000
 let lastPublicReadAt = 0
 
-/** Test hook: forget the last read time so one test's spacing does not leak into the next. */
+/** The outcome of the most recent public read: what Kalshi actually answered, as observed. */
+export interface KalshiReadInfo {
+  /** HTTP status, or null when no answer arrived (transport failure). */
+  status: number | null
+  /** Raw Retry-After header; null when absent or when no answer arrived. */
+  retryAfter: string | null
+  /** Wall-clock ms when the outcome was observed. */
+  at: number
+  /** API path read, without the query string. */
+  path: string
+}
+let lastRead: KalshiReadInfo | null = null
+
+/** The last public read's observed outcome (status + Retry-After), or null before any read. */
+export function lastKalshiReadInfo(): KalshiReadInfo | null {
+  return lastRead ? { ...lastRead } : null
+}
+
+/** Test hook: forget the last read time and outcome so one test's state does not leak into the next. */
 export function resetKalshiReadSpacing(): void {
   lastPublicReadAt = 0
+  lastRead = null
 }
 
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -260,7 +279,13 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
     const waitMs = KALSHI_PUBLIC_READ_INTERVAL_MS - (now() - lastPublicReadAt)
     if (waitMs > 0) await delay(waitMs, deps.signal)
     lastPublicReadAt = now()
-    res = await fetchOnce(deps, url)
+    try {
+      res = await fetchOnce(deps, url)
+    } catch (error) {
+      if (error instanceof KalshiError) lastRead = { status: null, retryAfter: null, at: now(), path }
+      throw error
+    }
+    lastRead = { status: res.status, retryAfter: retryAfterHeader(res), at: now(), path }
     if (!res.ok) logReadFailure(path, res.status, retryAfterHeader(res), attempt)
     if (res.status !== 429 || attempt >= KALSHI_429_RETRY_DELAYS_MS.length) break
     await delay(retryAfterMs(res, KALSHI_429_RETRY_DELAYS_MS[attempt]), deps.signal)
@@ -278,8 +303,18 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
   try {
     return await res.json()
   } catch {
-    throw new KalshiError('Kalshi returned a response that is not valid JSON.')
+    const err = new KalshiError(`Kalshi returned HTTP ${res.status} on ${path}, but the response is not valid JSON.`)
+    err.httpStatus = res.status
+    throw err
   }
+}
+
+/** A well-formed answer missing what the caller needs, with the status that carried it. */
+function shapeError(missing: string): KalshiError {
+  const status = lastRead?.status ?? null
+  const err = new KalshiError(`Kalshi response had no ${missing} (HTTP ${status ?? 'unknown'}).`)
+  if (status !== null) err.httpStatus = status
+  return err
 }
 
 async function fetchOnce(deps: KalshiDeps, url: string): Promise<Response> {
@@ -329,7 +364,7 @@ export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promis
   try {
     for (let page = 0; page < KALSHI_MAX_PAGES; page++) {
       const data = await getJson(deps, buildMarketsUrl(q, cursor)) as { markets?: KalshiMarket[]; cursor?: string }
-      if (!Array.isArray(data?.markets)) throw new KalshiError('Kalshi response had no "markets" array.')
+      if (!Array.isArray(data?.markets)) throw shapeError('"markets" array')
       all.push(...data.markets)
       cursor = data.cursor || undefined
       if (!cursor || q.ticker) break
@@ -356,7 +391,7 @@ export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promis
 export async function fetchKalshiMarket(ticker: string, deps: KalshiDeps): Promise<KalshiMarket | null> {
   if (!/^[A-Za-z0-9_.-]{1,80}$/.test(ticker)) throw new KalshiError('Invalid Kalshi ticker.')
   const data = await getJson(deps, buildMarketsUrl({ ticker })) as { markets?: KalshiMarket[] }
-  if (!Array.isArray(data?.markets)) throw new KalshiError('Kalshi response had no "markets" array.')
+  if (!Array.isArray(data?.markets)) throw shapeError('"markets" array')
   return data.markets.find(m => m?.ticker === ticker) ?? null
 }
 
@@ -389,6 +424,6 @@ export async function runKalshiOrderbook(ticker: string, deps: KalshiDeps): Prom
   if (!/^[A-Za-z0-9_.-]{1,80}$/.test(ticker)) throw new KalshiError('Invalid Kalshi ticker.')
   const data = await getJson(deps, `${KALSHI_BASE_URL}/markets/${encodeURIComponent(ticker)}/orderbook`)
   const book = parseOrderbook(data)
-  if (!book) throw new KalshiError('Kalshi response had no "orderbook_fp".')
+  if (!book) throw shapeError('"orderbook_fp"')
   return formatOrderbook(ticker, book)
 }
