@@ -18,7 +18,7 @@
  */
 
 import { kalshiBaseUrl, signKalshiRequest, type KalshiCredentials } from './kalshiAuth'
-import { parseDollars } from './kalshiMarkets'
+import { parseDollars, parseExchangeIndex } from './kalshiMarkets'
 
 export class KalshiApiError extends Error {
   status: number
@@ -136,6 +136,12 @@ export interface KalshiMarketQuote {
   noAsk: number | null
   status?: string
   result?: string
+  /**
+   * The market's exchange shard (its record's `exchange_index`; 0 when Kalshi omits
+   * it — Kalshi's own default). An order on this market draws only on this shard's
+   * balance, so the approval path checks this shard, not just the all-shards total.
+   */
+  exchangeIndex: number
 }
 
 /**
@@ -151,7 +157,12 @@ export type KalshiOrderLookup =
   | { kind: 'unknown'; reason: string }
 
 export interface KalshiClient {
-  getBalance(): Promise<KalshiBalance>
+  /**
+   * The account balance. Without an exchange index this is the all-shards total —
+   * which can read healthy while the one shard an order needs is empty. With one,
+   * it is that shard's balance alone (GET /portfolio/balance?exchange_index=N).
+   */
+  getBalance(exchangeIndex?: number): Promise<KalshiBalance>
   createOrder(input: { ticker: string; side: 'bid' | 'ask'; count: number; priceDollars: number; clientOrderId: string }): Promise<KalshiOrderResult>
   findOrderByClientOrderId(clientOrderId: string, ticker: string, sinceMs?: number): Promise<KalshiOrderLookup>
   getSettlements(): Promise<KalshiSettlement[]>
@@ -223,8 +234,13 @@ export function createKalshiClient(creds: KalshiCredentials, fetcher: KalshiFetc
   }
 
   return {
-    async getBalance() {
-      const raw = await request<{ balance: number; balance_dollars: string; portfolio_value: number }>('GET', '/trade-api/v2/portfolio/balance')
+    async getBalance(exchangeIndex?: number) {
+      // The shard filter rides as a query parameter, signed exactly like the orders
+      // lookup below: the signature covers the path only, the query goes on the URL.
+      const raw = await request<{ balance: number; balance_dollars: string; portfolio_value: number }>(
+        'GET', '/trade-api/v2/portfolio/balance',
+        exchangeIndex !== undefined ? `exchange_index=${exchangeIndex}` : undefined,
+      )
       return {
         balanceCents: raw.balance,
         balanceDollars: num(raw.balance_dollars) ?? raw.balance / 100,
@@ -330,6 +346,7 @@ export function createKalshiClient(creds: KalshiCredentials, fetcher: KalshiFetc
       return {
         yesAsk: parseDollars(raw.market.yes_ask_dollars),
         noAsk: parseDollars(raw.market.no_ask_dollars),
+        exchangeIndex: parseExchangeIndex(raw.market.exchange_index),
         ...(typeof raw.market.status === 'string' ? { status: raw.market.status } : {}),
         ...(typeof raw.market.result === 'string' && raw.market.result ? { result: raw.market.result } : {}),
       }
