@@ -118,6 +118,7 @@ export const EN = {
   'activity.computer': "Forge's computer",
   'activity.channelCalls': 'CHANNEL CALLS',
   'activity.channelCall': 'CHANNEL CALL',
+  'activity.channelCallDismiss': 'DISMISS',
 
 
 
@@ -538,6 +539,7 @@ const ES: Record<Key, string> = {
   'activity.computer': 'La computadora de Forge',
   'activity.channelCalls': 'LLAMADAS DEL CANAL',
   'activity.channelCall': 'LLAMADA DEL CANAL',
+  'activity.channelCallDismiss': 'DESCARTAR',
 
 
 

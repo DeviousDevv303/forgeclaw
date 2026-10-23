@@ -3,14 +3,18 @@
 // Built with love for Cristian Jr., Layla, and Jozae.
 
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  CHANNEL_CALL_PENDING_KEY,
   CHANNEL_CALL_WATERMARK_KEY,
   acknowledgeChannelCalls,
   filterNewChannelCalls,
+  mergeChannelCalls,
   parseChannelCall,
   parseChannelCalls,
   readChannelCallWatermark,
+  readPendingChannelCalls,
+  savePendingChannelCalls,
   type GithubIssueCommentLike,
 } from './channelCalls'
 
@@ -116,5 +120,43 @@ describe('watermark storage (strict read-back)', () => {
   it('a corrupt stored watermark reads as 0, never as a phantom position', () => {
     localStorage.setItem(CHANNEL_CALL_WATERMARK_KEY, 'not-a-number')
     expect(readChannelCallWatermark()).toBe(0)
+  })
+})
+
+describe('pending calls survive a reload until dismissed', () => {
+  const call = (id: number) => ({ callId: `c${id}`, commentId: id, createdAt: '2026-10-23T06:30:00Z', taskText: `task ${id}` })
+  beforeEach(() => { localStorage.clear() })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('round-trips through storage, oldest first', () => {
+    expect(readPendingChannelCalls()).toEqual([])
+    expect(savePendingChannelCalls([call(7), call(3)])).toBe(true)
+    expect(readPendingChannelCalls().map(c => c.commentId)).toEqual([3, 7])
+    expect(savePendingChannelCalls([])).toBe(true)
+    expect(readPendingChannelCalls()).toEqual([])
+  })
+
+  it('reports a refused write instead of pretending the calls are held', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('full', 'QuotaExceededError') })
+    expect(savePendingChannelCalls([call(1)])).toBe(false)
+    expect(readPendingChannelCalls()).toEqual([])
+  })
+
+  it('corrupt or malformed stored data reads as no pending calls', () => {
+    localStorage.setItem(CHANNEL_CALL_PENDING_KEY, '{not json')
+    expect(readPendingChannelCalls()).toEqual([])
+    localStorage.setItem(CHANNEL_CALL_PENDING_KEY, JSON.stringify([call(1), { commentId: 'x' }, null]))
+    expect(readPendingChannelCalls().map(c => c.commentId)).toEqual([1])
+  })
+
+  it('keeps only the newest 50', () => {
+    savePendingChannelCalls(Array.from({ length: 60 }, (_, i) => call(i + 1)))
+    const kept = readPendingChannelCalls()
+    expect(kept).toHaveLength(50)
+    expect(kept[0].commentId).toBe(11)
+  })
+
+  it('merge is a union by comment id, oldest first', () => {
+    expect(mergeChannelCalls([call(5), call(2)], [call(5), call(9)]).map(c => c.commentId)).toEqual([2, 5, 9])
   })
 })

@@ -27,6 +27,9 @@ export const CHANNEL_ISSUE_NUMBER = 235
 /** Only the owner's own comments can call the app — every agent on the channel posts as him. */
 export const CHANNEL_CALL_AUTHOR = 'DeviousDevv303'
 export const CHANNEL_CALL_WATERMARK_KEY = 'fc_channel_call_watermark'
+/** Calls surfaced to the owner and not yet dismissed. Persisted so a reload cannot lose a call the owner never saw. */
+export const CHANNEL_CALL_PENDING_KEY = 'fc_channel_calls_pending'
+const MAX_PENDING_CALLS = 50
 
 /**
  * 15 minutes: the channel is a human/agent loop that moves in minutes-to-hours, and
@@ -112,6 +115,44 @@ export function acknowledgeChannelCalls(calls: readonly ChannelCall[]): boolean 
   const write = strictSetItem(CHANNEL_CALL_WATERMARK_KEY, value)
   if (!write.ok) return false
   const back = strictGetItem(CHANNEL_CALL_WATERMARK_KEY)
+  return back.ok && back.value === value
+}
+
+function isStoredCall(value: unknown): value is ChannelCall {
+  const c = value as Partial<ChannelCall> | null
+  return !!c && typeof c.callId === 'string' && typeof c.commentId === 'number' && Number.isFinite(c.commentId)
+    && typeof c.createdAt === 'string' && typeof c.taskText === 'string'
+}
+
+/** Calls surfaced earlier and not dismissed, oldest first; empty when none, unreadable or corrupt. */
+export function readPendingChannelCalls(): ChannelCall[] {
+  const read = strictGetItem(CHANNEL_CALL_PENDING_KEY)
+  if (!read.ok || !read.value) return []
+  try {
+    const parsed: unknown = JSON.parse(read.value)
+    return Array.isArray(parsed) ? parsed.filter(isStoredCall).sort((a, b) => a.commentId - b.commentId) : []
+  } catch {
+    return []
+  }
+}
+
+/** Union by comment id, oldest first. */
+export function mergeChannelCalls(existing: readonly ChannelCall[], incoming: readonly ChannelCall[]): ChannelCall[] {
+  const byId = new Map<number, ChannelCall>()
+  for (const call of [...existing, ...incoming]) byId.set(call.commentId, call)
+  return [...byId.values()].sort((a, b) => a.commentId - b.commentId)
+}
+
+/**
+ * Persist the pending list (newest 50) and prove the write landed. A call is surfaced in
+ * memory first, so the watermark may only advance past it once this returns true —
+ * otherwise a reload before the owner looked would drop the call for good.
+ */
+export function savePendingChannelCalls(calls: readonly ChannelCall[]): boolean {
+  const value = JSON.stringify([...calls].sort((a, b) => a.commentId - b.commentId).slice(-MAX_PENDING_CALLS))
+  const write = strictSetItem(CHANNEL_CALL_PENDING_KEY, value)
+  if (!write.ok) return false
+  const back = strictGetItem(CHANNEL_CALL_PENDING_KEY)
   return back.ok && back.value === value
 }
 
