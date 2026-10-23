@@ -1,0 +1,91 @@
+name: PR Watch
+run-name: PR Watch digest
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write       # commit the digest
+  pull-requests: read   # list open PRs
+
+concurrency:
+  group: pr-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build digest
+        id: digest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p docs/agents
+          gh pr list --state open --limit 50 \
+            --json number,title,author,headRefName,headRefOid,isDraft,mergeable,createdAt,body,reviewRequests \
+            > /tmp/prs.json
+          python3 - <<'PY'
+          import json, datetime
+          from pathlib import Path
+          prs = json.load(open('/tmp/prs.json'))
+          now = datetime.datetime.now(datetime.timezone.utc)
+          lines = ['# PR Watch', '',
+                   f"_Updated {now:%Y-%m-%d %H:%M UTC} by pr-watch.yml — do not edit by hand_", '',
+                   f'## Open PRs ({len(prs)})', '']
+          tagged = []
+          for p in prs:
+              created = datetime.datetime.fromisoformat(p['createdAt'].replace('Z', '+00:00'))
+              age_h = (now - created).total_seconds() / 3600
+              age = f'{age_h:.0f}h' if age_h < 48 else f'{age_h/24:.0f}d'
+              flags = []
+              if p['isDraft']: flags.append('DRAFT')
+              flags.append(p['mergeable'])
+              haystack = (p['title'] + ' ' + (p.get('body') or '') + ' ' +
+                          ' '.join(r.get('login', '') for r in (p.get('reviewRequests') or []))).lower()
+              is_tagged = any(t in haystack for t in ('claude', 'forgeclaw'))
+              if is_tagged: flags.append('TAGGED')
+              if is_tagged: tagged.append(p)
+              lines.append(f"- #{p['number']} {p['title']} — @{p['author']['login']}, "
+                           f"`{p['headRefName']}`, head `{p['headRefOid'][:8]}`, "
+                           f"{', '.join(flags)}, {age} old")
+              lines.append(f"  https://github.com/DeviousDevv303/forgeclaw/pull/{p['number']}")
+          if not prs:
+              lines.append('None.')
+          lines += ['', f'## Tagging claude / forgeclaw ({len(tagged)})', '']
+          lines += [f"- #{p['number']} {p['title']} (head `{p['headRefOid'][:8]}`)" for p in tagged] or ['None.']
+          lines.append('')
+          Path('docs/agents/WATCH.md.new').write_text('\n'.join(lines), encoding='utf-8')
+          PY
+          # Commit only when content changed; line 3 is the timestamp, so compare from line 4.
+          if [ -f docs/agents/WATCH.md ] && diff <(tail -n +4 docs/agents/WATCH.md) <(tail -n +4 docs/agents/WATCH.md.new) >/dev/null 2>&1; then
+            rm docs/agents/WATCH.md.new
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            mv docs/agents/WATCH.md.new docs/agents/WATCH.md
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit digest if changed
+        if: steps.digest.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name 'forgeclaw-watch[bot]'
+          git config user.email 'forgeclaw-watch[bot]@users.noreply.github.com'
+          git add docs/agents/WATCH.md
+          git commit -m "watch: PR digest $(date -u +'%H:%M UTC') [skip ci]"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:main
+          
