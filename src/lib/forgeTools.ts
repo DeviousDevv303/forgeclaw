@@ -50,6 +50,7 @@ import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
 import { weatherForecast } from './weather'
 import { fetchKalshiMarket, KalshiError, runKalshiMarkets, runKalshiOrderbook, type KalshiDeps } from './kalshiMarkets'
+import { formatOwnerPrices, parseOwnerPrices } from './kalshiOwnerPrices'
 import { relayFallbackFetcher } from './kalshiTrade'
 import { effectiveKalshiRelayUrl } from './kalshiAuth'
 import { formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
@@ -627,6 +628,20 @@ export const FORGE_TOOLS: ToolDef[] = [
         orderbook: { type: 'boolean', description: 'With ticker: show the order book (bids and depth) instead of the summary' },
       },
       required: [],
+    },
+  },
+  {
+    // Authorized 2026-10-23 by Cristian Nunez: manual price input only, prices labelled as the owner's,
+    // no evidence weight in NEXUS (listed in NOT_EVIDENCE_TOOLS). See kalshiOwnerPrices.ts.
+    name: 'kalshi_owner_prices',
+    description: "Prices the OWNER typed in, for when kalshi_markets cannot read Kalshi. Call it only with numbers the owner actually gave in this conversation; never invent, estimate or carry over a price. The output is labelled as the owner's, and every answer that uses it must say so. It records nothing and places nothing; a real order still re-reads the live price at approval.",
+    parameters: {
+      type: 'object',
+      properties: {
+        prices: { type: 'string', description: 'The owner\'s prices, one per line: "<ticker> [yes|no] <price>" or "<ticker>=<price>". Price as 0.42, $0.42, 42c or 42. Side defaults to yes.' },
+        note: { type: 'string', description: 'Optional: what the owner said about these prices, e.g. "from the Kalshi app at 5:30pm"' },
+      },
+      required: ['prices'],
     },
   },
   {
@@ -1978,6 +1993,12 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           }
           throw error
         }
+      }
+
+      case 'kalshi_owner_prices': {
+        // Formats the owner's own numbers; no network, no ledger, no order path.
+        const note = typeof input.note === 'string' ? input.note : undefined
+        return formatOwnerPrices(parseOwnerPrices(input.prices), note)
       }
 
       case 'funds_status':
