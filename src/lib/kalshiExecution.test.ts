@@ -5,7 +5,7 @@
 // @vitest-environment jsdom
 import { generateKeyPairSync, webcrypto } from 'node:crypto'
 import { beforeEach, describe, expect, it } from 'vitest'
-import type { KalshiCredentials } from './kalshiAuth'
+import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, type KalshiCredentials } from './kalshiAuth'
 import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, parseFundsCommand, proposePosition, recordKalshiFill, runFundsCommand, saveFunds } from './fundsLedger'
 import { saveOwnerScaffold } from './ownerScaffold'
 import { autoSettleKalshiPositions, directThenRelayFetcher, maybeAutoApprove, runFundsCommandWithExecution, type KalshiFailureNote, type KalshiPlacedInfo } from './kalshiExecution'
@@ -282,6 +282,35 @@ describe('credentials never leak (item 1)', () => {
     const id = seedProposal()
     const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, { creds: null, now: () => NOW, relayUrl: '' })
     expect(reply).toContain('no Kalshi API key in this browser')
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+})
+
+describe('the no-credentials refusal names the missing half', () => {
+  it('only the key ID saved: the refusal names the private key as the missing half', async () => {
+    localStorage.setItem(KALSHI_KEY_ID_STORAGE, 'the-id')
+    const id = seedProposal()
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, { creds: null, now: () => NOW, relayUrl: '' })
+    expect(reply).toContain('no Kalshi private key saved in this browser (key ID is saved)')
+    expect(reply).toContain('Add your private key in Settings (the Kalshi section where the Brave key used to be)')
+    expect(reply).toContain('The proposal is unchanged.')
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+
+  it('only the private key saved: the refusal names the key ID as the missing half', async () => {
+    localStorage.setItem(KALSHI_PRIVATE_KEY_STORAGE, PEM)
+    const id = seedProposal()
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, { creds: null, now: () => NOW, relayUrl: '' })
+    expect(reply).toContain('no Kalshi key ID saved in this browser (private key is saved)')
+    expect(reply).toContain('Add your key ID in Settings (the Kalshi section where the Brave key used to be)')
+    expect(reply).toContain('The proposal is unchanged.')
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+
+  it('neither half saved: the refusal keeps the pair wording', async () => {
+    const id = seedProposal()
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, { creds: null, now: () => NOW, relayUrl: '' })
+    expect(reply).toContain('Not placed: no Kalshi API key in this browser. Add your key ID and private key in Settings (the Kalshi section where the Brave key used to be) — a demo key first. The proposal is unchanged.')
     expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
   })
 })

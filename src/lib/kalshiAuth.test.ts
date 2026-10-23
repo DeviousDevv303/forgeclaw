@@ -13,6 +13,7 @@ import {
   KalshiAuthError,
   effectiveKalshiRelayUrl,
   kalshiBaseUrl,
+  kalshiCredentialPresence,
   loadKalshiCredentials,
   loadKalshiEnv,
   loadKalshiRelayUrl,
@@ -110,6 +111,46 @@ describe('credential storage', () => {
     expect(loadKalshiCredentials()).toBeNull()
     saveKalshiCredentials('the-id', 'the-key')
     expect(loadKalshiCredentials()).toEqual({ keyId: 'the-id', privateKeyPem: 'the-key', env: 'demo' })
+  })
+
+  it('saveKalshiCredentials verifies by read-back: true only when the pair actually persisted', () => {
+    localStorage.clear()
+    expect(saveKalshiCredentials('the-id', 'the-key')).toBe(true)
+    expect(loadKalshiCredentials()).toEqual({ keyId: 'the-id', privateKeyPem: 'the-key', env: 'demo' })
+  })
+
+  it('a storage write that throws (quota / blocked) is a failed save, never a saved key', () => {
+    localStorage.clear()
+    const original = Storage.prototype.setItem
+    Storage.prototype.setItem = () => { throw new Error('QuotaExceededError') }
+    try {
+      expect(saveKalshiCredentials('the-id', 'the-key')).toBe(false)
+      expect(loadKalshiCredentials()).toBeNull()
+      expect(kalshiCredentialPresence()).toEqual({ keyId: false, privateKey: false })
+    } finally {
+      Storage.prototype.setItem = original
+    }
+  })
+
+  it('a storage write that silently drops is also a failed save', () => {
+    localStorage.clear()
+    const original = Storage.prototype.setItem
+    Storage.prototype.setItem = () => { /* accepts the write, keeps nothing */ }
+    try {
+      expect(saveKalshiCredentials('the-id', 'the-key')).toBe(false)
+      expect(loadKalshiCredentials()).toBeNull()
+    } finally {
+      Storage.prototype.setItem = original
+    }
+  })
+
+  it('kalshiCredentialPresence reports each half independently', () => {
+    localStorage.clear()
+    expect(kalshiCredentialPresence()).toEqual({ keyId: false, privateKey: false })
+    localStorage.setItem('fc_kalshi_key_id', 'the-id')
+    expect(kalshiCredentialPresence()).toEqual({ keyId: true, privateKey: false })
+    saveKalshiCredentials('the-id', 'the-key')
+    expect(kalshiCredentialPresence()).toEqual({ keyId: true, privateKey: true })
   })
 
   it('defaults to the demo environment until the owner switches it', () => {

@@ -60,9 +60,31 @@ export function loadKalshiCredentials(): KalshiCredentials | null {
   return { keyId, privateKeyPem, env: loadKalshiEnv() }
 }
 
-export function saveKalshiCredentials(keyId: string, privateKeyPem: string): void {
-  safeSetItem(KALSHI_KEY_ID_STORAGE, keyId.trim())
-  safeSetItem(KALSHI_PRIVATE_KEY_STORAGE, privateKeyPem.trim())
+/**
+ * Save the pair — and prove it landed. safeSetItem swallows write failures (storage full
+ * or blocked), so a save that never persisted used to look exactly like a saved key in
+ * Settings while every approve refused "no key in this browser". Read both halves back
+ * and report the truth: true only when storage now holds exactly what was written.
+ */
+export function saveKalshiCredentials(keyId: string, privateKeyPem: string): boolean {
+  const id = keyId.trim()
+  const pem = privateKeyPem.trim()
+  safeSetItem(KALSHI_KEY_ID_STORAGE, id)
+  safeSetItem(KALSHI_PRIVATE_KEY_STORAGE, pem)
+  return (safeGetItem(KALSHI_KEY_ID_STORAGE) ?? '') === id
+    && (safeGetItem(KALSHI_PRIVATE_KEY_STORAGE) ?? '') === pem
+}
+
+/**
+ * Which halves of the pair are actually in this browser's storage, read back fresh.
+ * A half can be typed and parse as valid yet never have persisted, so Settings shows
+ * per-half saved marks from this, and the approve refusal names the missing half by it.
+ */
+export function kalshiCredentialPresence(): { keyId: boolean; privateKey: boolean } {
+  return {
+    keyId: (safeGetItem(KALSHI_KEY_ID_STORAGE) ?? '').trim() !== '',
+    privateKey: (safeGetItem(KALSHI_PRIVATE_KEY_STORAGE) ?? '').trim() !== '',
+  }
 }
 
 // ── Relay URL (the Kalshi transport fallback) ──────────────────────────────────
