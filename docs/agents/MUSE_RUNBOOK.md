@@ -19,6 +19,7 @@ Follow these steps literally. Do not improvise fixes outside the task you are on
    git diff --no-renames -z --name-only origin/main | python3 .github/scripts/check-protected.py .github/protected-paths.txt
    ```
 8. **Report with the template at the bottom.** "Attempted" is not "done", and "done" is not "verified live".
+9. **Byte-check every merge made with GitHub's button.** "merge N, expecting head X" only protects merges through ForgeClaw's tool (`src/lib/mergePr.ts` refuses a moved head); the web button asks nothing. After such a merge, run `git fetch origin main && git diff <last-verified-head> <merge-commit>`. Empty = main holds exactly the tree that was verified. Not empty: if `git log --oneline <last-verified-head>..<merge-commit>^1` lists other PRs that reached main after your check, the difference is theirs; anything else is a tree nobody reviewed, so report both SHAs to Cristian. Don't revert it yourself (that is a push to `main`). This detects a bad merge after the fact; it does not prevent one.
 
 ---
 
