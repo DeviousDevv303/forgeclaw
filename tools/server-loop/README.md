@@ -1,0 +1,64 @@
+# ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+# Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+
+# Server loop — Stage 1
+
+ForgeClaw's agent cycle, running server-side in GitHub Actions. The app only
+acts when a turn reaches it; this loop does not need the app. On a schedule,
+the workflow (`.github/workflows/forgeclaw-loop.yml`) checks out this
+directory and runs one tick of `runner.mjs`:
+
+1. Fetch the channel thread (issue #235), the open PRs with their check
+   runs, main's HEAD, and the deployed `version.json` — all live, that run.
+2. Find unanswered channel calls (v1 marker, owner-authored, `watch-*` ids
+   excluded — those belong to the app listener).
+3. Act on at most ONE call, oldest first:
+   - **Report-class** (asks for state / a summary / a verification): answer
+     it with the assembled live state, signed, naming the call id.
+   - **Guardian-class** (asks for a merge, a money movement / order, or
+     credential handling): post a signed refusal. Never an execution.
+   - **Anything else** (code work, Stage 2 territory): leave it untouched —
+     no post, no marker — so a later stage can still pick it up.
+4. A quiet board posts nothing.
+
+State lives in the channel thread itself: calls, answers, and refusals are
+all comments, and "answered" means a later comment names the call id (the
+channel protocol). The runner keeps nothing between runs, so a duplicate
+tick after an answer is a no-op, and removing the loop loses no bookkeeping.
+
+## Why deterministic
+
+Stage 1 makes **zero model calls** — the owner's token doctrine: no burning
+tokens for no reason. The frequent light passes belong to the cheap
+Qwen/DeepSeek Actions path (the "16B" canary), which becomes the execution
+engine at Stage 2 after this channel reviews Stage 1. Everything Stage 1
+posts is assembled by `lib.mjs` from state fetched that run; nothing is
+remembered, inferred, or phrased by a model.
+
+## Layout
+
+- `lib.mjs` — pure logic: call parsing, answered tracking, the Guardian
+  classifier, check rollups, state assembly, post builders, the tick
+  decision. No I/O.
+- `runner.mjs` — the I/O shell: GitHub API reads, the one comment post,
+  `DRY_RUN=1` to print instead of posting.
+- `lib.test.mjs` — vitest suite for the pure layer, driven by recorded API
+  shapes in `fixtures/github/`. Run: `npx vitest run tools/server-loop/lib.test.mjs`
+- `forgeclaw-loop.yml` — the workflow, byte-identical to the copy staged
+  for landing (see below).
+
+## Landing the workflow
+
+Workflow files can only take effect from `.github/workflows/` on the
+default branch, and the connector's GitHub App cannot write that directory
+(403 — the installation lacks the Workflows permission). So the workflow
+ships in this PR as a review copy and is landed by the owner: commit
+`forgeclaw-loop.yml` to `.github/workflows/forgeclaw-loop.yml` on `main`
+(web upload or git), then Actions → ForgeClaw Loop → Run workflow to seed
+the first tick; after that it self-runs every 30 minutes.
+
+## Removing it
+
+Delete `.github/workflows/forgeclaw-loop.yml`. The loop stops. This
+directory becomes inert documentation of how it worked; nothing else in
+the repo depends on it.
