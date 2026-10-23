@@ -480,7 +480,21 @@ async function executeApproveAll(deps: KalshiExecutionDeps): Promise<string> {
     lines.push(reply)
   }
   const counts = [`${placed} placed`, ...(approved ? [`${approved} approved (place on the venue yourself)`] : []), `${refused} refused`, `${unknown} unknown`]
-  return [`Approve-all: ${counts.join(', ')} of ${ids.length} proposals.`, ...lines].join('\n')
+  const countsLine = `${counts.join(', ')} of ${ids.length} proposals.`
+  // Why the lead moves: the batch lead is also the app's completion signal —
+  // App.tsx marks a funds reply BLOCKED when it starts with 'Unknown:' or
+  // 'Not placed:'. A batch containing any Unknown must never read complete,
+  // because the owner's Unknown rule (never re-approve an Unknown blind; the
+  // owner reconciles under the same kept key) only fires on a blocked reply.
+  // A batch that placed or ledger-approved nothing but refused something is
+  // blocked for the same reason. The counts line stays after the lead so no
+  // information is lost.
+  const lead = unknown > 0
+    ? `Unknown: ${countsLine}`
+    : placed === 0 && approved === 0 && refused > 0
+      ? `Not placed: ${countsLine}`
+      : `Approve-all: ${countsLine}`
+  return [lead, ...lines].join('\n')
 }
 
 /**

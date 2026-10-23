@@ -703,6 +703,13 @@ const setAutoApprove = (dollars: number) =>
   saveFunds(applyFundsCommand(loadFunds(), { kind: 'limits', changes: { autoApproveUnder: dollars } }, NOW).state)
 
 describe('approve-all (item 10)', () => {
+  // Mirrors App.tsx's fundsOk predicate (App.tsx:1571): a funds reply is BLOCKED
+  // when it starts with 'Not done:', 'Not placed:' or 'Unknown:'. The approve-all
+  // lead is chosen so that predicate does the right thing — keep in sync.
+  const fundsBlocked = (reply: string | null): boolean => reply !== null &&
+    (reply.startsWith('Not done:') || reply.startsWith('Not placed:') || reply.startsWith('Unknown:'))
+  const fundsOk = (reply: string | null) => !fundsBlocked(reply)
+
   it('places every waiting proposal, one order each, in order', async () => {
     const a = seedProposal()
     const b = seedMore('KX-TEST-2')
@@ -759,12 +766,43 @@ describe('approve-all (item 10)', () => {
       existing: null,
     })
     const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
-    expect(reply).toContain('Approve-all: 1 placed, 0 refused, 1 unknown of 2 proposals.')
+    // The batch lead is the app's completion signal: an Unknown in the batch leads
+    // with 'Unknown:' so the app marks the whole reply BLOCKED and the owner's
+    // Unknown rule fires (the batch must never read complete).
+    expect(reply?.startsWith('Unknown: 1 placed, 0 refused, 1 unknown of 2 proposals.')).toBe(true)
     expect(reply).toContain('Unknown:')
     expect(createCalls).toHaveLength(2) // the lost position's one attempt (a lost response reconciles by lookup, never a resend), then the next position's one
     const positions = loadFunds().positions
     expect(positions.find(p => p.id === lost)!.status).toBe('approved')
     expect(positions.find(p => p.id === ok)!.status).toBe('placed')
+  })
+
+  it('the batch lead is the app completion signal: Unknown: marks it blocked', async () => {
+    // Unknown in the batch -> 'Unknown:' lead -> app marks it blocked, so the
+    // owner's Unknown rule fires and the batch never reads complete.
+    seedProposal()
+    seedMore('KX-TEST-2')
+    const { client } = fakeClient({
+      onCreate: (n, input) => {
+        if (n === 1) throw new KalshiNetworkError('socket closed')
+        return { orderId: 'ord-u', clientOrderId: input.clientOrderId, fillCount: 10, remainingCount: 0, averageFillPrice: 0.42, averageFeePaid: 0.0171 }
+      },
+      existing: null,
+    })
+    const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
+    expect(reply?.startsWith('Unknown:')).toBe(true)
+    expect(fundsOk(reply)).toBe(false)
+  })
+
+  it('a clean all-placed batch still leads with Approve-all: and reads complete', async () => {
+    const a = seedProposal()
+    const b = seedMore('KX-TEST-2')
+    const { client } = fakeClient({})
+    const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
+    expect(reply?.startsWith('Approve-all: 2 placed, 0 refused, 0 unknown of 2 proposals.')).toBe(true)
+    expect(fundsOk(reply)).toBe(true)
+    expect(reply).toContain(`Placed ${a}`)
+    expect(reply).toContain(`Placed ${b}`)
   })
 
   it('with nothing waiting it says so and sends nothing', async () => {
@@ -778,7 +816,10 @@ describe('approve-all (item 10)', () => {
     const a = seedProposal()
     const b = seedMore('KX-TEST-2')
     const reply = await runFundsCommandWithExecution('/funds approve-all', { creds: null, now: () => NOW, relayUrl: '' })
-    expect(reply).toContain('Approve-all: 0 placed, 2 refused, 0 unknown of 2 proposals.')
+    // Nothing placed and everything refused: the batch leads with 'Not placed:'
+    // so the app marks it BLOCKED instead of complete.
+    expect(reply?.startsWith('Not placed: 0 placed, 2 refused, 0 unknown of 2 proposals.')).toBe(true)
+    expect(fundsOk(reply)).toBe(false)
     expect(reply).toContain('no Kalshi API key in this browser')
     const positions = loadFunds().positions
     expect(positions.find(p => p.id === a)!.status).toBe('proposed')
