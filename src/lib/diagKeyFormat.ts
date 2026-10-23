@@ -4,8 +4,9 @@
 // path enforces (anthropicProvider.ts:226 / moonshotProvider.ts:310 throw on !isConfigured),
 // not mere presence — the Settings inputs write raw keystrokes into state, so a malformed key
 // is reachable in-session while the provider treats it as no key at all.
-import { anthropicProvider } from './ai/providers/anthropicProvider'
-import { moonshotProvider } from './ai/providers/moonshotProvider'
+import { ANTHROPIC_KEY_FORMAT, anthropicProvider } from './ai/providers/anthropicProvider'
+import { MOONSHOT_KEY_FORMAT, moonshotProvider } from './ai/providers/moonshotProvider'
+import { keyFormatProblem, type KeyFormatProblem } from './ai/keyFormat'
 
 export function diagKeyFormatValid(provider: string, anthropicKey: string, moonshotKey: string, keyPresent: boolean): boolean {
   // isConfigured is typed boolean | Promise<boolean> (some providers check async); both of
@@ -15,4 +16,17 @@ export function diagKeyFormatValid(provider: string, anthropicKey: string, moons
     : provider === 'moonshot' ? moonshotProvider.isConfigured(moonshotKey)
     : null
   return typeof check === 'boolean' ? check : keyPresent
+}
+
+/**
+ * The verdict (from the provider's own gate, as above) and, when it fails, why: worded from the same rule the gate
+ * reads (ANTHROPIC_KEY_FORMAT / MOONSHOT_KEY_FORMAT), never from a copy of it in the panel.
+ */
+export function diagKeyFormat(provider: string, anthropicKey: string, moonshotKey: string, keyPresent: boolean): { valid: boolean; problem: KeyFormatProblem | null } {
+  const valid = diagKeyFormatValid(provider, anthropicKey, moonshotKey, keyPresent)
+  if (valid) return { valid, problem: null }
+  const problem = provider === 'anthropic' ? keyFormatProblem(anthropicKey, ANTHROPIC_KEY_FORMAT)
+    : provider === 'moonshot' ? keyFormatProblem(moonshotKey, MOONSHOT_KEY_FORMAT)
+    : null
+  return { valid, problem }
 }
