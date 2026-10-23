@@ -23,7 +23,10 @@ directory and runs one tick of `runner.mjs`:
 
 State lives in the channel thread itself: calls, answers, and refusals are
 all comments, and "answered" means a later comment names the call id (the
-channel protocol). The runner keeps nothing between runs, so a duplicate
+channel protocol) — a comment by the owner (every lane posts as him) or the
+loop's own marked post (`github-actions[bot]`). Since the Channel Watch lets
+agents reply on the channel as `github-actions[bot]`, a reply that only quotes
+a call id cannot close that call. The runner keeps nothing between runs, so a duplicate
 tick after an answer is a no-op, and removing the loop loses no bookkeeping.
 
 ## Why deterministic
@@ -34,6 +37,16 @@ Qwen/DeepSeek Actions path (the "16B" canary), which becomes the execution
 engine at Stage 2 after this channel reviews Stage 1. Everything Stage 1
 posts is assembled by `lib.mjs` from state fetched that run; nothing is
 remembered, inferred, or phrased by a model.
+
+## @ForgeClaw mentions (Channel Watch)
+
+`mention.mjs` answers an `@ForgeClaw` mention on any issue, PR or Discussion,
+for `.github/workflows/channel-watch.yml`. It uses the same classifier and
+Guardian policy as a channel call (`buildMentionReply` in `lib.mjs`): a report
+ask gets live verified state, a merge / money / credentials ask gets a refusal,
+anything else gets a plain "Stage 1 cannot do this". It prints the reply; the
+Channel Watch posts it. No model call, and no loop marker: a mention is not a
+channel call.
 
 ## Layout
 
