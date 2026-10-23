@@ -12,7 +12,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { FundsPanel } from './FundsPanel'
 import { applyFundsCommand, emptyFunds, loadFunds, proposePosition, saveFunds, type ProposalInput } from '../lib/fundsLedger'
 
@@ -77,5 +77,19 @@ describe('FundsPanel', () => {
     rerender(<FundsPanel onCommand={onCommand} refreshKey={1} />)
     fireEvent.click(screen.getByText('Approve all'))
     expect(onCommand).toHaveBeenCalledWith('/funds approve-all')
+  })
+
+  it('shows a proposal saved outside a /funds command, with no refreshKey change or tab switch', () => {
+    // S1: a model tool's funds_propose saves mid-run, outside any /funds command — App
+    // never bumps refreshKey for that save, so the panel must learn it from the ledger.
+    const onCommand = vi.fn()
+    render(<FundsPanel onCommand={onCommand} refreshKey={0} />)
+    expect(screen.queryByText('OK')).toBeNull()
+    let id = ''
+    act(() => { id = seedProposal() }) // seedProposal saves via saveFunds, exactly like the tool path
+    expect(screen.getByText('OK')).toBeTruthy()
+    expect(screen.getByText('No')).toBeTruthy()
+    fireEvent.click(screen.getByText('OK'))
+    expect(onCommand).toHaveBeenCalledWith(`/funds approve ${id}`)
   })
 })

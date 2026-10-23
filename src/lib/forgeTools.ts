@@ -44,7 +44,7 @@ import { mergePullRequest } from './mergePr'
 import { decodeBase64Utf8, formatFileRead } from './fileRead'
 import { listOpenPullRequests, parsePullNumber, readPullRequest } from './prInfo'
 import { formatGrepMatches, gitGrepCommand, parseGrepOutput } from './codeSearch'
-import { PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
+import { isPublicVisitor, PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
@@ -53,7 +53,7 @@ import { fetchKalshiMarket, KalshiError, runKalshiMarkets, runKalshiOrderbook, t
 import { relayFallbackFetcher } from './kalshiTrade'
 import { effectiveKalshiRelayUrl } from './kalshiAuth'
 import { formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
-import { maybeAutoApprove } from './kalshiExecution'
+import { autoApproveHoldNote, kalshiOrderPlacedJournalEntry, maybeAutoApprove, type KalshiExecutionDeps } from './kalshiExecution'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -839,6 +839,24 @@ function kalshiToolDeps(ctx: ToolContext): KalshiDeps {
   const relayUrl = effectiveKalshiRelayUrl()
   const base = (url: string, init?: RequestInit) => toolFetch(ctx, url, init)
   return { fetcher: relayFallbackFetcher(base, relayUrl), signal: ctx.signal, relayUrl }
+}
+
+/**
+ * The order-path hooks for the funds_propose tool path (item 10 auto-approve): the same
+ * three hooks App passes for a typed /funds approve — the run ID (stored on the
+ * position, the journal entry and failure notes; never inside the client_order_id), an
+ * irreversible journal entry when it places, and failure telemetry — plus the visitor
+ * flag from this run's public-relay field, matching App's determination. The failure
+ * sink is the tool-level error log (errorLog.ts, the log the error_report tool reads):
+ * the ledger's failure log is only writable from App's error bus. Exported for tests.
+ */
+export function autoApproveExecutionDeps(ctx: ToolContext): KalshiExecutionDeps {
+  return {
+    runId: ctx.runId,
+    visitor: isPublicVisitor(ctx.ghToken ?? '', ctx.publicRelayUrl),
+    onFailure: note => logError('kalshi', note.message, `run ${note.runId ?? ctx.runId ?? 'none'} · position ${note.positionId ?? '?'} · stage ${note.stage}${note.ticker ? ` · ${note.ticker}` : ''}${note.clientOrderId ? ` · key ${note.clientOrderId}` : ''}${note.httpStatus ? ` · http ${note.httpStatus}` : ''}`),
+    onPlaced: info => journalRecord(ctx.journal, kalshiOrderPlacedJournalEntry(info)),
+  }
 }
 
 /**
@@ -1983,10 +2001,18 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           if (saved) {
             // Item 10: the owner's autoapprove limit is a standing owner instruction, so a
             // small enough proposal is approved at once — through kalshiExecution's normal
-            // approve path, not here. A failed attempt never unmakes the proposal.
+            // approve path, not here. A failed attempt never unmakes the proposal. The run
+            // drives it with this run's own provenance and telemetry via
+            // autoApproveExecutionDeps — the same three hooks App passes for a typed
+            // /funds approve, which is what keeps the run ID, the journal entry and the
+            // failure telemetry on an auto-placed order.
             try {
-              const auto = await maybeAutoApprove(position)
+              const auto = await maybeAutoApprove(position, autoApproveExecutionDeps(ctx))
               if (auto) autoNote = `\nAuto-approve (the owner's /funds limits autoapprove setting) ran the same approval as /funds approve ${position.id}:\n${auto}`
+              else {
+                const hold = autoApproveHoldNote(position)
+                if (hold) autoNote = `\n${hold}`
+              }
             } catch (error) {
               autoNote = `\nAuto-approve attempt failed (${error instanceof Error ? error.message : String(error)}). The proposal still waits for /funds approve ${position.id}.`
             }

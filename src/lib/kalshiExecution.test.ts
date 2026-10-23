@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, type KalshiCredentials } from './kalshiAuth'
 import { FUNDS_STORAGE_KEY, applyFundsCommand, emptyFunds, loadFunds, parseFundsCommand, proposePosition, recordKalshiFill, runFundsCommand, saveFunds } from './fundsLedger'
 import { saveOwnerScaffold } from './ownerScaffold'
-import { autoSettleKalshiPositions, directThenRelayFetcher, maybeAutoApprove, runFundsCommandWithExecution, type KalshiFailureNote, type KalshiPlacedInfo } from './kalshiExecution'
+import { autoApproveHoldNote, autoSettleKalshiPositions, directThenRelayFetcher, maybeAutoApprove, runFundsCommandWithExecution, type KalshiFailureNote, type KalshiPlacedInfo } from './kalshiExecution'
 import { KalshiApiError, KalshiNetworkError, type KalshiClient, type KalshiOrderResult } from './kalshiTrade'
 
 // jsdom's WebCrypto has no Ed25519; Node's does (as in kalshiAuth.test.ts).
@@ -209,7 +209,7 @@ describe('shard gate (Kalshi partitions the balance by exchange shard)', () => {
     })
     expect(reply).toContain('trades on shard 3, which holds $0.00')
     expect(reply).toContain('across all shards is $100.00')
-    expect(reply).toContain('the API does not move funds between shards')
+    expect(reply).toContain('ForgeClaw never moves funds between shards automatically')
     expect(reply).toContain('Nothing was spent')
     expect(createCalls).toHaveLength(0)
     expect(balanceReads).toEqual([undefined, 3])
@@ -784,6 +784,41 @@ describe('approve-all (item 10)', () => {
     expect(positions.find(p => p.id === a)!.status).toBe('proposed')
     expect(positions.find(p => p.id === b)!.status).toBe('proposed')
   })
+
+  it('two same-market proposals in one pass produce exactly one order', async () => {
+    const a = seedProposal()
+    const b = seedMore('KX-TEST') // the same market as a: a second order would stack
+    const { client, createCalls } = fakeClient({})
+    const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
+    expect(reply).toContain('Approve-all: 1 placed, 1 refused, 0 unknown of 2 proposals.')
+    expect(createCalls).toHaveLength(1)
+    expect(createCalls[0].clientOrderId).toContain(a)
+    expect(loadFunds().positions.find(p => p.id === a)!.status).toBe('placed')
+    expect(loadFunds().positions.find(p => p.id === b)!.status).toBe('proposed')
+    // The skip is named: which position, which market, and the one-order rule.
+    expect(reply).toContain(`Not placed: ${b}`)
+    expect(reply).toContain(`another position (${a})`)
+    expect(reply).toContain('already placed')
+    expect(reply).toContain('one order per market per pass')
+  })
+
+  it('a merely-proposed sibling does not block the first same-market proposal of a pass', async () => {
+    // The first processed proposal must take its turn; only a committed order blocks.
+    // Here the first order is refused by Kalshi (a POST, but no order lands), so the
+    // second proposal may still place — the guard is about exposure, not attempts.
+    const a = seedProposal()
+    const b = seedMore('KX-TEST')
+    const { client, createCalls } = fakeClient({ onCreate: (n, input) => {
+      if (n === 1) throw new KalshiApiError(400, 'insufficient_balance', 'Insufficient balance.')
+      return { orderId: 'ord-2', clientOrderId: input.clientOrderId, fillCount: 10, remainingCount: 0, averageFillPrice: 0.42, averageFeePaid: 0.0171 }
+    } })
+    const reply = await runFundsCommandWithExecution('/funds approve-all', deps(client))
+    expect(reply).toContain('Approve-all: 1 placed, 1 refused, 0 unknown of 2 proposals.')
+    expect(createCalls).toHaveLength(2) // the refused POST, then the one live order
+    expect(reply).not.toContain('one order per market per pass')
+    expect(loadFunds().positions.find(p => p.id === a)!.status).toBe('proposed') // refused: nothing committed
+    expect(loadFunds().positions.find(p => p.id === b)!.status).toBe('placed') // proposed sibling blocked nothing
+  })
 })
 
 describe('auto-approve under a limit (item 10)', () => {
@@ -828,6 +863,70 @@ describe('auto-approve under a limit (item 10)', () => {
     expect(await maybeAutoApprove(position, deps(client))).toBeNull()
     expect(createCalls).toHaveLength(0)
     expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+
+  it('carries the run ID through to the position, the journal entry and failure telemetry', async () => {
+    const id = seedProposal()
+    const position = loadFunds().positions.find(p => p.id === id)!
+    setAutoApprove(position.stake) // exactly at the stake: at-or-under must fire
+    const { client, createCalls } = fakeClient({})
+    const placed: KalshiPlacedInfo[] = []
+    const failures: KalshiFailureNote[] = []
+    const reply = await maybeAutoApprove(position, { ...deps(client), runId: 'run-auto-1', onPlaced: i => placed.push(i), onFailure: n => failures.push(n) })
+    expect(reply).toContain(`Placed ${id}`)
+    expect(createCalls).toHaveLength(1)
+    expect(loadFunds().positions.find(p => p.id === id)!.runId).toBe('run-auto-1')
+    expect(placed).toHaveLength(1)
+    expect(placed[0]).toMatchObject({ positionId: id, orderId: 'ord-1', runId: 'run-auto-1' })
+    expect(failures).toHaveLength(0)
+  })
+
+  it('a refusal on the auto path reaches onFailure carrying the run ID', async () => {
+    const id = seedProposal()
+    const position = loadFunds().positions.find(p => p.id === id)!
+    setAutoApprove(position.stake)
+    const { client, createCalls } = fakeClient({ balanceDollars: 0, balanceByShard: { 0: 0 } })
+    const failures: KalshiFailureNote[] = []
+    const reply = await maybeAutoApprove(position, { ...deps(client), runId: 'run-auto-2', onFailure: n => failures.push(n) })
+    expect(reply).toContain('Not placed:')
+    expect(createCalls).toHaveLength(0)
+    const note = failures.find(f => f.stage === 'balance')
+    expect(note).toBeTruthy()
+    expect(note!.runId).toBe('run-auto-2')
+    expect(note!.positionId).toBe(id)
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+
+  it('a second same-market proposal under autoapprove is held for the owner, never a second order', async () => {
+    const a = seedProposal()
+    const posA = loadFunds().positions.find(p => p.id === a)!
+    setAutoApprove(posA.stake)
+    const { client, createCalls } = fakeClient({})
+    expect(await maybeAutoApprove(posA, deps(client))).toContain(`Placed ${a}`)
+    const b = seedMore('KX-TEST')
+    const posB = loadFunds().positions.find(p => p.id === b)!
+    expect(await maybeAutoApprove(posB, deps(client))).toBeNull()
+    expect(createCalls).toHaveLength(1)
+    expect(loadFunds().positions.find(p => p.id === b)!.status).toBe('proposed')
+    // The hold is explained, not silent: the model is told not to re-propose.
+    const hold = autoApproveHoldNote(posB)
+    expect(hold).toContain(a)
+    expect(hold).toContain('Do not re-propose')
+    // A placed position was never auto-eligible: the hold note says nothing.
+    const freshA = loadFunds().positions.find(p => p.id === a)!
+    expect(freshA.status).toBe('placed')
+    expect(autoApproveHoldNote(freshA)).toBeNull()
+  })
+
+  it('a merely-proposed sibling also holds the auto-approve (the market is unreviewed)', async () => {
+    seedProposal()
+    const b = seedMore('KX-TEST')
+    const posB = loadFunds().positions.find(p => p.id === b)!
+    setAutoApprove(posB.stake)
+    const { client, createCalls } = fakeClient({})
+    expect(await maybeAutoApprove(posB, deps(client))).toBeNull()
+    expect(createCalls).toHaveLength(0)
+    expect(autoApproveHoldNote(posB)).toContain('already proposed')
   })
 })
 

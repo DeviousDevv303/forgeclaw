@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { executeTool, FORGE_TOOLS } from './forgeTools'
+import { autoApproveExecutionDeps, executeTool, FORGE_TOOLS } from './forgeTools'
+import { clearErrorLog, getErrorLog } from './errorLog'
 import { loadFunds, runFundsCommand } from './fundsLedger'
 import { requiresCoSign } from './guardianGate'
 import { NOT_EVIDENCE_TOOLS } from './nexusConvergence'
@@ -117,5 +118,58 @@ describe('funds tools', () => {
     const out = await call('funds_settle', { id: 'all' })
     expect(out).toMatch(/p1 \[paper\] settled from Kalshi \(result yes\): won/)
     expect(out).toMatch(/p2 not settled: Kalshi shows KX-B as active with no result yet/)
+  })
+})
+
+describe('auto-approve execution deps (the tool path\'s order hooks)', () => {
+  beforeEach(() => clearErrorLog())
+  // A plain object literal (not the file's `as never` ctx): spreading a `never` is a type error.
+  const runCtx = (over: Record<string, unknown> = {}) => ({
+    ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator',
+    requestGuardianApproval: async () => true, ...over,
+  })
+
+  it('passes the run ID and the visitor flag from the run context', () => {
+    const withToken = autoApproveExecutionDeps(runCtx({ runId: 'run-ctx-1', ghToken: 'tok', publicRelayUrl: 'https://relay.example' }) as never)
+    expect(withToken.runId).toBe('run-ctx-1')
+    expect(withToken.visitor).toBe(false)
+    const visitor = autoApproveExecutionDeps(runCtx({ runId: 'run-ctx-2', ghToken: '  ', publicRelayUrl: 'https://relay.example' }) as never)
+    expect(visitor.visitor).toBe(true)
+  })
+
+  it('onPlaced journals the irreversible entry carrying the order id', () => {
+    const recorded: Array<{ kind: string; label: string }> = []
+    const deps = autoApproveExecutionDeps(runCtx({ journal: { record: (e: { kind: string; label: string }) => recorded.push(e) } }) as never)
+    deps.onPlaced!({ positionId: 'p2', ticker: 'KX-T', clientOrderId: 'fc-p2-1', orderId: 'ord-9', fillCount: 3 })
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0].kind).toBe('irreversible')
+    expect(recorded[0].label).toContain('ord-9')
+  })
+
+  it('onFailure writes to the tool error log with the run ID and context', () => {
+    const deps = autoApproveExecutionDeps(runCtx({ runId: 'run-ctx-3' }) as never)
+    deps.onFailure!({ stage: 'balance', message: 'Kalshi refused the balance check.', positionId: 'p2', ticker: 'KX-T' })
+    const entries = getErrorLog().filter(e => e.source === 'kalshi')
+    expect(entries.length).toBeGreaterThan(0)
+    expect(entries[0].message).toBe('Kalshi refused the balance check.')
+    expect(entries[0].details).toContain('run-ctx-3')
+    expect(entries[0].details).toContain('p2')
+    expect(entries[0].details).toContain('balance')
+  })
+
+  it('a refusal through funds_propose reaches the error log carrying the run ID', async () => {
+    fundAndOpenGate()
+    runFundsCommand('/funds limits autoapprove=100')
+    const out = await executeTool({ id: '1', name: 'funds_propose', input: {
+      venue: 'kalshi', market: 'KX-RAIN-OCT', side: 'yes', price: 0.4, probability: 0.55,
+      rationale: 'NWS forecast gives 60% rain for the window and three models agree; the market lags the update.',
+      sources: ['https://weather.gov/forecast'],
+    } }, runCtx({ runId: 'run-propose-1' }) as never)
+    expect(out).toMatch(/Auto-approve/)
+    expect(out).toMatch(/no Kalshi API key in this browser/)
+    const entries = getErrorLog().filter(e => e.source === 'kalshi' && e.message.includes('no API key'))
+    expect(entries.length).toBeGreaterThan(0)
+    expect(entries[0].details).toContain('run-propose-1')
+    expect(loadFunds().positions.find(p => p.id === 'p2')!.status).toBe('proposed')
   })
 })
