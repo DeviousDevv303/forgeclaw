@@ -59,6 +59,11 @@ Then paste the workers.dev URL into ForgeClaw: **Settings → Kalshi trading →
 URL**. From then on, Kalshi calls the browser cannot make directly — market reads and the
 signed order path alike — go through the relay instead.
 
+**Do not set the `FORGECLAW_PUBLIC_RELAY_URL` repo variable for Kalshi.** It is the public-visitor
+switch: with it set, every browser that has no GitHub token (including yours, if you never saved
+one there) is treated as a visitor, the Kalshi Settings section disappears, and any key already
+saved is ignored. The Settings field above is the Kalshi route and needs no variable and no token.
+
 Two honest limits of the minimal deploy:
 
 - **Without the `RATE` namespace the relay has no per-IP limit, only the origin check.**

@@ -149,10 +149,13 @@ export function formatMarket(m: KalshiMarket, nowMs: number): string {
   const closes = Number.isNaN(close) ? 'n/a' : `${m.close_time} (${Math.max(0, Math.round((close - nowMs) / 3_600_000))}h from now)`
   const spread = yesBid !== null && yesAsk !== null ? yesAsk - yesBid : null
   const title = (m.title ?? m.yes_sub_title ?? m.ticker).replace(/\s+/g, ' ').trim()
+  // Orders draw only on their market's exchange shard, so the shard is shown as Kalshi reports it —
+  // 'n/a' when the record omits it, never a guessed 0 (the approve path's own default is not evidence).
+  const shard = typeof m.exchange_index === 'number' && Number.isInteger(m.exchange_index) && m.exchange_index >= 0 ? String(m.exchange_index) : 'n/a'
   return [
     `${m.ticker} — ${title}`,
     `   YES: bid ${usd(yesBid)} / ask ${usd(yesAsk)} (implied ${pct(yesAsk)}); NO ask ${usd(noAsk)}; last ${usd(last)}; spread ${usd(spread)}`,
-    `   volume ${num(parseCount(m.volume_fp))} (24h ${num(parseCount(m.volume_24h_fp))}); open interest ${num(parseCount(m.open_interest_fp))}; status ${m.status ?? 'n/a'}; closes ${closes}`,
+    `   volume ${num(parseCount(m.volume_fp))} (24h ${num(parseCount(m.volume_24h_fp))}); open interest ${num(parseCount(m.open_interest_fp))}; status ${m.status ?? 'n/a'}; shard ${shard}; closes ${closes}`,
   ].join('\n')
 }
 
