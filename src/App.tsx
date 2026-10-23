@@ -204,6 +204,7 @@ import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
 import { isPublicVisitor } from './lib/publicRelay'
+import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, type ChannelCall } from './lib/channelCalls'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { ReasoningFrameworkPanel } from './components/ReasoningFrameworkPanel'
@@ -818,6 +819,9 @@ function App() {
   }
   const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
 
+  // Channel calls — work the Channel Watch @'d this app with on issue #235 (lib/channelCalls)
+  const [channelCalls, setChannelCalls] = useState<ChannelCall[]>([])
+
   // Diagnostics — operator visibility panel
   interface DiagnosticsState {
     provider: string
@@ -961,6 +965,37 @@ function App() {
       onFailure: n => emitFailure({ source: 'kalshi', severity: 'warning', message: n.message, context: { stage: n.stage } }),
     }).then(notices => { if (!cancelled && notices.length) setSettledNotices(notices) }).catch(() => {})
     return () => { cancelled = true }
+  }, [])
+  // Channel calls: poll the Muse↔Claude channel (issue #235) for @ForgeClaw calls while
+  // the app is open — a static PWA cannot be woken while closed, so calls land on open,
+  // on return to the tab, and on the poll interval. Public visitors never poll: the
+  // channel is the owner's working channel and a visitor's browser has no standing there.
+  useEffect(() => {
+    let cancelled = false
+    const poll = async () => {
+      if (document.visibilityState !== 'visible') return
+      const token = resolveGithubToken()
+      if (isPublicVisitor(token)) return
+      try {
+        const calls = await fetchNewChannelCalls({ token })
+        if (cancelled || !calls.length) return
+        setChannelCalls(prev => {
+          const seen = new Set(prev.map(c => c.commentId))
+          const fresh = calls.filter(c => !seen.has(c.commentId))
+          return fresh.length ? [...prev, ...fresh] : prev
+        })
+        // Advance only after surfacing. A refused write returns false, and the calls
+        // then resurface on a later poll instead of being marked seen on a claim.
+        acknowledgeChannelCalls(calls)
+      } catch {
+        // A failed poll is not an app failure — the next interval retries.
+      }
+    }
+    void poll()
+    const interval = setInterval(() => void poll(), CHANNEL_CALL_POLL_MS)
+    const onVisible = () => { if (document.visibilityState === 'visible') void poll() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { cancelled = true; clearInterval(interval); document.removeEventListener('visibilitychange', onVisible) }
   }, [])
   useEffect(() => { safeSetItem('forgemind_corpus', JSON.stringify(corpus)) }, [corpus])
   useEffect(() => { safeSetItem('fm_anthropic_key', anthropicApiKey) }, [anthropicApiKey])
@@ -3447,6 +3482,26 @@ function App() {
               </div>
             )}
 
+            {/* ── Channel calls — work the Channel Watch @'d this app with (issue #235) ── */}
+            {activityView === 'log' && channelCalls.length > 0 && (
+              <div style={{ marginBottom: '16px', border: '1px solid #1a1a1a', borderRadius: '4px', padding: '10px 12px' }}>
+                <div style={{ color: '#f97316', fontSize: '9px', letterSpacing: '2px', fontWeight: 'bold', marginBottom: '4px' }}>{t('activity.channelCalls')}</div>
+                {channelCalls.map(call => {
+                  const ts = new Date(call.createdAt)
+                  const timeStr = Number.isNaN(ts.getTime()) ? '' : `${ts.toLocaleDateString(locale, { month: 'short', day: 'numeric' })} ${ts.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
+                  return (
+                    <div key={call.commentId} style={{ padding: '6px 0', borderTop: '1px solid #0f0f0f' }}>
+                      <div style={{ display: 'flex', gap: '10px', alignItems: 'baseline' }}>
+                        <span style={{ color: '#f9731644', fontSize: '8px', letterSpacing: '1px', flexShrink: 0 }}>{t('activity.channelCall')}</span>
+                        {timeStr && <span style={{ color: '#333', fontSize: '8px', flexShrink: 0 }}>{timeStr}</span>}
+                      </div>
+                      <div style={{ color: '#999', fontSize: '10px', whiteSpace: 'pre-wrap', marginTop: '3px' }}>{call.taskText}</div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
             {/* ── Mission Log — Manus-style live work log ── */}
             {activityView === 'log' && activityLog.length > 0 && (
               <div style={{ marginBottom: '16px' }}>
@@ -3494,7 +3549,7 @@ function App() {
               </div>
             )}
 
-            {activityView === 'log' && messages.length === 0 && activityLog.length === 0 && (
+            {activityView === 'log' && messages.length === 0 && activityLog.length === 0 && channelCalls.length === 0 && (
               <div style={{ color: '#333', fontSize: '10px', textAlign: 'center', marginTop: '40px', letterSpacing: '2px' }}>{t('activity.none')}</div>
             )}
 
