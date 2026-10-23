@@ -118,27 +118,99 @@ export const RESEARCH_GUIDANCE =
  */
 export const FUNDS_WEATHER_MAX_SPREAD_CENTS = 5
 
-/** Planning with the owner's money: research, own probability vs price, sized proposals, owner decides. */
+/**
+ * Master Money Multiplier, Module 1 — net-edge bars (cents per contract, after the fee
+ * and the spread paid). The netting itself is measured, not folklore: Becker (2026, 72.1M
+ * Kalshi trades) finds takers transfer −1.12% per trade to makers before fees, so a taker
+ * entry needs a real cushion over the price, not a coin-flip's worth of model opinion.
+ */
+export const FUNDS_MIN_NET_EDGE_TAKER_CENTS = 5
+/**
+ * The maker bar is lower because a resting order does not pay the spread — but ForgeClaw
+ * has no maker execution path (it executes taker-at-cross), so this bar is stated in the
+ * guidance as future-only: quoted so the model never prices a proposal as if it were a maker.
+ */
+export const FUNDS_MIN_NET_EDGE_MAKER_CENTS = 3
+/**
+ * Buckets priced this cheap or this dear are where a normal error model invents edge that
+ * is not there (measured fat tails: a model's 0–10% bin resolved 7.9% in the 2026 backtest),
+ * so a case resting on the model alone must clear a higher bar there.
+ */
+export const FUNDS_EXTREME_PRICE_LOW_CENTS = 15
+/** See FUNDS_EXTREME_PRICE_LOW_CENTS: the dear end of the same invented-edge band. */
+export const FUNDS_EXTREME_PRICE_HIGH_CENTS = 85
+/** Net edge a model-only case in the extreme band must clear (see the two constants above). */
+export const FUNDS_MIN_NET_EDGE_EXTREME_CENTS = 10
+
+/**
+ * Cheapest contract (cents) the model may propose buying as a directional bet. Bürgi, Deng
+ * & Whelan (2026, 313,972 Kalshi prices): contracts priced at or below this lose over 60%
+ * of the money put in them — the favorite–longshot bias is strongest exactly here, and the
+ * fee takes a larger share of a cheap stake on top of it.
+ */
+export const FUNDS_LONGSHOT_MAX_PRICE_CENTS = 10
+
+/**
+ * Ensemble disagreement (degrees F) on a day's high at which the model stands down or
+ * halves size: at that spread the forecast sources are not measuring one quantity (the
+ * 2026 research snapshot had ECMWF 57.0°F vs GFS/HRRR 60.5°F for the same NYC day), and
+ * wide model spread is where retail fair values hallucinate edge.
+ */
+export const FUNDS_ENSEMBLE_STAND_DOWN_SPREAD_F = 3
+
+/**
+ * Planning with the owner's money: research, own probability vs price, sized proposals, owner decides.
+ * The trading playbook below is Master Money Multiplier, Module 1 (Kalshi), distilled from the
+ * 2026-10-23 evidence review (Becker; Bürgi, Deng & Whelan; Crosier; Diercks, Katz & Wright;
+ * Kalshi Fee Schedule eff. 2026-07-07; a 1,317-city-day forecast-model backtest).
+ */
 export const FUNDS_GUIDANCE =
   'Funds plan: you are planning with the owner\'s real money. 1) Call funds_status first: bankroll, available funds, limits, open positions, your track record and the owner\'s own rules, which override anything here. If it says HALTED, propose nothing real. ' +
   '2) Research before proposing: kalshi_markets for live prices and market rules, web_search and deep_research for evidence. Look for markets where public evidence ' +
-  '(official data, schedules, forecasts, polls, injury reports) points away from the price. 3) For each candidate, state YOUR probability with the evidence behind it; ' +
-  'do not anchor on the market price. Propose only where your probability beats the price after fees. 4) Propose each position with funds_propose; it sizes the ' +
-  'stake from the bankroll and limits and refuses bets with no edge, so never invent a stake. Sizing also learns from your settled record per market series ' +
+  '(official data, schedules, forecasts, polls, injury reports) points away from the price. 3) For each candidate, state YOUR probability (call it q) with the evidence behind it; ' +
+  'do not anchor on the market price. Compute the net edge per contract before proposing: net = q − price − fee per contract − the spread you pay crossing the book, ' +
+  'with the Kalshi taker fee estimated as round_up(0.07 × contracts × price × (1 − price)) for the order. Propose only when net clears the bar: at least ' + FUNDS_MIN_NET_EDGE_TAKER_CENTS + ' cents ' +
+  'for a taker entry — and every ForgeClaw execution is taker-at-cross by design, so the taker bar is the one that applies; the maker bar is at least ' + FUNDS_MIN_NET_EDGE_MAKER_CENTS + ' cents, ' +
+  'but maker (resting limit) execution is NOT built, so never describe a proposal as a maker order, never assume maker fees and never promise a resting fill; at least ' + FUNDS_MIN_NET_EDGE_EXTREME_CENTS + ' cents ' +
+  'when the side is priced at ' + FUNDS_EXTREME_PRICE_LOW_CENTS + ' cents or less or ' + FUNDS_EXTREME_PRICE_HIGH_CENTS + ' cents or more and the case rests on your model alone. ' +
+  'Takers start behind: Becker (2026) measures takers at −1.12% per trade against makers before fees, so a small model disagreement is not an edge. ' +
+  'Never propose buying a contract priced at ' + FUNDS_LONGSHOT_MAX_PRICE_CENTS + ' cents or less as a directional bet: on Kalshi those contracts lose over 60% of the money put in them ' +
+  '(Bürgi, Deng & Whelan 2026). Express a tail view from the other side instead — buy the NO or the complementary favorite at its own price, under the same net-edge bars. ' +
+  '4) Propose each position with funds_propose; it sizes the ' +
+  'stake from the bankroll and limits and refuses bets with no edge, so never invent a stake. Sizing is quarter-Kelly, f = 0.25 × (q − price) / (1 − price), before the stake, ' +
+  'exposure and daily-loss limits in funds_status cut it down. All buckets in one city-day event are ONE bet — they are mutually exclusive — so never size or present them as independent bets, ' +
+  'and if you propose more than one bucket in the same event, state that their combined stake is the single event bet. A city or model with no settled record is unvalidated: keep max_stake small until it has one. ' +
+  'Never split a position into 1-contract orders: the fee rounds up per order, so a lone contract pays a 1–2 cent flat fee — a round-up tax that can exceed the edge; batch into one proposal instead. ' +
+  'Sizing also learns from your settled record per market series ' +
   '(the ticker prefix, e.g. KXHIGHNY): a series with fewer than 5 settled positions is staked at half and one that has lost money over 5 or more at a quarter, ' +
   'until its record improves; funds_status shows each series\' record and multiplier. Never rename a series to dodge a shrink — the shrink is the system learning. ' +
   '5) Then write the master plan: the goal, the proposals and how much ' +
   'of the bankroll they use, the timeline, what result would show the plan is wrong (your track record versus the prices paid), and when to stop or scale up. ' +
+  'Grade that track record by Brier score and calibration (your stated probabilities against outcomes, by price band), never by win rate alone: fewer than 400 settled trades at mid prices ' +
+  '(about 900 near 10 cents, about 1,700 near 95 cents) proves nothing, so never call a strategy or a series proven on a winning streak. ' +
   '6) Only the owner approves, places orders or moves money — except when the owner has set /funds limits autoapprove above zero: then funds_propose reports the placement in its own output, ' +
   'because that auto-approval is the owner\'s standing instruction. Never say a position is placed unless funds_status shows it placed or the funds_propose output says it was ' +
   'placed. After any outcome other than Placed, do not re-propose that market — the earlier proposal is still the live one, and re-proposing would stack a second order on it. ' +
   '7) Settle placed Kalshi positions with funds_settle (id "all" for every one) once markets have results. ' +
   '8) The owner prefers short-term, quick-turnaround markets (settling within hours or days). Use mode=paper only when the owner asks to test an idea without money, and never describe paper results as real money. ' +
-  '9) Playbook — weather first: daily high-temperature markets (series starting KXHIGH) settle on one station\'s official high; call weather_forecast for that city, ' +
-  'form your probability from the forecast, and propose only when it beats the kalshi_markets price after fees. Skip thin or wide books: if the spread kalshi_markets ' +
+  '9) Playbook — weather first: daily high-temperature markets (series starting KXHIGH) settle on one station\'s official high, from the settlement source named in that market\'s own ' +
+  'rules — since 2026-08-14 that source is The Weather Company, with the National Weather Service as fallback — and the market\'s rules win if they say otherwise, so read them on kalshi_markets every time. ' +
+  'Forecast ONLY the settlement station, and state the station and the settlement source in every weather rationale: NYC = Central Park (KNYC), Chicago = Midway (KMDW), Miami = MIA, ' +
+  'Philadelphia = PHL, Denver = DEN, Los Angeles = LAX, Austin = ABIA. A forecast for any other station is a forecast of a different number — discard it. Call weather_forecast for that city and station. ' +
+  'Form your probability by integrating a bias-corrected error distribution over the bucket — never from a point forecast: start from σ ≈ 2.8°F, correct the known station biases ' +
+  '(NYC −1.1°F, MIA +3.7°F, LAX −4.0°F; re-estimate them as your record grows), and widen the tails beyond a normal curve, because fat tails are measured and tail buckets are where models invent edge. ' +
+  'If ensemble members disagree by ' + FUNDS_ENSEMBLE_STAND_DOWN_SPREAD_F + '°F or more on the day\'s high, stand down — or halve the size with max_stake and say the disagreement in the rationale. ' +
+  'Respect the benchmark: the market\'s implied forecast beats the NBM by about 10% RMSE and beats a blend of ALL public forecasts by 3–4% (Crosier 2026), and a public-forecast model trading ' +
+  '8-cent edges lost 37.7% buying YES in backtest — so a forecast merely disagreeing with the price is not an edge. Your rationale must name the specific information the market has not absorbed ' +
+  '(a station bias its ladder ignores, same-day observations at the station, data published after the price formed); no named information, no proposal. Use the NBM as your benchmark input, ' +
+  'with LAMP and same-day observations late in the day; do not trade a model-run release as news — prices do not jump when the NWS publishes. ' +
+  'Skip thin or wide books: if the spread kalshi_markets ' +
   'prints (YES ask minus YES bid) is wider than ' + FUNDS_WEATHER_MAX_SPREAD_CENTS + ' cents, or the 24h volume and open interest are near zero, the price is not evidence and ' +
-  'crossing it eats a weather edge, which is only a few cents to begin with. Econ second: for scheduled releases (CPI, jobs reports, Fed decisions), your rationale ' +
-  'must name the release time and a falsifier — the print that would prove your estimate wrong; no falsifier, no proposal. ' +
+  'crossing it eats a weather edge, which is only a few cents to begin with. Econ second: for scheduled releases (CPI, jobs reports, Fed decisions), the position must be fully proposed ' +
+  'before the close — CPI and jobs markets close at 8:29 AM ET for the 8:30 AM ET print, and there is no post-print entry. Never fade a headline-CPI or day-before-FOMC price on judgment alone: ' +
+  'Kalshi\'s headline-CPI forecast error (0.063) beats the Bloomberg consensus (0.081) (Diercks, Katz & Wright 2026). Propose an econ position only on a quantified benchmark gap: name the ' +
+  'Cleveland Fed nowcast and/or the consensus, the Kalshi-implied number, and show the gap is larger than that benchmark\'s historical print error — all three numbers belong in the rationale. ' +
+  'Your rationale must name the release time and a falsifier — the print that would prove your estimate wrong; no falsifier, no proposal. ' +
   '10) Every bet must carry its evidence on the record: deep_research citations and/or structured data (a weather_forecast, the kalshi_markets order book, price history), ' +
   'a stated confidence, and a falsifier. Put them in funds_propose\'s rationale and sources — a bet without them does not belong in a plan, ' +
   'and the owner reading it back with /funds plan sees the gap where they are missing.'
