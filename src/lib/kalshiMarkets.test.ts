@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
-  selectMarkets, type KalshiMarket,
+  selectMarkets, type KalshiMarket, KALSHI_429_RETRY_DELAYS_MS, KALSHI_PUBLIC_READ_INTERVAL_MS, resetKalshiReadSpacing,
 } from './kalshiMarkets'
 import { relayFallbackFetcher } from './kalshiTrade'
 
@@ -184,5 +184,61 @@ describe('orderbook', () => {
   it('rejects tickers that could alter the URL, and responses without a book', async () => {
     await expect(runKalshiOrderbook('../x?y=1', { fetcher: async () => json(data) })).rejects.toThrow('Invalid Kalshi ticker')
     await expect(runKalshiOrderbook('KX-A', { fetcher: async () => json({}) })).rejects.toThrow('orderbook_fp')
+  })
+})
+
+// 2026-10-23: three kalshi_markets series lookups in one answer (KXHIGHNY, KXHIGHMIA, KXHIGHLAX) all came back
+// HTTP 429. Public reads are spaced and a 429 is retried with backoff before it becomes an error.
+describe('rate limits on public market reads', () => {
+  const limited = (headers: Record<string, string> = {}) => ({ ok: false, status: 429, headers: new Headers(headers), json: async () => ({}) }) as unknown as Response
+  const fakeTime = () => {
+    let t = 1_000_000
+    const waits: number[] = []
+    return { waits, clock: () => t, delay: async (ms: number) => { waits.push(ms); t += ms } }
+  }
+
+  it('a 429 is retried after a spaced wait and the markets render', async () => {
+    resetKalshiReadSpacing()
+    const time = fakeTime()
+    const replies = [limited(), json({ markets: [mk({})] })]
+    const out = await runKalshiMarkets({ ticker: 'KX-A' }, { fetcher: async () => replies.shift()!, now: () => NOW, ...time })
+    expect(out).toContain('KX-A — Will A happen?')
+    expect(time.waits).toEqual([KALSHI_429_RETRY_DELAYS_MS[0]])
+  })
+
+  it('still limited after every retry: an error that says so, never an empty list', async () => {
+    resetKalshiReadSpacing()
+    const time = fakeTime()
+    let calls = 0
+    const err = await runKalshiMarkets({ series_ticker: 'KXHIGHNY' }, { fetcher: async () => { calls++; return limited() }, now: () => NOW, ...time }).catch(e => e)
+    expect(err).toBeInstanceOf(KalshiError)
+    expect(err.message).toMatch(/rate-limited this read \(HTTP 429.*still limiting it after 2 spaced retries\. It is not an empty market list/)
+    expect(calls).toBe(1 + KALSHI_429_RETRY_DELAYS_MS.length)
+    expect(time.waits).toEqual([...KALSHI_429_RETRY_DELAYS_MS])
+  })
+
+  it('honours Retry-After, capped at 5 s', async () => {
+    resetKalshiReadSpacing()
+    const time = fakeTime()
+    const replies = [limited({ 'Retry-After': '2' }), limited({ 'Retry-After': '60' }), json({ markets: [mk({})] })]
+    await runKalshiMarkets({ ticker: 'KX-A' }, { fetcher: async () => replies.shift()!, now: () => NOW, ...time })
+    expect(time.waits).toEqual([2000, 5000])
+  })
+
+  it('back-to-back reads are spaced, across separate calls', async () => {
+    resetKalshiReadSpacing()
+    const time = fakeTime()
+    const deps = { fetcher: async () => json({ markets: [mk({})] }), now: () => NOW, ...time }
+    for (const series of ['KXHIGHNY', 'KXHIGHMIA', 'KXHIGHLAX']) await runKalshiMarkets({ series_ticker: series }, deps)
+    expect(time.waits).toEqual([KALSHI_PUBLIC_READ_INTERVAL_MS, KALSHI_PUBLIC_READ_INTERVAL_MS])
+  })
+
+  it('an abort during the wait stops the read', async () => {
+    resetKalshiReadSpacing()
+    const controller = new AbortController()
+    const replies = [limited()]
+    const pending = runKalshiMarkets({ ticker: 'KX-A' }, { fetcher: async () => replies.shift() ?? json({ markets: [] }), now: () => NOW, signal: controller.signal })
+    controller.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
   })
 })
