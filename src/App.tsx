@@ -1473,6 +1473,7 @@ function App() {
       // Not a bare 'review': that would offer it for "review my workflows".
       'review_code': ['code review', 'review this code', 'review my code'],
       'weather_forecast': ['weather', 'forecast', 'temperature', 'rain', 'snow', 'how hot', 'how cold'],
+      'espn_fight_stats': ['ufc', 'mma', 'fight stats', 'fightcenter', 'strikes landed', 'significant strikes', 'striking accuracy', 'takedown', 'fight card', 'bantamweight', 'featherweight', 'lightweight', 'welterweight', 'middleweight', 'heavyweight', 'flyweight'],
       'kalshi_markets': ['kalshi', 'prediction market', 'polymarket odds', 'contract price', 'implied probability', 'multiply', 'my funds', 'my money', 'bankroll', 'master plan', 'game plan', 'betting', 'bets'],
       'kalshi_owner_prices': ['kalshi', 'prediction market', 'contract price', 'my prices', 'the prices are', 'priced at', 'betting', 'bets'],
       // The owner's money: planning, proposals and settlement (fundsLedger.ts). Approving and placing stay owner commands.
