@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createSpeechController, splitForSpeech, type SpeechUtteranceLike } from './speech'
+import { cleanForSpeech, createSpeechController, splitForSpeech, type SpeechUtteranceLike } from './speech'
 
 function harness() {
   const spoken: Array<{ text: string; u: SpeechUtteranceLike }> = []
@@ -45,6 +45,35 @@ describe('splitForSpeech', () => {
     const chunks = splitForSpeech(`${'word '.repeat(100)}end`, 80)
     expect(chunks.every(c => c.length <= 80)).toBe(true)
     expect(chunks.join(' ')).toContain('end')
+  })
+})
+
+describe('cleanForSpeech', () => {
+  it('compacts a billion-scale number instead of leaving a digit string to count out', () => {
+    expect(cleanForSpeech('The fund holds 1000000000 dollars.')).toBe('The fund holds 1 billion dollars.')
+    expect(cleanForSpeech('Revenue hit $1,250,000,000 this year.')).toBe('Revenue hit $1.25 billion this year.')
+    expect(cleanForSpeech('About 2500000 users, up 1234567% overall.')).toBe('About 2.5 million users, up 1.23 million% overall.')
+    expect(cleanForSpeech('He ran 42000 meters.')).toBe('He ran 42 thousand meters.')
+  })
+
+  it('never lets an arrow survive into the spoken text', () => {
+    const cleaned = cleanForSpeech('Yan → victory, Merab ← defeat, rematch ⇒ soon.')
+    expect(cleaned).toBe('Yan victory, Merab defeat, rematch soon.')
+    expect(cleaned).not.toMatch(/[\u{2190}-\u{21FF}\u{2900}-\u{297F}]/u)
+  })
+
+  it('preserves forward slashes in paths and URLs exactly', () => {
+    const text = 'Open src/lib/speech.ts or deviousdevv303.github.io/forgeclaw/ to check.'
+    expect(cleanForSpeech(text)).toBe(text)
+  })
+
+  it('leaves ordinary sentences and small numbers unchanged', () => {
+    const text = "Petr Yan won in round 3, and he didn't look back — 42 people cheered in 2026."
+    expect(cleanForSpeech(text)).toBe(text)
+  })
+
+  it('keeps the pre-existing emoji and asterisk stripping', () => {
+    expect(cleanForSpeech('**Bold** claim 🎉 done ✅')).toBe('Bold claim done')
   })
 })
 

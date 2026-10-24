@@ -133,7 +133,7 @@ import { sendViaRouter, isDeepSeekProvider, testProviderKey, corpusProvider, moo
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { diagKeyFormat } from './lib/diagKeyFormat'
 import { isToolFailureOutput } from './lib/toolOutcome'
-import { createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
+import { cleanForSpeech, createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
 import { answerOutcome } from './lib/nexusConvergence'
 import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
@@ -541,13 +541,6 @@ function renderMessageContent(text: string, onCopy: (code: string) => void, copi
       </div>
     ) : <span key={`${i}-${j}`} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{renderWithLinks(segment.text)}</span>)
   })
-}
-
-function cleanForSpeech(text: string): string {
-  return text
-    .replace(/[\u{1F000}-\u{1FFFF}]/gu, '')
-    .replace(/[\u{2600}-\u{26FF}]/gu, '')
-    .replace(/\*\*/g, '').replace(/\*/g, '').trim()
 }
 
 // Render text with clickable markdown links [label](url) and bare https:// URLs.
