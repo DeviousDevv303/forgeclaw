@@ -15,6 +15,13 @@ FACEBOOK_ACCESS_TOKEN is configured). Every run reports a per-lane manifest: eac
 (with item count and as-of time), NOT CONFIGURED, or FAILED (with the cause). A lane that did not
 run is named in the output, never silently absent: a recommendation built on this research must
 be able to say "forum layer missing: <lane> — <reason>" instead of pretending the scan happened.
+
+The same sentiment subjects also drive the FIGHTER POSTS block: each named fighter's OWN public posts
+(Instagram, X, TikTok), found through the web search backend with no credentials and no login. It is a
+separate block, never a lane, and never part of the crowd lean: a fighter's own post is not crowd opinion,
+and third-party posts about the fighter (media, fan accounts) are dropped from it, because they carry the
+poster's mood and not the fighter's. Handles are verified before use, dates come from the post when the
+platform encodes one, and a fighter with no verified recent post is reported as such with the reason.
 """
 from __future__ import annotations
 
@@ -138,6 +145,10 @@ def gather(question: str, queries: list[str], max_sources: int, search: SearchFn
     }
     if sentiment_block is not None:
         report['sentiment'] = sentiment_block
+    # Separate from the lanes and from the crowd lean on purpose (see the FIGHTER POSTS note above).
+    fighter_posts = build_fighter_posts(sentiment, search, delay_s, now_iso)
+    if fighter_posts is not None:
+        report['fighter_posts'] = fighter_posts
     return report
 
 
@@ -360,6 +371,201 @@ def facebook_lane(subject_query: str, access_token: str, http_get: HttpGet, now_
     return _lane('facebook', 'Facebook', 'ran', len(items), now_iso, detail=detail), items
 
 
+# ─── Fighter posts: a fighter's own public posts, from the web search index ───
+# Instagram and X refuse anonymous reads (login wall, HTTP 429), so the search backend's indexed snippets are the
+# source: a post's caption/text, its account and (where shown) its date. Measured 2026-10-24 on UFC 333 fighters:
+# unquoted `site:` queries return results where quoted ones return none, own-account posts are indexed for most
+# fighters but not all, and the first Instagram hit for a common name can be a namesake (a photographer), so a
+# handle is used only after its profile snippet reads as a fighter's.
+
+FIGHTER_POSTS_METHOD = 'own-account-search-v1'
+FIGHTER_POSTS_WINDOW_DAYS = 60       # camp length: older posts say nothing about the state going into this fight
+FIGHTER_POSTS_MAX_PER_FIGHTER = 12
+FIGHTER_POSTS_MAX_UNDATED = 3        # an undated post is shown, flagged, and capped: its age is unknown
+FIGHTER_POST_TEXT_CHARS = 400
+SEARCH_RETRIES = 2                   # the backend sometimes answers "no results" to a query it answered a minute ago
+SEARCH_RETRY_DELAY_S = 5.0
+X_EPOCH_MS = 1288834974657           # X ids are snowflakes: (id >> 22) + this = the post's creation time in ms
+FIGHT_PROFILE_WORDS = re.compile(r'\b(ufc|mma|mixed martial|bantamweight|featherweight|lightweight|welterweight|middleweight|heavyweight|flyweight|strawweight|champion)\b', re.I)
+RESERVED_HANDLES = {'p', 'reel', 'reels', 'explore', 'accounts', 'i', 'home', 'search', 'hashtag', 'tag', 'share', 'intent', 'login'}
+_MONTHS = {m: i for i, m in enumerate(['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'], 1)}
+PLATFORMS = (
+    ('instagram', 'instagram.com', re.compile(r'instagram\.com/([A-Za-z0-9._]+)/?(?:reels/)?(?:\?.*)?$', re.I)),
+    ('x', 'x.com', re.compile(r'(?:x|twitter)\.com/([A-Za-z0-9_]+)(?:/with_replies)?/?(?:\?.*)?$', re.I)),
+    ('tiktok', 'tiktok.com', re.compile(r'tiktok\.com/@([A-Za-z0-9._]+)/?(?:\?.*)?$', re.I)),
+)
+_IG_CAPTION = re.compile(r'^\s*[\d.,]+[KkMm]?\s+likes?,\s*[\d.,]+[KkMm]?\s+comments?\s+-\s+(\S+)\s+on\s+([A-Z][a-z]+)\s+(\d{1,2}),\s+(\d{4}):\s*"(.*)', re.S)
+_IG_LEAD = re.compile(r'^\s*(\S+)\s+(?:Verified\s+)?Follow\s+[\d.,]+\s*likes?\s+\1\s+(.*)', re.S | re.I)
+_X_STATUS = re.compile(r'(?:x|twitter)\.com/([A-Za-z0-9_]+)/status/(\d+)', re.I)
+_TT_VIDEO = re.compile(r'tiktok\.com/@([A-Za-z0-9._]+)/video/(\d+)', re.I)
+_IG_POST = re.compile(r'instagram\.com/(?:p|reel)/([A-Za-z0-9_-]+)', re.I)
+
+
+def search_with_retry(search: Callable, query: str, count: int, delay_s: float) -> list:
+    """The search backend's answer, retried when it errors or says nothing. Raises the last error only if every try errored."""
+    last: Exception | None = None
+    for attempt in range(SEARCH_RETRIES + 1):
+        if delay_s:
+            time.sleep(delay_s if attempt == 0 else SEARCH_RETRY_DELAY_S)
+        try:
+            hits = search(query, count) or []
+            if hits:
+                return hits
+            last = None
+        except Exception as error:  # noqa: BLE001 - reported by the caller as a failed query
+            last = error
+    if last is not None:
+        raise last
+    return []
+
+
+def x_post_time(post_id: str) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(((int(post_id) >> 22) + X_EPOCH_MS) / 1000, timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def tiktok_post_time(video_id: str) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(int(video_id) >> 32, timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _profile_handle(platform_pattern: re.Pattern, hit: dict) -> str | None:
+    match = platform_pattern.search((hit.get('href') or hit.get('url') or '').strip())
+    handle = match.group(1) if match else None
+    return handle if handle and handle.lower() not in RESERVED_HANDLES else None
+
+
+def discover_handle(name: str, platform: str, domain_name: str, pattern: re.Pattern, search: Callable, delay_s: float) -> tuple[str | None, str]:
+    """The fighter's verified handle on one platform, and the reason when there is none. A profile hit is accepted only when
+    its snippet reads as a fighter's (a fight word) and the handle or the snippet carries the name."""
+    tokens = [t for t in _name_tokens(name) if len(t) >= 3]
+    try:
+        hits = search_with_retry(search, f'site:{domain_name} {name}', 10, delay_s)
+    except Exception as error:  # noqa: BLE001
+        return None, f'{platform} profile search failed: {type(error).__name__}: {error}'[:200]
+    for hit in hits:
+        handle = _profile_handle(pattern, hit)
+        if not handle:
+            continue
+        text = f"{hit.get('title') or ''} {hit.get('body') or ''}".lower()
+        if FIGHT_PROFILE_WORDS.search(text) and any(tok in handle.lower() or tok in text for tok in tokens):
+            return handle, ''
+    return None, f'no {platform} profile found that reads as {name}\'s (fight words and the name)'
+
+
+TIKTOK_TEXT_NOTE = "TikTok index text: it can be auto-generated, so it is not quotable as the fighter's words"
+
+
+def _clip(text: str) -> str:
+    return re.sub(r'"[.\s]*$', '', re.sub(r'\s+', ' ', text).strip()).strip()[:FIGHTER_POST_TEXT_CHARS]
+
+
+def _own_posts(platform: str, handle: str, hits: list[dict]) -> list[dict]:
+    """The hits that are posts by `handle` itself. Another account's post about the fighter is dropped."""
+    mine, want = [], handle.lower()
+    for hit in hits:
+        url = (hit.get('href') or hit.get('url') or '').strip()
+        body = hit.get('body') or ''
+        title = hit.get('title') or ''
+        item = None
+        if platform == 'x':
+            m = _X_STATUS.search(url)
+            if m and m.group(1).lower() == want:
+                when = x_post_time(m.group(2))
+                text = re.sub(r'^.*?\bon X:\s*"?', '', title) if ' on X: ' in title else body
+                item = {'date': when, 'date_source': 'post-id', 'text': text}
+        elif platform == 'tiktok':
+            m = _TT_VIDEO.search(url)
+            if m and m.group(1).lower() == want:
+                quoted = re.search(r'\(@[^)]*\):\s*"(.*)', body, re.S)
+                item = {'date': tiktok_post_time(m.group(2)), 'date_source': 'post-id', 'text': quoted.group(1) if quoted else body}
+        elif platform == 'instagram' and _IG_POST.search(url):
+            m = _IG_CAPTION.match(body)
+            if m and m.group(1).lower() == want and m.group(2) in _MONTHS:
+                try:
+                    when = datetime(int(m.group(4)), _MONTHS[m.group(2)], int(m.group(3)), tzinfo=timezone.utc)
+                except ValueError:
+                    when = None
+                item = {'date': when, 'date_source': 'snippet', 'text': m.group(5)}
+            else:
+                m = _IG_LEAD.match(body)
+                if m and m.group(1).lower() == want:
+                    item = {'date': None, 'date_source': '', 'text': m.group(2)}
+        text = _clip(item['text']) if item else ''
+        if item and text:
+            mine.append({'platform': platform, 'handle': handle, 'url': url, 'text': text,
+                         'date': item['date'].strftime('%Y-%m-%d') if item['date'] else '', 'date_source': item['date_source'],
+                         **({'note': TIKTOK_TEXT_NOTE} if platform == 'tiktok' else {}),
+                         '_when': item['date']})
+    return mine
+
+
+POST_QUERIES = {
+    'instagram': ('site:instagram.com/p {h}', 'site:instagram.com/reel {h}'),
+    'x': ('site:x.com/{h}/status',),
+    'tiktok': ('site:tiktok.com/@{h}',),
+}
+
+
+def fighter_posts_for(name: str, search: Callable, delay_s: float, now: datetime) -> dict:
+    """One fighter's own recent public posts across the platforms, with what was and was not found."""
+    handles: dict[str, str] = {}
+    notes: list[str] = []
+    found: list[dict] = []
+    errors = 0
+    for platform, domain_name, pattern in PLATFORMS:
+        handle, why = discover_handle(name, platform, domain_name, pattern, search, delay_s)
+        if not handle:
+            notes.append(why)
+            errors += 'failed' in why
+            continue
+        handles[platform] = handle
+        for template in POST_QUERIES[platform]:
+            try:
+                found += _own_posts(platform, handle, search_with_retry(search, template.format(h=handle), 10, delay_s))
+            except Exception as error:  # noqa: BLE001
+                notes.append(f'{platform} post search failed: {type(error).__name__}: {error}'[:200])
+                errors += 1
+    seen, unique = set(), []
+    for item in found:
+        if item['url'] not in seen:
+            seen.add(item['url'])
+            unique.append(item)
+    cutoff = now.timestamp() - FIGHTER_POSTS_WINDOW_DAYS * 86400
+    dated = sorted((i for i in unique if i['_when'] and cutoff <= i['_when'].timestamp() <= now.timestamp() + 86400), key=lambda i: i['_when'], reverse=True)
+    undated = [i for i in unique if not i['_when']][:FIGHTER_POSTS_MAX_UNDATED]
+    stale = sum(1 for i in unique if i['_when'] and i['_when'].timestamp() < cutoff)
+    items = [{k: v for k, v in i.items() if k != '_when'} for i in dated[:FIGHTER_POSTS_MAX_PER_FIGHTER]] + \
+            [{**{k: v for k, v in i.items() if k != '_when'}, 'undated': True} for i in undated]
+    if items:
+        status, reason = 'ran', ''
+    elif not handles:
+        status, reason = ('failed' if errors else 'no_handle'), '; '.join(notes)[:300]
+    else:
+        status = 'none_found'
+        reason = f'verified handle(s) {", ".join(f"{p}:{h}" for p, h in handles.items())} but no own post indexed in the last {FIGHTER_POSTS_WINDOW_DAYS} days' + \
+                 (f' ({stale} older post(s) set aside)' if stale else '') + ('; ' + '; '.join(notes) if notes else '')
+    return {'name': name, 'status': status, 'handles': handles, 'items': items, 'stale_set_aside': stale, 'reason': reason[:400]}
+
+
+def build_fighter_posts(sentiment: dict | None, search: Callable, delay_s: float, now_iso: Callable[[], str]) -> dict | None:
+    """The FIGHTER POSTS block for the fighters named as the run's sides, or None when the run named no sides."""
+    sides = [s for s in (sentiment or {}).get('sides') or [] if s]
+    if not sentiment or not sides:
+        return None
+    as_of = now_iso()
+    try:
+        now = datetime.fromisoformat(as_of.replace('Z', '+00:00'))
+    except ValueError:
+        now = datetime.now(timezone.utc)
+    return {'method': FIGHTER_POSTS_METHOD, 'window_days': FIGHTER_POSTS_WINDOW_DAYS, 'as_of': as_of,
+            'fighters': [fighter_posts_for(side, search, delay_s, now) for side in sides]}
+
+
 def _name_tokens(name: str) -> set[str]:
     parts = [p for p in re.findall(r"[a-z][a-z'’-]*", name.lower()) if len(p) >= 3]
     return set(parts)
@@ -447,6 +653,14 @@ def to_markdown(report: dict) -> str:
             lines.append(f"- [{item['lane']}] {item['text'][:300]} — {item['url']}")
         if len(sentiment['items']) > 20:
             lines.append(f"({len(sentiment['items']) - 20} more sentiment item(s) in the JSON record)")
+    posts = report.get('fighter_posts')
+    if posts:
+        lines += ['', f"## Fighter posts (own accounts only; {posts['method']}, last {posts['window_days']} days, as of {posts['as_of']})"]
+        for fighter in posts['fighters']:
+            handles = ', '.join(f'{p}:@{h}' for p, h in fighter['handles'].items()) or 'no verified handle'
+            lines.append(f"{fighter['name']} ({handles}): " + ('' if fighter['items'] else f"unavailable — {fighter['reason'] or fighter['status']}"))
+            for item in fighter['items']:
+                lines.append(f"- [{item['platform']} {item['date'] or 'undated'}] {item['text'][:300]} — {item['url']}" + (f" ({item['note']})" if item.get('note') else ''))
     if report['failures']:
         lines.append(f"Not used ({len(report['failures'])}): " + '; '.join((f.get('url') or f.get('query', '')) + ' - ' + f['error'] for f in report['failures'][:8]))
     return '\n'.join(lines)

@@ -253,5 +253,141 @@ class SentimentLaneTests(unittest.TestCase):
         self.assertEqual(lean['pick_bearing'], 2)
 
 
+# Snippets below are trimmed from the real search results of 2026-10-24 (the reachability probe for UFC 333 fighters).
+YAN_IG_PROFILE = {'href': 'https://www.instagram.com/petr_yan/', 'title': 'Петр "No Mercy" Ян (@petr_yan) • Instagram photos and videos',
+                  'body': '2M Followers, 761 Following, 1,464 Posts - Петр "No Mercy" Ян (@petr_yan) on Instagram: "🔺UFC Champion🏆 🔺Team @archangl_michael'}
+NAMESAKE_IG = {'href': 'https://www.instagram.com/yantastic/', 'title': 'Peter Yan (@yantastic) • Instagram photos and videos',
+               'body': '803K Followers - Peter Yan (@yantastic) on Instagram: "Melbourne Australia @presets My iPhone & Osmo LUTs, Presets"'}
+YAN_IG_OWN = {'href': 'https://www.instagram.com/p/DeKZJkACIyx/', 'title': 'Instagram',
+              'body': '343K likes, 3,291 comments - petr_yan on October 6, 2026: "Работа такая , надо делать ⚡️ That\'s the job—it has to be done"'}
+YAN_IG_OLD = {'href': 'https://www.instagram.com/p/DbfwxqACKmL/', 'title': 'Instagram',
+              'body': '58K likes, 478 comments - petr_yan on August 1, 2026: "Сегодня состоялся очередной праздник"'}
+ESPN_ABOUT_YAN = {'href': 'https://www.instagram.com/p/DR880Lujc7Q/', 'title': 'Instagram',
+                  'body': '334K likes, 2,128 comments - espnmma on October 20, 2026: "Petr Yan put on an absolute clinic"'}
+YAN_X_PROFILE = {'href': 'https://x.com/PetrYanUFC', 'title': 'Petr "No Mercy" Yan (@PetrYanUFC) / X', 'body': 'UFC bantamweight from Siberia, Russia.'}
+MERAB_X_OWN = {'href': 'https://x.com/MerabDvalishvil/status/2106565593268879862', 'title': 'Post',
+               'body': 'Post Merab "The Machine" Dvalishvili @MerabDvalishvil Wow, we have a new contender in bantamweight 🦾 #UFC332 2:02 AM · Oct 4, 2026'}
+UFC_ABOUT_YAN_X = {'href': 'https://x.com/ufc/status/2113503056843423988', 'title': 'UFC on X: "No Mercy @PetrYanUFC weighs in at 135 lbs"', 'body': 'No Mercy weighs in'}
+YAN_X_OLD = {'href': 'https://x.com/PetrYanUFC/status/1259332032695418888', 'title': 'x', 'body': "I'm watching this fight very closely #UFC249"}
+VOLK_TT_OWN = {'href': 'https://www.tiktok.com/@alexvolkanovski/video/7623943615487708434', 'title': 'TikTok',
+               'body': '1134 Likes, 44 Comments. TikTok video from Alex Volkanovski (@alexvolkanovski): "Hunting invasive deer on my property".'}
+FIGHT_NOW = dr.datetime(2026, 10, 24, tzinfo=dr.timezone.utc)
+
+
+def scripted(table):
+    """A search backend answering by exact query; a value that is an Exception is raised."""
+    calls = []
+
+    def fn(query, count):
+        calls.append(query)
+        value = table.get(query, [])
+        if isinstance(value, Exception):
+            raise value
+        return value
+    fn.calls = calls
+    return fn
+
+
+class FighterPostsTests(unittest.TestCase):
+    def test_x_ids_decode_to_the_times_x_displayed(self):
+        # Displayed on the posts: 2:02 AM Oct 4 2026 (UTC) and 8:33 PM Oct 24 2026.
+        self.assertEqual(dr.x_post_time('2106565593268879862').strftime('%Y-%m-%d %H:%M'), '2026-10-04 02:02')
+        self.assertEqual(dr.x_post_time('2114092946442309978').strftime('%Y-%m-%d %H:%M'), '2026-10-24 20:33')
+        self.assertIsNone(dr.x_post_time('not-a-number'))
+
+    def test_keeps_only_the_fighters_own_recent_posts_and_drops_namesakes_and_third_parties(self):
+        sr = scripted({
+            'site:instagram.com Petr Yan': [NAMESAKE_IG, YAN_IG_PROFILE],
+            'site:instagram.com/p petr_yan': [YAN_IG_OWN, ESPN_ABOUT_YAN, YAN_IG_OLD],
+            'site:instagram.com/reel petr_yan': [YAN_IG_OWN],
+            'site:x.com Petr Yan': [YAN_X_PROFILE],
+            'site:x.com/PetrYanUFC/status': [UFC_ABOUT_YAN_X, YAN_X_OLD],
+        })
+        out = dr.fighter_posts_for('Petr Yan', sr, 0, FIGHT_NOW)
+        self.assertEqual(out['handles'], {'instagram': 'petr_yan', 'x': 'PetrYanUFC'})  # not @yantastic
+        self.assertEqual(out['status'], 'ran')
+        self.assertEqual([i['url'] for i in out['items']], ['https://www.instagram.com/p/DeKZJkACIyx/'])  # de-duplicated; own and in window
+        self.assertEqual(out['items'][0]['date'], '2026-10-06')
+        self.assertIn("That's the job", out['items'][0]['text'])
+        self.assertGreaterEqual(out['stale_set_aside'], 1)  # the Aug 1 post and the 2020 X post are older than the window
+
+    def test_captions_lose_their_closing_quote_and_full_stop(self):
+        self.assertEqual(dr._clip('Press Conference time #UFC333".'), 'Press Conference time #UFC333')
+        self.assertEqual(dr._clip('He said "stay ready" and left'), 'He said "stay ready" and left')
+
+    def test_a_third_party_post_is_never_attributed_to_the_fighter(self):
+        posts = dr._own_posts('instagram', 'petr_yan', [ESPN_ABOUT_YAN])
+        self.assertEqual(posts, [])
+        self.assertEqual(dr._own_posts('x', 'PetrYanUFC', [UFC_ABOUT_YAN_X]), [])
+
+    def test_x_and_tiktok_posts_are_dated_from_their_ids_and_matched_to_the_account_in_the_url(self):
+        mine = dr._own_posts('x', 'merabdvalishvil', [MERAB_X_OWN])
+        self.assertEqual((mine[0]['date'], mine[0]['date_source']), ('2026-10-04', 'post-id'))
+        self.assertIn('new contender in bantamweight', mine[0]['text'])
+        tiktok = dr._own_posts('tiktok', 'alexvolkanovski', [VOLK_TT_OWN])
+        self.assertEqual((tiktok[0]['date'], tiktok[0]['date_source']), ('2026-04-01', 'post-id'))
+        self.assertIn('auto-generated', tiktok[0]['note'])  # TikTok's index text is not necessarily the fighter's words
+        self.assertNotIn('note', mine[0])
+        self.assertEqual(dr._own_posts('tiktok', 'someoneelse', [VOLK_TT_OWN]), [])
+
+    def test_a_fighter_with_no_verified_handle_is_reported_with_the_reason_not_guessed(self):
+        sr = scripted({'site:instagram.com Petr Yan': [NAMESAKE_IG]})
+        out = dr.fighter_posts_for('Petr Yan', sr, 0, FIGHT_NOW)
+        self.assertEqual((out['status'], out['handles'], out['items']), ('no_handle', {}, []))
+        self.assertIn('no instagram profile found that reads as Petr Yan', out['reason'])
+
+    def test_a_verified_handle_with_nothing_recent_says_so(self):
+        sr = scripted({'site:x.com Petr Yan': [YAN_X_PROFILE], 'site:x.com/PetrYanUFC/status': [YAN_X_OLD]})
+        out = dr.fighter_posts_for('Petr Yan', sr, 0, FIGHT_NOW)
+        self.assertEqual(out['status'], 'none_found')
+        self.assertIn('no own post indexed in the last 60 days', out['reason'])
+        self.assertIn('1 older post(s) set aside', out['reason'])
+
+    def test_a_search_backend_that_errors_is_a_failed_fighter_not_a_crash_and_is_retried(self):
+        boom = RuntimeError('rate limited')
+        sr = scripted({q: boom for q in ('site:instagram.com Petr Yan', 'site:x.com Petr Yan', 'site:tiktok.com Petr Yan')})
+        out = dr.fighter_posts_for('Petr Yan', sr, 0, FIGHT_NOW)
+        self.assertEqual(out['status'], 'failed')
+        self.assertIn('RuntimeError: rate limited', out['reason'])
+        self.assertEqual(sr.calls.count('site:x.com Petr Yan'), dr.SEARCH_RETRIES + 1)
+
+    def test_an_empty_answer_is_retried_then_accepted_when_the_backend_recovers(self):
+        answers = iter([[], [], [YAN_X_PROFILE]])
+        calls = []
+
+        def flaky(query, count):
+            calls.append(query)
+            return next(answers) if query == 'site:x.com Petr Yan' else []
+        handle, why = dr.discover_handle('Petr Yan', 'x', 'x.com', dr.PLATFORMS[1][2], flaky, 0)
+        self.assertEqual((handle, why), ('PetrYanUFC', ''))
+
+    def test_undated_posts_are_capped_and_flagged(self):
+        lead = lambda n: {'href': f'https://www.instagram.com/p/U{n}/', 'title': 'Instagram', 'body': f'petr_yan Follow 20,106likes petr_yan Caption number {n}'}  # noqa: E731
+        sr = scripted({'site:instagram.com Petr Yan': [YAN_IG_PROFILE], 'site:instagram.com/p petr_yan': [lead(n) for n in range(6)]})
+        out = dr.fighter_posts_for('Petr Yan', sr, 0, FIGHT_NOW)
+        self.assertEqual(len(out['items']), dr.FIGHTER_POSTS_MAX_UNDATED)
+        self.assertTrue(all(i.get('undated') for i in out['items']))
+
+    def test_the_block_is_separate_from_the_lanes_and_the_crowd_lean(self):
+        sr = scripted({'q': [{'href': 'https://a.example/'}], 'site:instagram.com Petr Yan': [YAN_IG_PROFILE],
+                       'site:instagram.com/p petr_yan': [YAN_IG_OWN]})
+        http = reddit_http()
+        report = dr.gather('Who wins?', ['q'], 3, sr, lambda url: ('t', ARTICLE, ''), delay_s=0, sentiment=SENTIMENT,
+                           config={}, http_get=http.get, http_post=http.post, now_iso=FIXED_NOW)
+        self.assertNotIn('fighter_posts', [lane['id'] for lane in report['lanes']])
+        self.assertEqual(report['fighter_posts']['method'], dr.FIGHTER_POSTS_METHOD)
+        self.assertEqual([f['name'] for f in report['fighter_posts']['fighters']], SIDES)
+        # The fighter's own caption names Yan; it must not be counted as crowd opinion.
+        self.assertTrue(all('petr_yan' not in item['url'] for item in report['sentiment']['items']))
+        md = dr.to_markdown(report)
+        self.assertIn('## Fighter posts (own accounts only', md)
+        self.assertIn('Petr Yan (instagram:@petr_yan): ', md)
+        self.assertIn('unavailable — ', md)  # the other fighter had no handle: named, not silent
+
+    def test_no_block_without_sentiment_subjects(self):
+        report = dr.gather('q', ['q'], 3, search({'q': [{'href': 'https://a.example/'}]}), lambda url: ('t', ARTICLE, ''), delay_s=0, now_iso=FIXED_NOW)
+        self.assertNotIn('fighter_posts', report)
+
+
 if __name__ == '__main__':
     unittest.main()

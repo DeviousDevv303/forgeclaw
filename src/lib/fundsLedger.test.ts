@@ -495,7 +495,8 @@ describe('fight-card proposals are held to the research template', () => {
     'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com).',
     'MATCHUP NEUTRALIZATION: primary path: Merab wins by wrestling pace and top control, Yan by standing Muay Thai; neutralization: demonstrated — Yan defended the takedowns for five rounds in the second fight after losing the first to the wrestling; the fight that remains: a standing fight, which favors Yan.',
     `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab: crowd lean: 44%. Record on comparable fights: 6 of 12 called correctly.`,
-    'FUSION: range: 58-65%; the book line and facts carry it; sentiment weight: 0%.',
+    'FIGHTER STATE: unavailable — no own-account post was indexed for either fighter in the last 60 days.',
+    'FUSION: range: 58-65%; the book line and facts carry it; sentiment weight: 0%; fighter-state weight: 0%.',
     'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
     'FALSIFIER: a late injury report for Yan, or the line moving to Merab -120 before the walkout.',
   ].join('\n')
@@ -554,7 +555,8 @@ describe('the crowd, scored (item B)', () => {
     'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com).',
     'MATCHUP NEUTRALIZATION: primary path: Merab wins by wrestling pace and top control, Yan by standing Muay Thai; neutralization: demonstrated — Yan defended the takedowns for five rounds in the second fight after losing the first to the wrestling; the fight that remains: a standing fight, which favors Yan.',
     `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab: crowd lean: 44%. Record on comparable fights: 6 of 12 called correctly.`,
-    'FUSION: range: 58-65%; the book line and facts carry it; sentiment weight: 0%.',
+    'FIGHTER STATE: unavailable — no own-account post was indexed for either fighter in the last 60 days.',
+    'FUSION: range: 58-65%; the book line and facts carry it; sentiment weight: 0%; fighter-state weight: 0%.',
     'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
     'FALSIFIER: a late injury report for Yan, or the line moving to Merab -120 before the walkout.',
   ].join('\n')

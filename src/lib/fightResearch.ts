@@ -31,7 +31,7 @@
 export const FIGHT_SERIES_PREFIXES = ['KXUFCFIGHT', 'KXMMAFIGHT', 'KXMMAEXFIGHT'] as const
 
 /** A fight proposal's rationale is kept whole up to this length (other proposals keep 2,000). */
-export const FIGHT_RATIONALE_MAX_CHARS = 4600
+export const FIGHT_RATIONALE_MAX_CHARS = 5200  // 4,600 held eight sections; FIGHTER STATE (four linked posts, ~500 chars) is the ninth
 
 /**
  * The most a crowd (Reddit, forums, social posts, pick'em polls) may weigh in the fusion, as a percent, and only once its
@@ -41,6 +41,13 @@ export const FUNDS_SENTIMENT_MAX_WEIGHT_PCT = 10
 /** Starting bars for the crowd to count at all. Not measured: re-estimate from the owner's settled record. */
 export const FUNDS_CROWD_MIN_COMPARABLE_FIGHTS = 10
 export const FUNDS_CROWD_MIN_HIT_RATE_PCT = 55
+
+/**
+ * The most the fighters' own public posts (their state going into the fight) may weigh in the fusion, as a percent.
+ * Owner ruling 2026-10-24: "a small fixed weight now", unlike the crowd, which must first earn its weight. The value is a
+ * placeholder for "small", not a measurement: nothing scores this read against results yet, so raise it only on evidence.
+ */
+export const FIGHTER_STATE_MAX_WEIGHT_PCT = 3
 
 /** At most this many scanned links are kept on a position's sentiment snapshot. */
 export const SENTIMENT_MAX_LINKS = 5
@@ -61,21 +68,22 @@ export interface SentimentSnapshot {
   recordedAt: number
 }
 
-export type FightSectionKey = 'rematch' | 'book' | 'stats' | 'matchup' | 'sentiment' | 'fusion' | 'edge' | 'falsifier'
+export type FightSectionKey = 'rematch' | 'book' | 'stats' | 'matchup' | 'sentiment' | 'state' | 'fusion' | 'edge' | 'falsifier'
 
 export interface FightSection { key: FightSectionKey; label: string; pattern: RegExp; hint: string }
 
 const heading = (label: string) =>
   new RegExp(`^\\s*(?:[-*]\\s*|\\d+[.)]\\s*)?(?:\\*\\*|__)?\\s*${label}\\s*(?:\\*\\*|__)?\\s*[:—–-]\\s*(.*)$`, 'i')
 
-/** The eight sections, in the order they are written. */
+/** The nine sections, in the order they are written. */
 export const FIGHT_SECTIONS: readonly FightSection[] = [
   { key: 'rematch', label: 'REMATCH SEQUENCE', pattern: heading('REMATCH SEQUENCE'), hint: 'prior meetings: date, winner, method, round, what the crowd predicted then versus what happened; or "no prior meeting"' },
   { key: 'book', label: 'BOOK LINE', pattern: heading('BOOK LINE'), hint: 'sharp-book odds at 2+ books, the no-vig probability, and the Kalshi ask; or "unavailable — <reason>"' },
   { key: 'stats', label: 'STATS & FACTS', pattern: heading('STATS (?:&|AND) FACTS'), hint: 'statistics that adjust the baseline, and hard facts (weigh-ins, injuries, camp, changes) each with a source; or "unavailable — <reason>"' },
   { key: 'matchup', label: 'MATCHUP NEUTRALIZATION', pattern: heading('MATCHUP NEUTRALIZATION'), hint: 'primary path: <each fighter\'s primary path to victory>; neutralization: <demonstrated | not demonstrated — the evidence: adaptation across prior meetings, or defense shown against the same style>; the fight that remains: <the matchup left over if the key strength is taken away, and who it favors>' },
   { key: 'sentiment', label: 'SENTIMENT SCAN', pattern: heading('SENTIMENT SCAN'), hint: 'the threads/forums scanned (with links); "crowd lean: <n>%" = the crowd\'s chance that YOUR side wins; and its record: "N of M comparable fights called correctly"; or "unavailable — <reason>"' },
-  { key: 'fusion', label: 'FUSION', pattern: heading('FUSION'), hint: 'range: <low>-<high> (must contain your probability); how each tier moved it; sentiment weight: <n>%' },
+  { key: 'state', label: 'FIGHTER STATE', pattern: heading('FIGHTER STATE'), hint: 'the fighters\' OWN public posts you read (deep_research\'s "Fighter posts"), each with date and link, what they observably show (tone, injury or weight-cut mentions, a change in posting) and what they cannot show; never a diagnosis; or "unavailable — <reason>"' },
+  { key: 'fusion', label: 'FUSION', pattern: heading('FUSION'), hint: 'range: <low>-<high> (must contain your probability); how each tier moved it; sentiment weight: <n>%; fighter-state weight: <n>%' },
   { key: 'edge', label: 'EDGE', pattern: heading('EDGE'), hint: 'net edge: <n>¢ per contract after the fee and the spread' },
   { key: 'falsifier', label: 'FALSIFIER', pattern: heading('FALSIFIER'), hint: 'the result or news that would prove this wrong' },
 ]
@@ -185,7 +193,7 @@ export function checkFightRationale(input: FightCheckInput, bars: FightBars): Fi
     else if (body.length < 12) problems.push(`${s.label} is empty or too short to be evidence (12+ characters)`)
   }
 
-  for (const key of ['book', 'stats', 'sentiment'] as const) {
+  for (const key of ['book', 'stats', 'sentiment', 'state'] as const) {
     const body = sections.get(key)
     const reason = body === undefined ? null : unavailableReason(body)
     if (reason !== null && reason.length < 10) {
@@ -229,6 +237,13 @@ export function checkFightRationale(input: FightCheckInput, bars: FightBars): Fi
     problems.push('SENTIMENT SCAN must state the crowd\'s lean for the side you propose ("crowd lean: 62%" = the crowd\'s chance that your side wins, 0-100); the ledger keeps it and scores the crowd against the result')
   }
 
+  const state = sections.get('state')
+  const stateUnavailable = state !== undefined && unavailableReason(state) !== null
+  const stateLinked = state !== undefined && !stateUnavailable && /https?:\/\//i.test(state)
+  if (state !== undefined && !stateUnavailable && state.length >= 12 && !stateLinked) {
+    problems.push('FIGHTER STATE names no post link; link each own post you read (with its date), or write "unavailable — <reason>"')
+  }
+
   const fusion = sections.get('fusion')
   if (fusion !== undefined && fusion.length >= 12) {
     const range = /(\d+(?:\.\d+)?)\s*%?\s*(?:-|–|—|to)\s*(\d+(?:\.\d+)?)\s*%?/i.exec(fusion)
@@ -249,6 +264,20 @@ export function checkFightRationale(input: FightCheckInput, bars: FightBars): Fi
       const allowed = allowedSentimentWeightPct(sentiment)
       if (Number(weight[1]) > allowed + 1e-9) {
         problems.push(`sentiment weight ${weight[1]}% is more than the crowd has earned (${allowed}%): it needs a stated record of at least ${FUNDS_CROWD_MIN_COMPARABLE_FIGHTS} comparable fights called ${FUNDS_CROWD_MIN_HIT_RATE_PCT}%+ correctly ("N of M"), and is never more than ${FUNDS_SENTIMENT_MAX_WEIGHT_PCT}%`)
+      }
+    }
+  }
+
+  if (fusion !== undefined && fusion.length >= 12) {
+    const stateWeight = /fighter[\s-]?state weight\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%/i.exec(fusion)
+    if (!stateWeight) {
+      problems.push('FUSION must state the fighter-state weight ("fighter-state weight: 0%")')
+    } else {
+      const weight = Number(stateWeight[1])
+      if (weight > FIGHTER_STATE_MAX_WEIGHT_PCT + 1e-9) {
+        problems.push(`fighter-state weight ${stateWeight[1]}% is above the ${FIGHTER_STATE_MAX_WEIGHT_PCT}% cap for the fighters' own posts`)
+      } else if (weight > 0 && !stateLinked) {
+        problems.push('fighter-state weight is above 0% but FIGHTER STATE is unavailable or links no post; with nothing read the weight is 0%')
       }
     }
   }

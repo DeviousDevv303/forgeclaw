@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { baselineToolNames, FUNDS_GUIDANCE, SHELL_EXEC_GUIDANCE } from './toolExposure'
-import { FIGHT_SECTIONS, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT } from './fightResearch'
+import { FIGHTER_STATE_MAX_WEIGHT_PCT, FIGHT_SECTIONS, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT } from './fightResearch'
 import { FORGE_TOOLS } from './forgeTools'
 import { KALSHI_MAX_RESULTS } from './kalshiMarkets'
 
@@ -200,6 +200,18 @@ describe('funds guidance — fight-card playbook (2026-10-24)', () => {
     expect(FORGE_TOOLS.some(t => t.name === 'espn_fight_stats')).toBe(true)
   })
 
+  it('teaches FIGHTER STATE: own accounts only, a lead not a fact, partial coverage, a small fixed weight', () => {
+    expect(g).toContain('nine labeled lines')
+    expect(g).toContain('FIGHTER STATE: how each fighter is going into the fight')
+    expect(g).toMatch(/only a fighter's own account counts/)
+    expect(g).toMatch(/a post is a lead, not a fact/)
+    expect(g).toMatch(/never diagnose a mental state/)
+    expect(g).toMatch(/Coverage is partial/)
+    expect(g).toMatch(/TikTok item carries index text that can be auto-generated/)
+    expect(g).toContain(`at most ${FIGHTER_STATE_MAX_WEIGHT_PCT}% in the fusion`)
+    expect(g).toMatch(/media day, press conference, weigh-in and recent interviews/)
+  })
+
   it('the tool description tells the model the same cap the code enforces', () => {
     const tool = FORGE_TOOLS.find(t => t.name === 'kalshi_markets')!
     const limit = (tool.parameters.properties as Record<string, { description: string }>).limit.description
@@ -221,7 +233,7 @@ describe('funds guidance — fight-card playbook (2026-10-24)', () => {
     expect(g).toMatch(/Starting defaults, not measured/)
   })
 
-  it('carries the enforced template: the same eight headings the ledger checks, in the same order', () => {
+  it('carries the enforced template: the same nine headings the ledger checks, in the same order', () => {
     const at = FIGHT_SECTIONS.map(section => g.indexOf(`${section.label}: <`))
     expect(at.every(i => i > g.indexOf('THE TEMPLATE (enforced)'))).toBe(true)
     expect([...at].sort((a, b) => a - b)).toEqual(at)
