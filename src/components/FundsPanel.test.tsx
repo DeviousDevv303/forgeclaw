@@ -65,6 +65,47 @@ describe('FundsPanel', () => {
     expect(screen.queryByText('Funds — proposals waiting')).toBeNull()
   })
 
+  it('balance pop-up: the close button hides it until the next fresh read (2026-10-23)', async () => {
+    const { privateKey } = generateKeyPairSync('ed25519')
+    localStorage.setItem(KALSHI_KEY_ID_STORAGE, 'panel-test-key')
+    localStorage.setItem(KALSHI_PRIVATE_KEY_STORAGE, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      balance: 2500, balance_dollars: '25.0000', portfolio_value: 2500, updated_ts: 1761240000,
+      balance_breakdown: [{ exchange_index: 0, balance: '25.0000' }],
+    }), { status: 200 })))
+    render(<FundsPanel onCommand={() => {}} refreshKey={0} />)
+    expect(await screen.findByText(/Total across shards/)).toBeTruthy()
+    fireEvent.click(screen.getByLabelText('Close balance'))
+    expect(screen.queryByText(/Total across shards/)).toBeNull()
+  })
+
+  it('balance pop-up: dismisses itself 30 seconds after a fresh read lands (2026-10-23)', async () => {
+    vi.useFakeTimers()
+    try {
+      const { privateKey } = generateKeyPairSync('ed25519')
+      localStorage.setItem(KALSHI_KEY_ID_STORAGE, 'panel-test-key')
+      localStorage.setItem(KALSHI_PRIVATE_KEY_STORAGE, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        balance: 2500, balance_dollars: '25.0000', portfolio_value: 2500, updated_ts: 1761240000,
+        balance_breakdown: [{ exchange_index: 0, balance: '25.0000' }],
+      }), { status: 200 })))
+      render(<FundsPanel onCommand={() => {}} refreshKey={0} />)
+      // The read chain itself waits on timers (signed-read spacing), so flush it by
+      // stepping the fake clock — the pop-up's own 30s countdown only starts once
+      // the block lands, so these steps don't eat into it.
+      for (let i = 0; i < 40 && !screen.queryByText(/Total across shards/); i++) {
+        await act(async () => { vi.advanceTimersByTime(250) })
+      }
+      expect(screen.getByText(/Total across shards/)).toBeTruthy()
+      act(() => { vi.advanceTimersByTime(29_000) })
+      expect(screen.getByText(/Total across shards/)).toBeTruthy()
+      act(() => { vi.advanceTimersByTime(2_000) })
+      expect(screen.queryByText(/Total across shards/)).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('lists the proposal and sends the exact approve / reject commands', () => {
     const id = seedProposal()
     const onCommand = vi.fn()
