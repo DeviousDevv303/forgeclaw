@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { baselineToolNames, FUNDS_GUIDANCE, SHELL_EXEC_GUIDANCE } from './toolExposure'
 import { FIGHTER_STATE_MAX_WEIGHT_PCT, FIGHT_SECTIONS, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT } from './fightResearch'
+import { SIM_MIN_HIT_RATE, SIM_MIN_SETTLED_RUNS, SIM_WEIGHT_CAP } from './simGrading'
 import { FORGE_TOOLS } from './forgeTools'
 import { KALSHI_MAX_RESULTS } from './kalshiMarkets'
 
@@ -210,6 +211,15 @@ describe('funds guidance — fight-card playbook (2026-10-24)', () => {
     expect(g).toMatch(/TikTok item carries index text that can be auto-generated/)
     expect(g).toContain(`at most ${FIGHTER_STATE_MAX_WEIGHT_PCT}% in the fusion`)
     expect(g).toMatch(/media day, press conference, weigh-in and recent interviews/)
+  })
+
+  it('teaches SWARM SIM: a crowd-family sim, an optional FUSION line, zero weight until its record earns it', () => {
+    expect(g).toContain('SWARM SIM: a MiroFish swarm simulation')
+    expect(g).toContain('swarm sim: <median>% <side> (weight <w>%, run <run_id>)')
+    expect(g).toContain(`at least ${SIM_MIN_SETTLED_RUNS} settled sims`)
+    expect(g).toContain(`hit rate of at least ${Math.round(SIM_MIN_HIT_RATE * 100)}%`)
+    expect(g).toContain(`never more than ${Math.round(SIM_WEIGHT_CAP * 100)}% of the fusion`)
+    expect(g).toMatch(/never invent a sim line for a run that did not happen/)
   })
 
   it('the tool description tells the model the same cap the code enforces', () => {
