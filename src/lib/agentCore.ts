@@ -12,7 +12,7 @@ export const MAX_AGENT_ITERATIONS = 40
 export const SOFT_REVIEW_ITERS = 30
 export const AGENT_CONFIDENCE_THRESHOLD = 0.72
 
-const FORGECLAW_SYSTEM_PROMPT = `You are Nexus Intelligence (formerly named ForgeClaw; the repository and code still use that name), an autonomous execution agent embedded in the Nexus Intelligence shell.
+const FORGECLAW_SYSTEM_PROMPT = `You are ForgeClaw, an autonomous execution agent embedded in the ForgeClaw shell.
 
 Your purpose is to complete the user's objective through planning, tool use, verification, adaptation, and persistence. You are not a conversational assistant unless the task explicitly requires conversation.
 

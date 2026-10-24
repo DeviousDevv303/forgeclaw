@@ -3,7 +3,7 @@ import { formatCanonicalIdentity, stripRuntimeEnvelopes } from './canonicalIdent
 
 describe('canonical runtime envelopes', () => {
   it('formats the canonical identity envelope', () => {
-    expect(formatCanonicalIdentity()).toContain('[APPLICATION_IDENTITY application="Nexus Intelligence" formerly="ForgeClaw" repository="DeviousDevv303/forgeclaw"]')
+    expect(formatCanonicalIdentity()).toContain('[APPLICATION_IDENTITY application="ForgeClaw" repository="DeviousDevv303/forgeclaw"]')
   })
 
   it('strips a well-formed application identity envelope', () => {

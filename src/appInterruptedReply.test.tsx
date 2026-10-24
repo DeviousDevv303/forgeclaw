@@ -26,7 +26,7 @@ describe('replies interrupted by a reload', () => {
     ]))
     const { default: App } = await import('./App')
     render(<App />)
-    expect(await screen.findByText(/Interrupted: Nexus Intelligence was closed or reloaded before this finished/)).toBeTruthy()
+    expect(await screen.findByText(/Interrupted: ForgeClaw was closed or reloaded before this finished/)).toBeTruthy()
     expect(screen.queryByText(/Still working/)).toBeNull()
     expect(screen.getByText(/Tap RESUME to run it again/)).toBeTruthy()
   })

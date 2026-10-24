@@ -40,7 +40,7 @@ export function SculptKeyPanel() {
         <span style={{ color: unlocked ? '#22c55e' : '#ef4444', fontSize: '10px', fontFamily: 'monospace' }}>● {unlocked ? 'unlocked' : configured ? 'locked' : 'not set'}</span>
       </div>
       <div style={{ color: '#666', fontSize: '10px', lineHeight: 1.5, marginBottom: '8px' }}>
-        Nexus Intelligence can only change its own code after you unlock it with this key. Only you know it; it is stored as a hash in this browser and never sent anywhere.
+        ForgeClaw can only change its own code after you unlock it with this key. Only you know it; it is stored as a hash in this browser and never sent anywhere.
         {!configured && ` Choose a phrase of at least ${SCULPT_KEY_MIN_LENGTH} characters.`}
       </div>
       {changing && <input aria-label="Current self-sculpt key" type="password" value={current} onChange={e => setCurrent(e.target.value)} placeholder="current key" style={{ ...input, width: '100%', marginBottom: '6px' }} />}

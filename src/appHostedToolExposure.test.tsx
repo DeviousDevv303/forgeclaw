@@ -52,8 +52,8 @@ describe('hosted tool-calling providers get read-only repo tools', () => {
     }
     // Writes stay gated: nothing in this message asks to change the repo.
     expect(names).not.toContain('github_write_file')
-    // The finished reply in the chat carries the Nexus Intelligence sign-off.
-    await waitFor(() => expect(screen.getByText(/Reviewed\.\s*— Nexus Intelligence/)).toBeTruthy(), { timeout: 5000 })
+    // The finished reply in the chat carries the ForgeClaw sign-off.
+    await waitFor(() => expect(screen.getByText(/Reviewed\.\s*— ForgeClaw/)).toBeTruthy(), { timeout: 5000 })
     // #139: Claude can run ForgeClaw shell commands (through executeTool + Guardian).
     expect(names).toContain('shell_exec')
     // ...and is told where they run, so it stops cloning the repo it is already in.

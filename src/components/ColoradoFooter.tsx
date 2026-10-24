@@ -91,7 +91,7 @@ export default function ColoradoFooter() {
             letterSpacing: '1.5px',
           }}
         >
-          NEXUS INTELLIGENCE · AUTONOMOUS REASONING ENGINE · BUILT BY DEVIOUSDEVV303
+          FORGECLAW · AUTONOMOUS REASONING ENGINE · BUILT BY DEVIOUSDEVV303
         </div>
       </div>
     </footer>

@@ -9,11 +9,6 @@ describe('ForgeClaw sign-off', () => {
     expect(withForgeClawSignature(`Done.\n\n${FORGECLAW_SIGNATURE}\n`)).toBe(`Done.\n\n${FORGECLAW_SIGNATURE}`)
     expect(withForgeClawSignature('Done.\n-- ForgeClaw')).toBe('Done.\n-- ForgeClaw')
   })
-  it('does not re-sign a reply stored with the pre-rename ForgeClaw signature (2026-10-24 rename)', () => {
-    expect(FORGECLAW_SIGNATURE).toBe('— Nexus Intelligence')
-    expect(withForgeClawSignature('Done.\n\n— ForgeClaw')).toBe('Done.\n\n— ForgeClaw')
-    expect(withForgeClawSignature('Done.\n- ForgeClaw')).toBe('Done.\n- ForgeClaw')
-  })
   it('leaves an empty reply empty', () => {
     expect(withForgeClawSignature('')).toBe('')
   })

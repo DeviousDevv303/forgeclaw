@@ -84,7 +84,7 @@ describe('DeepSeek task/context boundary', () => {
     expect(payload.task).toBe('What causes rainbows to form after rain?')
     expect(payload.task).not.toMatch(/APPLICATION_IDENTITY|RUNTIME_STATE/)
     // Still available to the model, but labelled as context, not as the question.
-    expect(payload.context).toContain('[APPLICATION_IDENTITY application="Nexus Intelligence"')
+    expect(payload.context).toContain('[APPLICATION_IDENTITY application="ForgeClaw"')
     expect(payload.context).toContain('[RUNTIME_STATE repository="DeviousDevv303/forgeclaw"')
   })
 

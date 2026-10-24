@@ -593,8 +593,7 @@ describe('coding task detection and repo state parsing', () => {
 
   it('uses one canonical identity and keeps repository evidence out of the runtime envelope', () => {
     expect(CANONICAL_IDENTITY).toEqual({
-      application: 'Nexus Intelligence',
-      formerName: 'ForgeClaw',
+      application: 'ForgeClaw',
       owner: 'DeviousDevv303',
       repository: 'forgeclaw',
       fullRepository: 'DeviousDevv303/forgeclaw',
