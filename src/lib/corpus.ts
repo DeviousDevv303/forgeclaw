@@ -684,18 +684,32 @@ export class CorpusRepository {
       const response = await fetchImpl(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ corpusId: 'nexus-local', version: this.getVersion(), records }) })
       if (!response.ok) return { attempted: records.length, admitted: 0, status: 'pending', reason: `Webhook HTTP ${response.status}` }
       const rawBody = await response.text().catch(() => null)
-      // F-022: an unreadable reply must not read as a successful sync. The upload
-      // reached the webhook (HTTP 200), but the update list — the artifact this
-      // status word is verified against — was never read, so 'synced' would assert
-      // a reconciliation that never happened. Report it as still pending instead.
-      let body: { updates?: unknown }
+      // F-022: 'synced' is verified against the SHAPE of the reply — a parseable
+      // body containing the expected `updates` list — never against HTTP 200 and
+      // never against parseability alone. An empty body, an unparseable body, or
+      // a body with no `updates` list never read the artifact this status word
+      // rests on, so each reports 'pending' instead of asserting a reconciliation
+      // that never happened. The webhook receiver is not in this repo (its URL is
+      // an owner-configured endpoint), so its reply contract is unverified — and
+      // absence of evidence about a contract is not evidence of a permissive
+      // contract: unverifiable shapes fail closed. (A present-but-empty `updates`
+      // list stays 'synced' below: whether it can be a legitimate success is an
+      // open contract question, flagged in PR #273.)
+      if (rawBody === null || rawBody.trim() === '') {
+        return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook answered with an empty reply; candidates were sent but the update list was not reconciled.' }
+      }
+      let body: unknown
       try {
-        body = rawBody ? (JSON.parse(rawBody) as { updates?: unknown }) : {}
+        body = JSON.parse(rawBody) as unknown
       } catch {
         return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook answered but its reply could not be read; candidates were sent but the update list was not reconciled.' }
       }
+      if (!body || typeof body !== 'object' || !Array.isArray((body as { updates?: unknown }).updates)) {
+        return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook reply did not contain the expected updates list; candidates were sent but the update list was not reconciled.' }
+      }
+      const updates = (body as { updates: unknown[] }).updates
       const admitted = 0
-      for (const update of Array.isArray(body.updates) ? body.updates : []) {
+      for (const update of updates) {
         if (!update || typeof update !== 'object') continue
         const value = update as Partial<LearningCandidate>
         if (typeof value.id !== 'string') continue
