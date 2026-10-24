@@ -13,10 +13,12 @@ import { executeTool } from './forgeTools'
 import {
   KALSHI_RELAY_URL_STORAGE, saveKalshiCredentials, saveKalshiEnv, type KalshiCredentials,
 } from './kalshiAuth'
+import { readKalshiBalanceBlock, type KalshiBalanceSnapshot, type KalshiBalanceSnapshotStore } from './kalshiBalanceDisplay'
 import {
-  KALSHI_429_RETRY_DELAYS_MS, KALSHI_SIGNED_READ_COOLDOWN_MS, fetchKalshiMarket, lastKalshiReadInfo, resetKalshiReadSpacing, runKalshiMarkets, runKalshiOrderbook,
+  KALSHI_429_RETRY_DELAYS_MS, KALSHI_SIGNED_READ_COOLDOWN_MS, describeSignedReadsPause, fetchKalshiMarket, lastKalshiReadInfo, resetKalshiReadSpacing, runKalshiMarkets, runKalshiOrderbook,
   type KalshiMarket,
 } from './kalshiMarkets'
+import { KalshiNetworkError, type KalshiBalance, type KalshiClient } from './kalshiTrade'
 import { kalshiReadSigner } from './kalshiReadSigner'
 
 const NOW = Date.parse('2026-10-24T12:00:00Z')
@@ -262,5 +264,90 @@ describe('kalshi_markets tool — signing, end to end through the relay', () => 
     stubRelay(relayed)
     await executeTool({ id: '1', name: 'kalshi_markets', input: { ticker: market.ticker } }, ctx())
     expect(Object.keys(relayed[0]).filter(k => k.startsWith('KALSHI-'))).toEqual([])
+  })
+})
+
+// Kimi's review note on #278: a refused or unusable key quietly sends every read back to the anonymous budget that was
+// already being rate-limited, and the only trace was a warning in a log the owner rarely opens. The pause is now said
+// out loud where the account's state is shown (the balance block shared by /funds status, funds_status and the Funds
+// panel) and in the 429 message.
+describe('a paused signature is visible, not silent', () => {
+  const signer = async () => ({ 'KALSHI-ACCESS-KEY': 'k', 'KALSHI-ACCESS-TIMESTAMP': '1', 'KALSHI-ACCESS-SIGNATURE': 's' })
+  /** Refuses the first (signed) request with `status`, then answers every later request with `later`. */
+  const refuseOnce = (status: number, later: number) => { let n = 0; return async () => (++n === 1 ? reply(status) : reply(later)) }
+  const balance: KalshiBalance = { balanceCents: 2500, balanceDollars: 25, portfolioValueCents: 2500, updatedTs: null, breakdown: [] }
+  const client = (failure?: Error): KalshiClient => {
+    const unused = async (): Promise<never> => { throw new Error('not used') }
+    return { getBalance: async () => { if (failure) throw failure; return balance }, createOrder: unused, findOrderByClientOrderId: unused, getSettlements: unused, getMarketQuote: unused }
+  }
+  const memoryStore = (initial: KalshiBalanceSnapshot | null = null): KalshiBalanceSnapshotStore => {
+    let saved = initial
+    return { load: () => saved, save: s => { saved = s } }
+  }
+  /** A refused signed read at fake time 1_000_000, leaving signing paused until 1_000_000 + the cooldown. */
+  async function pauseSigning(status = 401) {
+    const time = fakeTime()
+    await runKalshiMarkets({ ticker: market.ticker }, { fetcher: refuseOnce(status, 200), sign: signer, now: () => NOW, snapshots: null, ...time })
+    return time.clock()
+  }
+
+  it('says nothing before any refusal, and again nothing once the pause has run out', async () => {
+    expect(describeSignedReadsPause(1_000_000)).toBeNull()
+    const at = await pauseSigning()
+    expect(describeSignedReadsPause(at)).toContain('Signed Kalshi reads are paused until')
+    expect(describeSignedReadsPause(at + KALSHI_SIGNED_READ_COOLDOWN_MS)).toBeNull()
+  })
+
+  it('names the end of the pause in UTC and why: the HTTP status Kalshi answered', async () => {
+    const at = await pauseSigning(403)
+    const until = new Date(at + KALSHI_SIGNED_READ_COOLDOWN_MS).toISOString().slice(11, 19)
+    expect(describeSignedReadsPause(at)).toBe(`Signed Kalshi reads are paused until ${until} UTC (Kalshi answered the signed read with HTTP 403); market reads are going out anonymously and may be rate-limited.`)
+  })
+
+  it('a key that cannot sign is named by the auth module’s own message; any other error shows only a generic reason', async () => {
+    const { creds } = fixture()
+    const unusable = kalshiReadSigner(false, { ...creds, privateKeyPem: 'not a key' })
+    await runKalshiMarkets({ ticker: market.ticker }, { fetcher: async () => reply(200), sign: unusable, now: () => NOW, snapshots: null, ...fakeTime() })
+    expect(describeSignedReadsPause(1_000_000)).toContain('not a PEM key')
+    resetKalshiReadSpacing()
+    const leaky = async (): Promise<Record<string, string>> => { throw new Error('secret-key-material-0123') }
+    await runKalshiMarkets({ ticker: market.ticker }, { fetcher: async () => reply(200), sign: leaky, now: () => NOW, snapshots: null, ...fakeTime() })
+    const note = describeSignedReadsPause(1_000_000)!
+    expect(note).toContain('the saved key could not sign')
+    expect(note).not.toContain('secret-key-material')
+  })
+
+  it('the shared balance block carries the line on every path: live, stale snapshot and unreadable', async () => {
+    const at = await pauseSigning()
+    const note = describeSignedReadsPause(at)!
+    expect(await readKalshiBalanceBlock(client(), { env: 'prod', now: () => at, store: memoryStore() })).toContain(note)
+    const snapshot: KalshiBalanceSnapshot = { balance, fetchedAt: at - 60_000, env: 'prod' }
+    const stale = await readKalshiBalanceBlock(client(new KalshiNetworkError('offline')), { env: 'prod', now: () => at, store: memoryStore(snapshot) })
+    expect(stale).toContain('STALE')
+    expect(stale).toContain(note)
+    const unreadable = await readKalshiBalanceBlock(client(new KalshiNetworkError('offline')), { env: 'prod', now: () => at, store: memoryStore() })
+    expect(unreadable).toContain('could not be read')
+    expect(unreadable).toContain(note)
+  })
+
+  it('the balance block is unchanged while signing is not paused', async () => {
+    const block = await readKalshiBalanceBlock(client(), { env: 'prod', now: () => 1_000_000, store: memoryStore() })
+    expect(block).not.toContain('paused')
+  })
+
+  it('a 429 that follows a refused key says the read was anonymous because signing is paused', async () => {
+    const time = fakeTime()
+    let n = 0
+    const err = await runKalshiMarkets({ ticker: market.ticker }, { fetcher: async () => (++n === 1 ? reply(401) : reply(429)), sign: signer, now: () => NOW, snapshots: null, ...time }).catch(e => e)
+    expect(err.message).toMatch(/rate-limited this read: HTTP 429/)
+    expect(err.message).toContain('kalshi_owner_prices')
+    expect(err.message).toContain('Signed Kalshi reads are paused until')
+    expect(err.message).toContain('HTTP 401')
+  })
+
+  it('an owner with no key (no signer) never sees the pause line in a 429', async () => {
+    const err = await runKalshiMarkets({ ticker: market.ticker }, { fetcher: async () => reply(429), now: () => NOW, snapshots: null, ...fakeTime() }).catch(e => e)
+    expect(err.message).toMatch(/rate-limited this read/)
+    expect(err.message).not.toContain('paused')
   })
 })
