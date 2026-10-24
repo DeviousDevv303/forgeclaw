@@ -38,6 +38,7 @@ export const EN = {
 
   'status.localEndpointMissing': 'Local endpoint missing',
   'status.anthropicNoKey': 'Anthropic: no API key',
+  'status.metaNoKey': 'Meta: no API key',
 
   'chat.empty': 'System initialized. Awaiting input...',
   'chat.placeholder': 'Ask anything… — {provider}',
@@ -134,6 +135,7 @@ export const EN = {
 
   'test.noAnthropicKey': 'No Anthropic key entered',
   'test.noMoonshotKey': 'No Moonshot/Kimi key entered',
+  'test.noMetaKey': 'No Meta Model API key entered',
   'test.localReachable': 'Local llama.cpp endpoint is reachable',
   'test.testing': 'Testing...',
   'corpus.noWebhook': 'No webhook configured; local-only mode remains active.',
@@ -169,6 +171,15 @@ export const EN = {
   'settings.anthropicNoKeyHelp': 'Anthropic: no API key — paste one in Settings (sk-ant-...)',
   'settings.claudeKeySaved': 'Key saved locally; click Test Claude Key to verify',
   'settings.claudeKeyVerified': 'Claude API key verified',
+  'settings.metaDesc': 'Meta Model API — Muse Wonder with native tool calling.',
+  'settings.metaModel': 'Meta Model',
+  'settings.metaModelDesc': 'Meta Chat Completions API (OpenAI-compatible) with native tool calling.',
+  'settings.metaKey': 'Meta Model API Key',
+  'settings.metaKeyHelp': 'Create a key at dev.meta.ai (API keys tab), then paste it here. Meta keys start with LLM_. It is stored only in this browser.',
+  'settings.testMetaKey': 'TEST META KEY',
+  'settings.metaNoKeyHelp': 'Meta: no API key — add your Meta Model API key in Settings (LLM_...)',
+  'settings.metaKeySaved': 'Key saved locally; click Test Meta Key to verify',
+  'settings.metaKeyVerified': 'Meta Model API key verified',
   'settings.localEndpoint': 'llama.cpp Server Endpoint',
   'settings.testLocal': 'TEST LOCAL ENDPOINT',
   'settings.localHelp': 'Start llama-server locally with a GGUF model and its configured OpenAI-compatible /v1 endpoint.',
@@ -476,6 +487,7 @@ const ES: Record<Key, string> = {
 
   'status.localEndpointMissing': 'Falta el endpoint local',
   'status.anthropicNoKey': 'Anthropic: sin clave de API',
+  'status.metaNoKey': 'Meta: sin clave de API',
 
   'chat.empty': 'Sistema iniciado. Esperando instrucciones...',
   'chat.placeholder': 'Pregunta lo que quieras… — {provider}',
@@ -571,6 +583,7 @@ const ES: Record<Key, string> = {
 
   'test.noAnthropicKey': 'No se ingresó la clave de Anthropic',
   'test.noMoonshotKey': 'No se ingresó la clave de Moonshot/Kimi',
+  'test.noMetaKey': 'No se ingresó la clave de la API de Meta',
   'test.localReachable': 'El endpoint local de llama.cpp responde',
   'test.testing': 'Probando...',
   'corpus.noWebhook': 'No hay webhook configurado; sigue activo el modo solo local.',
@@ -602,6 +615,15 @@ const ES: Record<Key, string> = {
   'settings.anthropicNoKeyHelp': 'Anthropic: sin clave de API — pega una en Ajustes (sk-ant-...)',
   'settings.claudeKeySaved': 'Clave guardada localmente; haz clic en Probar clave de Claude para verificarla',
   'settings.claudeKeyVerified': 'Clave de API de Claude verificada',
+  'settings.metaDesc': 'API de Meta — Muse Wonder con llamadas nativas a herramientas.',
+  'settings.metaModel': 'Modelo Meta',
+  'settings.metaModelDesc': 'API de Chat Completions de Meta (compatible con OpenAI) con llamadas nativas a herramientas.',
+  'settings.metaKey': 'Clave de API de Meta',
+  'settings.metaKeyHelp': 'Crea una clave en dev.meta.ai (pestaña API keys) y pégala aquí. Las claves de Meta empiezan con LLM_. Solo se guarda en este navegador.',
+  'settings.testMetaKey': 'PROBAR CLAVE DE META',
+  'settings.metaNoKeyHelp': 'Meta: sin clave de API — agrega tu clave de la API de Meta en Ajustes (LLM_...)',
+  'settings.metaKeySaved': 'Clave guardada localmente; haz clic en Probar clave de Meta para verificarla',
+  'settings.metaKeyVerified': 'Clave de API de Meta verificada',
   'settings.localEndpoint': 'Endpoint del servidor llama.cpp',
   'settings.testLocal': 'PROBAR ENDPOINT LOCAL',
   'settings.localHelp': 'Inicia llama-server en local con un modelo GGUF y su endpoint /v1 compatible con OpenAI.',

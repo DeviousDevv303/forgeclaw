@@ -129,7 +129,7 @@ import type { ProviderId } from './lib/modelProviders'
 import { RESPONSE_LANGUAGE_INSTRUCTIONS, withResponseLanguage } from './lib/responseLanguage'
 import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, isDeepSeekProvider, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, isDeepSeekProvider, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, metaProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { diagKeyFormat } from './lib/diagKeyFormat'
 import { isToolFailureOutput } from './lib/toolOutcome'
@@ -138,6 +138,7 @@ import { answerOutcome } from './lib/nexusConvergence'
 import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
 import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
+import { resolveMetaModel } from './lib/ai/providers/metaProvider'
 import { corpusRepository } from './lib/corpus'
 import { parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
@@ -505,6 +506,13 @@ function readMoonshotKey(): string {
 function readMoonshotModel(): string {
   return resolveMoonshotModel(safeGetItem('fm_moonshot_model'))
 }
+function readMetaKey(): string {
+  const key = safeGetItem('fm_meta_key') || ''
+  return metaProvider.isConfigured(key) ? key : ''
+}
+function readMetaModel(): string {
+  return resolveMetaModel(safeGetItem('fm_meta_model'))
+}
 
 // Render message text — splits on fenced code blocks and styles them
 function renderMessageContent(text: string, onCopy: (code: string) => void, copiedCode: string | null): React.ReactNode {
@@ -758,6 +766,9 @@ function App() {
   const [anthropicModel, setAnthropicModel] = useState<string>(() => readAnthropicModel())
   const [anthropicWorkspaceId, setAnthropicWorkspaceId] = useState<string>(() => readAnthropicWorkspaceId())
   const [moonshotApiKey, setMoonshotApiKey] = useState<string>(() => readMoonshotKey())
+  const [metaApiKey, setMetaApiKey] = useState<string>(() => readMetaKey())
+  const [metaApiKeyStatus, setMetaApiKeyStatus] = useState<'unverified' | 'valid' | 'invalid'>(() => isKeyVerified('muse', readMetaKey()) ? 'valid' : 'unverified')
+  const [metaModel, setMetaModel] = useState<string>(() => readMetaModel())
   // Kalshi trading (kalshiAuth.ts): environment toggle + whether the pasted private key imports.
   const [kalshiEnv, setKalshiEnv] = useState<KalshiEnv>(() => loadKalshiEnv())
   const [kalshiKeyState, setKalshiKeyState] = useState<'' | 'ok' | 'bad'>('')
@@ -779,13 +790,15 @@ function App() {
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
   const [corpusWebhookUrl, setCorpusWebhookUrl] = useState<string>(() => safeGetItem('fm_corpus_webhook') || '')
   const [corpusSyncStatus, setCorpusSyncStatus] = useState('')
-  const normalizedActiveModel = activeProvider === 'local' ? localModel : isDeepSeekProvider(activeProvider) ? 'deepseek-16b' : activeProvider === 'moonshot' ? moonshotModel : anthropicModel
+  const normalizedActiveModel = activeProvider === 'local' ? localModel : isDeepSeekProvider(activeProvider) ? 'deepseek-16b' : activeProvider === 'moonshot' ? moonshotModel : activeProvider === 'muse' ? metaModel : anthropicModel
   const activeModelLabel = isDeepSeekProvider(activeProvider)
     ? corpusProvider.models[0]?.label ?? 'DeepSeek 16B · GitHub Actions'
     : activeProvider === 'local'
       ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
     : activeProvider === 'moonshot'
       ? moonshotProvider.models.find(m => m.id === moonshotModel)?.label ?? moonshotModel
+    : activeProvider === 'muse'
+      ? metaProvider.models.find(m => m.id === metaModel)?.label ?? metaModel
     : activeProvider === 'anthropic'
       ? anthropicProvider.models.find(m => m.id === anthropicModel)?.label ?? anthropicModel
       : localModel
@@ -797,6 +810,8 @@ function App() {
         ? 'Level 1 · DeepSeek 16B GitHub Actions'
       : lastRuntimeMessage.provider === 'moonshot'
             ? `Level 1 · Moonshot/Kimi (${lastRuntimeMessage.model})`
+        : lastRuntimeMessage.provider === 'muse'
+            ? `Level 1 · Meta/Muse (${lastRuntimeMessage.model})`
         : lastRuntimeMessage.provider === 'local'
             ? 'Level 2 · llama.cpp'
             : `${lastRuntimeMessage.provider} · ${lastRuntimeMessage.model}`
@@ -872,7 +887,7 @@ function App() {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsState>({
     provider: activeProvider,
     model: normalizedActiveModel,
-    keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : true,
+    keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : activeProvider === 'muse' ? !!metaApiKey : true,
     lastRequestStatus: 'none',
     lastError: null,
     lastLatencyMs: null,
@@ -881,7 +896,7 @@ function App() {
   })
   // The Diagnostics key hint: the verdict from the provider's own gate, the reason from the same rule (diagKeyFormat.ts).
   const keyFormatHint = (): string => {
-    const { valid, problem } = diagKeyFormat(activeProvider, anthropicApiKey, moonshotApiKey, diagnostics.keyPresent)
+    const { valid, problem } = diagKeyFormat(activeProvider, anthropicApiKey, moonshotApiKey, diagnostics.keyPresent, metaApiKey)
     if (valid) return t('diag.keyFormatValid')
     if (problem?.kind === 'length') return t('diag.keyFormatTooShort', { prefix: problem.prefix, length: problem.length, min: problem.minLength })
     return t('diag.keyFormatInvalid', { prefix: problem?.prefix ?? '' })
@@ -1054,6 +1069,8 @@ function App() {
   useEffect(() => { safeSetItem('fm_anthropic_workspace_id', anthropicWorkspaceId) }, [anthropicWorkspaceId])
   useEffect(() => { safeSetItem('fm_moonshot_key', moonshotApiKey) }, [moonshotApiKey])
   useEffect(() => { safeSetItem('fm_moonshot_model', moonshotModel) }, [moonshotModel])
+  useEffect(() => { safeSetItem('fm_meta_key', metaApiKey) }, [metaApiKey])
+  useEffect(() => { safeSetItem('fm_meta_model', metaModel) }, [metaModel])
   useEffect(() => { safeSetItem('fm_corpus_webhook', corpusWebhookUrl) }, [corpusWebhookUrl])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
@@ -1064,10 +1081,10 @@ function App() {
       ...prev,
       provider: activeProvider,
       model: normalizedActiveModel,
-      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : activeProvider === 'moonshot' ? !!moonshotApiKey : true,
+      keyPresent: activeProvider === 'local' ? !!localEndpoint : activeProvider === 'anthropic' ? !!anthropicApiKey : activeProvider === 'moonshot' ? !!moonshotApiKey : activeProvider === 'muse' ? !!metaApiKey : true,
       buildVersion: BUILD_COMMIT,
     }))
-  }, [normalizedActiveModel, anthropicApiKey, moonshotApiKey, localEndpoint, activeProvider])
+  }, [normalizedActiveModel, anthropicApiKey, moonshotApiKey, metaApiKey, localEndpoint, activeProvider])
 
   useEffect(() => {
     const loadVoices = () => {
@@ -1233,9 +1250,9 @@ function App() {
       ? `Analyze attachment: ${options.attachmentName}`
       : displayContent
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now(), ...(options.resumedAfterInterrupt ? { resumedAfterInterrupt: true } : {}) }
-    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : ''
-    const currentProviderLabel = isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : 'Anthropic'
-    const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : 'sk-ant-...'
+    const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'muse' ? metaApiKey : ''
+    const currentProviderLabel = isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'muse' ? 'Meta (Muse)' : 'Anthropic'
+    const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : activeProvider === 'muse' ? 'LLM_...' : 'sk-ant-...'
 
     const explicitDeepSeek = !imageUrl ? parseDirectDeepSeekCommand(promptText) : null
     if (explicitDeepSeek) {
@@ -1380,7 +1397,7 @@ function App() {
       isExplicitToolRequest(promptText) ||
       (isExplicitShellRequest(promptText) && extractExplicitShellCommand(promptText) !== null)
     )
-    if ((activeProvider === 'local' || activeProvider === 'anthropic' || activeProvider === 'moonshot') && !currentApiKey && !directDispatchOnly) {
+    if ((activeProvider === 'local' || activeProvider === 'anthropic' || activeProvider === 'moonshot' || activeProvider === 'muse') && !currentApiKey && !directDispatchOnly) {
       const missingKeyMessage = `${currentProviderLabel}: no API key — paste one in Settings (${currentKeyFormat})`
       setRequestStatus('blocked')
       setLastRequestError(missingKeyMessage)
@@ -1951,7 +1968,7 @@ function App() {
         setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'success', lastError: null, lastLatencyMs: latency }))
         const result = routerResult.response
         if (result.reasoningContent?.trim()) finalReasoning = result.reasoningContent.trim()
-        resolvedProvider = result.provider === 'deepseek' ? 'deepseek' : result.provider === 'corpus' ? 'corpus' : result.provider === 'moonshot' ? 'moonshot' : result.provider === 'local' ? 'local' : activeProvider
+        resolvedProvider = result.provider === 'deepseek' ? 'deepseek' : result.provider === 'corpus' ? 'corpus' : result.provider === 'moonshot' ? 'moonshot' : result.provider === 'muse' ? 'muse' : result.provider === 'local' ? 'local' : activeProvider
         if (result.provider === 'deepseek') source = 'cloud'
         resolvedModel = result.model || currentModel
         const primaryDiagnostic = result.diagnostics?.primaryReasoning
@@ -2280,6 +2297,7 @@ function App() {
       if (isAuthError) {
         if (activeProvider === 'anthropic') { clearKeyVerified('anthropic'); setAnthropicApiKeyStatus('invalid') }
         if (activeProvider === 'moonshot') { clearKeyVerified('moonshot'); setKeyVerifyTick(n => n + 1) }
+        if (activeProvider === 'muse') { clearKeyVerified('muse'); setMetaApiKeyStatus('invalid') }
       }
     } finally {
       if (learningRunRef.current === learningId) learningRunRef.current = ''
@@ -2291,7 +2309,7 @@ function App() {
         setLoading(false)
       }
     }
-  }, [anthropicApiKey, moonshotApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, guardianPosture, requestGuardianApproval, agentResumedState]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [anthropicApiKey, moonshotApiKey, metaApiKey, anthropicWorkspaceId, normalizedActiveModel, localEndpoint, selectedLanguage, activeProvider, emitFailure, admitTask, resolveTask, guardianPosture, requestGuardianApproval, agentResumedState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   sendPromptRef.current = sendPrompt
   useEffect(() => {
@@ -2499,6 +2517,25 @@ function App() {
   }
 
 
+  const testMetaKey = async () => {
+    if (!metaApiKey.trim()) { setMetaApiKeyStatus('invalid'); setTestKeyError(t('test.noMetaKey')); return }
+    setTestingKey(true)
+    setTestKeyError('')
+    try {
+      await testProviderKey(metaApiKey, 'muse')
+      markKeyVerified('muse', metaApiKey)
+      setMetaApiKeyStatus('valid')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setTestKeyError(msg)
+      // Only a rejection downgrades a key; a network failure on a re-test leaves a verified key verified.
+      if (isKeyRejection(msg)) { clearKeyVerified('muse'); setMetaApiKeyStatus('invalid') }
+      else setMetaApiKeyStatus(isKeyVerified('muse', metaApiKey) ? 'valid' : 'unverified')
+    } finally {
+      setTestingKey(false)
+    }
+  }
+
   const testLocalEndpoint = async () => {
     setTestingKey(true)
     setTestKeyError('')
@@ -2579,8 +2616,8 @@ function App() {
 
   const getStatusIndicator = () => {
     if (activeProvider === 'local') return <span style={{ color: localEndpoint ? '#6b6b6b' : '#ef4444' }}>{localEndpoint ? activeModelLabel : t('status.localEndpointMissing')}</span>
-    const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : true
-    if (!keyPresent) return <span style={{ color: '#ef4444' }}>{t('status.anthropicNoKey')}</span>
+    const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : activeProvider === 'muse' ? !!metaApiKey : true
+    if (!keyPresent) return <span style={{ color: '#ef4444' }}>{activeProvider === 'muse' ? t('status.metaNoKey') : t('status.anthropicNoKey')}</span>
     if (isDeepSeekProvider(activeProvider)) return <span style={{ color: '#6b6b6b' }}>DeepSeek 16B · GitHub Actions</span>
     return <span style={{ color: lastSource === 'cloud' ? '#3b82f6' : '#6b6b6b', fontWeight: lastSource === 'cloud' ? 'bold' : 'normal' }}>{activeModelLabel}</span>
   }
@@ -2760,6 +2797,7 @@ function App() {
                   <option value="moonshot" style={{ background: '#111' }}>Moonshot · Kimi</option>
                   <option value="corpus" style={{ background: '#111' }}>DeepSeek 16B · GitHub Actions</option>
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
+                  <option value="muse" style={{ background: '#111' }}>Muse · Meta</option>
                   <option value="local" style={{ background: '#111' }}>Local Inference (llama.cpp)</option>
                 </select>
               </div>
@@ -2776,6 +2814,13 @@ function App() {
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#d97757', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Anthropic</span>
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>{t('settings.anthropicDesc')}</span>
+                </div>
+              )}
+              {activeProvider === 'muse' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#0082fb', display: 'inline-block' }} />
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Meta</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>{t('settings.metaDesc')}</span>
                 </div>
               )}
               {isDeepSeekProvider(activeProvider) && (
@@ -2811,6 +2856,15 @@ function App() {
                     {anthropicProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note} ({m.contextK}K ctx)</option>)}
                   </select>
                   <div style={{ color: '#d97757', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.claudeModelDesc')}</div>
+                </div>
+              )}
+              {activeProvider === 'muse' && (
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.metaModel')}</label>
+                  <select value={metaModel} onChange={e => setMetaModel(e.target.value)} style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}>
+                    {metaProvider.models.map(m => <option key={m.id} value={m.id} style={{ background: '#111' }}>{m.label} — {m.note} ({m.contextK}K ctx)</option>)}
+                  </select>
+                  <div style={{ color: '#0082fb', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.metaModelDesc')}</div>
                 </div>
               )}
               {activeProvider === 'local' && (
@@ -2864,6 +2918,27 @@ function App() {
                   </div>
                 </>
               )}
+              {activeProvider === 'muse' && (
+                <>
+                  <div style={{ marginBottom: '14px' }}>
+                    <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.metaKey')}</label>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input type={showApiKey ? 'text' : 'password'} placeholder="LLM_..." value={metaApiKey} onChange={e => { setMetaApiKey(e.target.value); setMetaApiKeyStatus(isKeyVerified('muse', e.target.value) ? 'valid' : 'unverified') }} style={{ flex: 1, background: '#0a0a0a', color: '#ccc', border: `1px solid ${metaApiKeyStatus === 'invalid' ? '#ef4444' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                      <button onClick={() => setShowApiKey(!showApiKey)} style={{ background: '#222', border: 'none', color: '#666', borderRadius: '4px', padding: '0 10px', cursor: 'pointer', fontSize: '11px' }}>{showApiKey ? '🙈' : '👁'}</button>
+                    </div>
+                    <div style={{ color: '#666', fontSize: '10px', marginTop: '5px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.metaKeyHelp')}</div>
+                    {testKeyError && <div style={{ color: metaApiKeyStatus === 'invalid' ? '#ef4444' : '#eab308', fontSize: '10px', marginTop: '4px', fontFamily: 'monospace', wordBreak: 'break-word' }}>{testKeyError}</div>}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                    <button onClick={testMetaKey} disabled={testingKey || !metaApiKey} style={{ flex: 1, background: testingKey ? '#333' : '#0082fb', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: testingKey ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{testingKey ? t('test.testing') : t('settings.testMetaKey')}</button>
+                  </div>
+                  <div style={{ textAlign: 'center', fontSize: '11px', marginBottom: '14px' }}>
+                    {!metaApiKey && <span style={{ color: '#ef4444' }}>{t('settings.metaNoKeyHelp')}</span>}
+                    {metaApiKey && metaApiKeyStatus === 'unverified' && <span style={{ color: '#666' }}>{t('settings.metaKeySaved')}</span>}
+                    {metaApiKeyStatus === 'valid' && <span style={{ color: '#22c55e' }}>{t('settings.metaKeyVerified')}</span>}
+                  </div>
+                </>
+              )}
 
               {activeProvider === 'local' && (
                 <div style={{ marginBottom: '14px' }}>
@@ -2894,10 +2969,10 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>{t('settings.operatorDiagnostics')}</div>
                 {[
-                  [t('diag.rowRuntimeProvider'), isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : 'Anthropic'],
+                  [t('diag.rowRuntimeProvider'), isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : activeProvider === 'muse' ? 'Muse · Meta' : 'Anthropic'],
                   [t('diag.rowRuntimeModel'), activeModelLabel],
                   [t('diag.rowLastRoute'), lastRuntimeRoute],
-                  [t('diag.rowAuthState'), activeProvider === 'local' ? (localEndpoint ? t('diag.endpointConfigured') : t('diag.missingLower')) : activeProvider === 'anthropic' ? (anthropicApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'moonshot' ? (moonshotApiKey ? t('diag.presentLower') : t('diag.missingLower')) : safeGetItem('gh_token') ? t('diag.githubTokenPresent') : t('diag.githubTokenMissing')],
+                  [t('diag.rowAuthState'), activeProvider === 'local' ? (localEndpoint ? t('diag.endpointConfigured') : t('diag.missingLower')) : activeProvider === 'anthropic' ? (anthropicApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'moonshot' ? (moonshotApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'muse' ? (metaApiKey ? t('diag.presentLower') : t('diag.missingLower')) : safeGetItem('gh_token') ? t('diag.githubTokenPresent') : t('diag.githubTokenMissing')],
                   [t('diag.rowRequestStatus'), requestStatus],
                   [t('diag.rowLastError'), lastRequestError || diagnostics.lastError || t('diag.none')],
                   [t('diag.rowLatency'), lastRequestLatencyMs === null ? t('diag.na') : `${lastRequestLatencyMs} ms`],
@@ -3570,7 +3645,7 @@ function App() {
           <AgentsPanel
             activeProvider={activeProvider}
             activeModel={normalizedActiveModel}
-            apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'local' ? localEndpoint : ''}
+            apiKey={activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'muse' ? metaApiKey : activeProvider === 'local' ? localEndpoint : ''}
             guardianPosture={guardianPosture}
             requestGuardianApproval={requestGuardianApproval}
           />
@@ -3645,6 +3720,7 @@ function App() {
                       if (toolName === 'deepseek_reason' || toolName === 'ask_deepseek') {
                         if (provider === 'moonshot') return 'Kimi Reason'
                         if (provider === 'anthropic') return 'Claude Reason'
+                        if (provider === 'muse') return 'Muse Reason'
                         return 'DeepSeek Reason'
                       }
                       return toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
