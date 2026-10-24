@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  FIGHT_RATIONALE_MAX_CHARS, FIGHT_SECTIONS, FUNDS_SENTIMENT_MAX_WEIGHT_PCT, SENTIMENT_MAX_LINKS, allowedSentimentWeightPct, checkFightRationale,
+  FIGHTER_STATE_MAX_WEIGHT_PCT, FIGHT_RATIONALE_MAX_CHARS, FIGHT_SECTIONS, FUNDS_SENTIMENT_MAX_WEIGHT_PCT, SENTIMENT_MAX_LINKS, allowedSentimentWeightPct, checkFightRationale,
   crowdLeanFromScan, extractSentimentSnapshot, fightRefusal, fightTemplateSkeleton, isFightMarket, parseFightRationale,
 } from './fightResearch'
 
@@ -14,7 +14,8 @@ const GOOD = [
   'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com results page).',
   'MATCHUP NEUTRALIZATION: primary path: Merab wins by wrestling pace and top control, Yan by standing Muay Thai; neutralization: demonstrated — Yan defended the takedowns for five rounds in the second fight after losing the first to the wrestling; the fight that remains: a standing fight, which favors Yan.',
   `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab: crowd lean: 44%. Record on comparable fights: 6 of 12 called correctly.`,
-  'FUSION: range: 58-65%; the book line and facts carry it, statistics adjust it; sentiment weight: 0%.',
+  'FIGHTER STATE: unavailable — no own-account post was indexed for either fighter in the last 60 days.',
+  'FUSION: range: 58-65%; the book line and facts carry it, statistics adjust it; sentiment weight: 0%; fighter-state weight: 0%.',
   'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
   'FALSIFIER: a late injury report for Yan, or the line moving to Merab -120 before the walkout.',
 ].join('\n')
@@ -45,7 +46,7 @@ describe('the template', () => {
     expect(parsed.get('stats')).toBe('facts')
   })
 
-  it('every one of the eight sections is required, and named in the problem', () => {
+  it('every one of the nine sections is required, and named in the problem', () => {
     for (const section of FIGHT_SECTIONS) {
       const without = GOOD.split('\n').filter(line => !section.pattern.test(line)).join('\n')
       const result = check({ rationale: without })
@@ -103,7 +104,7 @@ describe('the template', () => {
 
   it('too-long rationales are refused rather than silently cut (the falsifier is last)', () => {
     const result = check({ rationale: `${GOOD}\n${'x'.repeat(FIGHT_RATIONALE_MAX_CHARS)}` })
-    expect(result.problems.join('\n')).toMatch(/is kept whole only up to 4600/)
+    expect(result.problems.join('\n')).toContain(`is kept whole only up to ${FIGHT_RATIONALE_MAX_CHARS}`)
   })
 })
 
@@ -155,12 +156,12 @@ describe('the stated edge is held to the bar and to arithmetic', () => {
 })
 
 describe('the refusal teaches the template', () => {
-  it('lists every problem and the eight headings, so one rewrite can fix it', () => {
+  it('lists every problem and the nine headings, so one rewrite can fix it', () => {
     const result = check({ rationale: 'a hunch about this fight and nothing more to say' })
     const text = fightRefusal('KXUFCFIGHT-26OCT24YANDVA-YAN', result)
-    expect(result.problems.length).toBeGreaterThanOrEqual(7)
+    expect(result.problems.length).toBeGreaterThanOrEqual(9)
     for (const section of FIGHT_SECTIONS) expect(text).toContain(`${section.label}: <`)
-    expect(fightTemplateSkeleton().split('\n')).toHaveLength(8)
+    expect(fightTemplateSkeleton().split('\n')).toHaveLength(9)
     expect(text).toContain('the ledger checks it (not the model)')
   })
 })
@@ -221,5 +222,53 @@ describe('the crowd\'s lean (item B)', () => {
 
   it('a rationale with no scan has no snapshot', () => {
     expect(extractSentimentSnapshot('just an opinion about the fight, no template at all', 1)).toBeNull()
+  })
+})
+
+const YAN_POST = 'https://www.instagram.com/p/DeKZJkACIyx/'
+const READ_STATE = `FIGHTER STATE: Yan's own Instagram post of Oct 6 ${YAN_POST} ("That's the job, it has to be done") is routine camp content; Merab's X post of Oct 16 https://x.com/MerabDvalishvil/status/2108000000000000000 ("Ready to go") is the same. Neither shows anything beyond training mode.`
+const withState = (state: string, weight: string) =>
+  GOOD.replace(/FIGHTER STATE:.*/, state).replace('fighter-state weight: 0%', `fighter-state weight: ${weight}`)
+
+describe('FIGHTER STATE: the fighters\' own posts, at a small fixed weight (owner ruling 2026-10-24)', () => {
+  it('is a required section, in the template, after the crowd and before the fusion', () => {
+    const keys = FIGHT_SECTIONS.map(s => s.key)
+    expect(keys.indexOf('state')).toBe(keys.indexOf('sentiment') + 1)
+    expect(keys.indexOf('state')).toBeLessThan(keys.indexOf('fusion'))
+    const missing = check({ rationale: GOOD.replace(/FIGHTER STATE:.*\n/, '') })
+    expect(missing.problems).toContain('FIGHTER STATE is missing (write "FIGHTER STATE: ..." on its own line)')
+  })
+
+  it('a linked read passes at a weight up to the cap', () => {
+    expect(check({ rationale: withState(READ_STATE, '0%') }).ok).toBe(true)
+    expect(check({ rationale: withState(READ_STATE, `${FIGHTER_STATE_MAX_WEIGHT_PCT}%`) }).ok).toBe(true)
+  })
+
+  it('refuses a weight above the cap', () => {
+    const result = check({ rationale: withState(READ_STATE, `${FIGHTER_STATE_MAX_WEIGHT_PCT + 1}%`) })
+    expect(result.problems.join('\n')).toContain(`above the ${FIGHTER_STATE_MAX_WEIGHT_PCT}% cap`)
+  })
+
+  it('refuses any weight when nothing was read (unavailable) or no post is linked', () => {
+    const unavailable = 'FIGHTER STATE: unavailable — no own-account post was indexed for either fighter in the last 60 days.'
+    expect(check({ rationale: withState(unavailable, '0%') }).ok).toBe(true)
+    expect(check({ rationale: withState(unavailable, '2%') }).problems.join('\n')).toContain('with nothing read the weight is 0%')
+    const unlinked = 'FIGHTER STATE: both fighters sound calm and confident in their recent posts and interviews.'
+    const result = check({ rationale: withState(unlinked, '2%') })
+    expect(result.problems.join('\n')).toContain('FIGHTER STATE names no post link')
+    expect(result.problems.join('\n')).toContain('with nothing read the weight is 0%')
+  })
+
+  it('unavailable needs a named reason, like the other evidence sections', () => {
+    const result = check({ rationale: withState('FIGHTER STATE: unavailable now', '0%') })
+    expect(result.problems.join('\n')).toContain('FIGHTER STATE says unavailable without a reason')
+  })
+
+  it('the weight must be stated, and is separate from the crowd\'s weight', () => {
+    const noStatement = GOOD.replace('; fighter-state weight: 0%', '')
+    expect(check({ rationale: noStatement }).problems.join('\n')).toContain('FUSION must state the fighter-state weight')
+    // The crowd's own cap and rule are untouched by it: a crowd weight above what it earned is still refused.
+    const crowd = GOOD.replace('sentiment weight: 0%', 'sentiment weight: 10%')
+    expect(check({ rationale: crowd }).problems.join('\n')).toContain('more than the crowd has earned')
   })
 })

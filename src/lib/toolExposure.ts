@@ -8,7 +8,7 @@
 // nothing, so Claude truthfully said it had no GitHub access, and on earlier turns invented commits.
 
 import { KALSHI_MAX_RESULTS } from './kalshiMarkets'
-import { FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT, fightTemplateSkeleton } from './fightResearch'
+import { FIGHTER_STATE_MAX_WEIGHT_PCT, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT, fightTemplateSkeleton } from './fightResearch'
 
 /** Providers whose models call tools natively and reliably; local llama.cpp is deliberately excluded. */
 export const HOSTED_TOOL_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'moonshot'])
@@ -245,9 +245,17 @@ export const FUNDS_GUIDANCE =
   '"Public money inflates favorites on Kalshi" is a hypothesis: test it against line movement and the Kalshi price versus the no-vig line, and drop it if the numbers do not show it. ' +
   'WHAT YOU CAN AND CANNOT READ: deep_research and web_search return only pages they actually fetched. The app has no live X (Twitter) or xAI feed, so never say you read X posts unless a returned source is an x.com address; ' +
   'never cite a forum claim without its link. If the sentiment scan returns nothing usable (a blocked or empty source), write it as "unavailable — <reason>": that is an allowed answer and the crowd then weighs 0%; a silent gap is not. ' +
-  'THE TEMPLATE (enforced): funds_propose refuses a proposal on a fight market (series KXUFCFIGHT, KXMMAFIGHT, KXMMAEXFIGHT) unless its rationale has these eight labeled lines:\n' + fightTemplateSkeleton() + '\n' +
+  'FIGHTER STATE: how each fighter is going into the fight, read as the owner reads it, from what they say and post themselves. Run deep_research with sentiment_query and sentiment_sides (the two fighters) and ' +
+  'its result carries a "Fighter posts" block: each fighter\'s OWN public posts on Instagram, X and TikTok from the last 60 days, dated, with links. Also research what is said around the fight: add queries for each fighter\'s ' +
+  'media day, press conference, weigh-in and recent interviews, since those often say more than posts do. Rules: only a fighter\'s own account counts (a media or fan post about them is not their state); cite each post with its date and link; ' +
+  'say what the posts observably show (tone, an injury or weight-cut mention, a change in how or how much they post) and what they cannot show; never diagnose a mental state, and a fighter who posts only promotion shows nothing. ' +
+  'A TikTok item carries index text that can be auto-generated: use it for when and how often they post, never as their words. ' +
+  'Teams often run these accounts, so a post is weak evidence of mood, and a post is a lead, not a fact: an injury or cut mentioned in a post belongs in STATS & FACTS only once a primary source or two independent outlets confirm it. ' +
+  'Coverage is partial (found through web search, not the platforms\' own feeds): a fighter with no verified recent post is written "unavailable — <reason>" and the owner is told, never skipped. ' +
+  'The owner\'s ruling: this read carries a small fixed weight, at most ' + FIGHTER_STATE_MAX_WEIGHT_PCT + '% in the fusion (stated as "fighter-state weight: N%"), and 0% when nothing was read; it is never a reason to cross the net-edge bar by itself. ' +
+  'THE TEMPLATE (enforced): funds_propose refuses a proposal on a fight market (series KXUFCFIGHT, KXMMAFIGHT, KXMMAEXFIGHT) unless its rationale has these nine labeled lines:\n' + fightTemplateSkeleton() + '\n' +
   'The ledger checks that each section is there and not empty, that BOOK LINE gives a no-vig number, that MATCHUP NEUTRALIZATION names each fighter\'s primary path to victory, gives a "neutralization: demonstrated / not demonstrated" verdict with its evidence, and reassesses "the fight that remains" if the key strength is taken away, that SENTIMENT SCAN links what it scanned and states "crowd lean: N%" (the crowd\'s chance that YOUR side wins; the ledger keeps it with the position and scores the crowd against the result when the fight settles) or says unavailable with a reason, that FUSION\'s range contains your probability ' +
-  'and states "sentiment weight: N%" within what the crowd has earned, that EDGE\'s net edge in cents clears the bar in rule 3 and cannot exceed probability minus price, and that BOOK LINE and STATS & FACTS are not both unavailable. ' +
+  'and states "sentiment weight: N%" within what the crowd has earned and "fighter-state weight: N%" within the cap (0% unless FIGHTER STATE links the posts it read), that FIGHTER STATE links its posts or says unavailable with a reason, that EDGE\'s net edge in cents clears the bar in rule 3 and cannot exceed probability minus price, and that BOOK LINE and STATS & FACTS are not both unavailable. ' +
   'It cannot check that your research is true: say what you could not verify. THE OUTPUT: if the owner\'s own framework appears in this prompt, structure the analysis with it; ' +
   'propose AT MOST ONE position, with its falsifier (the result or news that would prove you wrong) — or say that no bet clears the bar and propose nothing, which is a correct answer. ' +
   'Nothing predicts a fight with certainty: never write "guaranteed", "lock" or "sure thing", and say what you could not verify.'

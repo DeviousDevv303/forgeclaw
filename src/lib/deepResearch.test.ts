@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatResearchResult, missingForumLanes, normalizeQueries, normalizeSentimentInput, RESEARCH_RESULT_MAX_CHARS, runDeepResearch, type ResearchReport } from './deepResearch'
+import { formatFighterPostsBlock, formatResearchResult, missingForumLanes, normalizeQueries, normalizeSentimentInput, RESEARCH_RESULT_MAX_CHARS, runDeepResearch, type ResearchReport } from './deepResearch'
 import type { GithubRequest } from './githubPublish'
 
 const WF = 'https://api.github.com/repos/DeviousDevv303/forgeclaw'
@@ -168,5 +168,50 @@ describe('formatResearchResult lane manifest (non-silence)', () => {
     const text = formatResearchResult(ordinary, 'https://run')
     expect(text).toContain('- Reddit: NOT CONFIGURED — no sentiment subjects were supplied for this run')
     expect(text).not.toContain('forum layer missing')
+  })
+})
+
+describe('fighter posts block', () => {
+  const posts: ResearchReport['fighter_posts'] = {
+    method: 'own-account-search-v1', window_days: 60, as_of: '2026-10-24T00:00:00Z',
+    fighters: [
+      { name: 'Petr Yan', status: 'ran', handles: { instagram: 'petr_yan' }, stale_set_aside: 1,
+        items: [{ platform: 'instagram', handle: 'petr_yan', url: 'https://www.instagram.com/p/DeKZJkACIyx/', text: "That's the job", date: '2026-10-06', date_source: 'snippet' }] },
+      { name: 'Merab Dvalishvili', status: 'no_handle', handles: {}, items: [], reason: 'no instagram profile found that reads as Merab Dvalishvili\'s' },
+    ],
+  }
+  const withPosts: ResearchReport = { ...sentimentReport, fighter_posts: posts }
+
+  it('shows each fighter\'s own dated posts with links, and names the fighter with none, with the reason', () => {
+    const text = formatResearchResult(withPosts, 'https://run')
+    expect(text).toContain('Fighter posts (each fighter\'s OWN public posts, last 60 days')
+    expect(text).toContain('- Petr Yan (instagram:@petr_yan): 1 post(s)')
+    expect(text).toContain("[instagram 2026-10-06] That's the job — https://www.instagram.com/p/DeKZJkACIyx/")
+    expect(text).toContain('- Merab Dvalishvili (no verified handle): unavailable — no instagram profile found')
+    expect(text).toContain('Never diagnose a fighter\'s mental state')
+  })
+
+  it('is not a forum lane: a missing one never reads as "forum layer missing", and the crowd lean is unchanged', () => {
+    const text = formatResearchResult(withPosts, 'https://run')
+    expect(text).not.toContain('forum layer missing: Fighter')
+    expect(missingForumLanes(withPosts).map(l => l.id)).toEqual(['x', 'facebook'])
+    expect(text).toContain('Community lean (exclusive-name-mention-v1; 3 pick-bearing of 2 item(s)): Merab Dvalishvili: 2 item(s) (66.7%); Petr Yan: 1 item(s) (33.3%)')
+  })
+
+  it('also rides a run that found no readable web source, and is absent on reports without it', () => {
+    expect(formatResearchResult({ ...withPosts, sources: [] }, 'https://run')).toContain('Fighter posts (')
+    expect(formatFighterPostsBlock(sentimentReport)).toBe('')
+    expect(formatResearchResult(sentimentReport, 'https://run')).not.toContain('Fighter posts')
+  })
+
+  it('carries a post\'s note, so TikTok text is never presented as the fighter\'s words', () => {
+    const note = 'TikTok index text: it can be auto-generated, so it is not quotable as the fighter\'s words'
+    const tiktok: ResearchReport = { ...withPosts, fighter_posts: { ...posts, fighters: [{ ...posts.fighters[0], items: [{ platform: 'tiktok', handle: 'x', url: 'https://www.tiktok.com/@x/video/1', text: 'One week until UFC 333', date: '2026-10-17', note }] }] } }
+    expect(formatFighterPostsBlock(tiktok)).toContain(`One week until UFC 333 — https://www.tiktok.com/@x/video/1 (${note})`)
+  })
+
+  it('an undated post is shown as undated', () => {
+    const undated: ResearchReport = { ...withPosts, fighter_posts: { ...posts, fighters: [{ ...posts.fighters[0], items: [{ platform: 'instagram', handle: 'petr_yan', url: 'https://www.instagram.com/p/U1/', text: 'Caption', date: '', undated: true }] }] } }
+    expect(formatFighterPostsBlock(undated)).toContain('[instagram undated] Caption')
   })
 })

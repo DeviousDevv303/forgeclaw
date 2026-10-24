@@ -46,6 +46,24 @@ export interface SentimentItem { lane: string; kind: string; text: string; url: 
 export interface SentimentLean { method: string; sides: string[]; pick_bearing: number; counts: number[]; share_pct: Array<number | null> }
 export interface SentimentReport { sides: string[]; items: SentimentItem[]; lean: SentimentLean | null }
 
+/** One of a fighter's OWN public posts, as the search index showed it. `undated` posts have no known age. */
+export interface FighterPost { platform: string; handle: string; url: string; text: string; date: string; date_source?: string; undated?: boolean; note?: string }
+export type FighterPostsStatus = 'ran' | 'none_found' | 'no_handle' | 'failed'
+export interface FighterPostsEntry {
+  name: string
+  status: FighterPostsStatus
+  handles: Record<string, string>
+  items: FighterPost[]
+  stale_set_aside?: number
+  /** Why there is nothing to read (everything but 'ran'). */
+  reason?: string
+}
+/**
+ * The fighters' own recent posts (deep_research.py). Deliberately not a lane and not part of the crowd lean: a fighter's
+ * own post is not crowd opinion, and posts by media or fan accounts about the fighter are dropped before they get here.
+ */
+export interface FighterPostsReport { method: string; window_days: number; as_of: string; fighters: FighterPostsEntry[] }
+
 export interface ResearchReport {
   question: string
   queries: string[]
@@ -58,6 +76,8 @@ export interface ResearchReport {
   /** True when the caller supplied sentiment subjects for this run. */
   sentiment_requested?: boolean
   sentiment?: SentimentReport
+  /** Present when the run named two fighters (the sentiment sides); absent on reports from before it existed. */
+  fighter_posts?: FighterPostsReport
 }
 
 export interface DeepResearchInput {
@@ -163,17 +183,48 @@ export function formatLaneBlock(report: ResearchReport): string {
   return lines.join('\n')
 }
 
+const FIGHTER_POSTS_SHOWN_PER_FIGHTER = 6
+
+/**
+ * The FIGHTER POSTS block of a tool result: each fighter's own dated posts, or the reason there are none. It says what the
+ * posts are and are not, so a FIGHTER STATE section written from it describes what is visible and never diagnoses.
+ */
+export function formatFighterPostsBlock(report: ResearchReport): string {
+  const posts = report.fighter_posts
+  if (!posts?.fighters?.length) return ''
+  const lines = [`Fighter posts (each fighter's OWN public posts, last ${posts.window_days} days, as of ${posts.as_of}; found through web search, so coverage is partial):`]
+  for (const fighter of posts.fighters) {
+    const handles = Object.entries(fighter.handles ?? {}).map(([platform, handle]) => `${platform}:@${handle}`).join(', ') || 'no verified handle'
+    if (!fighter.items?.length) {
+      lines.push(`- ${fighter.name} (${handles}): unavailable — ${fighter.reason || fighter.status}`)
+      continue
+    }
+    lines.push(`- ${fighter.name} (${handles}): ${fighter.items.length} post(s)`)
+    for (const post of fighter.items.slice(0, FIGHTER_POSTS_SHOWN_PER_FIGHTER)) {
+      lines.push(`    [${post.platform} ${post.undated || !post.date ? 'undated' : post.date}] ${post.text.replace(/\s+/g, ' ').slice(0, 220)} — ${post.url}${post.note ? ` (${post.note})` : ''}`)
+    }
+    if (fighter.items.length > FIGHTER_POSTS_SHOWN_PER_FIGHTER) lines.push(`    (${fighter.items.length - FIGHTER_POSTS_SHOWN_PER_FIGHTER} more in the stored research record)`)
+  }
+  lines.push('For a FIGHTER STATE section: use only these own-account posts, cite each with its date and link, say what they observably show (tone, injury or weight-cut mentions, a change in how or how much they post) and what they cannot show. Accounts are often run by a team, so a post is weak evidence of mood; a fighter who says nothing, or whose posts are all promotion, shows nothing. Never diagnose a fighter\'s mental state. A fighter listed as unavailable is written as "unavailable — <reason>", never skipped.')
+  return lines.join('\n')
+}
+
+/** The blocks that ride after the evidence: the lane manifest, then the fighter posts. */
+function trailingBlocks(report: ResearchReport): string {
+  return [formatLaneBlock(report), formatFighterPostsBlock(report)].filter(Boolean).join('\n')
+}
+
 /** Tool result: numbered evidence plus the citation rule. Never contains an answer of its own. */
 export function formatResearchResult(report: ResearchReport, runUrl: string): string {
-  const laneBlock = formatLaneBlock(report)
+  const trailing = trailingBlocks(report)
   if (!report.sources?.length) {
     const why = (report.failures ?? []).slice(0, 6).map(f => `${f.url || f.query}: ${f.error}`).join('\n  ')
-    return `[TOOL ERROR] deep_research found no readable sources for "${report.question}". Nothing can be cited.${why ? `\n  ${why}` : ''}\n  run: ${runUrl}${laneBlock ? `\n${laneBlock}` : ''}`
+    return `[TOOL ERROR] deep_research found no readable sources for "${report.question}". Nothing can be cited.${why ? `\n  ${why}` : ''}\n  run: ${runUrl}${trailing ? `\n${trailing}` : ''}`
   }
   const header = `✓ Deep research: ${report.sources.length} source(s) for "${report.question}" (${report.queries.length} queries, ${report.elapsed_seconds}s)\n` +
     `Write the answer only from these sources and cite them as [n]. Say plainly what they do not cover; never cite a source that is not listed.\nrun: ${runUrl}\n`
   // The lane block always fits: source excerpts yield room to it, never the other way around.
-  const budget = RESEARCH_RESULT_MAX_CHARS - (laneBlock ? laneBlock.length + 1 : 0)
+  const budget = RESEARCH_RESULT_MAX_CHARS - (trailing ? trailing.length + 1 : 0)
   let body = ''
   for (const s of report.sources) {
     const entry = `\n[${s.id}] ${s.title || s.url} (${s.domain}${s.date ? `, ${s.date}` : ''})\n${s.url}\n${s.excerpt}\n`
@@ -181,5 +232,5 @@ export function formatResearchResult(report: ResearchReport, runUrl: string): st
     body += entry
   }
   const failed = report.failures?.length ? `\nNot used: ${report.failures.length} page(s) or queries failed.` : ''
-  return header + body + failed + (laneBlock ? `\n${laneBlock}` : '')
+  return header + body + failed + (trailing ? `\n${trailing}` : '')
 }
