@@ -102,21 +102,48 @@ describe('speech controller', () => {
     expect(h.spoken.map(s => s.text)).toEqual(['Message A.', 'Message B.'])
   })
 
+  it('a first click on an idle engine speaks immediately — no cancel in front of it, no start delay', () => {
+    const h = harness()
+    expect(h.controller.speak('a', 'Message A.')).toBe(true)
+    // No timer flushed: the utterance is already with the engine, and cancel was never called.
+    // (Regression: cancel-then-delayed-speak made the owner's first click silent.)
+    expect(h.spoken.map(s => s.text)).toEqual(['Message A.'])
+    expect(h.cancels()).toBe(0)
+    expect(h.controller.current()).toBe('a')
+  })
+
+  it('replacing a live read-aloud still cancels it and settles before the new one speaks', () => {
+    const h = harness()
+    h.controller.speak('a', 'Message A.')
+    h.spoken[0].u.onstart?.()
+    const cancelsBefore = h.cancels()
+    h.controller.speak('b', 'Message B.')
+    expect(h.cancels()).toBeGreaterThan(cancelsBefore)
+    // B waits out the post-cancel settle delay; it is not enqueued yet.
+    expect(h.spoken.map(s => s.text)).toEqual(['Message A.'])
+    h.flush(150)
+    expect(h.spoken.map(s => s.text)).toEqual(['Message A.', 'Message B.'])
+    expect(h.controller.current()).toBe('b')
+  })
+
   it('stop() (used when the mic starts) cancels speech and clears the id', () => {
     const h = harness()
     h.controller.speak('a', 'Message A.')
-    h.flush(150)
+    const cancelsBefore = h.cancels()
     h.controller.stop()
     expect(h.controller.current()).toBeNull()
-    expect(h.cancels()).toBeGreaterThanOrEqual(2)
+    expect(h.cancels()).toBeGreaterThan(cancelsBefore)
   })
 
-  it('stop() before the start delay prevents any speech', () => {
+  it('stop() during the post-cancel settle delay prevents the next message from speaking', () => {
     const h = harness()
     h.controller.speak('a', 'Message A.')
+    h.spoken[0].u.onstart?.()
+    h.controller.speak('b', 'Message B.')
     h.controller.stop()
     h.flush()
-    expect(h.spoken).toHaveLength(0)
+    expect(h.spoken.map(s => s.text)).toEqual(['Message A.'])
+    expect(h.controller.current()).toBeNull()
   })
 
   it('ignores the error events caused by its own cancel', () => {

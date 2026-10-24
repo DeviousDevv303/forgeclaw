@@ -137,7 +137,8 @@ export function splitForSpeech(text: string, maxChars = 220): string[] {
   return chunks
 }
 
-// Chrome can re-suspend the engine in the gap after cancel(); wait briefly before speaking.
+// Chrome can re-suspend the engine in the gap after cancel(); when replacing a live read-aloud,
+// wait briefly before speaking. An idle first click does NOT wait (see speak()).
 const START_DELAY_MS = 150
 // If the first chunk has not started speaking by then, the engine is jammed: retry once.
 const JAM_RETRY_MS = 2_000
@@ -166,10 +167,23 @@ export function createSpeechController(deps: SpeechControllerDeps) {
 
   /** Speak `text` for message `id`, stopping anything already speaking. Returns false when there is nothing to say. */
   function speak(id: string, text: string, options: SpeakOptions = {}): boolean {
-    stop()
+    // Two start paths, because the owner's first click used to be silent:
+    //  - REPLACING a live read-aloud needs a real cancel(), and Chrome re-suspends the engine in
+    //    the gap right after one, so that path keeps the settle delay before enqueueing.
+    //  - On an IDLE engine there is nothing to cancel. The old code cancelled anyway and then
+    //    waited 150 ms: Chrome/Android drops the utterance enqueued behind a cancel() (and the
+    //    timer moves it out of the click's user-activation window), the jam retry repeated the
+    //    same cancel-then-speak and gave up silently — dead first click, working second click.
+    //    So an idle start enqueues immediately, inside the gesture, with no cancel in front of it.
+    const replacing = currentId !== null || inflight.size > 0
+    token += 1
+    const mine = token
+    inflight.clear()
+    if (replacing) deps.synth.cancel()
+    setCurrent(null)
+
     const chunks = splitForSpeech(text)
     if (!chunks.length) return false
-    const mine = token
     setCurrent(id)
 
     let started = false
@@ -199,16 +213,7 @@ export function createSpeechController(deps: SpeechControllerDeps) {
         deps.synth.speak(utterance)
       })
     }
-
-    schedule(() => {
-      if (mine !== token) return
-      try {
-        deps.synth.resume()
-        enqueueAll()
-      } catch {
-        finish()
-        return
-      }
+    const armJamWatchdog = () => {
       schedule(() => {
         if (mine !== token || started || retried) return
         retried = true
@@ -225,7 +230,30 @@ export function createSpeechController(deps: SpeechControllerDeps) {
           if (mine === token && !started) { deps.synth.cancel(); finish() }
         }, JAM_GIVE_UP_MS - JAM_RETRY_MS)
       }, JAM_RETRY_MS)
-    }, START_DELAY_MS)
+    }
+
+    if (replacing) {
+      schedule(() => {
+        if (mine !== token) return
+        try {
+          deps.synth.resume()
+          enqueueAll()
+        } catch {
+          finish()
+          return
+        }
+        armJamWatchdog()
+      }, START_DELAY_MS)
+    } else {
+      try {
+        deps.synth.resume()
+        enqueueAll()
+      } catch {
+        finish()
+        return true
+      }
+      armJamWatchdog()
+    }
     return true
   }
 
