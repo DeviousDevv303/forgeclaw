@@ -123,7 +123,7 @@ import type { CristianDecision } from './types/warRoom'
 import { collectMockEvents } from './lib/reasoningMock'
 import { pushFile as githubPushFile } from './lib/github'
 import type { MessageRole, ReasoningChain as ReasoningChainType } from './types/reasoning'
-import { resolveInitialProvider } from './lib/modelProviders'
+import { PROVIDERS, resolveInitialProvider } from './lib/modelProviders'
 import type { ProviderId } from './lib/modelProviders'
 import { RESPONSE_LANGUAGE_INSTRUCTIONS, withResponseLanguage } from './lib/responseLanguage'
 import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
@@ -599,6 +599,26 @@ function startRunJournal(): RunJournal {
   const journal = createRunJournal()
   setActiveRunJournal(journal)
   return journal
+}
+
+/**
+ * One collapsible group on the Settings tab (reorganization, 2026-10-23 — the tab
+ * had grown into one long scroll). Children stay MOUNTED while collapsed (the body
+ * is display:none, never unmounted), so every setting inside keeps its state,
+ * storage key, default and behaviour exactly as before — this wrapper changes
+ * only how the tab is grouped, never what a setting does.
+ */
+function SettingsSection({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <section style={{ marginBottom: '14px', border: '1px solid #1e1e1e', borderRadius: '8px', background: '#0d0d0d' }}>
+      <button onClick={() => setOpen(o => !o)} aria-expanded={open} style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'none', border: 'none', padding: '12px 14px', cursor: 'pointer' }}>
+        <span style={{ color: '#f97316', fontSize: '11px', letterSpacing: '2px', fontWeight: 'bold', fontFamily: 'monospace', textTransform: 'uppercase' }}>{title}</span>
+        <span aria-hidden="true" style={{ color: '#666', fontSize: '12px' }}>{open ? '▾' : '▸'}</span>
+      </button>
+      <div style={{ display: open ? 'block' : 'none', padding: '0 14px 14px' }}>{children}</div>
+    </section>
+  )
 }
 
 function App() {
@@ -2718,6 +2738,7 @@ function App() {
                 </div>
               </section>
 
+              <SettingsSection title="Providers & Keys" defaultOpen>
               {/* Provider Selector */}
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.runtimeProvider')}</label>
@@ -2858,6 +2879,8 @@ function App() {
               )}
 
 
+              </SettingsSection>
+              <SettingsSection title="Operator Diagnostics">
               {/* Operator diagnostics */}
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>{t('settings.operatorDiagnostics')}</div>
@@ -2879,6 +2902,8 @@ function App() {
                 ))}
               </div>
 
+              </SettingsSection>
+              <SettingsSection title="Data & Danger Zone">
               {/* Corpus Memory Progress */}
               <div style={{ marginTop: '12px', borderTop: '1px solid #1a1a1a', paddingTop: '12px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
@@ -2924,8 +2949,12 @@ function App() {
                 </div>
               </div>
 
+              </SettingsSection>
+              <SettingsSection title="Sculpt & Reasoning">
               {!isPublicVisitor(ghToken) && <SculptKeyPanel />}
               {!isPublicVisitor(ghToken) && <ReasoningFrameworkPanel />}
+              </SettingsSection>
+              <SettingsSection title="GitHub">
               {/* GitHub Token */}              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <label style={{ color: '#f97316', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', fontFamily: 'monospace' }}>
@@ -2983,6 +3012,8 @@ function App() {
                 </div>
               </div>
 
+              </SettingsSection>
+              <SettingsSection title="Kalshi / Funds">
               {/* Kalshi trading keys — this section replaces the Brave key slot (owner removed
                   Brave 2026-10-23: he does not use it; web_search falls back to DuckDuckGo).
                   Hidden in visitor mode: a public visitor never sees the trading keys. */}
@@ -3050,6 +3081,8 @@ function App() {
                 </div>
               </div>)}
 
+              </SettingsSection>
+              <SettingsSection title="Connections">
               {/* Google OAuth Token */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -3072,6 +3105,8 @@ function App() {
                 <WhatsAppConnector />
               </div>
 
+              </SettingsSection>
+              <SettingsSection title="Health & Build">
               {/* Operator Health / Diagnostics */}
               <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold', marginBottom: '12px' }}>{t('diag.title')}</div>
@@ -3148,6 +3183,7 @@ function App() {
                 </div>
               </div>
 
+              </SettingsSection>
             </div>
           </div>
         )}
@@ -3426,7 +3462,7 @@ function App() {
                   >
                     {screenCopied ? t('chat.screenCopied') : t('chat.screenText')}
                   </button>
-                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', padding: '2px 4px', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder={t('chat.placeholder')} value={input} onChange={e => { setInput(e.target.value); window.forgeCore?.userTyping() }} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
+                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', padding: '2px 4px', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder={t('chat.placeholder', { provider: PROVIDERS[activeProvider].name })} value={input} onChange={e => { setInput(e.target.value); window.forgeCore?.userTyping() }} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
                   {loading ? (
                     <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '7px 16px', borderRadius: '9px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={stopGeneration} aria-label={t('chat.stopAria')}>{t('chat.stop')}</button>
                   ) : (
