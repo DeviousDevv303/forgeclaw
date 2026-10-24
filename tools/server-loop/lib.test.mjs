@@ -17,7 +17,6 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 import {
-  buildMentionReply,
   classifyCall,
   decide,
   findUnansweredCalls,
@@ -90,23 +89,6 @@ describe('answered tracking', () => {
     const parsed = parseCalls([call], { owner: OWNER })[0]
     expect(isAnswered(parsed, [early, call, answer])).toBe(true)
     expect(isAnswered(parsed, [early, call])).toBe(false)
-  })
-
-  it('with the owner known, only the owner or the loop’s marked post can answer; an agent quoting the id cannot', () => {
-    const call = callComment('fc-q', 'report status')
-    const parsed = parseCalls([call], { owner: OWNER })[0]
-    const agentQuote = comment('Kimi here: about `fc-q`, I think…', { author: 'github-actions[bot]' })
-    const stranger = comment('fc-q is done', { author: 'someone-else' })
-    expect(isAnswered(parsed, [call, agentQuote, stranger], { owner: OWNER })).toBe(false)
-    expect(findUnansweredCalls([call, agentQuote, stranger], { owner: OWNER }).map((c) => c.id)).toEqual(['fc-q'])
-    const loopPost = comment(`Answering channel call \`fc-q\`\n<!-- forgeclaw-loop:v1 answered=fc-q -->`, { author: 'github-actions[bot]' })
-    expect(isAnswered(parsed, [call, agentQuote, loopPost], { owner: OWNER })).toBe(true)
-    const loopRefusal = comment(`Refusing \`fc-q\`\n<!-- forgeclaw-loop:v1 refused=fc-q -->`, { author: 'github-actions[bot]' })
-    expect(isAnswered(parsed, [call, loopRefusal], { owner: OWNER })).toBe(true)
-    // A marker for another call does not answer this one.
-    const otherMarker = comment(`about fc-q <!-- forgeclaw-loop:v1 answered=fc-other -->`, { author: 'github-actions[bot]' })
-    expect(isAnswered(parsed, [call, otherMarker], { owner: OWNER })).toBe(false)
-    expect(isAnswered(parsed, [call, comment('Answering `fc-q`.')], { owner: OWNER })).toBe(true)
   })
 
   it('answered calls drop out, unanswered stay in order', () => {
@@ -223,39 +205,5 @@ describe('decide (end-to-end over fixture threads)', () => {
   it('an unanswered watch-timer wake is ignored, not answered', () => {
     const wake = callComment('watch-19000000009', 'wake call from the watch timer')
     expect(decideOn([wake]).action).toBe('quiet')
-  })
-})
-
-describe('@ForgeClaw mentions (Channel Watch)', () => {
-  const reply = (text) => buildMentionReply({ text, state: fixtureState(), now: NOW, repoSlug: 'DeviousDevv303/forgeclaw', runId: 'cw-1' })
-
-  it('a report ask gets the live verified state, signed, with no loop marker', () => {
-    const r = reply('@ForgeClaw report the board state')
-    expect(r.kind).toBe('report')
-    expect(r.body).toContain('Verified live repo state for **DeviousDevv303/forgeclaw**')
-    expect(r.body).toContain('Channel Watch run cw-1')
-    expect(r.body).not.toContain('forgeclaw-loop:v1')
-  })
-
-  it('a Guardian-class ask is refused by the same classifier the loop uses', () => {
-    for (const [text, words] of [['@ForgeClaw merge PR #12', 'merging a pull request'], ['@ForgeClaw place an order on Kalshi', 'moving money or placing an order'], ['@ForgeClaw paste the API key here', 'handling credentials']]) {
-      const r = reply(text)
-      expect(r.kind, text).toBe('refuse')
-      expect(r.body, text).toContain(`This asks for ${words}.`)
-      expect(r.body, text).toContain('Nothing was executed.')
-    }
-  })
-
-  it('anything else says plainly that Stage 1 cannot do it', () => {
-    const r = reply('@ForgeClaw refactor the funds ledger')
-    expect(r.kind).toBe('other')
-    expect(r.body).toContain('Stage 2 (model-driven work) is not built yet, so nothing was done.')
-  })
-
-  it('a mention reply never answers a channel call', () => {
-    const call = callComment('fc-m', 'report status')
-    const parsed = parseCalls([call], { owner: OWNER })[0]
-    const posted = comment(`${reply('@ForgeClaw report status fc-m').body}`, { author: 'github-actions[bot]' })
-    expect(isAnswered(parsed, [call, posted], { owner: OWNER })).toBe(false)
   })
 })

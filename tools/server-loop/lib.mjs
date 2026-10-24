@@ -76,29 +76,15 @@ export function parseCalls(comments, { owner } = {}) {
  * makes a duplicate tick (a manual re-dispatch right after an answer) a
  * no-op instead of a double answer.
  */
-export function isAnswered(call, comments, { owner } = {}) {
+export function isAnswered(call, comments) {
   return comments.some(
-    (c) => c.id > call.commentId && (c.body ?? '').includes(call.id) && (!owner || canAnswer(c, call, owner)),
+    (c) => c.id > call.commentId && (c.body ?? '').includes(call.id),
   )
-}
-
-/**
- * Who can answer a call when the owner is known: the owner's own comments (every lane posts as him) and the loop's
- * machine-marked posts (made with the workflow token, so authored by github-actions[bot]). Nobody else: once agents
- * reply on the channel through the Channel Watch (as github-actions[bot], HTML comments stripped), a reply that only
- * quotes a call id must not silently close that call.
- */
-const LOOP_AUTHOR = 'github-actions[bot]'
-function canAnswer(comment, call, owner) {
-  if (comment.user?.login === owner) return true
-  const body = comment.body ?? ''
-  return comment.user?.login === LOOP_AUTHOR &&
-    (body.includes(loopAnswerMarker(call.id)) || body.includes(loopRefusalMarker(call.id)))
 }
 
 /** Every call in the thread that nobody has answered yet, oldest first. */
 export function findUnansweredCalls(comments, opts = {}) {
-  return parseCalls(comments, opts).filter((call) => !isAnswered(call, comments, opts))
+  return parseCalls(comments, opts).filter((call) => !isAnswered(call, comments))
 }
 
 /**
@@ -285,45 +271,4 @@ export function decide({ comments, state, now, repoSlug, runId, owner }) {
     }
   }
   return { action: 'quiet' }
-}
-
-/**
- * ForgeClaw's reply to an @ForgeClaw mention on any issue, PR or Discussion (the Channel Watch, channel-watch.yml,
- * hands the mention text here through mention.mjs). Same classifier and Guardian policy as a channel call, so the
- * rules live in one place: report -> the live verified state; Guardian class -> a refusal; anything else -> a plain
- * statement that Stage 1 cannot do it. No loop marker: a mention is not a channel call and must not answer one.
- */
-export function buildMentionReply({ text, state, now, repoSlug, runId }) {
-  const cls = classifyCall(text)
-  const sign =
-    '— ForgeClaw server loop · Stage 1 (deterministic — no model calls were made), ' +
-    `Channel Watch run ${runId}.`
-  if (cls.kind === 'refuse') {
-    return {
-      kind: 'refuse',
-      body: [
-        `This asks for ${GUARD_WORDS[cls.guard]}. That stays the owner's hands alone — ForgeClaw never merges, ` +
-          'never moves money or places orders, and never touches credentials, on any surface, including this one. ' +
-          'Nothing was executed.',
-        '',
-        sign,
-      ].join('\n'),
-    }
-  }
-  if (cls.kind === 'report') {
-    return {
-      kind: 'report',
-      body: [assembleReport(state, { now, repoSlug }), '', `${sign} State above was fetched live this run.`].join('\n'),
-    }
-  }
-  return {
-    kind: 'other',
-    body: [
-      'ForgeClaw Stage 1 answers status and report asks from live repository state, and refuses merges, money and ' +
-        'credentials. This ask is neither, and Stage 2 (model-driven work) is not built yet, so nothing was done. ' +
-        'For model work, ask in the ForgeClaw app.',
-      '',
-      sign,
-    ].join('\n'),
-  }
 }
