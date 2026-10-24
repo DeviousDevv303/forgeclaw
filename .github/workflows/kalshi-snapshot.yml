@@ -1,0 +1,96 @@
+# ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+# Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+name: Kalshi Snapshot
+
+# WHY this workflow exists: the server-side loop, Stage 2. The app's Kalshi
+# price reads originate from the owner's browser, and Kalshi rate-limits
+# that per-IP quota (the 429 wall: spaced reads dying mid-answer, the app
+# degrading to last-good snapshots or owner-typed prices). This workflow
+# moves the read server-side: every 10 minutes it fetches the watchlist
+# series from Kalshi's PUBLIC market-data API (unauthenticated — no keys,
+# no credentials anywhere in this path) and commits ONE JSON snapshot to
+# the kalshi-snapshot-data branch. The app reads that file and only falls
+# back to a direct read when the snapshot is stale or does not cover the
+# query. Money paths never touch the snapshot: an approval still re-reads
+# the live price before anything is sent.
+#
+# The data branch is the whole interface: main's history stays clean, and
+# the snapshot commits keep the repository active. If the fetch fails, the
+# fetcher still writes its snapshot — with an error field and no prices —
+# and the publish step commits it anyway: a visible failure in the data,
+# never a silent gap or a stale file pretending to be fresh. The app fails
+# closed on the error field.
+#
+# Two copies: this file lives at .github/workflows/kalshi-snapshot.yml (the
+# live copy, which takes effect only from the default branch) and at
+# tools/server-loop/kalshi-snapshot.yml (the review copy, which Muse's
+# connector can edit because its GitHub App cannot write .github/workflows,
+# 403). They must stay byte-identical; kalshiServerSnapshot.test.ts fails if
+# they drift. A change to the live copy is the owner's tap (protected path).
+
+on:
+  schedule:
+    # 10 minutes against the app's 15-minute staleness limit
+    # (KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS): GitHub's scheduler is best effort
+    # and ticks arrive late or are skipped, so the cadence leaves room for
+    # one late tick before the file goes stale. A run of missed ticks ages
+    # the snapshot out instead of letting it pose as current.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  # contents: write is for ONE thing: pushing the snapshot commit to the
+  # kalshi-snapshot-data branch. This workflow opens no PRs, merges
+  # nothing, and touches no other branch.
+  contents: write
+
+# Two publishers racing the data branch would interleave half-written
+# states; serialize, and never cancel a publish mid-push.
+concurrency:
+  group: kalshi-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the fetcher (main)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Fetch Kalshi prices into a snapshot
+        id: fetch
+        # A failed fetch is a publishable outcome, not a stopped run: the
+        # fetcher writes its error snapshot (error field, no prices) before
+        # exiting non-zero, and that file is exactly what must reach the
+        # data branch so the failure is visible in the data.
+        continue-on-error: true
+        run: node tools/server-loop/kalshi-snapshot.mjs "$RUNNER_TEMP/kalshi-snapshot.json"
+
+      - name: Check out the data branch
+        uses: actions/checkout@v4
+        with:
+          ref: kalshi-snapshot-data
+          path: snapshot-data
+
+      - name: Publish the snapshot to the data branch
+        working-directory: snapshot-data
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/kalshi-snapshot.json" kalshi-snapshot.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add kalshi-snapshot.json
+          if git diff --cached --quiet; then
+            echo "Snapshot unchanged; nothing to publish."
+            exit 0
+          fi
+          git commit -m "kalshi snapshot $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin HEAD:kalshi-snapshot-data
