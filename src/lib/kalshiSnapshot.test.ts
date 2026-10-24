@@ -70,7 +70,7 @@ describe('last-good snapshot fallback', () => {
     expect(err).toBeInstanceOf(KalshiError)
     expect(err.httpStatus).toBe(429)
     expect(err.retryAfter).toBeNull()
-    expect(err.message).toMatch(/^Kalshi rate-limited this read: HTTP 429 on \/markets after 2 spaced retries · Retry-After: none · not an empty market list\. No snapshot within 15 min to fall back to/)
+    expect(err.message).toMatch(/^Kalshi rate-limited this read: HTTP 429 on \/markets after 2 spaced retries · Retry-After: none · not an empty market list\. Do not repeat this call in this run: .* No snapshot within 15 min to fall back to/)
   })
 
   it('the age limit is per call: maxSnapshotAgeMs widens or narrows it', async () => {

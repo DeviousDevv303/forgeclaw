@@ -1,7 +1,9 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { baselineToolNames, SHELL_EXEC_GUIDANCE } from './toolExposure'
+import { baselineToolNames, FUNDS_CROWD_MAX_MOVE_POINTS, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_GUIDANCE, SHELL_EXEC_GUIDANCE } from './toolExposure'
+import { FORGE_TOOLS } from './forgeTools'
+import { KALSHI_MAX_RESULTS } from './kalshiMarkets'
 
 // SHELL_EXEC_GUIDANCE makes factual claims about .github/workflows/shell-exec.yml. If the workflow
 // changes (installs deps, deepens the checkout, persists credentials, changes the limit), this fails so
@@ -174,5 +176,49 @@ describe('read-only money baseline', () => {
   it('local and DeepSeek models get no baseline', () => {
     expect(baselineToolNames('local')).toEqual([])
     expect(baselineToolNames('deepseek')).toEqual([])
+  })
+})
+
+describe('funds guidance — fight-card playbook (2026-10-24)', () => {
+  // The playbook is the owner's research method written down: it is read by the model every bet turn, so the
+  // rules that carry the method are pinned here. The drift guards below tie its numbers to the code it describes.
+  const g = FUNDS_GUIDANCE
+  const at = (text: string) => { const i = g.indexOf(text); expect(i, text).toBeGreaterThan(g.indexOf('11) Playbook')); return i }
+
+  it('reads a whole card in one call, with the cap the tool really has, and warns off the filter that hides it', () => {
+    expect(g).toContain('series_ticker KXUFCFIGHT')
+    expect(g).toContain(`limit ${KALSHI_MAX_RESULTS}`)
+    expect(g).toMatch(/never use closes_within_hours on it/)
+    expect(g).toMatch(/Never read a card one fight at a time/)
+    expect(g).toMatch(/If Kalshi answers 429, do not repeat the call in this run/)
+  })
+
+  it('the tool description tells the model the same cap the code enforces', () => {
+    const tool = FORGE_TOOLS.find(t => t.name === 'kalshi_markets')!
+    const limit = (tool.parameters.properties as Record<string, { description: string }>).limit.description
+    expect(limit).toContain(`max ${KALSHI_MAX_RESULTS}`)
+  })
+
+  it('weighs evidence market and sharp books first, then hard facts, then statistics, and the crowd last', () => {
+    const order = [at('(1) The market itself and the sharp books'), at('(2) Hard facts about THIS fight'), at('(3) Statistics'), at('(4) Community opinion')]
+    expect([...order].sort((a, b) => a - b)).toEqual(order)
+    expect(g).toMatch(/carries the LOWEST weight: it is color unless its track record is measured/)
+  })
+
+  it('makes the crowd earn its weight from past fights, with the bars named and zero below them', () => {
+    expect(g).toContain('what forums and public picks said BEFORE comparable past fights and what happened')
+    expect(g).toContain(`fewer than ${FUNDS_CROWD_MIN_COMPARABLE_FIGHTS} comparable fights or a crowd hit rate below ${FUNDS_CROWD_MIN_HIT_RATE_PCT}%`)
+    expect(g).toContain('community weight is zero')
+    expect(g).toContain(`never move your estimate by more than ${FUNDS_CROWD_MAX_MOVE_POINTS} points`)
+    expect(g).toMatch(/Where a rematch exists, also compare what was predicted for the first fight with what happened/)
+    expect(g).toMatch(/Starting defaults, not measured/)
+  })
+
+  it('does not claim access it lacks, and ends in one proposal with a falsifier, or none', () => {
+    expect(g).toMatch(/no live X \(Twitter\) or xAI feed/)
+    expect(g).toMatch(/never cite a forum claim without its link/)
+    expect(g).toMatch(/propose AT MOST ONE position, with its falsifier/)
+    expect(g).toMatch(/no bet clears the bar and propose nothing, which is a correct answer/)
+    expect(g).toMatch(/never write "guaranteed", "lock" or "sure thing"/)
   })
 })

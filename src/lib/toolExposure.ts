@@ -7,6 +7,8 @@
 // requests: "look through my GitHub repo and look for efficiency improvements on workflows" matched
 // nothing, so Claude truthfully said it had no GitHub access, and on earlier turns invented commits.
 
+import { KALSHI_MAX_RESULTS } from './kalshiMarkets'
+
 /** Providers whose models call tools natively and reliably; local llama.cpp is deliberately excluded. */
 export const HOSTED_TOOL_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'moonshot'])
 
@@ -167,6 +169,15 @@ export const FUNDS_LONGSHOT_MAX_PRICE_CENTS = 10
 export const FUNDS_ENSEMBLE_STAND_DOWN_SPREAD_F = 3
 
 /**
+ * Starting defaults for how much a crowd (forums, subreddits, social posts, pick'em polls) may move a combat-card
+ * probability. They are NOT measured: they are conservative placeholders to be re-estimated from the owner's settled
+ * record, the way the weather playbook starts from a stated sigma. Below either bar the crowd is color, weight zero.
+ */
+export const FUNDS_CROWD_MIN_COMPARABLE_FIGHTS = 10
+export const FUNDS_CROWD_MIN_HIT_RATE_PCT = 55
+export const FUNDS_CROWD_MAX_MOVE_POINTS = 2
+
+/**
  * Planning with the owner's money: research, own probability vs price, sized proposals, owner decides.
  * The trading playbook below is Master Money Multiplier, Module 1 (Kalshi), distilled from the
  * 2026-10-23 evidence review (Becker; Bürgi, Deng & Whelan; Crosier; Diercks, Katz & Wright;
@@ -221,7 +232,25 @@ export const FUNDS_GUIDANCE =
   'Your rationale must name the release time and a falsifier — the print that would prove your estimate wrong; no falsifier, no proposal. ' +
   '10) Every bet must carry its evidence on the record: deep_research citations and/or structured data (a weather_forecast, the kalshi_markets order book, price history), ' +
   'a stated confidence, and a falsifier. Put them in funds_propose\'s rationale and sources — a bet without them does not belong in a plan, ' +
-  'and the owner reading it back with /funds plan sees the gap where they are missing.'
+  'and the owner reading it back with /funds plan sees the gap where they are missing. ' +
+  '11) Playbook — fight cards (UFC and other combat sports) and other event contests. READ THE CARD ONCE: call kalshi_markets with series_ticker KXUFCFIGHT ' +
+  '(other MMA: KXMMAFIGHT) and limit ' + KALSHI_MAX_RESULTS + ' — one request returns every open fight on the card (checked 2026-10-24: 14 fights, 28 markets; each fight is one event with two markets, one per fighter, ' +
+  'and the event ticker carries the date). Never read a card one fight at a time, and never use closes_within_hours on it: these markets close about two days after the fight, so that filter hides the whole card. ' +
+  'Use ticker or orderbook only for the one fight you are about to propose. If Kalshi answers 429, do not repeat the call in this run: say so, and use kalshi_owner_prices if the owner can type the prices. ' +
+  'WEIGH EVIDENCE IN THIS ORDER. (1) The market itself and the sharp books: the Kalshi price and the no-vig line at two or more sharp books are the baseline, because they already contain most public information; ' +
+  'your probability starts there, not at your opinion. (2) Hard facts about THIS fight, each with a source: the confirmed matchup, weigh-in results, injuries and withdrawals, short-notice changes, ' +
+  'camp reports from a primary source or two independent outlets, and odds movement. (3) Statistics: record against comparable opposition, finish and decision rates, strike and takedown rates, age, layoff, ' +
+  'weight-class changes, reach and stance — they adjust the baseline, and they are weakest with few fights or a long layoff. (4) Community opinion — forums, subreddits, social posts, fan polls, pick\'em percentages — ' +
+  'carries the LOWEST weight: it is color unless its track record is measured. ' +
+  'MEASURE THE CROWD BEFORE USING IT. For the fighters in this bout (a rematch\'s earlier meeting first), use deep_research to find what forums and public picks said BEFORE comparable past fights and what happened, ' +
+  'and report how many comparable fights you checked, how many the crowd called correctly, and the links. Starting defaults, not measured: with fewer than ' + FUNDS_CROWD_MIN_COMPARABLE_FIGHTS +
+  ' comparable fights or a crowd hit rate below ' + FUNDS_CROWD_MIN_HIT_RATE_PCT + '%, community weight is zero and it appears only as color; above both bars it may break a tie between two candidate probabilities ' +
+  'and may never move your estimate by more than ' + FUNDS_CROWD_MAX_MOVE_POINTS + ' points. Where a rematch exists, also compare what was predicted for the first fight with what happened and say what that shows about the crowd\'s bias ' +
+  '(for example, overrating the earlier winner). "Public money inflates favorites on Kalshi" is a hypothesis: test it against line movement and the Kalshi price versus the no-vig line, and drop it if the numbers do not show it. ' +
+  'WHAT YOU CAN AND CANNOT READ: deep_research and web_search return only pages they actually fetched. The app has no live X (Twitter) or xAI feed, so never say you read X posts unless a returned source is an x.com address; ' +
+  'never cite a forum claim without its link. THE OUTPUT: if the owner\'s own framework appears in this prompt, structure the analysis with it; give your probability as a range with the evidence behind each end; ' +
+  'compute the net edge exactly as in rule 3; propose AT MOST ONE position, with its falsifier (the result or news that would prove you wrong) — or say that no bet clears the bar and propose nothing, which is a correct answer. ' +
+  'Nothing predicts a fight with certainty: never write "guaranteed", "lock" or "sure thing", and say what you could not verify.'
 
 /** How a hosted model improves ForgeClaw itself: evidence first, smallest safe proposal, PR only. */
 export const SELF_SCULPT_GUIDANCE =
