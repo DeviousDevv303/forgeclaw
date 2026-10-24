@@ -138,8 +138,12 @@ export const EN = {
   'test.testing': 'Testing...',
   'corpus.noWebhook': 'No webhook configured; local-only mode remains active.',
   'corpus.syncing': 'Syncing pending candidates…',
-  'corpus.syncedOne': 'Synced {n} candidate update; admission still requires authorization.',
-  'corpus.syncedMany': 'Synced {n} candidate updates; admission still requires authorization.',
+  // F-023: the old second clause ("admission still requires authorization") stated the
+  // pre-#212 rule. Since #212 the live route is convergence without authorization
+  // (corpus.ts convergencePhase; README "NEXUS recursive learning"); the signed path
+  // has no trusted key and no UI offers it, so the old wording promised the impossible.
+  'corpus.syncedOne': 'Synced {n} candidate update; evidence-backed records converge on their own (nexus-convergence).',
+  'corpus.syncedMany': 'Synced {n} candidate updates; evidence-backed records converge on their own (nexus-convergence).',
   'corpus.unavailableOne': 'Webhook unavailable; {n} candidate remains local.',
   'corpus.unavailableMany': 'Webhook unavailable; {n} candidates remain local.',
 
@@ -570,8 +574,8 @@ const ES: Record<Key, string> = {
   'test.testing': 'Probando...',
   'corpus.noWebhook': 'No hay webhook configurado; sigue activo el modo solo local.',
   'corpus.syncing': 'Sincronizando candidatos pendientes…',
-  'corpus.syncedOne': 'Se sincronizó {n} actualización de candidato; la admisión aún requiere autorización.',
-  'corpus.syncedMany': 'Se sincronizaron {n} actualizaciones de candidatos; la admisión aún requiere autorización.',
+  'corpus.syncedOne': 'Se sincronizó {n} actualización de candidato; los registros con evidencia convergen por sí solos (nexus-convergence).',
+  'corpus.syncedMany': 'Se sincronizaron {n} actualizaciones de candidatos; los registros con evidencia convergen por sí solos (nexus-convergence).',
   'corpus.unavailableOne': 'Webhook no disponible; {n} candidato sigue en local.',
   'corpus.unavailableMany': 'Webhook no disponible; {n} candidatos siguen en local.',
 
