@@ -8,6 +8,7 @@
 // nothing, so Claude truthfully said it had no GitHub access, and on earlier turns invented commits.
 
 import { KALSHI_MAX_RESULTS } from './kalshiMarkets'
+import { FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT, fightTemplateSkeleton } from './fightResearch'
 
 /** Providers whose models call tools natively and reliably; local llama.cpp is deliberately excluded. */
 export const HOSTED_TOOL_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'moonshot'])
@@ -168,14 +169,6 @@ export const FUNDS_LONGSHOT_MAX_PRICE_CENTS = 10
  */
 export const FUNDS_ENSEMBLE_STAND_DOWN_SPREAD_F = 3
 
-/**
- * Starting defaults for how much a crowd (forums, subreddits, social posts, pick'em polls) may move a combat-card
- * probability. They are NOT measured: they are conservative placeholders to be re-estimated from the owner's settled
- * record, the way the weather playbook starts from a stated sigma. Below either bar the crowd is color, weight zero.
- */
-export const FUNDS_CROWD_MIN_COMPARABLE_FIGHTS = 10
-export const FUNDS_CROWD_MIN_HIT_RATE_PCT = 55
-export const FUNDS_CROWD_MAX_MOVE_POINTS = 2
 
 /**
  * Planning with the owner's money: research, own probability vs price, sized proposals, owner decides.
@@ -242,14 +235,19 @@ export const FUNDS_GUIDANCE =
   'camp reports from a primary source or two independent outlets, and odds movement. (3) Statistics: record against comparable opposition, finish and decision rates, strike and takedown rates, age, layoff, ' +
   'weight-class changes, reach and stance — they adjust the baseline, and they are weakest with few fights or a long layoff. (4) Community opinion — forums, subreddits, social posts, fan polls, pick\'em percentages — ' +
   'carries the LOWEST weight: it is color unless its track record is measured. ' +
-  'MEASURE THE CROWD BEFORE USING IT. For the fighters in this bout (a rematch\'s earlier meeting first), use deep_research to find what forums and public picks said BEFORE comparable past fights and what happened, ' +
-  'and report how many comparable fights you checked, how many the crowd called correctly, and the links. Starting defaults, not measured: with fewer than ' + FUNDS_CROWD_MIN_COMPARABLE_FIGHTS +
-  ' comparable fights or a crowd hit rate below ' + FUNDS_CROWD_MIN_HIT_RATE_PCT + '%, community weight is zero and it appears only as color; above both bars it may break a tie between two candidate probabilities ' +
-  'and may never move your estimate by more than ' + FUNDS_CROWD_MAX_MOVE_POINTS + ' points. Where a rematch exists, also compare what was predicted for the first fight with what happened and say what that shows about the crowd\'s bias ' +
-  '(for example, overrating the earlier winner). "Public money inflates favorites on Kalshi" is a hypothesis: test it against line movement and the Kalshi price versus the no-vig line, and drop it if the numbers do not show it. ' +
+  'MEASURE THE CROWD BEFORE USING IT. The owner\'s sentiment source is Reddit and similar forums (for example r/MMA threads on the fighters, a rematch\'s earlier-meeting threads first): ' +
+  'use deep_research with queries aimed at them, read what was said BEFORE comparable past fights against what happened, and report how many comparable fights you checked, how many the crowd called correctly, and the links. ' +
+  'Starting defaults, not measured: with fewer than ' + FUNDS_CROWD_MIN_COMPARABLE_FIGHTS + ' comparable fights or a crowd hit rate below ' + FUNDS_CROWD_MIN_HIT_RATE_PCT +
+  '%, the crowd\'s weight in your fusion is 0%; above both bars it is at most ' + FUNDS_SENTIMENT_MAX_WEIGHT_PCT + '% (the owner\'s cap, until the settled ledger has earned it more). ' +
+  'Where a rematch exists, also compare what was predicted for the first fight with what happened and say what that shows about the crowd\'s bias (for example, overrating the earlier winner). ' +
+  '"Public money inflates favorites on Kalshi" is a hypothesis: test it against line movement and the Kalshi price versus the no-vig line, and drop it if the numbers do not show it. ' +
   'WHAT YOU CAN AND CANNOT READ: deep_research and web_search return only pages they actually fetched. The app has no live X (Twitter) or xAI feed, so never say you read X posts unless a returned source is an x.com address; ' +
-  'never cite a forum claim without its link. THE OUTPUT: if the owner\'s own framework appears in this prompt, structure the analysis with it; give your probability as a range with the evidence behind each end; ' +
-  'compute the net edge exactly as in rule 3; propose AT MOST ONE position, with its falsifier (the result or news that would prove you wrong) — or say that no bet clears the bar and propose nothing, which is a correct answer. ' +
+  'never cite a forum claim without its link. If the sentiment scan returns nothing usable (a blocked or empty source), write it as "unavailable — <reason>": that is an allowed answer and the crowd then weighs 0%; a silent gap is not. ' +
+  'THE TEMPLATE (enforced): funds_propose refuses a proposal on a fight market (series KXUFCFIGHT, KXMMAFIGHT, KXMMAEXFIGHT) unless its rationale has these seven labeled lines:\n' + fightTemplateSkeleton() + '\n' +
+  'The ledger checks that each section is there and not empty, that BOOK LINE gives a no-vig number, that SENTIMENT SCAN links what it scanned (or says unavailable, with a reason), that FUSION\'s range contains your probability ' +
+  'and states "sentiment weight: N%" within what the crowd has earned, that EDGE\'s net edge in cents clears the bar in rule 3 and cannot exceed probability minus price, and that BOOK LINE and STATS & FACTS are not both unavailable. ' +
+  'It cannot check that your research is true: say what you could not verify. THE OUTPUT: if the owner\'s own framework appears in this prompt, structure the analysis with it; ' +
+  'propose AT MOST ONE position, with its falsifier (the result or news that would prove you wrong) — or say that no bet clears the bar and propose nothing, which is a correct answer. ' +
   'Nothing predicts a fight with certainty: never write "guaranteed", "lock" or "sure thing", and say what you could not verify.'
 
 /** How a hosted model improves ForgeClaw itself: evidence first, smallest safe proposal, PR only. */

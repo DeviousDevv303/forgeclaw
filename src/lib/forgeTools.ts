@@ -50,6 +50,7 @@ import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
 import { weatherForecast } from './weather'
 import { fetchKalshiMarket, KalshiError, runKalshiMarkets, runKalshiOrderbook, type KalshiDeps } from './kalshiMarkets'
+import { kalshiReadSigner } from './kalshiReadSigner'
 import { formatOwnerPrices, parseOwnerPrices } from './kalshiOwnerPrices'
 import { createKalshiClient, relayFallbackFetcher } from './kalshiTrade'
 import { effectiveKalshiRelayUrl, loadKalshiCredentials } from './kalshiAuth'
@@ -850,11 +851,17 @@ export { toolFetch } from './githubFetch'
  * wrapped around this run's bounded fetch, so a browser Kalshi's CORS shuts out falls
  * back to the owner's relay instead of reporting "no markets". The relay URL is the
  * owner's Settings value (then the build's), never visitor mode's.
+ * The reads are signed with the owner's production key when one is saved in this browser
+ * (kalshiReadSigner): signed reads are limited per account, anonymous ones per caller address, and
+ * every in-app read shares the relay's address. A visitor is never signed.
  */
 function kalshiToolDeps(ctx: ToolContext): KalshiDeps {
   const relayUrl = effectiveKalshiRelayUrl()
   const base = (url: string, init?: RequestInit) => toolFetch(ctx, url, init)
-  return { fetcher: relayFallbackFetcher(base, relayUrl), signal: ctx.signal, relayUrl }
+  return {
+    fetcher: relayFallbackFetcher(base, relayUrl), signal: ctx.signal, relayUrl,
+    sign: kalshiReadSigner(isPublicVisitor(ctx.ghToken ?? '', ctx.publicRelayUrl)),
+  }
 }
 
 /**
