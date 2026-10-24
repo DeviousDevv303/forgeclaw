@@ -811,6 +811,71 @@ export class CorpusRepository {
     })
   }
 
+  /**
+   * Stage 3b intake adapter (nexusIntake.ts): the same single candidate path as
+   * appendShellExperience, plus the owner's auto-admission criteria for external
+   * intake (Cristian, 2026-10-24 — audit-adjudicated records whose loop closed are
+   * verified knowledge). When the caller passes `admittedBy`, the record is admitted
+   * exactly the way the convergence rule admits in appendInteraction — the candidate
+   * is marked approved with the marker and a knowledge record is saved — unless the
+   * owner previously removed this exact content (DECLINED), in which case it stays a
+   * candidate and is never re-admitted. Without `admittedBy` this behaves exactly
+   * like appendShellExperience: an unapproved candidate, nothing more.
+   */
+  appendIntakeExperience(input: ShellCorpusExperienceInput, admittedBy?: string): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+    const timestamp = new Date().toISOString()
+    const content = canonicalContent(input)
+    return integrityHash(content).then(integrity => {
+      const interactionId = `interaction-${integrity}`
+      const version = this.nextVersion()
+      const interaction: CorpusRecord = {
+        id: interactionId,
+        corpusId: 'nexus-local',
+        source: input.source || 'nexus-intake',
+        content: input.result,
+        timestamp,
+        version,
+        recordType: 'interaction',
+        integrity,
+        admissionStatus: 'raw',
+        metadata: { input: input.input, runtime: input.runtime, model: input.model, ...input.provenance },
+      }
+      this.saveRecord(interaction)
+      const admit = Boolean(admittedBy) && !readIndex(DECLINED_KEY).includes(integrity)
+      const admitted: Record<string, string> = admit ? { admittedBy: admittedBy as string, admittedAt: timestamp } : {}
+      const candidate: LearningCandidate = {
+        ...interaction,
+        metadata: { ...interaction.metadata, ...admitted },
+        id: `candidate-${integrity}`,
+        recordType: 'learning_candidate',
+        admissionStatus: admit ? 'approved' : 'candidate',
+        sourceInteractionId: interactionId,
+        runtime: input.runtime,
+        model: input.model,
+        input: input.input,
+        context: input.context,
+        generatedResult: input.result,
+        provenance: input.provenance,
+      }
+      this.saveRecord(candidate, true)
+      if (admit) {
+        this.saveRecord({
+          id: `knowledge-${integrity}`,
+          corpusId: interaction.corpusId,
+          source: interaction.source,
+          content: input.result,
+          timestamp,
+          version: this.nextVersion(),
+          recordType: 'knowledge',
+          integrity,
+          admissionStatus: 'approved',
+          metadata: { ...input.provenance, input: input.input, runtime: input.runtime, model: input.model, sourceInteractionId: interactionId, ...admitted },
+        })
+      }
+      return { interaction, candidate }
+    })
+  }
+
   /** Reject a pending candidate durably while preserving the existing states. */
   async rejectCandidate(candidateId: string, reason = 'rejected by validation'): Promise<CorpusRecord | null> {
     const raw = safeGetItem(`${CANDIDATE_PREFIX}${candidateId}`)
