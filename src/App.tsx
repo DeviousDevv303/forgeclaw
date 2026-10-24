@@ -112,6 +112,7 @@ async function resumeOrphanedDeepSeekRun(
 import { useOrchestrator } from './hooks/useOrchestrator'
 import { FailureDashboard } from './components/FailureDashboard'
 import { WhatsAppConnector } from './components/WhatsAppConnector'
+import { waCredentialsConfigured } from './hooks/useWhatsApp'
 import { AgentsPanel } from './components/AgentsPanel'
 import { ReasoningChainComponent } from './components/reasoning/ReasoningChain'
 import { SystemMonitor } from './components/monitor/SystemMonitor'
@@ -817,6 +818,11 @@ function App() {
   // Resolve through the shared auth path so an operator-provided .env seed and the
   // localStorage PAT are both honoured here, not just in the GitHub tool helpers.
   const [ghToken, setGhToken] = useState(() => resolveGithubToken())
+  // F-028: WhatsApp status reads credential COMPLETENESS, not key presence — useWhatsApp's
+  // persist effect writes the (empty) default blob on mount, so `wa_credentials` exists after
+  // Settings is opened once even when nothing is configured. The header dot and the Connectors
+  // panel row both read this one value (see waCredentialsConfigured).
+  const waConfigured = waCredentialsConfigured(safeGetItem('wa_credentials'))
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
@@ -2624,13 +2630,13 @@ function App() {
               >GH</span>
               {/* WhatsApp dot */}
               <span
-                title={t('header.waTitle', { state: t(safeGetItem('wa_credentials') ? 'state.configured' : 'state.notSet') })}
+                title={t('header.waTitle', { state: t(waConfigured ? 'state.configured' : 'state.notSet') })}
                 onClick={() => setActiveTab('settings')}
                 style={{
                   width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
-                  background: safeGetItem('wa_credentials') ? '#22c55e22' : '#1a1a1a',
-                  border: `1px solid ${safeGetItem('wa_credentials') ? '#22c55e' : '#333'}`,
-                  color: safeGetItem('wa_credentials') ? '#22c55e' : '#444',
+                  background: waConfigured ? '#22c55e22' : '#1a1a1a',
+                  border: `1px solid ${waConfigured ? '#22c55e' : '#333'}`,
+                  color: waConfigured ? '#22c55e' : '#444',
                   fontSize: '7px', fontWeight: 'bold', fontFamily: 'monospace',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
@@ -3518,7 +3524,10 @@ function App() {
                       { name: t('connectors.calendar'), icon: '📅', key: 'fc_google_token', connected: !!safeGetItem('fc_google_token') },
                       // F-008: the header WA dot reads `wa_credentials`, so the panel row must too —
                       // a hardcoded false disagrees with the dot whenever credentials exist.
-                      { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: !!safeGetItem('wa_credentials') },
+                      // F-028: both read credential completeness (waConfigured), not key presence —
+                      // the hook persists its empty defaults on mount, so presence is guaranteed
+                      // after Settings is opened once and proved nothing about configuration.
+                      { name: 'WhatsApp', icon: '💬', key: 'fc_whatsapp', connected: waConfigured },
                       // F-009: the approve path refuses ("no Kalshi private key saved…") when only the
                       // key-ID half persisted, so the panel must read the same both-halves signal
                       // (kalshiCredentialPresence) — a key-ID-only state is not connected.

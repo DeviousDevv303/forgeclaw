@@ -31,6 +31,20 @@ const POLL_INTERVAL_MS  = 20_000
 
 const META_API = 'https://graph.facebook.com/v19.0'
 
+/**
+ * F-028: whether the stored credentials are actually usable — all three fields the hook's
+ * `connected` state requires. Key PRESENCE is not evidence: the hook's persist effect writes
+ * the default credentials blob (all three fields empty) on mount, so after Settings is opened
+ * once the `wa_credentials` key exists permanently while nothing is configured. Surfaces that
+ * read presence (the header dot, the Connectors panel row) claimed "configured"/ON for an
+ * unconfigured connector — the inverse of F-008, whose presence-based read overshot for the
+ * same reason. Every WA status surface must read this completeness check instead.
+ */
+export function waCredentialsConfigured(raw: string | null): boolean {
+  const creds = safeJsonParse<Partial<WACredentials>>(raw, {})
+  return !!(creds.phoneNumberId && creds.accessToken && creds.recipientNumber)
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useWhatsApp() {
