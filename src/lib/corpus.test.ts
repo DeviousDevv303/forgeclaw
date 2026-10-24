@@ -19,6 +19,20 @@ class MemoryStorage implements Storage {
 const storage = new MemoryStorage()
 Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
 
+/** Reads an index exactly as stored, in order: a v2 meta object walks its chunk keys; anything else is the v1 array shape. */
+function storedIndexIds(key: string): string[] {
+  const raw = storage.getItem(key)
+  if (!raw) return []
+  const parsed = JSON.parse(raw) as unknown
+  if (Array.isArray(parsed)) return parsed as string[]
+  const meta = parsed as { first: number; last: number }
+  const ids: string[] = []
+  for (let chunk = meta.first; chunk <= meta.last; chunk += 1) {
+    ids.push(...(JSON.parse(storage.getItem(`${key}:chunk:${chunk}`)!) as string[]))
+  }
+  return ids
+}
+
 const RFC8032_PRIVATE_SEED = '9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60'
 const RFC8032_PKCS8_PREFIX = '302e020100300506032b657004220420'
 
@@ -271,9 +285,62 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(repository.getInteractionCount()).toBe(10_000)
     expect(repository.getCandidateCount()).toBe(10_000)
     expect(new CorpusRepository({ mode: 'test' }).getInteractionCount()).toBe(10_000)
-    // 10,000 sequential appends each rewrite an index of up to 10,000 ids: ~31 s alone, so 60 s timed out under suite
-    // load (docs/flakes.md entry 5). One real append is a few ms; only this test's back-to-back volume is quadratic.
+    // The cap holds past 10,000: three more appends evict the three oldest ids and keep the count at the cap.
+    for (let index = 10_000; index < 10_003; index += 1) {
+      await repository.appendInteraction({ input: `synthetic query ${index}`, context: '', result: `synthetic result ${index}`, runtime: 'corpus', model: 'local-model' })
+    }
+    expect(repository.getInteractionCount()).toBe(10_000)
+    const stored = storedIndexIds('forgeclaw_nexus_index_v1')
+    const oldestId = `interaction-${await integrityHash(['synthetic query 0', '', 'synthetic result 0', 'corpus', 'local-model'].join('\n'))}`
+    const newestId = `interaction-${await integrityHash(['synthetic query 10002', '', 'synthetic result 10002', 'corpus', 'local-model'].join('\n'))}`
+    expect(stored).toHaveLength(10_000)
+    expect(stored.includes(oldestId)).toBe(false)
+    expect(stored[stored.length - 1]).toBe(newestId)
+    // Appends rewrite only the index's tail chunk (the chunked index in corpus.ts), so this volume stays
+    // seconds-class. The 180 s timeout is leftover headroom from when every append rewrote the whole index of up
+    // to 10,000 ids (~31 s alone; 60 s timed out under suite load, docs/flakes.md entry 5).
   }, 180_000)
+
+  it('converts a pre-chunking (v1 array) index losslessly on the first append after upgrade', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    const appended: string[] = []
+    for (let index = 0; index < 3; index += 1) {
+      const { interaction } = await repository.appendInteraction({ input: `legacy query ${index}`, context: '', result: `legacy result ${index}`, runtime: 'corpus', model: 'local-model' })
+      appended.push(interaction.id)
+    }
+    // Flatten both indexes back to the v1 shape the deployed app used to store: one JSON array at the index key,
+    // no chunk keys. This is the exact stored state an existing profile carries into the upgraded build.
+    for (const key of ['forgeclaw_nexus_index_v1', 'forgeclaw_nexus_candidate_index_v1']) {
+      const ids = storedIndexIds(key)
+      const meta = JSON.parse(storage.getItem(key)!) as { first: number; last: number }
+      for (let chunk = meta.first; chunk <= meta.last; chunk += 1) storage.removeItem(`${key}:chunk:${chunk}`)
+      storage.setItem(key, JSON.stringify(ids))
+    }
+    expect(storedIndexIds('forgeclaw_nexus_index_v1')).toEqual(appended)
+    const { interaction } = await repository.appendInteraction({ input: 'post-upgrade query', context: '', result: 'post-upgrade result', runtime: 'corpus', model: 'local-model' })
+    expect(repository.getInteractionCount()).toBe(4)
+    expect(repository.getCandidateCount()).toBe(4)
+    // Same ids, same order, with the new id appended — the conversion lost nothing.
+    expect(storedIndexIds('forgeclaw_nexus_index_v1')).toEqual([...appended, interaction.id])
+  })
+
+  it('rewrites only the tail chunk when appending to an index that spans several chunks', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    // 512 ids per chunk (corpus.ts INDEX_CHUNK_SIZE): 600 interactions span two chunks in each index.
+    for (let index = 0; index < 600; index += 1) {
+      await repository.appendInteraction({ input: `chunked query ${index}`, context: '', result: `chunked result ${index}`, runtime: 'corpus', model: 'local-model' })
+    }
+    const headBefore = storage.getItem('forgeclaw_nexus_index_v1:chunk:0')
+    const candidateHeadBefore = storage.getItem('forgeclaw_nexus_candidate_index_v1:chunk:0')
+    expect(headBefore).not.toBeNull()
+    expect(candidateHeadBefore).not.toBeNull()
+    await repository.appendInteraction({ input: 'one more query', context: '', result: 'one more result', runtime: 'corpus', model: 'local-model' })
+    // The quadratic cost this pins: an append must not rewrite earlier chunks of either index.
+    expect(storage.getItem('forgeclaw_nexus_index_v1:chunk:0')).toBe(headBefore)
+    expect(storage.getItem('forgeclaw_nexus_candidate_index_v1:chunk:0')).toBe(candidateHeadBefore)
+    expect(repository.getInteractionCount()).toBe(601)
+    expect(repository.getCandidateCount()).toBe(601)
+  })
 })
 
 describe('CORPUS admission authorization conformance', () => {
