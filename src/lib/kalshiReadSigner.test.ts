@@ -294,14 +294,14 @@ describe('a paused signature is visible, not silent', () => {
   it('says nothing before any refusal, and again nothing once the pause has run out', async () => {
     expect(describeSignedReadsPause(1_000_000)).toBeNull()
     const at = await pauseSigning()
-    expect(describeSignedReadsPause(at)).toContain('Signed Kalshi reads are paused until')
+    expect(describeSignedReadsPause(at)).toContain('Signed market reads are paused until')
     expect(describeSignedReadsPause(at + KALSHI_SIGNED_READ_COOLDOWN_MS)).toBeNull()
   })
 
   it('names the end of the pause in UTC and why: the HTTP status Kalshi answered', async () => {
     const at = await pauseSigning(403)
     const until = new Date(at + KALSHI_SIGNED_READ_COOLDOWN_MS).toISOString().slice(11, 19)
-    expect(describeSignedReadsPause(at)).toBe(`Signed Kalshi reads are paused until ${until} UTC (Kalshi answered the signed read with HTTP 403); market reads are going out anonymously and may be rate-limited.`)
+    expect(describeSignedReadsPause(at)).toBe(`Signed market reads are paused until ${until} UTC (Kalshi answered the signed read with HTTP 403); market reads are going out anonymously and may be rate-limited.`)  // F-024: scoped to market reads — kalshiTrade signs every attempt, no pause
   })
 
   it('a key that cannot sign is named by the auth module’s own message; any other error shows only a generic reason', async () => {
@@ -341,7 +341,7 @@ describe('a paused signature is visible, not silent', () => {
     const err = await runKalshiMarkets({ ticker: market.ticker }, { fetcher: async () => (++n === 1 ? reply(401) : reply(429)), sign: signer, now: () => NOW, snapshots: null, ...time }).catch(e => e)
     expect(err.message).toMatch(/rate-limited this read: HTTP 429/)
     expect(err.message).toContain('kalshi_owner_prices')
-    expect(err.message).toContain('Signed Kalshi reads are paused until')
+    expect(err.message).toContain('Signed market reads are paused until')
     expect(err.message).toContain('HTTP 401')
   })
 
