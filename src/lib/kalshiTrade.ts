@@ -18,7 +18,7 @@
  */
 
 import { kalshiBaseUrl, signKalshiRequest, type KalshiCredentials } from './kalshiAuth'
-import { parseDollars, parseExchangeIndex } from './kalshiMarkets'
+import { parseDollars, parseExchangeIndexStrict } from './kalshiMarkets'
 
 export class KalshiApiError extends Error {
   status: number
@@ -81,12 +81,52 @@ export function relayFallbackFetcher(baseFetcher: KalshiBaseFetcher, relayUrl: s
   }
 }
 
+/** One shard's balance, from the balance response's `balance_breakdown` entries. */
+export interface KalshiShardBalance {
+  exchangeIndex: number
+  /** That shard's available balance in dollars (the entry's `balance`, parsed). */
+  balanceDollars: number
+}
+
 export interface KalshiBalance {
   /** Available balance in whole cents (Kalshi's `balance`). */
   balanceCents: number
   /** Available balance in dollars (Kalshi's `balance_dollars`, parsed). */
   balanceDollars: number
   portfolioValueCents: number
+  /**
+   * When Kalshi last updated the balance (its `updated_ts`, whole seconds), or null
+   * when the response carried no parseable timestamp. Carried for display honesty:
+   * a live value is shown with the exchange's own update time, never implied fresh.
+   */
+  updatedTs: number | null
+  /**
+   * Per-shard balances from `balance_breakdown`, or null when the response omitted
+   * the field entirely. Null and [] are different facts: "not reported" is never
+   * rendered as a list of zero shards, and a reported shard that is missing from
+   * the list is "not reported", never $0.
+   */
+  breakdown: KalshiShardBalance[] | null
+}
+
+/**
+ * Parse `balance_breakdown` defensively: the field is an array of
+ * {exchange_index, balance} entries; an entry that does not parse cleanly is
+ * dropped, never guessed at. A non-array value means the breakdown was not
+ * reported, which is null, not an empty list.
+ */
+export function parseBalanceBreakdown(value: unknown): KalshiShardBalance[] | null {
+  if (!Array.isArray(value)) return null
+  const out: KalshiShardBalance[] = []
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue
+    const record = entry as Record<string, unknown>
+    const exchangeIndex = parseExchangeIndexStrict(record.exchange_index)
+    const balance = num(record.balance)
+    if (exchangeIndex === null || balance === undefined) continue
+    out.push({ exchangeIndex, balanceDollars: balance })
+  }
+  return out
 }
 
 export interface KalshiOrderResult {
@@ -137,11 +177,14 @@ export interface KalshiMarketQuote {
   status?: string
   result?: string
   /**
-   * The market's exchange shard (its record's `exchange_index`; 0 when Kalshi omits
-   * it — Kalshi's own default). An order on this market draws only on this shard's
-   * balance, so the approval path checks this shard, not just the all-shards total.
+   * The market's exchange shard (its record's `exchange_index`), or null when the
+   * record carries no readable index. An order on this market draws only on this
+   * shard's balance, so the approval path checks this shard, not just the all-shards
+   * total — and on null it refuses rather than guessing a shard (owner ruling,
+   * 2026-10-23: "Lock it"). Display code keeps using parseExchangeIndex's default;
+   * the quote is the money path, so it reports exactly what the record said.
    */
-  exchangeIndex: number
+  exchangeIndex: number | null
 }
 
 /**
@@ -237,7 +280,9 @@ export function createKalshiClient(creds: KalshiCredentials, fetcher: KalshiFetc
     async getBalance(exchangeIndex?: number) {
       // The shard filter rides as a query parameter, signed exactly like the orders
       // lookup below: the signature covers the path only, the query goes on the URL.
-      const raw = await request<{ balance: number; balance_dollars: string; portfolio_value: number }>(
+      // The response's updated_ts and balance_breakdown ride along for the display
+      // layer; the gate reads balanceDollars exactly as before.
+      const raw = await request<{ balance: number; balance_dollars: string; portfolio_value: number; updated_ts?: unknown; balance_breakdown?: unknown }>(
         'GET', '/trade-api/v2/portfolio/balance',
         exchangeIndex !== undefined ? `exchange_index=${exchangeIndex}` : undefined,
       )
@@ -245,6 +290,8 @@ export function createKalshiClient(creds: KalshiCredentials, fetcher: KalshiFetc
         balanceCents: raw.balance,
         balanceDollars: num(raw.balance_dollars) ?? raw.balance / 100,
         portfolioValueCents: raw.portfolio_value,
+        updatedTs: num(raw.updated_ts) ?? null,
+        breakdown: parseBalanceBreakdown(raw.balance_breakdown),
       }
     },
 
@@ -346,7 +393,7 @@ export function createKalshiClient(creds: KalshiCredentials, fetcher: KalshiFetc
       return {
         yesAsk: parseDollars(raw.market.yes_ask_dollars),
         noAsk: parseDollars(raw.market.no_ask_dollars),
-        exchangeIndex: parseExchangeIndex(raw.market.exchange_index),
+        exchangeIndex: parseExchangeIndexStrict(raw.market.exchange_index),
         ...(typeof raw.market.status === 'string' ? { status: raw.market.status } : {}),
         ...(typeof raw.market.result === 'string' && raw.market.result ? { result: raw.market.result } : {}),
       }

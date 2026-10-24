@@ -35,6 +35,7 @@ import {
   NOT_SAVED_WARNING, type FundsPosition, type FundsState,
 } from './fundsLedger'
 import { loadOwnerScaffold, scaffoldPhases } from './ownerScaffold'
+import { readKalshiBalanceBlock } from './kalshiBalanceDisplay'
 import { KalshiApiError, KalshiNetworkError, createKalshiClient, orderForProposal, relayFallbackFetcher, type KalshiClient, type KalshiExistingOrder, type KalshiFetcher, type KalshiOrderLookup } from './kalshiTrade'
 
 export interface KalshiFailureNote {
@@ -241,6 +242,17 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
       return `Not placed: the price moved from ${money(position.price)} to ${money(quotedPrice)}, past your tolerance of ${state.limits.toleranceCents}¢ (change it with /funds limits tolerance=<cents>). Nothing was spent; the proposal is unchanged.`
     }
 
+    // 1b. The shard lock (owner ruling, 2026-10-23: "Lock it"): the quote reports the
+    // market's shard as null when Kalshi's record carries no readable exchange_index.
+    // A real order draws on exactly one shard, and a shard that cannot be determined
+    // cannot be balance-checked — so a real proposal refuses here, before any balance
+    // read, instead of inheriting a default shard it never verified. Paper proposals
+    // move no money and are not gated on the shard.
+    if (position.mode === 'real' && quote.exchangeIndex === null) {
+      note('balance', `Shard could not be determined for ${position.market}: the market record carried no readable exchange_index.`, {})
+      return `Not placed: the exchange shard for ${position.market} could not be determined from Kalshi's market record, so the balance this order would draw on cannot be verified. ForgeClaw will not guess a shard — a guessed shard is how an order gets checked against the wrong money. Nothing was spent; the proposal is unchanged.`
+    }
+
     // 2. Balance gate against Kalshi's real balance.
     let balanceDollars: number
     try {
@@ -261,19 +273,23 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
     // the aggregate read above cannot prove that shard holds anything. Read the
     // market's shard and hold the same stake + fees against it. A shard whose
     // balance cannot be read is unverified, and an unverified shard is never
-    // treated as funded: no order is sent either way.
+    // treated as funded: no order is sent either way. A null shard never reaches
+    // here for a real proposal (the lock at 1b refused it); the guard below is
+    // what keeps that true by construction.
     const shardIndex = quote.exchangeIndex
-    let shardBalanceDollars: number
-    try {
-      shardBalanceDollars = (await client.getBalance(shardIndex)).balanceDollars
-    } catch (error) {
-      if (error instanceof KalshiNetworkError) { note('balance', `Shard ${shardIndex} balance check unreachable for ${id}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi to verify your balance on shard ${shardIndex} (${error.message}). A shard whose balance cannot be verified is never treated as funded. Nothing was spent; the proposal is unchanged.` }
-      if (error instanceof KalshiApiError) { note('balance', `Kalshi refused the shard ${shardIndex} balance check for ${id} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the balance check for shard ${shardIndex} (${error.code}: ${error.message}), so that shard's balance could not be verified. Nothing was spent; the proposal is unchanged.` }
-      throw error
-    }
-    if (shardBalanceDollars + 1e-9 < needed) {
-      note('balance', `Shard ${shardIndex} balance ${shardBalanceDollars} cannot cover ${needed} for ${id} (aggregate ${balanceDollars}).`, {})
-      return `Not placed: Kalshi splits your balance across exchange shards, and ${position.market} trades on shard ${shardIndex}, which holds ${money(shardBalanceDollars)}${envNote}. This order needs about ${money(needed)} (${position.contracts} contracts at ${money(quotedPrice)} + ~${money(feeAtLive)} fees). Your balance across all shards is ${money(balanceDollars)}, but an order can only draw on its own market's shard — the funds for this one sit on a different shard. ForgeClaw never moves funds between shards automatically (the Kalshi app moves them for you when you trade there). Nothing was spent; the proposal is unchanged.`
+    if (shardIndex !== null) {
+      let shardBalanceDollars: number
+      try {
+        shardBalanceDollars = (await client.getBalance(shardIndex)).balanceDollars
+      } catch (error) {
+        if (error instanceof KalshiNetworkError) { note('balance', `Shard ${shardIndex} balance check unreachable for ${id}: ${error.message}`, {}); return `Not placed: this browser could not reach Kalshi to verify your balance on shard ${shardIndex} (${error.message}). A shard whose balance cannot be verified is never treated as funded. Nothing was spent; the proposal is unchanged.` }
+        if (error instanceof KalshiApiError) { note('balance', `Kalshi refused the shard ${shardIndex} balance check for ${id} (${error.code}: ${error.message}).`, { httpStatus: error.status }); return `Not placed: Kalshi refused the balance check for shard ${shardIndex} (${error.code}: ${error.message}), so that shard's balance could not be verified. Nothing was spent; the proposal is unchanged.` }
+        throw error
+      }
+      if (shardBalanceDollars + 1e-9 < needed) {
+        note('balance', `Shard ${shardIndex} balance ${shardBalanceDollars} cannot cover ${needed} for ${id} (aggregate ${balanceDollars}).`, {})
+        return `Not placed: Kalshi splits your balance across exchange shards, and ${position.market} trades on shard ${shardIndex}, which holds ${money(shardBalanceDollars)}${envNote}. This order needs about ${money(needed)} (${position.contracts} contracts at ${money(quotedPrice)} + ~${money(feeAtLive)} fees). Your balance across all shards is ${money(balanceDollars)}, but an order can only draw on its own market's shard — the funds for this one sit on a different shard. ForgeClaw never moves funds between shards automatically (the Kalshi app moves them for you when you trade there). Nothing was spent; the proposal is unchanged.`
+      }
     }
     livePrice = quotedPrice
     return null
@@ -657,13 +673,11 @@ export async function runFundsCommandWithExecution(text: string, deps: KalshiExe
     const base = runFundsCommand(text)
     const resolved = resolveClient(deps)
     if (!resolved || base === null) return base
-    try {
-      const balance = await resolved.client.getBalance()
-      return `${base}\nKalshi balance (live, ${resolved.creds.env}): ${money(balance.balanceDollars)}.`
-    } catch (error) {
-      const why = error instanceof KalshiApiError ? `Kalshi refused (${error.code}: ${error.message})` : error instanceof KalshiNetworkError ? 'this browser could not reach Kalshi' : 'unknown error'
-      return `${base}\nKalshi balance: could not be read — ${why}.`
-    }
+    // The shared Kalshi (live) block (kalshiBalanceDisplay): per-shard balances,
+    // timestamps, and the last-good/STALE fallback — the same block the funds_status
+    // tool and the Funds panel show. The ledger above it stays the ledger.
+    const block = await readKalshiBalanceBlock(resolved.client, { env: resolved.creds.env, now: deps.now })
+    return `${base}\n${block}`
   }
   return runFundsCommand(text)
 }

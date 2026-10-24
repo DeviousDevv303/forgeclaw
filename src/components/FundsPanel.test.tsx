@@ -11,10 +11,15 @@
  * Item 10 adds: the Approve all button appears only with 2+ proposals waiting.
  */
 
+import { generateKeyPairSync, webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { FundsPanel } from './FundsPanel'
 import { applyFundsCommand, emptyFunds, loadFunds, proposePosition, saveFunds, type ProposalInput } from '../lib/fundsLedger'
+import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE } from '../lib/kalshiAuth'
+
+// jsdom's WebCrypto has no Ed25519; sign with Node's, as in kalshiAuth.test.ts.
+Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true })
 
 const NOW = Date.parse('2026-10-22T15:00:00Z')
 
@@ -35,12 +40,29 @@ function seedProposal(market = 'KX-RAIN-OCT'): string {
 }
 
 beforeEach(() => localStorage.clear())
-afterEach(() => cleanup())
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 describe('FundsPanel', () => {
   it('renders nothing when no proposal is waiting', () => {
     const { container } = render(<FundsPanel onCommand={() => {}} refreshKey={0} />)
     expect(container.firstChild).toBeNull()
+  })
+
+  it('renders the Kalshi (live) balance with no proposal waiting, when credentials are saved (balance plan, 2026-10-23)', async () => {
+    const { privateKey } = generateKeyPairSync('ed25519')
+    localStorage.setItem(KALSHI_KEY_ID_STORAGE, 'panel-test-key')
+    localStorage.setItem(KALSHI_PRIVATE_KEY_STORAGE, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      balance: 2500, balance_dollars: '25.0000', portfolio_value: 2500, updated_ts: 1761240000,
+      balance_breakdown: [
+        { exchange_index: 0, balance: '25.0000' },
+        { exchange_index: 3, balance: '0.0000' },
+      ],
+    }), { status: 200 })))
+    render(<FundsPanel onCommand={() => {}} refreshKey={0} />)
+    expect(await screen.findByText(/Total across shards — orders spend from one shard: \$25\.00/)).toBeTruthy()
+    expect(screen.getByText(/shard 3 \(sports\): \$0\.00/)).toBeTruthy()
+    expect(screen.queryByText('Funds — proposals waiting')).toBeNull()
   })
 
   it('lists the proposal and sends the exact approve / reject commands', () => {
