@@ -31,6 +31,17 @@ function seedProposal(side: 'yes' | 'no' = 'yes', price = 0.4, probability = 0.5
   return proposed.position.id
 }
 
+function seedPaperProposal(): string {
+  const state = applyFundsCommand(emptyFunds(), { kind: 'limits', changes: { capAmount: 100000 } }, NOW).state
+  const proposed = proposePosition(state, {
+    venue: 'kalshi', market: 'KX-TEST', side: 'yes', price: 0.4, probability: 0.55, mode: 'paper',
+    rationale: 'NWS forecast gives 60% rain for the window and three models agree; market lags the update.',
+    sources: ['https://weather.gov/forecast'],
+  }, NOW)
+  saveFunds(proposed.state)
+  return proposed.position.id
+}
+
 type FakeExisting = { fillCount: number; averageFillPrice?: number; totalFees?: number; orderId?: string; status?: string }
 
 interface FakeBehavior {
@@ -39,8 +50,8 @@ interface FakeBehavior {
   onQuote?: () => void
   quoteByTicker?: Record<string, { yesAsk: number | null; noAsk: number | null } | null>
   balanceDollars?: number
-  /** The market's exchange shard, as the quote reports it (default 0). */
-  exchangeIndex?: number
+  /** The market's exchange shard, as the quote reports it (default 0; null = the record carried no readable index). */
+  exchangeIndex?: number | null
   /** Per-shard balances for the shard read; a missing index falls back to balanceDollars. */
   balanceByShard?: Record<number, number>
   /** Makes the shard read (getBalance with an index) fail instead of answering. */
@@ -63,9 +74,9 @@ function fakeClient(behavior: FakeBehavior): { client: KalshiClient; createCalls
         if (behavior.shardReadError === 'network') throw new KalshiNetworkError('No answer from Kalshi for the shard balance read')
         if (behavior.shardReadError === 'api') throw new KalshiApiError(503, 'unavailable', 'Shard balance unavailable.')
         const dollars = behavior.balanceByShard?.[exchangeIndex] ?? behavior.balanceDollars ?? 500
-        return { balanceCents: Math.round(dollars * 100), balanceDollars: dollars, portfolioValueCents: 0 }
+        return { balanceCents: Math.round(dollars * 100), balanceDollars: dollars, portfolioValueCents: 0, updatedTs: 0, breakdown: null }
       }
-      return { balanceCents: Math.round((behavior.balanceDollars ?? 500) * 100), balanceDollars: behavior.balanceDollars ?? 500, portfolioValueCents: 0 }
+      return { balanceCents: Math.round((behavior.balanceDollars ?? 500) * 100), balanceDollars: behavior.balanceDollars ?? 500, portfolioValueCents: 0, updatedTs: 0, breakdown: null }
     },
     async getMarketQuote(ticker: string) {
       behavior.onQuote?.()
@@ -73,7 +84,7 @@ function fakeClient(behavior: FakeBehavior): { client: KalshiClient; createCalls
         ? behavior.quoteByTicker[ticker]
         : behavior.quote === undefined ? { yesAsk: 0.42, noAsk: 0.44 } : behavior.quote
       if (!base) return null
-      return { ...base, exchangeIndex: behavior.exchangeIndex ?? 0, ...(behavior.quoteStatus ? { status: behavior.quoteStatus } : {}) }
+      return { ...base, exchangeIndex: behavior.exchangeIndex === undefined ? 0 : behavior.exchangeIndex, ...(behavior.quoteStatus ? { status: behavior.quoteStatus } : {}) }
     },
     async createOrder(input) {
       createCalls.push({ side: input.side, priceDollars: input.priceDollars, clientOrderId: input.clientOrderId })
@@ -191,11 +202,12 @@ describe('balance gate (item 4)', () => {
     expect(createCalls).toHaveLength(0)
   })
 
-  it('status appends the live balance when a key is present', async () => {
+  it('status appends the shared Kalshi (live) block when a key is present', async () => {
     seedProposal()
     const { client } = fakeClient({ balanceDollars: 321.09 })
     const reply = await runFundsCommandWithExecution('/funds', deps(client))
-    expect(reply).toContain('Kalshi balance (live, demo): $321.09')
+    expect(reply).toContain('Kalshi (live) — demo')
+    expect(reply).toContain('Total across shards — orders spend from one shard: $321.09')
   })
 })
 
@@ -249,15 +261,26 @@ describe('shard gate (Kalshi partitions the balance by exchange shard)', () => {
     expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
   })
 
-  it('a market whose record has no exchange_index is checked against shard 0 — the aggregate does not substitute', async () => {
+  it('a market whose record has no readable exchange_index is refused by the shard lock — no balance read, no order (owner ruling, 2026-10-23)', async () => {
     const id = seedProposal()
-    const { client, createCalls, balanceReads } = fakeClient({ balanceDollars: 500, balanceByShard: { 0: 0 } })
+    const { client, createCalls, balanceReads } = fakeClient({ exchangeIndex: null, balanceDollars: 500 })
     const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
-    expect(reply).toContain('trades on shard 0, which holds $0.00')
-    expect(reply).toContain('across all shards is $500.00')
-    expect(balanceReads).toEqual([undefined, 0])
+    expect(reply).toContain('could not be determined')
+    expect(reply).toContain('will not guess a shard')
+    expect(balanceReads).toEqual([])
     expect(createCalls).toHaveLength(0)
     expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('proposed')
+  })
+
+  it('a paper position is never shard-locked: paper is placed in the ledger at proposal and no gate ever sees it', async () => {
+    const id = seedPaperProposal()
+    // Paper needs no approval — no money is involved, so the ledger places it
+    // (simulated) at proposal time and the execution path is never entered.
+    expect(loadFunds().positions.find(p => p.id === id)!.status).toBe('placed')
+    const { client, createCalls } = fakeClient({ exchangeIndex: null })
+    const reply = await runFundsCommandWithExecution(`/funds approve ${id}`, deps(client))
+    expect(reply).not.toContain('could not be determined')
+    expect(createCalls).toHaveLength(0)
   })
 })
 
