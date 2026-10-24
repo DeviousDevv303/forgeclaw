@@ -61,7 +61,7 @@ function buildWorld(rand: () => number) {
     async getBalance() {
       const roll = rand()
       if (roll < 0.04) throw new KalshiNetworkError('balance unreachable')
-      return { balanceCents: roll < 0.08 ? 100 : 50000, balanceDollars: roll < 0.08 ? 1 : 500, portfolioValueCents: 0 }
+      return { balanceCents: roll < 0.08 ? 100 : 50000, balanceDollars: roll < 0.08 ? 1 : 500, portfolioValueCents: 0, updatedTs: 0, breakdown: null }
     },
     async getMarketQuote() {
       const roll = rand()

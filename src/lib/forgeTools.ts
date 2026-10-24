@@ -51,8 +51,9 @@ import { formatCodeReview, runCodeReview } from './codeReview'
 import { weatherForecast } from './weather'
 import { fetchKalshiMarket, KalshiError, runKalshiMarkets, runKalshiOrderbook, type KalshiDeps } from './kalshiMarkets'
 import { formatOwnerPrices, parseOwnerPrices } from './kalshiOwnerPrices'
-import { relayFallbackFetcher } from './kalshiTrade'
-import { effectiveKalshiRelayUrl } from './kalshiAuth'
+import { createKalshiClient, relayFallbackFetcher } from './kalshiTrade'
+import { effectiveKalshiRelayUrl, loadKalshiCredentials } from './kalshiAuth'
+import { readKalshiBalanceBlock } from './kalshiBalanceDisplay'
 import { formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
 import { autoApproveHoldNote, kalshiOrderPlacedJournalEntry, maybeAutoApprove, type KalshiExecutionDeps } from './kalshiExecution'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
@@ -2001,8 +2002,19 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         return formatOwnerPrices(parseOwnerPrices(input.prices), note)
       }
 
-      case 'funds_status':
-        return formatFundsStatus(loadFunds(), Date.now())
+      case 'funds_status': {
+        // The ledger first, as always; then the shared Kalshi (live) block when this
+        // browser holds Kalshi credentials — the exchange's own numbers, kept in
+        // their own labelled section, never merged into the ledger's (balance plan,
+        // 2026-10-23). No credentials: the ledger alone, exactly as before.
+        const base = formatFundsStatus(loadFunds(), Date.now())
+        const creds = loadKalshiCredentials()
+        if (!creds) return base
+        const relayUrl = effectiveKalshiRelayUrl()
+        const client = createKalshiClient(creds, relayFallbackFetcher((url, init) => toolFetch(ctx, url, init), relayUrl))
+        const block = await readKalshiBalanceBlock(client, { env: creds.env })
+        return `${base}\n${block}`
+      }
 
       case 'funds_propose': {
         // Records a proposal only. Approving, placing and moving money are owner commands (/funds), never tools.

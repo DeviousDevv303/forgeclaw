@@ -191,6 +191,19 @@ export function parseExchangeIndex(value: unknown): number {
   return Number.isInteger(n) && n >= 0 ? n : 0
 }
 
+/**
+ * The strict sibling, for the money path only: a non-negative integer as Kalshi reports
+ * it, or null when the value is absent or unreadable. Display and listing code uses
+ * parseExchangeIndex (Kalshi's own default of 0 is fine for showing a market), but an
+ * order draws on one specific shard's balance, and a shard the record does not name
+ * cannot be verified — the approval gate refuses on null instead of inheriting a
+ * default it never checked (owner ruling, 2026-10-23: "Lock it").
+ */
+export function parseExchangeIndexStrict(value: unknown): number | null {
+  const n = typeof value === 'string' && value.trim() !== '' ? Number(value) : typeof value === 'number' ? value : NaN
+  return Number.isInteger(n) && n >= 0 ? n : null
+}
+
 const usd = (n: number | null): string => (n === null ? 'n/a' : `$${n.toFixed(2)}`)
 const pct = (n: number | null): string => (n === null ? 'n/a' : `${Math.round(n * 100)}%`)
 const num = (n: number | null): string => (n === null ? 'n/a' : Math.round(n).toLocaleString('en-US'))

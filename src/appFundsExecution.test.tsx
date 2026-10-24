@@ -32,7 +32,10 @@ function stubFetch() {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     if (url === `${DEMO}/markets/KX-TEST`) {
-      return Response.json({ market: { yes_ask_dollars: yesAsk, no_ask_dollars: '0.4400', status: 'active' } })
+      // Kalshi market records carry their exchange_index; since the shard lock
+      // (2026-10-23) a record without one is refused, not defaulted — so the
+      // fixture names shard 0, as the real record for a general-exchange market does.
+      return Response.json({ market: { yes_ask_dollars: yesAsk, no_ask_dollars: '0.4400', status: 'active', exchange_index: 0 } })
     }
     // The balance endpoint also serves the approve flow's per-shard read, which adds
     // ?exchange_index=N to the same path — match the endpoint, not the exact URL.
