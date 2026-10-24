@@ -683,7 +683,17 @@ export class CorpusRepository {
     try {
       const response = await fetchImpl(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ corpusId: 'nexus-local', version: this.getVersion(), records }) })
       if (!response.ok) return { attempted: records.length, admitted: 0, status: 'pending', reason: `Webhook HTTP ${response.status}` }
-      const body = await response.json().catch(() => ({})) as { updates?: unknown }
+      const rawBody = await response.text().catch(() => null)
+      // F-022: an unreadable reply must not read as a successful sync. The upload
+      // reached the webhook (HTTP 200), but the update list — the artifact this
+      // status word is verified against — was never read, so 'synced' would assert
+      // a reconciliation that never happened. Report it as still pending instead.
+      let body: { updates?: unknown }
+      try {
+        body = rawBody ? (JSON.parse(rawBody) as { updates?: unknown }) : {}
+      } catch {
+        return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook answered but its reply could not be read; candidates were sent but the update list was not reconciled.' }
+      }
       const admitted = 0
       for (const update of Array.isArray(body.updates) ? body.updates : []) {
         if (!update || typeof update !== 'object') continue
