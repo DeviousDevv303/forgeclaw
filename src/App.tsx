@@ -2984,7 +2984,7 @@ function App() {
                     {showGhToken ? '🙈' : '👁'}
                   </button>
                   <button
-                    onClick={() => { persistGithubToken(ghToken); setGhTokenSaved(true); setTimeout(() => setGhTokenSaved(false), 2000) }}
+                    onClick={() => { /* F-030: "SAVED" only on persistGithubToken's read-back verdict — a swallowed write used to flash it anyway */ if (persistGithubToken(ghToken)) { setGhTokenSaved(true); setTimeout(() => setGhTokenSaved(false), 2000) } }}
                     style={{ background: ghTokenSaved ? '#14532d' : '#1a1a1a', border: `1px solid ${ghTokenSaved ? '#22c55e' : '#333'}`, color: ghTokenSaved ? '#22c55e' : '#888', borderRadius: '4px', padding: '0 12px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', fontWeight: 'bold', whiteSpace: 'nowrap' }}
                   >
                     {ghTokenSaved ? t('settings.saved') : t('settings.save')}
