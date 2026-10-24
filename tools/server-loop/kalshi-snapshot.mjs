@@ -11,7 +11,7 @@
  * file to the `kalshi-snapshot-data` branch; the app reads it from there
  * instead of calling Kalshi from the owner's browser, whose per-IP quota is
  * what kept draining (the 429 wall). This runner's egress is a different
- * bucket, and one fetch every 15 minutes serves every read until it goes
+ * bucket, and one fetch every 10 minutes serves every read until it goes
  * stale.
  *
  * Honesty rules, same as everywhere in this project:
@@ -61,7 +61,7 @@ export function priceOrNull(value) {
 /**
  * One Kalshi market record -> its snapshot entry. Only the fields the app
  * reads are carried; the long rules text stays behind (a snapshot is for
- * prices, and the file is committed every 15 minutes).
+ * prices, and the file is committed every 10 minutes).
  */
 export function toSnapshotMarket(raw, seriesTicker) {
   if (!raw || typeof raw.ticker !== 'string' || !raw.ticker) return null

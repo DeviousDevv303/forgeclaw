@@ -6,7 +6,7 @@ name: Kalshi Snapshot
 # price reads originate from the owner's browser, and Kalshi rate-limits
 # that per-IP quota (the 429 wall: spaced reads dying mid-answer, the app
 # degrading to last-good snapshots or owner-typed prices). This workflow
-# moves the read server-side: every 15 minutes it fetches the watchlist
+# moves the read server-side: every 10 minutes it fetches the watchlist
 # series from Kalshi's PUBLIC market-data API (unauthenticated — no keys,
 # no credentials anywhere in this path) and commits ONE JSON snapshot to
 # the kalshi-snapshot-data branch. The app reads that file and only falls
@@ -21,19 +21,21 @@ name: Kalshi Snapshot
 # never a silent gap or a stale file pretending to be fresh. The app fails
 # closed on the error field.
 #
-# Landing note: this file takes effect only from .github/workflows/ on the
-# default branch. The connector's GitHub App cannot write that directory
-# (403 — the installation lacks the Workflows permission), so the workflow
-# ships as this review copy at tools/server-loop/kalshi-snapshot.yml and
-# lands via Claude's lane or the owner, exactly as Stage 1 did; the two
-# copies must stay byte-identical. Nothing here runs until it lands.
+# Two copies: this file lives at .github/workflows/kalshi-snapshot.yml (the
+# live copy, which takes effect only from the default branch) and at
+# tools/server-loop/kalshi-snapshot.yml (the review copy, which Muse's
+# connector can edit because its GitHub App cannot write .github/workflows,
+# 403). They must stay byte-identical; kalshiServerSnapshot.test.ts fails if
+# they drift. A change to the live copy is the owner's tap (protected path).
 
 on:
   schedule:
-    # 15 minutes matches the app's staleness limit for the snapshot: a
-    # healthy cadence keeps a fresh file on the branch, and one missed
-    # tick ages the snapshot out instead of letting it pose as current.
-    - cron: "*/15 * * * *"
+    # 10 minutes against the app's 15-minute staleness limit
+    # (KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS): GitHub's scheduler is best effort
+    # and ticks arrive late or are skipped, so the cadence leaves room for
+    # one late tick before the file goes stale. A run of missed ticks ages
+    # the snapshot out instead of letting it pose as current.
+    - cron: "*/10 * * * *"
   workflow_dispatch:
 
 permissions:
