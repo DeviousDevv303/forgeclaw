@@ -176,7 +176,7 @@ describe('read-failure attribution', () => {
     await runKalshiMarkets({ series_ticker: 'KXHIGHNY' }, h.deps(async () => replies.shift()!)).catch(() => undefined)
     const kalshi = getErrorLog().filter(e => e.source === 'kalshi').reverse()
     expect(kalshi.map(e => e.message)).toEqual(['read HTTP 429 /markets', 'read HTTP 429 /markets', 'read HTTP 429 /markets'])
-    expect(kalshi.map(e => e.details)).toEqual(['attempt 1 · Retry-After: 3', 'attempt 2 · Retry-After: none', 'attempt 3 · Retry-After: none'])
+    expect(kalshi.map(e => e.details)).toEqual(['attempt 1 · Retry-After: 3 · anonymous', 'attempt 2 · Retry-After: none · anonymous', 'attempt 3 · Retry-After: none · anonymous'])
   })
 
   it('lastKalshiReadInfo reports the observed outcome: success, 429 with its header, then no answer', async () => {

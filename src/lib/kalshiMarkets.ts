@@ -87,6 +87,12 @@ export interface KalshiDeps {
   /** The wall clock read spacing is measured on (defaults to Date.now). */
   clock?: () => number
   /**
+   * Signs a read with the owner's Kalshi key (kalshiReadSigner). Absent for a visitor, a browser with no
+   * saved key, or a demo key: those reads go anonymously, exactly as before. Given the API path without
+   * its query, it returns the KALSHI-ACCESS-* headers.
+   */
+  sign?: (path: string) => Promise<Record<string, string>>
+  /**
    * Last-known-good listing snapshots (defaults to localStorage). Pass null to disable the
    * fallback entirely — a failed read then fails exactly as it did before snapshots existed.
    */
@@ -115,8 +121,16 @@ export interface KalshiReadInfo {
   at: number
   /** API path read, without the query string. */
   path: string
+  /** True when this request carried the owner's signature; false when it went anonymously. */
+  signed: boolean
 }
 let lastRead: KalshiReadInfo | null = null
+
+// A signed read Kalshi refuses (401 bad signature or clock, 403 not permitted) is repeated once without the
+// signature, and signing is then skipped for a while: a key that cannot read would otherwise double every
+// request, and the budget is already the scarce thing. Module-level for the same reason as the spacing.
+export const KALSHI_SIGNED_READ_COOLDOWN_MS = 5 * 60 * 1000
+let signedReadsRefusedAt = -Infinity
 
 /** The last public read's observed outcome (status + Retry-After), or null before any read. */
 export function lastKalshiReadInfo(): KalshiReadInfo | null {
@@ -127,6 +141,7 @@ export function lastKalshiReadInfo(): KalshiReadInfo | null {
 export function resetKalshiReadSpacing(): void {
   lastPublicReadAt = 0
   lastRead = null
+  signedReadsRefusedAt = -Infinity
 }
 
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -170,8 +185,8 @@ export class KalshiError extends Error {
  * attribution path for "how many reads failed, and how": before it existed, a 429 count could
  * only be inferred from the reports a user happened to paste.
  */
-function logReadFailure(path: string, status: number, retryAfter: string | null, attempt: number): void {
-  logWarning('kalshi', `read HTTP ${status} ${path}`, `attempt ${attempt + 1} · Retry-After: ${retryAfter ?? 'none'}`)
+function logReadFailure(path: string, status: number, retryAfter: string | null, attempt: number, signed: boolean): void {
+  logWarning('kalshi', `read HTTP ${status} ${path}`, `attempt ${attempt + 1} · Retry-After: ${retryAfter ?? 'none'} · ${signed ? 'signed' : 'anonymous'}`)
 }
 
 /** "0.9500" -> 0.95; anything that is not a finite number in [0, 1] -> null. */
@@ -289,21 +304,45 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
   const now = deps.clock ?? Date.now
   const delay = deps.delay ?? abortableDelay
   const path = url.split('?')[0].replace(KALSHI_BASE_URL, '') || url.split('?')[0]
+  // What Kalshi verifies a signature over: the full API path, never the query.
+  const apiPath = new URL(url).pathname
   let res: Response
-  for (let attempt = 0; ; attempt++) {
+  let attempt = 0
+  let signatureRefused = false
+  for (;;) {
     const waitMs = KALSHI_PUBLIC_READ_INTERVAL_MS - (now() - lastPublicReadAt)
     if (waitMs > 0) await delay(waitMs, deps.signal)
     lastPublicReadAt = now()
+    // A fresh signature per request: the timestamp is part of what is signed, and a retry is a new request.
+    let signature: Record<string, string> | null = null
+    if (deps.sign && !signatureRefused && now() - signedReadsRefusedAt >= KALSHI_SIGNED_READ_COOLDOWN_MS) {
+      try {
+        signature = await deps.sign(apiPath)
+      } catch (error) {
+        // A key that cannot sign (unreadable PEM) is not a reason to fail the read: read anonymously, and say so.
+        if (deps.signal?.aborted) throw error
+        signedReadsRefusedAt = now()
+        logWarning('kalshi', `signed read skipped for ${path}`, error instanceof Error ? error.message : String(error))
+      }
+    }
+    const signed = signature !== null
     try {
-      res = await fetchOnce(deps, url)
+      res = await fetchOnce(deps, url, signature ?? {})
     } catch (error) {
-      if (error instanceof KalshiError) lastRead = { status: null, retryAfter: null, at: now(), path }
+      if (error instanceof KalshiError) lastRead = { status: null, retryAfter: null, at: now(), path, signed }
       throw error
     }
-    lastRead = { status: res.status, retryAfter: retryAfterHeader(res), at: now(), path }
-    if (!res.ok) logReadFailure(path, res.status, retryAfterHeader(res), attempt)
+    lastRead = { status: res.status, retryAfter: retryAfterHeader(res), at: now(), path, signed }
+    if (!res.ok) logReadFailure(path, res.status, retryAfterHeader(res), attempt, signed)
+    // Refused for the signature (401) or the key (403): repeat once without it. This is not a rate-limit retry and does not spend one.
+    if (signed && (res.status === 401 || res.status === 403)) {
+      signedReadsRefusedAt = now()
+      signatureRefused = true
+      continue
+    }
     if (res.status !== 429 || attempt >= KALSHI_429_RETRY_DELAYS_MS.length) break
     await delay(retryAfterMs(res, KALSHI_429_RETRY_DELAYS_MS[attempt]), deps.signal)
+    attempt++
   }
   if (!res.ok) {
     const retryAfter = retryAfterHeader(res)
@@ -332,9 +371,9 @@ function shapeError(missing: string): KalshiError {
   return err
 }
 
-async function fetchOnce(deps: KalshiDeps, url: string): Promise<Response> {
+async function fetchOnce(deps: KalshiDeps, url: string, signature: Record<string, string>): Promise<Response> {
   try {
-    return await deps.fetcher(url, { headers: { Accept: 'application/json' }, cache: 'no-store', signal: deps.signal })
+    return await deps.fetcher(url, { headers: { Accept: 'application/json', ...signature }, cache: 'no-store', signal: deps.signal })
   } catch (error) {
     if (deps.signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) throw error
     const detail = error instanceof Error ? error.message : String(error)
