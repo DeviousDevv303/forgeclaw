@@ -11,7 +11,12 @@ import {
   intakeOwnerAutoAdmit,
   parseNexusIntake,
   parseNexusIntakeLine,
+  parseSimIntake,
+  simOutcomeRecordProblem,
+  simRunRecordProblem,
   syncNexusIntake,
+  validateSimOutcomeRecord,
+  validateSimRunRecord,
   type NexusIntakeSource,
 } from './nexusIntake'
 import { INTAKE_ADMITTED_BY, OWNER_ADMITTED_BY, knowledgeOrigin } from './nexusConvergence'
@@ -368,5 +373,111 @@ describe('nexusIntake sync', () => {
     const result = await syncNexusIntake(sourceOf(''), repo)
     expect(result).toEqual({ status: 'synced', fetched: 0, added: 0, admitted: 0 })
     expect(repo.listCandidates()).toHaveLength(0)
+  })
+})
+
+const SIM_RUN = {
+  ts: '2026-10-24T18:00:00.000Z',
+  source: 'mirofish-runner',
+  run_id: 'sim-20261024-yan',
+  kind: 'sim-run',
+  ref: 'KXUFCFIGHT-26OCT24YANDVA-YAN',
+  position_ref: 'pos-yan-1',
+  seed: { stats_snapshot: 'kalshi-snapshot-2026-10-24T17:00Z', matchup_read: true, human_state: false },
+  engine: {
+    agents: 25,
+    model: 'kimi-k2',
+    rounds: 12,
+    mirofish_commit: '0123456789abcdef0123456789abcdef01234567',
+    image_digest: `sha256:${'a'.repeat(64)}`,
+  },
+  median_lean_pct: 62,
+  side: 'YES',
+  report: 'https://example.invalid/sim-reports/sim-20261024-yan',
+}
+
+const SIM_OUTCOME = {
+  ts: '2026-10-25T04:00:00.000Z',
+  source: 'mirofish-runner',
+  run_id: 'sim-20261024-yan',
+  kind: 'sim-outcome',
+  ref: 'KXUFCFIGHT-26OCT24YANDVA-YAN',
+  winning_side: 'YES',
+}
+
+describe('MiroFish sim records (same intake stream, typed side-parse)', () => {
+  it('a complete sim-run validates and normalizes', () => {
+    const run = validateSimRunRecord(SIM_RUN)
+    expect(run).not.toBeNull()
+    expect(run!.runId).toBe('sim-20261024-yan')
+    expect(run!.marketRef).toBe('KXUFCFIGHT-26OCT24YANDVA-YAN')
+    expect(run!.positionRef).toBe('pos-yan-1')
+    expect(run!.seed).toEqual({ statsSnapshot: 'kalshi-snapshot-2026-10-24T17:00Z', matchupRead: true, humanState: false })
+    expect(run!.engine.mirofishCommit).toBe('0123456789abcdef0123456789abcdef01234567')
+    expect(run!.engine.imageDigest).toBe(`sha256:${'a'.repeat(64)}`)
+    expect(run!.medianLeanPct).toBe(62)
+    expect(run!.side).toBe('YES')
+    expect(simRunRecordProblem(SIM_RUN)).toBeNull()
+  })
+
+  it('a sim-run missing its image digest pin is invalid, and the problem names the pin', () => {
+    const engine: Record<string, unknown> = { ...SIM_RUN.engine }
+    delete engine.image_digest
+    const unpinned = { ...SIM_RUN, engine }
+    expect(validateSimRunRecord(unpinned)).toBeNull()
+    expect(simRunRecordProblem(unpinned)).toContain('image digest pin')
+  })
+
+  it('a sim-run missing its MiroFish commit pin is invalid, and the problem names the pin', () => {
+    const noCommit = { ...SIM_RUN, engine: { ...SIM_RUN.engine, mirofish_commit: '' } }
+    const shortCommit = { ...SIM_RUN, engine: { ...SIM_RUN.engine, mirofish_commit: 'abc' } }
+    expect(validateSimRunRecord(noCommit)).toBeNull()
+    expect(validateSimRunRecord(shortCommit)).toBeNull()
+    expect(simRunRecordProblem(noCommit)).toContain('commit pin')
+  })
+
+  it('seed provenance must be stated: booleans for the reads, a named snapshot or an explicit null', () => {
+    expect(validateSimRunRecord({ ...SIM_RUN, seed: { ...SIM_RUN.seed, stats_snapshot: null } })).not.toBeNull()
+    const seedNoSnapshot: Record<string, unknown> = { ...SIM_RUN.seed }
+    delete seedNoSnapshot.stats_snapshot
+    expect(validateSimRunRecord({ ...SIM_RUN, seed: seedNoSnapshot })).toBeNull()
+    expect(validateSimRunRecord({ ...SIM_RUN, seed: { ...SIM_RUN.seed, matchup_read: 'yes' } })).toBeNull()
+  })
+
+  it('a median outside 0-100 is not a record', () => {
+    expect(validateSimRunRecord({ ...SIM_RUN, median_lean_pct: 140 })).toBeNull()
+    expect(simRunRecordProblem({ ...SIM_RUN, median_lean_pct: 140 })).toContain('median_lean_pct')
+  })
+
+  it('a sim-outcome validates against the run it settles; a missing winning side is invalid', () => {
+    const outcome = validateSimOutcomeRecord(SIM_OUTCOME)
+    expect(outcome).not.toBeNull()
+    expect(outcome!.runId).toBe(SIM_RUN.run_id)
+    expect(outcome!.winningSide).toBe('YES')
+    const noWinner: Record<string, unknown> = { ...SIM_OUTCOME }
+    delete noWinner.winning_side
+    expect(validateSimOutcomeRecord(noWinner)).toBeNull()
+    expect(simOutcomeRecordProblem(noWinner)).toContain('winning_side')
+  })
+
+  it('parseSimIntake reads the sim records out of a mixed file: malformed sim lines counted, never fatal', () => {
+    const malformedSim = JSON.stringify({ ...SIM_RUN, run_id: 'sim-bad', engine: { ...SIM_RUN.engine, image_digest: 'latest' } })
+    const text = [CANARY_LINE, JSON.stringify(SIM_RUN), malformedSim, 'not json at all', JSON.stringify(SIM_OUTCOME)].join('\n')
+    const parsed = parseSimIntake(text)
+    expect(parsed.runs).toHaveLength(1)
+    expect(parsed.outcomes).toHaveLength(1)
+    expect(parsed.invalidSimLines).toBe(1)
+  })
+
+  it('a refiled run_id changes nothing: the first valid record wins', () => {
+    const refiled = JSON.stringify({ ...SIM_RUN, median_lean_pct: 99 })
+    const parsed = parseSimIntake([JSON.stringify(SIM_RUN), refiled].join('\n'))
+    expect(parsed.runs).toHaveLength(1)
+    expect(parsed.runs[0].medianLeanPct).toBe(62)
+  })
+
+  it('sim lines are not corpus candidates: the generic parser finds no record in them', () => {
+    expect(parseNexusIntake(JSON.stringify(SIM_RUN))).toEqual([])
+    expect(parseNexusIntake(JSON.stringify(SIM_OUTCOME))).toEqual([])
   })
 })

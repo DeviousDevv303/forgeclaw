@@ -338,3 +338,240 @@ export async function syncNexusIntake(
     return { status: 'unavailable', fetched: 0, added: 0, admitted: 0, reason: error instanceof Error ? error.message : 'Nexus intake unavailable.' }
   }
 }
+
+// ── MiroFish sim records (owner GO 2026-10-24, #235 comment 6390491232) ──────
+//
+// The MiroFish swarm-sim lane files two record kinds into THIS SAME intake
+// stream (same JSONL file, same tolerant-per-line rule — no parallel store):
+// `sim-run` when a simulation is run for a position, and `sim-outcome` when
+// the market it simulated settles. They are calibration records, not corpus
+// prose: the generic candidate path above ignores them (they carry no
+// evidence/summary text), and the typed parsers here are their only reader.
+// Grading and the weight policy live in simGrading.ts.
+//
+// Provenance is enforced by shape, per the owner's rule: a sim-run MUST pin
+// the engine it ran on — the MiroFish commit SHA and the engine image digest.
+// A run missing either pin is invalid, full stop: simRunRecordProblem names
+// the defect ("fails loudly"), validateSimRunRecord returns null, and
+// parseSimIntake counts the line as invalid rather than repairing it into a
+// plausible record. An unpinned sim can never be graded honestly later, so it
+// is never allowed to become a record at all.
+
+export const SIM_RUN_KIND = 'sim-run'
+export const SIM_OUTCOME_KIND = 'sim-outcome'
+
+/** Which seed inputs the simulation was built from — provenance, not decoration: a thin packet is labeled thin forever. */
+export interface SimSeedProvenance {
+  /** The stats snapshot the packet carried (id or timestamp), or null when the packet had none. */
+  statsSnapshot: string | null
+  /** The matchup-neutralization read was in the packet. */
+  matchupRead: boolean
+  /** Human-state (fighter-state) observations were in the packet. */
+  humanState: boolean
+}
+
+/** The engine configuration a sim ran under. The two pins are what make the run reproducible — and therefore gradeable. */
+export interface SimEngineConfig {
+  /** Swarm size (agent count). */
+  agents: number
+  /** The model id the agents ran on; engines are graded separately, so this is part of the record's identity. */
+  model: string
+  /** Simulation rounds. */
+  rounds: number
+  /** MiroFish engine commit SHA (pin 1 of 2 — required). */
+  mirofishCommit: string
+  /** Engine container image digest, `sha256:<64 hex>` (pin 2 of 2 — required). */
+  imageDigest: string
+}
+
+/** One validated `sim-run` record: a swarm simulation run for one position on one market. */
+export interface SimRunRecord {
+  ts: string
+  /** Producer name, e.g. 'mirofish-runner'. */
+  source: string
+  /** The run's own ID — its identity, and the key a sim-outcome links back by. */
+  runId: string
+  kind: typeof SIM_RUN_KIND
+  /** The market the sim was about: a Kalshi ticker, e.g. 'KXUFCFIGHT-26OCT24YANDVA-YAN'. */
+  marketRef: string
+  /** The position (or proposal) this run was made for. */
+  positionRef: string
+  seed: SimSeedProvenance
+  engine: SimEngineConfig
+  /** The swarm's median probability (0-100) that `side` wins. */
+  medianLeanPct: number
+  /** The side the median lean is about, as one token (e.g. 'YES', 'YAN'). */
+  side: string
+  /** Where the sim's illustrated report lives (URL or artifact id). A sim without its report failed half its purpose. */
+  reportRef: string
+}
+
+/** One validated `sim-outcome` record: how one sim-run's market settled. Hit and distance are NOT filed here — simGrading computes them from the run and this result, the same discipline as the ledger's crowdVerdict. */
+export interface SimOutcomeRecord {
+  ts: string
+  /** Producer name, e.g. 'mirofish-runner' or the settling lane. */
+  source: string
+  /** The sim-run's run_id this outcome settles. */
+  runId: string
+  kind: typeof SIM_OUTCOME_KIND
+  /** The market ticker, matching the run's marketRef. */
+  marketRef: string
+  /** The side that actually won, in the same label space as the run's `side`. */
+  winningSide: string
+}
+
+const SHA_RE = /^[0-9a-f]{7,40}$/i
+const IMAGE_DIGEST_RE = /^sha256:[0-9a-f]{64}$/
+const sideToken = (value: unknown): string | null =>
+  typeof value === 'string' && value.trim() !== '' && !/\s/.test(value.trim()) && value.trim().length <= 64 ? value.trim() : null
+const positiveInt = (value: unknown, max: number): number | null =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max ? value : null
+
+/**
+ * Why a value is not a valid sim-run, or null when it is. This is the loud
+ * half of the pinning rule: validation never guesses which field was meant.
+ */
+export function simRunRecordProblem(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'sim-run is not an object'
+  const raw = value as Record<string, unknown>
+  if (raw.kind !== SIM_RUN_KIND) return 'kind is not sim-run'
+  if (!nonEmptyString(raw.ts)) return 'sim-run has no ts'
+  if (!nonEmptyString(raw.source)) return 'sim-run has no source'
+  if (!nonEmptyString(raw.run_id)) return 'sim-run has no run_id (a sim-outcome could never link back to it)'
+  if (!nonEmptyString(raw.ref)) return 'sim-run has no ref (the market it simulated)'
+  if (!nonEmptyString(raw.position_ref)) return 'sim-run has no position_ref (the position it was run for)'
+  const seed = raw.seed
+  if (!seed || typeof seed !== 'object' || Array.isArray(seed)) return 'sim-run has no seed provenance object'
+  const s = seed as Record<string, unknown>
+  if (typeof s.matchup_read !== 'boolean') return 'sim-run seed.matchup_read must be true or false (was the matchup read in the packet?)'
+  if (typeof s.human_state !== 'boolean') return 'sim-run seed.human_state must be true or false (were human-state observations in the packet?)'
+  if (!('stats_snapshot' in s) || (s.stats_snapshot !== null && !nonEmptyString(s.stats_snapshot))) {
+    return 'sim-run seed.stats_snapshot must name the stats snapshot in the packet, or be null when there was none'
+  }
+  const engine = raw.engine
+  if (!engine || typeof engine !== 'object' || Array.isArray(engine)) return 'sim-run has no engine config object'
+  const e = engine as Record<string, unknown>
+  if (positiveInt(e.agents, 100_000) === null) return 'sim-run engine.agents must be a positive integer (the swarm size)'
+  if (!nonEmptyString(e.model)) return 'sim-run engine.model is missing (engines are graded separately; the model id is part of the record)'
+  if (positiveInt(e.rounds, 100_000) === null) return 'sim-run engine.rounds must be a positive integer'
+  if (typeof e.mirofish_commit !== 'string' || !SHA_RE.test(e.mirofish_commit)) {
+    return 'sim-run is missing its MiroFish commit pin (engine.mirofish_commit): an unpinned sim is not a record'
+  }
+  if (typeof e.image_digest !== 'string' || !IMAGE_DIGEST_RE.test(e.image_digest)) {
+    return 'sim-run is missing its engine image digest pin (engine.image_digest, sha256:<64 hex>): an unpinned sim is not a record'
+  }
+  const median = raw.median_lean_pct
+  if (typeof median !== 'number' || !Number.isFinite(median) || median < 0 || median > 100) {
+    return 'sim-run median_lean_pct must be a number from 0 to 100 (the swarm median, in percent)'
+  }
+  if (!sideToken(raw.side)) return 'sim-run side must be one token naming the side the median lean is about (e.g. YES)'
+  if (!nonEmptyString(raw.report)) return 'sim-run has no report reference (URL or artifact id of the illustrated sim report)'
+  return null
+}
+
+/** Validates one parsed JSON value into a sim-run record, or returns null (see simRunRecordProblem for the reason). */
+export function validateSimRunRecord(value: unknown): SimRunRecord | null {
+  if (simRunRecordProblem(value) !== null) return null
+  const raw = value as Record<string, unknown>
+  const s = raw.seed as Record<string, unknown>
+  const e = raw.engine as Record<string, unknown>
+  return {
+    ts: raw.ts as string,
+    source: raw.source as string,
+    runId: raw.run_id as string,
+    kind: SIM_RUN_KIND,
+    marketRef: raw.ref as string,
+    positionRef: raw.position_ref as string,
+    seed: {
+      statsSnapshot: (s.stats_snapshot as string | null) ?? null,
+      matchupRead: s.matchup_read as boolean,
+      humanState: s.human_state as boolean,
+    },
+    engine: {
+      agents: e.agents as number,
+      model: e.model as string,
+      rounds: e.rounds as number,
+      mirofishCommit: e.mirofish_commit as string,
+      imageDigest: e.image_digest as string,
+    },
+    medianLeanPct: raw.median_lean_pct as number,
+    side: sideToken(raw.side)!,
+    reportRef: raw.report as string,
+  }
+}
+
+/** Why a value is not a valid sim-outcome, or null when it is. */
+export function simOutcomeRecordProblem(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'sim-outcome is not an object'
+  const raw = value as Record<string, unknown>
+  if (raw.kind !== SIM_OUTCOME_KIND) return 'kind is not sim-outcome'
+  if (!nonEmptyString(raw.ts)) return 'sim-outcome has no ts'
+  if (!nonEmptyString(raw.source)) return 'sim-outcome has no source'
+  if (!nonEmptyString(raw.run_id)) return 'sim-outcome has no run_id (the sim-run it settles)'
+  if (!nonEmptyString(raw.ref)) return 'sim-outcome has no ref (the market that settled)'
+  if (!sideToken(raw.winning_side)) return 'sim-outcome winning_side must be one token naming the side that won'
+  return null
+}
+
+/** Validates one parsed JSON value into a sim-outcome record, or returns null. */
+export function validateSimOutcomeRecord(value: unknown): SimOutcomeRecord | null {
+  if (simOutcomeRecordProblem(value) !== null) return null
+  const raw = value as Record<string, unknown>
+  return {
+    ts: raw.ts as string,
+    source: raw.source as string,
+    runId: raw.run_id as string,
+    kind: SIM_OUTCOME_KIND,
+    marketRef: raw.ref as string,
+    winningSide: sideToken(raw.winning_side)!,
+  }
+}
+
+export interface SimIntakeParse {
+  runs: SimRunRecord[]
+  outcomes: SimOutcomeRecord[]
+  /** Lines that claimed to be sim records (kind sim-run / sim-outcome) but failed validation — counted, never repaired, never fatal. */
+  invalidSimLines: number
+}
+
+/**
+ * Parses the sim records out of an intake file's text, with the intake
+ * family's tolerant-per-line rule: blank and non-sim lines are ignored, a
+ * malformed sim line is skipped and counted, nothing throws. Identity is
+ * run_id: the first valid record for a run_id wins (a run is filed once; a
+ * market settles once), so a refiled duplicate changes nothing.
+ */
+export function parseSimIntake(text: string): SimIntakeParse {
+  const runs: SimRunRecord[] = []
+  const outcomes: SimOutcomeRecord[] = []
+  const seenRuns = new Set<string>()
+  const seenOutcomes = new Set<string>()
+  let invalidSimLines = 0
+  if (!text) return { runs, outcomes, invalidSimLines }
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(trimmed) as unknown
+    } catch {
+      continue // not JSON at all: not identifiable as a sim line; the generic parser skips it too
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue
+    const kind = (parsed as Record<string, unknown>).kind
+    if (kind === SIM_RUN_KIND) {
+      const run = validateSimRunRecord(parsed)
+      if (!run) { invalidSimLines += 1; continue }
+      if (seenRuns.has(run.runId)) continue
+      seenRuns.add(run.runId)
+      runs.push(run)
+    } else if (kind === SIM_OUTCOME_KIND) {
+      const outcome = validateSimOutcomeRecord(parsed)
+      if (!outcome) { invalidSimLines += 1; continue }
+      if (seenOutcomes.has(outcome.runId)) continue
+      seenOutcomes.add(outcome.runId)
+      outcomes.push(outcome)
+    }
+  }
+  return { runs, outcomes, invalidSimLines }
+}
