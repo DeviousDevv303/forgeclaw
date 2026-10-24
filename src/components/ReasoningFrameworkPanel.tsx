@@ -16,9 +16,9 @@ export function ReasoningFrameworkPanel() {
     const stored = saveOwnerScaffold(value)
     const cut = value.trim().length - stored.length
     setText(stored); setSaved(stored)
-    setStatus(!stored ? 'Cleared. ForgeClaw uses its default reasoning loop.'
+    setStatus(!stored ? 'Cleared. Nexus Intelligence uses its default reasoning loop.'
       : cut > 0 ? `Saved, but the last ${cut.toLocaleString()} characters were past the ${MAX_SCAFFOLD_CHARS.toLocaleString()} limit and were cut. Shorten it so every phase fits.`
-        : 'Saved in this browser. ForgeClaw reasons with it from the next message.')
+        : 'Saved in this browser. Nexus Intelligence reasons with it from the next message.')
   }
   return (
     <section aria-labelledby="framework-heading" style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
@@ -27,7 +27,7 @@ export function ReasoningFrameworkPanel() {
         <span style={{ color: saved ? '#22c55e' : '#666', fontSize: '10px', fontFamily: 'monospace' }}>● {saved ? 'active' : 'not set'}</span>
       </div>
       <div style={{ color: '#666', fontSize: '10px', lineHeight: 1.5, marginBottom: '8px', overflowWrap: 'anywhere' }}>
-        Paste the way you reason: your phases and what each means. ForgeClaw thinks through it privately on every task instead of its default loop. It is stored only in this browser, never in the repository. It is sent to the model you are chatting with, like the rest of the prompt. Up to {MAX_SCAFFOLD_CHARS.toLocaleString()} characters.
+        Paste the way you reason: your phases and what each means. Nexus Intelligence thinks through it privately on every task instead of its default loop. It is stored only in this browser, never in the repository. It is sent to the model you are chatting with, like the rest of the prompt. Up to {MAX_SCAFFOLD_CHARS.toLocaleString()} characters.
       </div>
       <textarea id="framework-text" value={text} rows={7} onChange={e => setText(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '11px', fontFamily: 'monospace', outline: 'none', resize: 'vertical' }} />
       <div style={{ display: 'flex', gap: '8px', marginTop: '6px', alignItems: 'center' }}>

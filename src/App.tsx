@@ -719,7 +719,7 @@ function App() {
             streaming: false,
             agentPhase: 'BLOCKED',
             ...(m.id === task?.replyId ? { resumeOf: task.userId } : {}),
-            content: `${m.content ? `${m.content}\n\n` : ''}⚠ Interrupted: ForgeClaw was closed or reloaded before this finished. ${
+            content: `${m.content ? `${m.content}\n\n` : ''}⚠ Interrupted: Nexus Intelligence was closed or reloaded before this finished. ${
               m.id !== task?.replyId ? 'Send it again to retry.' : task.auto ? 'Resuming it now that you are back.' : 'Tap RESUME to run it again.'}`,
           }
         : m)
@@ -1337,7 +1337,7 @@ function App() {
         content: visionUnavailableReply(isPublicVisitor(ghToken || ''), selectedLanguage),
         timestamp: Date.now(),
         source: 'local',
-        provider: 'ForgeClaw',
+        provider: 'Nexus Intelligence',
         model: 'image check',
         agentPhase: 'COMPLETE',
       }])
@@ -1354,7 +1354,7 @@ function App() {
         content: answer,
         timestamp: Date.now(),
         source: 'local',
-        provider: 'ForgeClaw',
+        provider: 'Nexus Intelligence',
         model: 'deterministic arithmetic',
         agentPhase: 'COMPLETE',
       }])
@@ -1568,7 +1568,7 @@ function App() {
     
     // Native function calling is not required: the router injects a compact
     // manual protocol when runtimeTools are present and the App loop parses it.
-    const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.\n${NO_TOOLS_NOTICE}`
+    const conversationalSystemPrompt = `You are Nexus Intelligence (formerly ForgeClaw), a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.\n${NO_TOOLS_NOTICE}`
     // A numbered request is a ledger: every item it enumerates is owed a section before the run may end (requestLedger.ts).
     const requestLedger = parseRequestLedger(promptText, FORGE_TOOLS.map(tool => tool.name))
     const ledgerInstruction = requestLedger ? `\n\n${reportFormatInstruction(requestLedger)}` : ''
@@ -1743,7 +1743,7 @@ function App() {
         // Resolve the streaming placeholder in place; appending a second bubble
         // left the placeholder spinning forever.
         setMessages(prev => prev.map(message => message.id === msgId
-          ? { ...message, content: output, streaming: false, provider: 'ForgeClaw', model: 'direct tool dispatch', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [result] }
+          ? { ...message, content: output, streaming: false, provider: 'Nexus Intelligence', model: 'direct tool dispatch', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [result] }
           : message,
         ))
         setRequestStatus(isError ? 'blocked' : 'success')
@@ -2381,7 +2381,7 @@ function App() {
         if (entries.length === 0) return
         const note = (content: string) => setMessages(prev => [...prev, {
           id: `rollback-${Date.now()}`, role: 'assistant', content, timestamp: Date.now(),
-          source: 'cloud', provider: 'ForgeClaw', model: 'stop-and-rollback',
+          source: 'cloud', provider: 'Nexus Intelligence', model: 'stop-and-rollback',
         }])
         note('⏹ STOP: cancelling remote runs and reverting this run\'s changes…')
         try {
@@ -2607,7 +2607,7 @@ function App() {
       <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px clamp(10px, 3vw, 20px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px 12px', background: '#0a0a0a' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <button onClick={() => setActiveTab('settings')} style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: 0 }}>⚙</button>
-          <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>FORGECLAW</span>
+          <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>NEXUS INTELLIGENCE</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px 12px', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0, flex: '1 1 auto' }}>
           {/* Language selector */}

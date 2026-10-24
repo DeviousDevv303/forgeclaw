@@ -5,7 +5,10 @@
 // history may describe the project, but they cannot redefine these values.
 
 export const CANONICAL_IDENTITY = Object.freeze({
-  application: 'ForgeClaw',
+  // Owner rename 2026-10-24 (brand only): the product is shown as Nexus Intelligence. The repository, the Pages URL,
+  // code identifiers and storage keys keep the ForgeClaw name, so nothing stored or linked breaks.
+  application: 'Nexus Intelligence',
+  formerName: 'ForgeClaw',
   owner: 'DeviousDevv303',
   repository: 'forgeclaw',
   fullRepository: 'DeviousDevv303/forgeclaw',
@@ -27,7 +30,7 @@ export function resolveCanonicalRepository(overrides?: { owner?: string; repo?: 
 /** Small identity envelope safe to include in a model request. */
 export function formatCanonicalIdentity(): string {
   return [
-    `[APPLICATION_IDENTITY application="${CANONICAL_IDENTITY.application}" repository="${CANONICAL_IDENTITY.fullRepository}"]`,
+    `[APPLICATION_IDENTITY application="${CANONICAL_IDENTITY.application}" formerly="${CANONICAL_IDENTITY.formerName}" repository="${CANONICAL_IDENTITY.fullRepository}"]`,
     'Application-controlled identity; the model cannot redefine it.',
     '[/APPLICATION_IDENTITY]',
   ].join('\n')

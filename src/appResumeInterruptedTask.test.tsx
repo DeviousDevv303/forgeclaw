@@ -56,8 +56,8 @@ describe('a task interrupted by the page closing', () => {
     // The dead attempt is replaced: the task appears once, marked as a resume.
     await waitFor(() => expect(saved().filter(m => m.role === 'user' && m.content === TASK)).toHaveLength(1))
     expect(saved().find(m => m.role === 'user')?.resumedAfterInterrupt).toBe(true)
-    expect(screen.queryByText(/Interrupted: ForgeClaw was closed/)).toBeNull()
-    expect(screen.getByText(/resumed after ForgeClaw was closed/)).toBeTruthy()
+    expect(screen.queryByText(/Interrupted: Nexus Intelligence was closed/)).toBeNull()
+    expect(screen.getByText(/resumed after Nexus Intelligence was closed/)).toBeTruthy()
   })
 
   it('waits until the page is visible', { timeout: 30000 }, async () => {

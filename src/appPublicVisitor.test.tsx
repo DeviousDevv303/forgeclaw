@@ -44,7 +44,7 @@ async function ask(prompt: string) {
 describe('public visitor mode', () => {
   it('answers a visitor through the relay with the hosted model, and says so', async () => {
     await ask('explain recursion to a ten year old')
-    expect(screen.getByRole('note').textContent).toMatch(/^Free mode: .*shared with the ForgeClaw developer.*do not enter private information/)
+    expect(screen.getByRole('note').textContent).toMatch(/^Free mode: .*shared with the Nexus Intelligence developer.*do not enter private information/)
     await waitFor(() => expect(screen.getByText(/Recursion is when a function calls itself\./)).toBeTruthy(), { timeout: 8000 })
     const post = fetchMock.mock.calls.find(([url, init]) => String(url) === `${RELAY}/v1/reason` && (init as RequestInit)?.method === 'POST')!
     expect(JSON.parse(String((post[1] as RequestInit).body)).task).toContain('explain recursion to a ten year old')
