@@ -17,7 +17,10 @@
  */
 
 import { safeGetItem, safeSetItem } from './storage'
-import { FIGHT_RATIONALE_MAX_CHARS, checkFightRationale, fightRefusal, isFightMarket } from './fightResearch'
+import {
+  FIGHT_RATIONALE_MAX_CHARS, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT,
+  checkFightRationale, extractSentimentSnapshot, fightRefusal, isFightMarket, type SentimentSnapshot,
+} from './fightResearch'
 import { FUNDS_EXTREME_PRICE_HIGH_CENTS, FUNDS_EXTREME_PRICE_LOW_CENTS, FUNDS_MIN_NET_EDGE_EXTREME_CENTS, FUNDS_MIN_NET_EDGE_TAKER_CENTS } from './toolExposure'
 
 export const FUNDS_STORAGE_KEY = 'forgeclaw_funds_v1'
@@ -74,6 +77,11 @@ export interface FundsPosition {
   outcome?: PositionOutcome
   pnl?: number
   settledBy?: 'owner' | 'kalshi'
+  /**
+   * Fight-card proposals only: what the sentiment scan said at proposal time (the crowd's lean for this side, the weight the
+   * fusion gave it, the links), kept so the crowd can be scored against the result when the fight settles (crowdRecord).
+   */
+  sentiment?: SentimentSnapshot
 }
 
 export interface FundsLimits {
@@ -343,6 +351,7 @@ export function proposePosition(state: FundsState, input: ProposalInput, nowMs: 
     )
     if (!check.ok) throw new FundsError(fightRefusal(input.market.trim(), check))
   }
+  const sentiment = fightCard ? extractSentimentSnapshot(input.rationale, nowMs) : null
   const sizing = sizePosition({ ...input, mode }, state, nowMs)
   if (sizing.edge <= 0) {
     throw new FundsError(`No edge: your probability ${pct(input.probability)} does not beat the price ${money(input.price)} (${pct(input.price)}). Not proposed.`)
@@ -355,6 +364,7 @@ export function proposePosition(state: FundsState, input: ProposalInput, nowMs: 
     rationale: input.rationale.trim().slice(0, fightCard ? FIGHT_RATIONALE_MAX_CHARS : 2000), sources: sources.slice(0, 10).map(x => x.slice(0, 300)),
     // A paper position needs no approval: no money is involved.
     status: mode === 'paper' ? 'placed' : 'proposed', ...(mode === 'paper' ? { placedAt: nowMs } : {}),
+    ...(sentiment ? { sentiment } : {}),
   }
   return { state: { ...state, positions: [...state.positions, position], nextId: state.nextId + 1 }, position, sizing }
 }
@@ -613,7 +623,8 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
     case 'settle': {
       const next = settlePosition(state, cmd.id, cmd.outcome, 'owner', nowMs)
       const p = next.positions.find(x => x.id === cmd.id)!
-      return { state: next, message: `${cmd.id} settled ${cmd.outcome}: ${money(p.pnl ?? 0)}. Bankroll ${money(summarize(next, nowMs).bankroll)}.` }
+      const crowd = crowdSettleNote(p)
+      return { state: next, message: `${cmd.id} settled ${cmd.outcome}: ${money(p.pnl ?? 0)}. Bankroll ${money(summarize(next, nowMs).bankroll)}.${crowd ? `\n${crowd}` : ''}` }
     }
     case 'limits': {
       const limits = { ...state.limits, ...cmd.changes }
@@ -668,11 +679,94 @@ export function trackRecord(state: FundsState): { settled: number; won: number; 
   }
 }
 
+// ── The crowd, scored ──────────────────────────────────────────────────────────
+// A fight proposal keeps the crowd's lean for its side (SentimentSnapshot). When the fight settles won or lost, the
+// crowd is scored like the model and the price: squared error of its probability against what happened. The record
+// covers only fights ForgeClaw proposed on, so it is a biased sample, and a handful of positions per card is a small
+// one; the status line says both. The ledger never changes the crowd's weight from this: the cap is the owner's
+// (FUNDS_SENTIMENT_MAX_WEIGHT_PCT); the record only shows whether the data supports more.
+
+/** Below this many scored positions a Brier score is noise, and the status line says so. */
+export const CROWD_RECORD_RELIABLE_N = 30
+
+export interface CrowdVerdict {
+  lean: number
+  sideWon: boolean
+  /** Did the crowd favor the winner? null when it leaned exactly 50% (no call). */
+  calledRight: boolean | null
+  crowdError: number
+  modelError: number
+  priceError: number
+}
+
+/** The crowd scored against a settled won/lost position; null when it has no numeric lean or is not settled. */
+export function crowdVerdict(p: FundsPosition): CrowdVerdict | null {
+  const lean = p.sentiment?.lean
+  if (typeof lean !== 'number' || p.status !== 'settled' || (p.outcome !== 'won' && p.outcome !== 'lost')) return null
+  const sideWon = p.outcome === 'won'
+  const actual = sideWon ? 1 : 0
+  return {
+    lean, sideWon,
+    calledRight: lean === 0.5 ? null : (lean > 0.5) === sideWon,
+    crowdError: (lean - actual) ** 2,
+    modelError: (p.probability - actual) ** 2,
+    priceError: ((p.fillPrice ?? p.price) - actual) ** 2,
+  }
+}
+
+const err3 = (n: number) => (Math.round(n * 1000) / 1000).toFixed(3)
+
+/** One line for a just-settled (or listed) position: what the crowd leaned, what happened, who was closer. */
+export function crowdSettleNote(p: FundsPosition): string | null {
+  const v = crowdVerdict(p)
+  if (!v) return null
+  const call = v.calledRight === null ? 'no call (50%)' : v.calledRight ? 'called it right' : 'called it wrong'
+  return `Crowd: leaned ${pct(v.lean)} for this side and it ${v.sideWon ? 'won' : 'lost'} (${call}); squared error crowd ${err3(v.crowdError)} vs your estimate ${err3(v.modelError)} vs price ${err3(v.priceError)} (lower is closer).`
+}
+
+export interface CrowdRecord {
+  /** Settled won/lost positions that carry a numeric crowd lean. */
+  scored: number
+  /** Of those, the ones where the crowd made a call (lean not exactly 50%), and how many it got right. */
+  called: number
+  right: number
+  crowdBrier: number | null
+  modelBrier: number | null
+  priceBrier: number | null
+  /** The record meets the starting bar for the crowd to count at all (see fightResearch.ts); it does not raise the cap. */
+  clearsBar: boolean
+}
+
+/** The crowd's record on this ledger's own settled fight positions; Brier scores are over the same positions for all three. */
+export function crowdRecord(state: FundsState): CrowdRecord {
+  const verdicts = state.positions.map(crowdVerdict).filter((v): v is CrowdVerdict => v !== null)
+  const calls = verdicts.filter(v => v.calledRight !== null)
+  const right = calls.filter(v => v.calledRight).length
+  const mean = (pick: (v: CrowdVerdict) => number) => (verdicts.length ? Math.round((verdicts.reduce((sum, v) => sum + pick(v), 0) / verdicts.length) * 1000) / 1000 : null)
+  return {
+    scored: verdicts.length, called: calls.length, right,
+    crowdBrier: mean(v => v.crowdError), modelBrier: mean(v => v.modelError), priceBrier: mean(v => v.priceError),
+    clearsBar: calls.length >= FUNDS_CROWD_MIN_COMPARABLE_FIGHTS && (right / calls.length) * 100 >= FUNDS_CROWD_MIN_HIT_RATE_PCT,
+  }
+}
+
+/** The status line for the crowd's record, or null before any fight position with a lean has settled. */
+export function formatCrowdRecord(r: CrowdRecord): string | null {
+  if (!r.scored) return null
+  const rate = r.called ? ` (${Math.round((r.right / r.called) * 100)}%)` : ''
+  const bar = r.clearsBar
+    ? `meets the starting bar (${FUNDS_CROWD_MIN_COMPARABLE_FIGHTS}+ calls at ${FUNDS_CROWD_MIN_HIT_RATE_PCT}%+), but the weight stays capped at ${FUNDS_SENTIMENT_MAX_WEIGHT_PCT}% unless the owner raises it`
+    : `below the starting bar (${FUNDS_CROWD_MIN_COMPARABLE_FIGHTS}+ calls at ${FUNDS_CROWD_MIN_HIT_RATE_PCT}%+), so the crowd's weight is still earned only by the stated record in the scan`
+  const caveat = r.scored < CROWD_RECORD_RELIABLE_N ? ` Only ${r.scored} scored: under ${CROWD_RECORD_RELIABLE_N} a Brier score is noise.` : ''
+  return `Crowd record (only fights ForgeClaw proposed on, so a biased sample): ${r.scored} scored, called ${r.right}/${r.called} right${rate}; Brier crowd ${r.crowdBrier} vs your estimates ${r.modelBrier} vs prices ${r.priceBrier} on the same positions (lower is better); ${bar}.${caveat}`
+}
+
 export function formatPosition(p: FundsPosition): string {
   const head = `${p.id} [${p.mode}${p.mode === 'real' ? `, ${p.status}` : p.status === 'settled' ? ', settled' : ', open'}] ${p.venue} "${p.market}" ${p.side.toUpperCase()} x${p.contracts} @ ${money(p.fillPrice ?? p.price)}`
   const est = `your estimate ${pct(p.probability)} vs price ${pct(p.fillPrice ?? p.price)}; stake ${money(p.stake)} + ~${money(p.feeEstimate)} fees`
   const result = p.status === 'settled' ? `; ${p.outcome} ${money(p.pnl ?? 0)}` : ''
-  return `${head}\n   ${est}${result}`
+  const crowd = crowdSettleNote(p)
+  return `${head}\n   ${est}${result}${crowd ? `\n   ${crowd}` : ''}`
 }
 
 export function formatFundsStatus(state: FundsState, nowMs: number): string {
@@ -684,6 +778,7 @@ export function formatFundsStatus(state: FundsState, nowMs: number): string {
     : 'no settled positions yet'
   const rules = state.rules ?? []
   const cats = categoryRecords(state)
+  const crowdLine = formatCrowdRecord(crowdRecord(state))
   return [
     ...(state.halted ? [haltedMessage(state.halted)] : []),
     `Funds ledger (ForgeClaw records funds; it never holds or moves money):`,
@@ -692,6 +787,7 @@ export function formatFundsStatus(state: FundsState, nowMs: number): string {
     `Paper (optional, phantom money): bankroll ${money(s.paperBankroll)} (P/L ${money(s.paperPnl)}) · available ${money(s.paperAvailable)}`,
     `Limits: ${formatLimits(state.limits)}`,
     `Track record: ${record}`,
+    ...(crowdLine ? [crowdLine] : []),
     ...(cats.length ? [`Stakes by category (learning stakes: an unproven series is sized ×${CATEGORY_UNPROVEN_MULTIPLIER}, a losing one ×${CATEGORY_LOSING_MULTIPLIER}, never above ×1): ${cats.map(c => `${c.category} ${c.won}/${c.settled} won, ${money(c.netPnl)} net → stake ×${stakeMultiplierFor(c)}`).join('; ')}`] : []),
     open.length ? `Open positions:\n${open.map(formatPosition).join('\n')}` : 'Open positions: none',
     rules.length ? `Owner's rules (follow every one; a proposal that breaks one must not be made):\n${formatRules(rules)}` : "Owner's rules: none set",
@@ -702,7 +798,11 @@ export function formatProposal(position: FundsPosition, sizing: Sizing): string 
   const next = position.mode === 'paper'
     ? 'Paper position: tracked now against the phantom bankroll, no money involved.'
     : `Waiting for the owner: /funds approve ${position.id} or /funds reject ${position.id}. Nothing is placed until the owner places it on ${position.venue}.`
-  return `Proposed ${formatPosition(position)}\n   edge ${pct(sizing.edge)} per contract; size limited by ${sizing.binding}\n   ${honestyLine(position)}\n   ${next}`
+  const s = position.sentiment
+  const crowd = s
+    ? `\n   Crowd snapshot recorded for the settle-time comparison: ${s.lean === null ? `no scan (${s.reason ?? 'unavailable'})` : `leans ${pct(s.lean)} for this side`}; weight ${s.weightPct}%; ${s.links.length} link${s.links.length === 1 ? '' : 's'}.`
+    : ''
+  return `Proposed ${formatPosition(position)}\n   edge ${pct(sizing.edge)} per contract; size limited by ${sizing.binding}\n   ${honestyLine(position)}${crowd}\n   ${next}`
 }
 
 // ── Storage ────────────────────────────────────────────────────────────────────

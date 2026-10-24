@@ -209,3 +209,43 @@ describe('funds_propose on a fight market', () => {
     expect(stored.rationale).toContain('FALSIFIER:')
   })
 })
+
+// Owner directive 2026-10-24 (B), through the tools the model calls: the lean is kept at proposal time and compared at settle time.
+describe('the crowd, from funds_propose to funds_settle', () => {
+  const THREAD = 'https://www.reddit.com/r/MMA/comments/1xdgbl2/petr_yan_vs_merab_dvalishvili_faceoff/'
+  const CHAIN = [
+    'REMATCH SEQUENCE: Merab won decisively in 2023; Yan took the belt back in Dec 2025. This is the rubber match.',
+    'BOOK LINE: DraftKings Yan -150 and BetMGM -148, no-vig 58.1% for Yan; Kalshi YES ask 55c.',
+    'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com).',
+    `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab: crowd lean: 44%. Record on comparable fights: 6 of 12 called correctly.`,
+    'FUSION: range: 58-65%; the book line and facts carry it; sentiment weight: 0%.',
+    'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
+    'FALSIFIER: a late injury report for Yan, or the line moving to Merab -120 before the walkout.',
+  ].join('\n')
+  const MARKET = 'KXUFCFIGHT-26OCT24YANDVA-YAN'
+
+  it('the proposal echoes the lean it recorded; the settlement from Kalshi reports how the crowd compared', async () => {
+    fundAndOpenGate()
+    const out = await propose({ market: MARKET, price: 0.55, probability: 0.62, rationale: CHAIN, sources: [THREAD] })
+    expect(out).toContain('Crowd snapshot recorded for the settle-time comparison: leans 44% for this side; weight 0%; 1 link.')
+    const id = loadFunds().positions[0].id
+    runFundsCommand(`/funds approve ${id}`)
+    runFundsCommand(`/funds placed ${id} 0.56`)
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ markets: [{ ticker: MARKET, status: 'finalized', result: 'no' }] })))
+    const settled = await call('funds_settle', { id })
+    expect(settled).toMatch(/settled from Kalshi \(result no\): lost, P\/L -\$/)
+    expect(settled).toContain('Crowd: leaned 44% for this side and it lost (called it right); squared error crowd 0.194 vs your estimate 0.384 vs price 0.314')
+    expect(await call('funds_status', {})).toContain('Crowd record (only fights ForgeClaw proposed on, so a biased sample): 1 scored, called 1/1 right (100%)')
+  })
+
+  it('a position with no snapshot settles exactly as before, with no crowd line', async () => {
+    fundAndOpenGate()
+    await propose()
+    runFundsCommand('/funds approve p2')
+    runFundsCommand('/funds placed p2 0.41')
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ markets: [{ ticker: 'KX-RAIN-OCT', status: 'finalized', result: 'yes' }] })))
+    const settled = await call('funds_settle', { id: 'p2' })
+    expect(settled).toMatch(/settled from Kalshi \(result yes\): won/)
+    expect(settled).not.toContain('Crowd:')
+  })
+})

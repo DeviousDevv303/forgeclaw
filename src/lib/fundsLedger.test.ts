@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   FUNDS_STORAGE_KEY, FundsError, applyFundsCommand, categoryOfMarket, categoryRecords, categoryStakeMultiplier, emptyFunds, estimateFee, formatFundsStatus, formatProposal, honestyLine, loadFunds, outcomeFromKalshiResult, ownerRulesPrompt,
   dailyLossHit, parseFundsCommand, pnlFor, proposePosition, recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setClientOrderId, settlePosition, sizePosition, stakeMultiplierFor, summarize, trackRecord,
+  CROWD_RECORD_RELIABLE_N, crowdRecord, crowdSettleNote, crowdVerdict, formatCrowdRecord, formatPosition,
   type FundsPosition, type FundsState, type ProposalInput,
 } from './fundsLedger'
 
@@ -492,7 +493,7 @@ describe('fight-card proposals are held to the research template', () => {
     'REMATCH SEQUENCE: Merab won decisively in 2023; Yan took the belt back in Dec 2025. This is the rubber match.',
     'BOOK LINE: DraftKings Yan -150 and BetMGM -148, no-vig 58.1% for Yan; Kalshi YES ask 55c.',
     'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com).',
-    `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab. Record on comparable fights: 6 of 12 called correctly.`,
+    `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab: crowd lean: 44%. Record on comparable fights: 6 of 12 called correctly.`,
     'FUSION: range: 58-65%; the book line and facts carry it; sentiment weight: 0%.',
     'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
     'FALSIFIER: a late injury report for Yan, or the line moving to Merab -120 before the walkout.',
@@ -540,5 +541,178 @@ describe('fight-card proposals are held to the research template', () => {
 
   it('the template gate comes after the funds checks, so an unfunded ledger says so first', () => {
     expect(() => proposePosition(capped(), fight({ rationale: 'short one liner about this particular fight card tonight.' }), NOW)).toThrow(/No funds in the ledger/)
+  })
+})
+
+// Owner directive 2026-10-24 (B): the crowd's lean is kept on a fight position and scored against the result when it settles.
+describe('the crowd, scored (item B)', () => {
+  const THREAD = 'https://www.reddit.com/r/MMA/comments/1xdgbl2/petr_yan_vs_merab_dvalishvili_faceoff/'
+  const RATIONALE = [
+    'REMATCH SEQUENCE: Merab won decisively in 2023; Yan took the belt back in Dec 2025. This is the rubber match.',
+    'BOOK LINE: DraftKings Yan -150 and BetMGM -148, no-vig 58.1% for Yan; Kalshi YES ask 55c.',
+    'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com).',
+    `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab: crowd lean: 44%. Record on comparable fights: 6 of 12 called correctly.`,
+    'FUSION: range: 58-65%; the book line and facts carry it; sentiment weight: 0%.',
+    'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
+    'FALSIFIER: a late injury report for Yan, or the line moving to Merab -120 before the walkout.',
+  ].join('\n')
+  const fight = (over: Partial<ProposalInput> = {}): ProposalInput => proposal({
+    market: 'KXUFCFIGHT-26OCT24YANDVA-YAN', price: 0.55, probability: 0.62, rationale: RATIONALE, sources: [THREAD], ...over,
+  })
+  /** A settled fight position, built directly: lean (0-1 or null), model probability, price, outcome. */
+  const settledPos = (id: string, lean: number | null, outcome: 'won' | 'lost' | 'void', probability = 0.6, price = 0.5): FundsPosition => ({
+    id, createdAt: NOW, mode: 'paper', venue: 'kalshi', market: `KXUFCFIGHT-26OCT24${id}-A`, side: 'yes', price, probability, contracts: 10, stake: 5, feeEstimate: 0.2,
+    rationale: 'x'.repeat(50), sources: ['s'], status: 'settled', placedAt: NOW, settledAt: NOW, outcome, pnl: 0,
+    ...(lean === undefined ? {} : { sentiment: { lean, weightPct: 0, links: [], recordedAt: NOW } }),
+  })
+  const stateOf = (...positions: FundsPosition[]): FundsState => ({ ...emptyFunds(), positions })
+
+  describe('what a proposal keeps', () => {
+    it('a fight proposal carries the snapshot: the lean for its side, the fusion weight, the links', () => {
+      const { position } = proposePosition(funded(), fight(), NOW)
+      expect(position.sentiment).toEqual({ lean: 0.44, weightPct: 0, links: [THREAD], recordedAt: NOW })
+    })
+
+    it('an unavailable scan is kept as no lean, with its reason', () => {
+      const rationale = RATIONALE.replace(/SENTIMENT SCAN:.*/, 'SENTIMENT SCAN: unavailable — Reddit blocked the fetch (HTTP 403)')
+      expect(proposePosition(funded(), fight({ rationale }), NOW).position.sentiment).toMatchObject({ lean: null, reason: 'Reddit blocked the fetch (HTTP 403)', links: [] })
+    })
+
+    it('a fight proposal whose scan states no lean is refused', () => {
+      const rationale = RATIONALE.replace('crowd lean: 44%. ', '')
+      expect(() => proposePosition(funded(), fight({ rationale }), NOW)).toThrow(/must state the crowd's lean/)
+    })
+
+    it('other markets keep no snapshot', () => {
+      expect(proposePosition(funded(), proposal(), NOW).position.sentiment).toBeUndefined()
+    })
+
+    it('the proposal output echoes what the ledger read, so a misparse is visible at once', () => {
+      const { position, sizing } = proposePosition(funded(), fight(), NOW)
+      expect(formatProposal(position, sizing)).toContain('Crowd snapshot recorded for the settle-time comparison: leans 44% for this side; weight 0%; 1 link.')
+      const none = proposePosition(funded(), proposal(), NOW)
+      expect(formatProposal(none.position, none.sizing)).not.toContain('Crowd snapshot')
+    })
+
+    it('survives the storage round trip and old positions without it still load', () => {
+      localStorage.clear()
+      const { state } = proposePosition(funded(), fight(), NOW)
+      expect(saveFunds(state)).toBe(true)
+      expect(loadFunds().positions.at(-1)!.sentiment!.lean).toBe(0.44)
+      const legacy = { ...state, positions: state.positions.map(p => { const copy = { ...p }; delete copy.sentiment; return copy }) }
+      saveFunds(legacy)
+      expect(loadFunds().positions.at(-1)!.sentiment).toBeUndefined()
+    })
+  })
+
+  describe('crowdVerdict', () => {
+    it('scores the crowd, the model and the price by squared error against what happened', () => {
+      const v = crowdVerdict(settledPos('p1', 0.7, 'won', 0.6, 0.5))!
+      expect(v).toMatchObject({ lean: 0.7, sideWon: true, calledRight: true })
+      expect(v.crowdError).toBeCloseTo(0.09, 10)
+      expect(v.modelError).toBeCloseTo(0.16, 10)
+      expect(v.priceError).toBeCloseTo(0.25, 10)
+    })
+
+    it('a lean below 50% called the other side: right when the side lost, wrong when it won', () => {
+      expect(crowdVerdict(settledPos('p1', 0.3, 'lost'))!.calledRight).toBe(true)
+      expect(crowdVerdict(settledPos('p1', 0.3, 'won'))!.calledRight).toBe(false)
+      expect(crowdVerdict(settledPos('p1', 0.7, 'lost'))!.calledRight).toBe(false)
+    })
+
+    it('exactly 50% is no call', () => {
+      expect(crowdVerdict(settledPos('p1', 0.5, 'won'))!.calledRight).toBeNull()
+    })
+
+    it('uses the price actually paid when there is a fill', () => {
+      const p = { ...settledPos('p1', 0.7, 'won', 0.6, 0.5), fillPrice: 0.4 }
+      expect(crowdVerdict(p)!.priceError).toBeCloseTo(0.36, 10)
+    })
+
+    it('nothing to score: void, not settled, no scan, or no snapshot', () => {
+      expect(crowdVerdict(settledPos('p1', 0.7, 'void'))).toBeNull()
+      expect(crowdVerdict({ ...settledPos('p1', 0.7, 'won'), status: 'placed' })).toBeNull()
+      expect(crowdVerdict(settledPos('p1', null, 'won'))).toBeNull()
+      const bare = settledPos('p1', 0.7, 'won')
+      delete bare.sentiment
+      expect(crowdVerdict(bare)).toBeNull()
+    })
+  })
+
+  describe('the settle-time comparison', () => {
+    it('/funds settle prints how the crowd compared with the result', () => {
+      const { state, position } = proposePosition(funded(), fight({ mode: 'paper' }), NOW)
+      const out = applyFundsCommand(state, { kind: 'settle', id: position.id, outcome: 'lost' }, NOW)
+      expect(out.message).toContain('Crowd: leaned 44% for this side and it lost (called it right); squared error crowd 0.194 vs your estimate 0.384 vs price 0.303')
+    })
+
+    it('says nothing for a position with no snapshot', () => {
+      const { state, position } = proposePosition(funded(), proposal({ mode: 'paper' }), NOW)
+      expect(applyFundsCommand(state, { kind: 'settle', id: position.id, outcome: 'won' }, NOW).message).not.toContain('Crowd:')
+    })
+
+    it('a settled position in a listing carries the same line; an open one does not', () => {
+      const settled = settledPos('p1', 0.7, 'won')
+      expect(formatPosition(settled)).toContain('Crowd: leaned 70% for this side and it won (called it right)')
+      expect(formatPosition({ ...settled, status: 'placed' })).not.toContain('Crowd:')
+      expect(crowdSettleNote(settledPos('p1', 0.5, 'won'))).toContain('no call (50%)')
+    })
+  })
+
+  describe('the crowd record', () => {
+    it('counts the scored positions, the calls and the right ones, with all three Brier scores over the same positions', () => {
+      const r = crowdRecord(stateOf(
+        settledPos('p1', 0.7, 'won'),   // right
+        settledPos('p2', 0.7, 'lost'),  // wrong
+        settledPos('p3', 0.5, 'won'),   // no call, still scored
+        settledPos('p4', null, 'won'),  // no scan: not scored
+        settledPos('p5', 0.9, 'void'),  // void: not scored
+      ))
+      expect(r).toMatchObject({ scored: 3, called: 2, right: 1, clearsBar: false })
+      expect(r.crowdBrier).toBeCloseTo((0.09 + 0.49 + 0.25) / 3, 3)
+      expect(r.modelBrier).toBeCloseTo((0.16 + 0.36 + 0.16) / 3, 3)
+      expect(r.priceBrier).toBeCloseTo((0.25 + 0.25 + 0.25) / 3, 3)
+    })
+
+    it('is empty, and prints nothing, before any fight position with a lean has settled', () => {
+      expect(crowdRecord(emptyFunds())).toMatchObject({ scored: 0, called: 0, right: 0, crowdBrier: null, clearsBar: false })
+      expect(formatCrowdRecord(crowdRecord(emptyFunds()))).toBeNull()
+      expect(formatFundsStatus(emptyFunds(), NOW)).not.toContain('Crowd record')
+    })
+
+    const calls = (right: number, wrong: number) => stateOf(
+      ...Array.from({ length: right }, (_, i) => settledPos(`r${i}`, 0.7, 'won')),
+      ...Array.from({ length: wrong }, (_, i) => settledPos(`w${i}`, 0.7, 'lost')),
+    )
+
+    it('meets the starting bar at 10 calls and 55% right, not before', () => {
+      expect(crowdRecord(calls(6, 4)).clearsBar).toBe(true)    // 10 calls at 60%
+      expect(crowdRecord(calls(5, 5)).clearsBar).toBe(false)   // 10 calls at 50%
+      expect(crowdRecord(calls(8, 1)).clearsBar).toBe(false)   // 89% but only 9 calls
+      expect(crowdRecord(calls(11, 9)).clearsBar).toBe(true)   // 20 calls at 55%
+    })
+
+    it('the status line shows the record, its bias, and that a small sample is noise', () => {
+      const line = formatCrowdRecord(crowdRecord(calls(6, 4)))!
+      expect(line).toContain('only fights ForgeClaw proposed on, so a biased sample')
+      expect(line).toContain('10 scored, called 6/10 right (60%)')
+      expect(line).toMatch(/Brier crowd [\d.]+ vs your estimates [\d.]+ vs prices [\d.]+ on the same positions/)
+      expect(line).toContain(`Only 10 scored: under ${CROWD_RECORD_RELIABLE_N} a Brier score is noise.`)
+      expect(formatCrowdRecord(crowdRecord(calls(18, 12)))).not.toContain('noise')
+      expect(formatFundsStatus(calls(6, 4), NOW)).toContain('Crowd record')
+    })
+
+    it('never raises the crowd\'s weight: a record that clears the bar still cannot buy more than the stated record allows or the owner\'s cap', () => {
+      expect(crowdRecord(calls(6, 4)).clearsBar).toBe(true)
+      expect(formatCrowdRecord(crowdRecord(calls(6, 4)))).toContain('the weight stays capped at 10% unless the owner raises it')
+      const over = RATIONALE.replace('sentiment weight: 0%', 'sentiment weight: 25%').replace('6 of 12 called correctly', '11 of 12 called correctly')
+      expect(() => proposePosition({ ...funded(), positions: calls(6, 4).positions }, fight({ rationale: over }), NOW)).toThrow(/sentiment weight 25% is more than the crowd has earned \(10%\)/)
+    })
+
+    it('does not change the existing track record (the model\'s own Brier)', () => {
+      const withLean = stateOf(settledPos('p1', 0.7, 'won'))
+      const without = stateOf({ ...settledPos('p1', 0.7, 'won'), sentiment: undefined })
+      expect(trackRecord(withLean)).toEqual(trackRecord(without))
+    })
   })
 })

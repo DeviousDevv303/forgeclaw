@@ -29,7 +29,7 @@
 
 import { effectiveKalshiRelayUrl, kalshiCredentialPresence, loadKalshiCredentials, loadKalshiEnv, type KalshiCredentials } from './kalshiAuth'
 import {
-  applyFundsCommand, categoryOfMarket, categoryRecords, categoryStakeMultiplier, estimateFee, formatLimits,
+  applyFundsCommand, categoryOfMarket, categoryRecords, categoryStakeMultiplier, crowdSettleNote, estimateFee, formatLimits,
   haltedMessage, loadFunds, money, outcomeFromKalshiResult, parseFundsCommand,
   recordKalshiFill, revertKalshiApproval, runFundsCommand, saveFunds, setOrderKey, settlePosition, summarize,
   NOT_SAVED_WARNING, type FundsPosition, type FundsState,
@@ -682,7 +682,7 @@ export async function runFundsCommandWithExecution(text: string, deps: KalshiExe
   return runFundsCommand(text)
 }
 
-export interface SettledNotice { id: string; market: string; outcome: 'won' | 'lost'; pnl: number }
+export interface SettledNotice { id: string; market: string; outcome: 'won' | 'lost'; pnl: number; /** How the crowd's lean compared with the result (fight positions with a scan only). */ crowd?: string }
 
 /**
  * On app open: settle placed Kalshi positions from Kalshi's own settlements. A settlement is
@@ -720,7 +720,8 @@ export async function autoSettleKalshiPositions(deps: KalshiExecutionDeps = {}):
     // Stamp the position with when Kalshi settled it, not when this open read it (never in the future).
     const settledMs = Date.parse(settlement.settledTime)
     state = settlePosition(state, position.id, outcome, 'kalshi', now(), realPnl, Number.isFinite(settledMs) ? Math.min(settledMs, now()) : undefined)
-    notices.push({ id: position.id, market: position.market, outcome, pnl: Math.round(realPnl * 100) / 100 })
+    const crowd = crowdSettleNote(state.positions.find(p => p.id === position.id)!)
+    notices.push({ id: position.id, market: position.market, outcome, pnl: Math.round(realPnl * 100) / 100, ...(crowd ? { crowd } : {}) })
   }
   if (notices.length) persist(state)
   return notices

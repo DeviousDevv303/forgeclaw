@@ -13,7 +13,10 @@
 // clears the bar and cannot exceed the gross edge), and that the sentiment weight stays inside what the crowd has
 // earned. Absence of data is allowed only when named: "unavailable — <reason>", never a silent omission.
 //
-// Pure: no network, no storage, no clock.
+// The crowd's lean ("crowd lean: 62%": its chance that the proposed side wins) is also kept, as a SentimentSnapshot on the
+// position, so that when the fight settles the ledger can score the crowd against the result (fundsLedger.ts crowdRecord).
+//
+// Pure: no network, no storage; the clock is a parameter.
 
 /** Kalshi series whose markets are fights (verified against the public series list 2026-10-24). */
 export const FIGHT_SERIES_PREFIXES = ['KXUFCFIGHT', 'KXMMAFIGHT', 'KXMMAEXFIGHT'] as const
@@ -30,6 +33,25 @@ export const FUNDS_SENTIMENT_MAX_WEIGHT_PCT = 10
 export const FUNDS_CROWD_MIN_COMPARABLE_FIGHTS = 10
 export const FUNDS_CROWD_MIN_HIT_RATE_PCT = 55
 
+/** At most this many scanned links are kept on a position's sentiment snapshot. */
+export const SENTIMENT_MAX_LINKS = 5
+
+/**
+ * What the SENTIMENT SCAN and FUSION said, kept on the position so the crowd can be scored when the fight settles.
+ * `lean` is the crowd's chance (0-1) that the PROPOSED side wins, as the model read it from the threads; null when
+ * the scan was unavailable. The ledger records the claim and scores it; it cannot check the scan was honest.
+ */
+export interface SentimentSnapshot {
+  lean: number | null
+  /** The weight (percent) the fusion gave the crowd. */
+  weightPct: number
+  /** Up to SENTIMENT_MAX_LINKS links to what was scanned. */
+  links: string[]
+  /** Why there was no scan, when lean is null. */
+  reason?: string
+  recordedAt: number
+}
+
 export type FightSectionKey = 'rematch' | 'book' | 'stats' | 'sentiment' | 'fusion' | 'edge' | 'falsifier'
 
 export interface FightSection { key: FightSectionKey; label: string; pattern: RegExp; hint: string }
@@ -42,7 +64,7 @@ export const FIGHT_SECTIONS: readonly FightSection[] = [
   { key: 'rematch', label: 'REMATCH SEQUENCE', pattern: heading('REMATCH SEQUENCE'), hint: 'prior meetings: date, winner, method, round, what the crowd predicted then versus what happened; or "no prior meeting"' },
   { key: 'book', label: 'BOOK LINE', pattern: heading('BOOK LINE'), hint: 'sharp-book odds at 2+ books, the no-vig probability, and the Kalshi ask; or "unavailable — <reason>"' },
   { key: 'stats', label: 'STATS & FACTS', pattern: heading('STATS (?:&|AND) FACTS'), hint: 'statistics that adjust the baseline, and hard facts (weigh-ins, injuries, camp, changes) each with a source; or "unavailable — <reason>"' },
-  { key: 'sentiment', label: 'SENTIMENT SCAN', pattern: heading('SENTIMENT SCAN'), hint: 'the threads/forums scanned (with links), the crowd\'s lean, and its record: "N of M comparable fights called correctly"; or "unavailable — <reason>"' },
+  { key: 'sentiment', label: 'SENTIMENT SCAN', pattern: heading('SENTIMENT SCAN'), hint: 'the threads/forums scanned (with links); "crowd lean: <n>%" = the crowd\'s chance that YOUR side wins; and its record: "N of M comparable fights called correctly"; or "unavailable — <reason>"' },
   { key: 'fusion', label: 'FUSION', pattern: heading('FUSION'), hint: 'range: <low>-<high> (must contain your probability); how each tier moved it; sentiment weight: <n>%' },
   { key: 'edge', label: 'EDGE', pattern: heading('EDGE'), hint: 'net edge: <n>¢ per contract after the fee and the spread' },
   { key: 'falsifier', label: 'FALSIFIER', pattern: heading('FALSIFIER'), hint: 'the result or news that would prove this wrong' },
@@ -79,6 +101,36 @@ const unavailableReason = (text: string): string | null => {
 }
 
 const asProbability = (n: number) => (n > 1 ? n / 100 : n)
+
+/** The crowd's stated chance (0-1) that the proposed side wins, from "crowd lean: 62%" in the scan; null when absent or out of range. */
+export function crowdLeanFromScan(sentimentText: string | undefined): number | null {
+  if (!sentimentText) return null
+  const m = /crowd(?:'s|’s)?\s+lean\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%/i.exec(sentimentText)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? n / 100 : null
+}
+
+const weightFromFusion = (fusion: string | undefined): number => {
+  const m = fusion ? /sentiment weight\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%/i.exec(fusion) : null
+  return m ? Number(m[1]) : 0
+}
+
+/**
+ * The snapshot to keep on a fight position, read from its (already checked) rationale. Null only when the rationale has
+ * no SENTIMENT SCAN at all, which the gate refuses first.
+ */
+export function extractSentimentSnapshot(rationale: string, nowMs: number): SentimentSnapshot | null {
+  const sections = parseFightRationale(rationale)
+  const scan = sections.get('sentiment')
+  if (scan === undefined) return null
+  const weightPct = weightFromFusion(sections.get('fusion'))
+  const reason = unavailableReason(scan)
+  if (reason !== null) return { lean: null, weightPct, links: [], reason: reason.slice(0, 300), recordedAt: nowMs }
+  // A link ends before the punctuation that closes the sentence around it ("... /faceoff/." is the link without the dot).
+  const links = [...new Set((scan.match(/https?:\/\/[^\s)>\]"']+/gi) ?? []).map(l => l.replace(/[.,;:!?]+$/, '')))].slice(0, SENTIMENT_MAX_LINKS).map(l => l.slice(0, 300))
+  return { lean: crowdLeanFromScan(scan), weightPct, links, recordedAt: nowMs }
+}
 
 export interface FightCheckInput {
   rationale: string
@@ -146,6 +198,9 @@ export function checkFightRationale(input: FightCheckInput, bars: FightBars): Fi
   const sentiment = sections.get('sentiment')
   if (sentiment !== undefined && unavailableReason(sentiment) === null && sentiment.length >= 12 && !/https?:\/\//i.test(sentiment)) {
     problems.push('SENTIMENT SCAN names no thread or forum link; link what you scanned, or write "unavailable — <reason>"')
+  }
+  if (sentiment !== undefined && unavailableReason(sentiment) === null && sentiment.length >= 12 && crowdLeanFromScan(sentiment) === null) {
+    problems.push('SENTIMENT SCAN must state the crowd\'s lean for the side you propose ("crowd lean: 62%" = the crowd\'s chance that your side wins, 0-100); the ledger keeps it and scores the crowd against the result')
   }
 
   const fusion = sections.get('fusion')

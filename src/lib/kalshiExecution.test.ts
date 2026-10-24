@@ -472,6 +472,23 @@ describe('auto-settle (item 9)', () => {
     expect(settled.settledBy).toBe('kalshi')
   })
 
+  it('the on-open notice carries how the crowd compared with the result when the position kept a crowd lean', async () => {
+    const id = seedPlaced()
+    const withLean = loadFunds()
+    saveFunds({ ...withLean, positions: withLean.positions.map(p => (p.id === id ? { ...p, sentiment: { lean: 0.7, weightPct: 0, links: [], recordedAt: NOW } } : p)) })
+    const placed = loadFunds().positions.find(p => p.id === id)!
+    const { client } = fakeClient({
+      settlements: [{
+        ticker: 'KX-TEST', marketResult: 'yes', yesCount: placed.contracts, noCount: 0,
+        yesTotalCostDollars: placed.contracts * 0.42, noTotalCostDollars: 0,
+        revenueCents: placed.contracts * 100, feeCostDollars: 0.5, settledTime: '2026-10-24T00:00:00Z',
+      }],
+    })
+    const notices = await autoSettleKalshiPositions({ creds, client, now: () => NOW, relayUrl: '' })
+    expect(notices).toHaveLength(1)
+    expect(notices[0].crowd).toContain('Crowd: leaned 70% for this side and it won (called it right)')
+  })
+
   it('a loss Kalshi settled yesterday is stamped yesterday: it does not halt the day the app is opened', async () => {
     const id = seedProposal()
     let state = applyFundsCommand(loadFunds(), { kind: 'limits', changes: { dailyLossPct: 2 } }, NOW).state

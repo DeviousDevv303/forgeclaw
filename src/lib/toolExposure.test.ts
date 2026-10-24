@@ -224,6 +224,11 @@ describe('funds guidance — fight-card playbook (2026-10-24)', () => {
     expect(g).toMatch(/It cannot check that your research is true/)
   })
 
+  it('asks for the crowd\'s lean in the form the ledger parses, and says it is scored against the result', () => {
+    expect(g).toContain('states "crowd lean: N%" (the crowd\'s chance that YOUR side wins; the ledger keeps it with the position and scores the crowd against the result when the fight settles)')
+    expect(g).toContain('"crowd lean: <n>%" = the crowd\'s chance that YOUR side wins')
+  })
+
   it('does not claim access it lacks, and ends in one proposal with a falsifier, or none', () => {
     expect(g).toMatch(/no live X \(Twitter\) or xAI feed/)
     expect(g).toMatch(/never cite a forum claim without its link/)

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  FIGHT_RATIONALE_MAX_CHARS, FIGHT_SECTIONS, FUNDS_SENTIMENT_MAX_WEIGHT_PCT, allowedSentimentWeightPct, checkFightRationale,
-  fightRefusal, fightTemplateSkeleton, isFightMarket, parseFightRationale,
+  FIGHT_RATIONALE_MAX_CHARS, FIGHT_SECTIONS, FUNDS_SENTIMENT_MAX_WEIGHT_PCT, SENTIMENT_MAX_LINKS, allowedSentimentWeightPct, checkFightRationale,
+  crowdLeanFromScan, extractSentimentSnapshot, fightRefusal, fightTemplateSkeleton, isFightMarket, parseFightRationale,
 } from './fightResearch'
 
 const BARS = { minNetEdgeCents: 5, minNetEdgeExtremeCents: 10, extremeLowCents: 15, extremeHighCents: 85 }
@@ -12,7 +12,7 @@ const GOOD = [
   'REMATCH SEQUENCE: Merab won decisively in 2023; Yan took the belt back in Dec 2025 (UFC 323). This is the rubber match.',
   'BOOK LINE: DraftKings Yan -150 and BetMGM -148, no-vig 58.1% for Yan; Kalshi YES ask 55c.',
   'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com results page).',
-  `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab. Record on comparable fights: 6 of 12 called correctly.`,
+  `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab: crowd lean: 44%. Record on comparable fights: 6 of 12 called correctly.`,
   'FUSION: range: 58-65%; the book line and facts carry it, statistics adjust it; sentiment weight: 0%.',
   'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
   'FALSIFIER: a late injury report for Yan, or the line moving to Merab -120 before the walkout.',
@@ -145,5 +145,64 @@ describe('the refusal teaches the template', () => {
     for (const section of FIGHT_SECTIONS) expect(text).toContain(`${section.label}: <`)
     expect(fightTemplateSkeleton().split('\n')).toHaveLength(7)
     expect(text).toContain('the ledger checks it (not the model)')
+  })
+})
+
+// Owner directive 2026-10-24 (B): the crowd's lean is kept on the position and scored against the result at settle time.
+describe('the crowd\'s lean (item B)', () => {
+  it('reads "crowd lean: N%" as the crowd\'s chance (0-1) that the proposed side wins', () => {
+    expect(crowdLeanFromScan('threads... crowd lean: 62%. record 6 of 12')).toBe(0.62)
+    expect(crowdLeanFromScan("The crowd's lean 41.5 % for Yan")).toBe(0.415)
+    expect(crowdLeanFromScan('CROWD LEAN = 0%')).toBe(0)
+    expect(crowdLeanFromScan('crowd lean: 100%')).toBe(1)
+  })
+
+  it('rejects what is not a stated percentage: no percent sign, out of range, only words, or nothing', () => {
+    for (const text of ['crowd lean: 0.62', 'crowd lean: 120%', 'the crowd leans Merab', 'lean 62%', '', undefined]) {
+      expect(crowdLeanFromScan(text), String(text)).toBeNull()
+    }
+  })
+
+  it('a scan with links but no stated lean is refused, naming what to write', () => {
+    const noLean = GOOD.replace(/SENTIMENT SCAN:.*/, `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab. Record on comparable fights: 6 of 12 called correctly.`)
+    const result = check({ rationale: noLean })
+    expect(result.ok).toBe(false)
+    expect(result.problems.join('\n')).toContain('SENTIMENT SCAN must state the crowd\'s lean for the side you propose ("crowd lean: 62%"')
+    expect(check({ rationale: GOOD.replace('crowd lean: 44%', 'crowd lean: 144%') }).ok).toBe(false)
+  })
+
+  it('an unavailable scan needs no lean (there was nothing to lean)', () => {
+    const unavailable = GOOD.replace(/SENTIMENT SCAN:.*/, 'SENTIMENT SCAN: unavailable — Reddit blocked the fetch (HTTP 403)')
+    expect(check({ rationale: unavailable })).toEqual({ ok: true, problems: [] })
+  })
+
+  it('the template shown to the model asks for it', () => {
+    expect(fightTemplateSkeleton()).toContain('"crowd lean: <n>%" = the crowd\'s chance that YOUR side wins')
+  })
+
+  it('the snapshot keeps the lean, the fusion weight and the links, stamped with the clock it is given', () => {
+    const snap = extractSentimentSnapshot(GOOD, 1234)
+    expect(snap).toEqual({ lean: 0.44, weightPct: 0, links: [THREAD], recordedAt: 1234 })
+  })
+
+  it('reads the weight the fusion actually states', () => {
+    const weighted = GOOD.replace('sentiment weight: 0%', 'sentiment weight: 8%')
+    expect(extractSentimentSnapshot(weighted, 1)!.weightPct).toBe(8)
+  })
+
+  it('an unavailable scan is kept as no lean, with its reason and no links', () => {
+    const unavailable = GOOD.replace(/SENTIMENT SCAN:.*/, 'SENTIMENT SCAN: unavailable — Reddit blocked the fetch (HTTP 403)')
+    expect(extractSentimentSnapshot(unavailable, 1)).toEqual({ lean: null, weightPct: 0, links: [], reason: 'Reddit blocked the fetch (HTTP 403)', recordedAt: 1 })
+  })
+
+  it('keeps each distinct link once and no more than the cap', () => {
+    const many = Array.from({ length: SENTIMENT_MAX_LINKS + 3 }, (_, i) => `https://www.reddit.com/r/MMA/comments/t${i}/x/`)
+    const scan = `SENTIMENT SCAN: ${many.join(' ')} ${many[0]} crowd lean: 50%. 6 of 12 called correctly.`
+    const snap = extractSentimentSnapshot(GOOD.replace(/SENTIMENT SCAN:.*/, scan), 1)!
+    expect(snap.links).toEqual(many.slice(0, SENTIMENT_MAX_LINKS))
+  })
+
+  it('a rationale with no scan has no snapshot', () => {
+    expect(extractSentimentSnapshot('just an opinion about the fight, no template at all', 1)).toBeNull()
   })
 })
