@@ -75,9 +75,14 @@ export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonPro
           color: disabled ? '#444' : '#666',
           cursor: disabled ? 'not-allowed' : 'pointer',
           fontSize: '16px',
-          padding: '0 8px',
+          padding: '0',
+          width: '36px',
+          height: '36px',
+          borderRadius: '10px',
+          flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
+          justifyContent: 'center',
           transition: 'color 0.15s',
         }}
         onMouseEnter={e => { if (!disabled) e.currentTarget.style.color = '#f97316' }}

@@ -53,6 +53,10 @@ export const SystemMonitor = memo(function SystemMonitor({
 
   const hasWarRoomData = lanes.length > 0 || proposals.length > 0
 
+  // Idle with nothing recorded: the expanded area used to render empty, so the
+  // tap looked like it did nothing. Say what lands here instead.
+  const isEmpty = !hasWarRoomData && displayEvents.length === 0 && agentMessages.length === 0
+
   return (
     <div
       className={`border-t border-slate-700 bg-slate-900/50 backdrop-blur-sm transition-all duration-200 ${
@@ -122,6 +126,11 @@ export const SystemMonitor = memo(function SystemMonitor({
           {!hasWarRoomData && displayEvents.map((event) => (
             <MonitorEventRow key={`${event.type}-${event.timestamp}-${event.agentId}`} event={event} />
           ))}
+
+          {/* Empty state: expanded but nothing has happened yet */}
+          {isEmpty && (
+            <div className="text-xs text-slate-500 py-2">{t('monitor.empty')}</div>
+          )}
         </div>
       )}
     </div>

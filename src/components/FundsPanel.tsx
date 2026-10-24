@@ -29,19 +29,19 @@ import { createKalshiClient, relayFallbackFetcher } from '../lib/kalshiTrade'
 import { readKalshiBalanceBlock } from '../lib/kalshiBalanceDisplay'
 
 const panelStyle: React.CSSProperties = {
-  margin: '8px 12px 0', background: '#101408', border: '1px solid #2a3319', borderRadius: '8px', padding: '10px 12px',
+  margin: '8px 12px 0', background: '#101408', border: '1px solid #2a3319', borderRadius: '8px', padding: '8px 10px',
 }
 const rowStyle: React.CSSProperties = {
-  display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '6px',
+  display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '5px',
 }
 const okStyle: React.CSSProperties = {
-  background: '#1e4633', color: '#b8f4cf', border: '1px solid #2f6b4c', borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer',
+  background: '#1e4633', color: '#b8f4cf', border: '1px solid #2f6b4c', borderRadius: '6px', padding: '3px 11px', fontSize: '12px', cursor: 'pointer',
 }
 const noStyle: React.CSSProperties = {
-  background: '#3a1d1d', color: '#f4b8b8', border: '1px solid #6b2f2f', borderRadius: '6px', padding: '4px 12px', fontSize: '12px', cursor: 'pointer',
+  background: '#3a1d1d', color: '#f4b8b8', border: '1px solid #6b2f2f', borderRadius: '6px', padding: '3px 11px', fontSize: '12px', cursor: 'pointer',
 }
 const inputStyle: React.CSSProperties = {
-  background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '5px 7px', fontSize: '12px', width: '110px', outline: 'none',
+  background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '4px 6px', fontSize: '12px', width: '110px', outline: 'none',
 }
 
 function ProposalRow({ p, onCommand }: { p: FundsPosition; onCommand: (text: string) => void }) {
@@ -66,12 +66,12 @@ const BALANCE_POPUP_VISIBLE_MS = 30_000
 
 const balancePopupStyle: React.CSSProperties = {
   position: 'fixed', right: '12px', bottom: '12px', zIndex: 70,
-  width: 'min(430px, calc(100vw - 24px))', boxSizing: 'border-box',
-  background: '#101408', border: '1px solid #2a3319', borderRadius: '10px',
-  padding: '10px 12px', boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
+  width: 'min(400px, calc(100vw - 24px))', boxSizing: 'border-box',
+  background: '#101408', border: '1px solid #2a3319', borderRadius: '9px',
+  padding: '8px 10px', boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
 }
 const closeStyle: React.CSSProperties = {
-  background: 'none', border: 'none', color: '#8a9a6a', cursor: 'pointer', fontSize: '16px', lineHeight: 1, padding: '0 0 4px',
+  background: 'none', border: 'none', color: '#8a9a6a', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: '0 0 2px',
 }
 
 /**
