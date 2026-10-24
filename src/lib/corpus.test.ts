@@ -140,6 +140,18 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(repository.getApprovedCount()).toBe(1)
   })
 
+  it('F-022: an unreadable webhook reply is still pending, never synced', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    await repository.appendInteraction({ input: 'f22 in', context: '', result: 'f22 out', runtime: 'corpus', model: 'local-model' })
+    const res = await repository.syncPending(
+      'https://example.invalid/webhook',
+      vi.fn().mockResolvedValue(new Response('<html>not json</html>', { status: 200 })),
+    )
+    expect(res.status).toBe('pending')
+    expect(res.admitted).toBe(0)
+    expect(res.reason).toMatch(/could not be read/)
+  })
+
   it('H-A: rejects an unauthorized webhook candidate instead of admitting it', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'local pending candidate', context: '', result: 'local result', runtime: 'corpus', model: 'local-model' })
