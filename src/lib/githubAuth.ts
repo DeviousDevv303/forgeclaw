@@ -34,12 +34,21 @@ function readStoredToken(): string {
   }
 }
 
-function writeStoredToken(token: string): void {
+// F-030: this writer used to swallow failures AND ignore empty input, so Settings could
+// flash "SAVED" for a token that never persisted (quota / private mode), and clearing the
+// field left the old token in storage — resolveGithubToken() then resurrected it on the
+// next load while the header dot (a direct storage read) never stopped showing "set".
+// Now a persist is a claim only read-back can make: write (or remove, on empty), read
+// back, and report whether storage actually holds what was asked for.
+function writeStoredToken(token: string): boolean {
   try {
-    if (typeof localStorage === 'undefined') return
+    if (typeof localStorage === 'undefined') return false
     if (token) localStorage.setItem(LS_KEY, token)
+    else localStorage.removeItem(LS_KEY)
+    return readStoredToken() === token
   } catch {
-    // private mode / blocked storage
+    // private mode / blocked storage — the write did not happen; say so
+    return false
   }
 }
 
@@ -57,9 +66,9 @@ export function resolveGithubToken(): string {
   return fromStore
 }
 
-/** Persist a token from Settings UI (same key; survives refresh). */
-export function persistGithubToken(token: string): void {
-  writeStoredToken(token.trim())
+/** Persist a token from Settings UI (same key; survives refresh). Returns the read-back verdict (F-030). */
+export function persistGithubToken(token: string): boolean {
+  return writeStoredToken(token.trim())
 }
 
 export function githubTokenSource(): 'env' | 'localStorage' | 'none' {
