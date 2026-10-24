@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
-  KALSHI_MAX_RESULTS, selectMarkets, type KalshiMarket, KALSHI_429_RETRY_DELAYS_MS, KALSHI_PUBLIC_READ_INTERVAL_MS, resetKalshiReadSpacing,
+  KALSHI_MAX_RESULTS, KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
+  selectMarkets, type KalshiMarket, KALSHI_429_RETRY_DELAYS_MS, KALSHI_PUBLIC_READ_INTERVAL_MS, resetKalshiReadSpacing,
 } from './kalshiMarkets'
 import { relayFallbackFetcher } from './kalshiTrade'
 
@@ -242,6 +242,92 @@ describe('rate limits on public market reads', () => {
     const pending = runKalshiMarkets({ ticker: 'KX-A' }, { fetcher: async () => replies.shift() ?? json({ markets: [] }), now: () => NOW, signal: controller.signal })
     controller.abort()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  })
+})
+
+// Stage 2 (2026-10-23): listings prefer the server-side snapshot the loop commits to the
+// kalshi-snapshot-data branch, so the browser stops spending its per-IP Kalshi quota on
+// reads a server can make once. Every miss — stale, malformed, out of scope — must fall
+// back to the live read with its behavior unchanged.
+describe('server snapshot preference (Stage 2)', () => {
+  const snapMarketDoc = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    ticker: 'KX-A', event_ticker: 'KX-EV', series_ticker: 'KX-S', title: 'Will A happen?', yes_sub_title: 'A',
+    yes_bid: 0.9, yes_ask: 0.92, no_bid: 0.08, no_ask: 0.11, last_price: 0.91,
+    volume: 5000, open_interest: 2500, status: 'active', close_time: '2026-10-23T12:00:00Z', ...over,
+  })
+  const snapDoc = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    fetched_at: new Date(NOW - 5 * 60_000).toISOString(), source: 'kalshi-public-api', http_status: 200,
+    error: null, markets: [snapMarketDoc()], ...over,
+  })
+  const sourceOf = (raw: unknown) => ({ load: async () => raw })
+  const liveDeps = () => {
+    let calls = 0
+    return { calls: () => calls, fetcher: async () => { calls++; return json({ markets: [mk({})] }) } }
+  }
+
+  it('a fresh snapshot covering the query answers without a live read, labelled as a snapshot', async () => {
+    const live = liveDeps()
+    const out = await runKalshiMarkets({ series_ticker: 'KX-S' }, { ...live, now: () => NOW, serverSnapshot: sourceOf(snapDoc()) })
+    expect(live.calls()).toBe(0)
+    expect(out).toContain('SNAPSHOT — prices from the server-side snapshot')
+    expect(out).toContain('not a live read')
+    expect(out).toContain('KX-A — Will A happen?')
+    expect(out).toContain('bid $0.90 / ask $0.92 (implied 92%)')
+  })
+
+  it('a stale snapshot changes nothing: the live read runs and its output carries no snapshot header', async () => {
+    const live = liveDeps()
+    const stale = snapDoc({ fetched_at: new Date(NOW - 16 * 60_000).toISOString() })
+    const out = await runKalshiMarkets({ series_ticker: 'KX-S' }, { ...live, now: () => NOW, serverSnapshot: sourceOf(stale) })
+    expect(live.calls()).toBe(1)
+    expect(out).not.toContain('SNAPSHOT —')
+    expect(out).toContain('KX-A — Will A happen?')
+  })
+
+  it('a per-call age limit can still admit that snapshot — the threshold is the caller’s, not a law', async () => {
+    const live = liveDeps()
+    const twentyMin = snapDoc({ fetched_at: new Date(NOW - 20 * 60_000).toISOString() })
+    const out = await runKalshiMarkets({ series_ticker: 'KX-S' }, { ...live, now: () => NOW, serverSnapshot: sourceOf(twentyMin), maxServerSnapshotAgeMs: 30 * 60_000 })
+    expect(live.calls()).toBe(0)
+    expect(out).toContain('SNAPSHOT —')
+  })
+
+  it('a malformed snapshot document falls back to the live read', async () => {
+    const live = liveDeps()
+    const drifted = snapDoc({ markets: [snapMarketDoc({ yes_ask: '0.92' })] })
+    const out = await runKalshiMarkets({ series_ticker: 'KX-S' }, { ...live, now: () => NOW, serverSnapshot: sourceOf(drifted) })
+    expect(live.calls()).toBe(1)
+    expect(out).not.toContain('SNAPSHOT —')
+  })
+
+  it('a snapshot that does not cover the queried series falls back to the live read', async () => {
+    const live = liveDeps()
+    const out = await runKalshiMarkets({ series_ticker: 'KX-OTHER' }, { ...live, now: () => NOW, serverSnapshot: sourceOf(snapDoc()) })
+    expect(live.calls()).toBe(1)
+    expect(out).not.toContain('SNAPSHOT —')
+  })
+
+  it('when the snapshot covers the scope but the caller’s filters match nothing it holds, the live read decides — a partial snapshot never reports an empty listing', async () => {
+    const live = liveDeps()
+    const out = await runKalshiMarkets({ series_ticker: 'KX-S', query: 'zzz' }, { ...live, now: () => NOW, serverSnapshot: sourceOf(snapDoc()) })
+    expect(live.calls()).toBe(1)
+    expect(out).not.toContain('SNAPSHOT —')
+  })
+
+  it('an unscoped listing never consults the snapshot at all', async () => {
+    const live = liveDeps()
+    let loads = 0
+    const source = { load: async () => { loads++; return snapDoc() } }
+    await runKalshiMarkets({ query: 'a happen' }, { ...live, now: () => NOW, serverSnapshot: source })
+    expect(loads).toBe(0)
+    expect(live.calls()).toBe(1)
+  })
+
+  it('serverSnapshot: null disables the preference; the live read runs exactly as before', async () => {
+    const live = liveDeps()
+    const out = await runKalshiMarkets({ series_ticker: 'KX-S' }, { ...live, now: () => NOW, serverSnapshot: null })
+    expect(live.calls()).toBe(1)
+    expect(out).not.toContain('SNAPSHOT —')
   })
 })
 
