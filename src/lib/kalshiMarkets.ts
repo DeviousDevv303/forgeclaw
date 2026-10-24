@@ -16,6 +16,12 @@
  * same query (kalshiSnapshot.ts) if it is within maxSnapshotAgeMs, and labels the output STALE
  * with its age. A snapshot is data Kalshi returned, never a guessed price; past the age limit
  * the read fails as before. Settlement and order-book reads never use snapshots.
+ *
+ * Listings try the Stage 2 server snapshot first (kalshiServerSnapshot.ts): prices the
+ * server-side loop fetched from the same public API and committed to the kalshi-snapshot-data
+ * branch. A fresh server snapshot answers without this browser spending its per-IP Kalshi
+ * quota at all; a stale, malformed, or out-of-scope one changes nothing — the live read runs
+ * with all of its existing behavior, including the last-good fallback above.
  */
 
 import { logWarning } from './errorLog'
@@ -23,6 +29,10 @@ import { KalshiAuthError } from './kalshiAuth'
 import {
   KALSHI_SNAPSHOT_MAX_AGE_MS, findSnapshot, formatAge, localStorageSnapshotStore, recordSnapshot, type KalshiSnapshotStore,
 } from './kalshiSnapshot'
+import {
+  KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS, httpServerSnapshotSource, loadServerSnapshot, serverSnapshotMarketsFor,
+  type KalshiServerSnapshotSource,
+} from './kalshiServerSnapshot'
 
 export const KALSHI_BASE_URL = 'https://external-api.kalshi.com/trade-api/v2'
 export const KALSHI_PAGE_LIMIT = 1000
@@ -100,6 +110,14 @@ export interface KalshiDeps {
   snapshots?: KalshiSnapshotStore | null
   /** Oldest snapshot the fallback may show, in ms (default KALSHI_SNAPSHOT_MAX_AGE_MS, 15 min). */
   maxSnapshotAgeMs?: number
+  /**
+   * The Stage 2 server snapshot source (defaults to the kalshi-snapshot-data branch's raw
+   * file over a direct fetch). Pass null to disable the server snapshot entirely — listings
+   * then read live exactly as they did before Stage 2.
+   */
+  serverSnapshot?: KalshiServerSnapshotSource | null
+  /** Oldest server snapshot that may answer a listing, in ms (default KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS, 15 min). */
+  maxServerSnapshotAgeMs?: number
 }
 
 // 2026-10-23: one answer asked kalshi_markets for KXHIGHNY, KXHIGHMIA and KXHIGHLAX back to back (each up to
@@ -429,6 +447,50 @@ export function staleHeader(fetchedAt: number, nowMs: number, maxAgeMs: number, 
     + 'These are not live prices: re-read before relying on them for a real-money decision.'
 }
 
+/** The header that makes a server-snapshot answer impossible to mistake for a live read. */
+export function serverSnapshotHeader(fetchedAt: number, nowMs: number, maxAgeMs: number): string {
+  return `SNAPSHOT — prices from the server-side snapshot fetched ${new Date(fetchedAt).toISOString()} (${formatAge(nowMs - fetchedAt)} old; limit ${formatAge(maxAgeMs)}), not a live read. `
+    + 'An approval re-reads the live price before anything is sent.'
+}
+
+/**
+ * How long a listing waits on the server snapshot before reading live without it.
+ * Why a hard bound: the snapshot is a preference, not a dependency — a slow or hung
+ * fetch of the file must never stall the live read the caller actually asked for.
+ */
+export const KALSHI_SERVER_SNAPSHOT_FETCH_TIMEOUT_MS = 4000
+
+function serverSnapshotSource(deps: KalshiDeps): KalshiServerSnapshotSource | null {
+  if (deps.serverSnapshot !== undefined) return deps.serverSnapshot
+  // A direct fetch, never deps.fetcher: that transport aims at Kalshi (with the relay
+  // fallback wrapped around it), and the snapshot file is not Kalshi's to answer for.
+  return httpServerSnapshotSource((url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(KALSHI_SERVER_SNAPSHOT_FETCH_TIMEOUT_MS) }))
+}
+
+/**
+ * The Stage 2 preference: answer from the server snapshot when it is fresh and covers
+ * the query's scope. Returns null — "read live, exactly as before" — when the snapshot
+ * is disabled, stale, malformed, out of scope, or holds nothing the caller's filters
+ * match. A partial snapshot never reports an empty listing: if the caller's filters
+ * match nothing the snapshot holds, the live read decides what exists.
+ */
+async function serverSnapshotAnswer(q: KalshiQuery, deps: KalshiDeps, now: () => number): Promise<string | null> {
+  if (!q.ticker && !q.event_ticker && !q.series_ticker) return null
+  const source = serverSnapshotSource(deps)
+  if (!source) return null
+  const maxAgeMs = deps.maxServerSnapshotAgeMs !== undefined && Number.isFinite(deps.maxServerSnapshotAgeMs) && deps.maxServerSnapshotAgeMs >= 0
+    ? deps.maxServerSnapshotAgeMs
+    : KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS
+  const snap = await loadServerSnapshot(source, now(), maxAgeMs)
+  if (!snap) return null
+  const scoped = serverSnapshotMarketsFor(snap, q)
+  if (!scoped) return null
+  const nowMs = now()
+  const selected = selectMarkets(scoped, q, nowMs)
+  if (!selected.length) return null
+  return `${serverSnapshotHeader(snap.fetchedAt, nowMs, maxAgeMs)}\n\n${formatMarkets(selected, q, nowMs, scoped.length, KALSHI_STALE_DISCLAIMER)}`
+}
+
 /**
  * Fetch open markets (up to KALSHI_MAX_PAGES pages), filter and format them. A successful read
  * is recorded as this query's snapshot; a failed one falls back to a snapshot within the age
@@ -436,6 +498,8 @@ export function staleHeader(fetchedAt: number, nowMs: number, maxAgeMs: number, 
  */
 export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promise<string> {
   const now = deps.now ?? Date.now
+  const fromServer = await serverSnapshotAnswer(q, deps, now)
+  if (fromServer !== null) return fromServer
   const store = snapshotStore(deps)
   const maxAgeMs = deps.maxSnapshotAgeMs !== undefined && Number.isFinite(deps.maxSnapshotAgeMs) && deps.maxSnapshotAgeMs >= 0
     ? deps.maxSnapshotAgeMs
