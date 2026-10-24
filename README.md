@@ -18,7 +18,7 @@ ForgeClaw is designed for people who want an AI-assisted development environment
 - Researching questions against the live web, with numbered, cited sources.
 - Looking at pictures you attach.
 - Proposing changes to its own code (self-sculpt), always as a reviewable pull request behind an owner-only key.
-- Learning from every run in NEXUS, the recursive-learning page, with nothing admitted without the owner's signed approval.
+- Learning from every run in NEXUS, the recursive-learning page: evidence-backed records converge into knowledge on their own (marked AUTO-ADDED); everything else stays an unapproved candidate.
 - Starting browser-automation work through Playwright-based GitHub Actions runners.
 - Reviewing activity, classified failures, and integrity checks instead of losing failures inside chat output.
 - Applying project-local scope and authorization checks before sensitive operations.
