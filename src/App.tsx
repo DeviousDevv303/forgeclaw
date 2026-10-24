@@ -973,6 +973,20 @@ function App() {
   const voiceOriginRef = useRef('')
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesScrollRef = useRef<HTMLDivElement>(null)
+  // Whether the reader is following the tail of the chat. Starts pinned: entry
+  // lands on the latest message (owner's stated preference). Scrolling up to
+  // read history unpins, and while unpinned, streaming updates must NOT yank
+  // the view back down to the processing indicator (owner report, 2026-10-24);
+  // scrolling back near the bottom re-pins.
+  const pinnedToBottomRef = useRef(true)
+  // True while a programmatic scroll-to-bottom is in flight: its own scroll
+  // events pass through positions far from the tail (a long new message grows
+  // scrollHeight instantly) and must not read as the reader unpinning. Cleared
+  // on arrival near the tail, or by a timeout backstop if the animation is
+  // interrupted — after which genuine scroll positions rule again.
+  const scrollAnimRef = useRef(false)
+  const scrollAnimTimerRef = useRef<number | null>(null)
   const ttsResumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const LANGUAGE_NAMES: Record<string, string> = {
@@ -991,20 +1005,46 @@ function App() {
     return pool.find(v => v.default) || pool[0] || null
   }
 
-  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  const scrollToBottomInstant = () => messagesEndRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior })
+  // useCallback with ref-only bodies: these are stable by construction, which
+  // keeps the scroll effects' dependency arrays honest (no new lint warnings).
+  const armScrollAnim = useCallback(() => {
+    scrollAnimRef.current = true
+    if (scrollAnimTimerRef.current) window.clearTimeout(scrollAnimTimerRef.current)
+    scrollAnimTimerRef.current = window.setTimeout(() => { scrollAnimRef.current = false }, 400)
+  }, [])
+  const scrollToBottom = useCallback(() => { armScrollAnim(); messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [armScrollAnim])
+  const scrollToBottomInstant = useCallback(() => { armScrollAnim(); messagesEndRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior }) }, [armScrollAnim])
 
-  useEffect(() => { scrollToBottom() }, [messages])
+  // Why 120px: roughly one short message of slack — near enough to the tail to
+  // count as following the conversation, small enough that a deliberate
+  // scroll-up to read is never inside it while a run streams.
+  const PIN_THRESHOLD_PX = 120
+  const handleMessagesScroll = () => {
+    const el = messagesScrollRef.current
+    if (!el) return
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (scrollAnimRef.current) {
+      if (distance <= PIN_THRESHOLD_PX) { scrollAnimRef.current = false; pinnedToBottomRef.current = true }
+      return
+    }
+    pinnedToBottomRef.current = distance <= PIN_THRESHOLD_PX
+  }
+
+  // Follow the tail ONLY while pinned: a messages change includes every
+  // streaming/buffering update during a run, and an unconditional scroll here
+  // is exactly the yank the owner reported.
+  useEffect(() => { if (pinnedToBottomRef.current) scrollToBottom() }, [messages, scrollToBottom])
   // On initial load and when returning to the chat tab, jump straight to the
   // latest message instead of landing mid-chat. Uses instant (not smooth) so it
   // completes before paint; a second pass catches late layout shifts.
   useEffect(() => {
     if (activeTab === 'forgemind') {
+      pinnedToBottomRef.current = true
       scrollToBottomInstant()
       const t = window.setTimeout(scrollToBottomInstant, 300)
       return () => window.clearTimeout(t)
     }
-  }, [activeTab])
+  }, [activeTab, scrollToBottomInstant])
   useEffect(() => { safeSetItem('forgemind_history', JSON.stringify(messages)) }, [messages])
   useEffect(() => { installErrorHandlers() }, [])
   // Auto-settle placed Kalshi positions from Kalshi's own settlements, once per open.
@@ -2331,6 +2371,9 @@ function App() {
 
   const handleSendMessage = async () => {
     if (!input.trim() && !attachedFile) return
+    // Sending means "take me to the tail": pin even if the reader had scrolled
+    // up into history, so their own message and its run stay in view.
+    pinnedToBottomRef.current = true
     // Keep the typed text while a request is still running; sendPrompt would ignore it anyway.
     // Say so, otherwise an ignored Enter looks like the app froze.
     if (activeRunRef.current) {
@@ -3197,7 +3240,7 @@ function App() {
         {/* ── ForgeMind Tab ── */}
         {activeTab === 'forgemind' && (
           <>
-            <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
+            <div ref={messagesScrollRef} onScroll={handleMessagesScroll} style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
               {isPublicVisitor(ghToken) && (
                 <div role="note" style={{ border: '1px solid #3a2a05', background: '#120d02', color: '#eab308', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('public.notice')}</div>
               )}
