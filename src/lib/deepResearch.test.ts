@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatResearchResult, normalizeQueries, RESEARCH_RESULT_MAX_CHARS, runDeepResearch, type ResearchReport } from './deepResearch'
+import { formatResearchResult, missingForumLanes, normalizeQueries, normalizeSentimentInput, RESEARCH_RESULT_MAX_CHARS, runDeepResearch, type ResearchReport } from './deepResearch'
 import type { GithubRequest } from './githubPublish'
 
 const WF = 'https://api.github.com/repos/DeviousDevv303/forgeclaw'
@@ -50,6 +50,25 @@ describe('runDeepResearch', () => {
     await expect(runDeepResearch(f.request, { ...f.base, question: '   ' })).rejects.toThrow(/question is required/)
     expect(f.calls).toEqual([])
   })
+  it('passes sentiment subjects to the workflow when they are well-formed, and only then', async () => {
+    const f = fake()
+    await runDeepResearch(f.request, { ...f.base, question: 'q', sentiment: { query: ' UFC 333  Dvalishvili vs Yan ', sides: ['Merab Dvalishvili', 'Petr Yan'] } })
+    expect(f.calls[0].body?.inputs).toMatchObject({ sentiment_query: 'UFC 333 Dvalishvili vs Yan', sentiment_sides: 'Merab Dvalishvili|Petr Yan' })
+    const g = fake()
+    await runDeepResearch(g.request, { ...g.base, question: 'q', sentiment: { query: 'UFC 333', sides: ['Only One'] } })
+    expect(g.calls[0].body?.inputs).not.toHaveProperty('sentiment_query')
+    expect(g.calls[0].body?.inputs).not.toHaveProperty('sentiment_sides')
+  })
+})
+
+describe('normalizeSentimentInput', () => {
+  it('needs a query and exactly two sides', () => {
+    expect(normalizeSentimentInput(' UFC 333 ', ['Merab Dvalishvili', ' Petr Yan '])).toEqual({ query: 'UFC 333', sides: ['Merab Dvalishvili', 'Petr Yan'] })
+    expect(normalizeSentimentInput('UFC 333', ['Merab Dvalishvili'])).toBeNull()
+    expect(normalizeSentimentInput('UFC 333', ['A', 'B', 'C'])).toBeNull()
+    expect(normalizeSentimentInput('', ['A', 'B'])).toBeNull()
+    expect(normalizeSentimentInput(undefined, undefined)).toBeNull()
+  })
 })
 
 describe('formatResearchResult', () => {
@@ -80,5 +99,74 @@ describe('formatResearchResult', () => {
   it('accepts queries as an array or a newline/semicolon string', () => {
     expect(normalizeQueries('a; b\nc')).toEqual(['a', 'b', 'c'])
     expect(normalizeQueries(undefined)).toEqual([])
+  })
+})
+
+const sentimentReport: ResearchReport = {
+  ...report,
+  sentiment_requested: true,
+  lanes: [
+    { id: 'web', label: 'Web search', status: 'ran', items: 2, as_of: '2026-10-24T00:00:00Z', reason: '' },
+    { id: 'reddit', label: 'Reddit', status: 'ran', items: 5, as_of: '2026-10-24T00:00:00Z', reason: '' },
+    { id: 'x', label: 'X', status: 'not_configured', items: 0, as_of: '2026-10-24T00:00:00Z', reason: 'no xAI API key configured (repository secret XAI_API_KEY is not set); the X lane needs it for X search' },
+    { id: 'facebook', label: 'Facebook', status: 'failed', items: 0, as_of: '2026-10-24T00:00:00Z', reason: 'Graph API error: Invalid OAuth access token' },
+  ],
+  sentiment: {
+    sides: ['Merab Dvalishvili', 'Petr Yan'],
+    items: [
+      { lane: 'reddit', kind: 'comment', text: 'Merab by decision, the cardio is unreal', url: 'https://www.reddit.com/r/MMA/comments/p1/x/c1/', score: 9 },
+      { lane: 'reddit', kind: 'post', text: 'Yan takes the rematch, bank on it', url: 'https://www.reddit.com/r/MMA/comments/p1/x/', score: 42 },
+    ],
+    lean: { method: 'exclusive-name-mention-v1', sides: ['Merab Dvalishvili', 'Petr Yan'], pick_bearing: 3, counts: [2, 1], share_pct: [66.7, 33.3] },
+  },
+}
+
+describe('formatResearchResult lane manifest (non-silence)', () => {
+  it('names every missing forum lane with its reason when sentiment was requested', () => {
+    const text = formatResearchResult(sentimentReport, 'https://run')
+    expect(text).toContain('Source lanes:')
+    expect(text).toContain('- Reddit: ran — 5 item(s)')
+    expect(text).toContain('forum layer missing: X — no xAI API key configured')
+    expect(text).toContain('forum layer missing: Facebook — Graph API error: Invalid OAuth access token')
+    expect(text).not.toContain('forum layer missing: Reddit')
+    expect(text).toContain('A SENTIMENT SCAN written from this research must name every missing lane above')
+  })
+  it('renders the counted lean and the scanned items with their URLs', () => {
+    const text = formatResearchResult(sentimentReport, 'https://run')
+    expect(text).toContain('Community lean (exclusive-name-mention-v1; 3 pick-bearing of 2 item(s)): Merab Dvalishvili: 2 item(s) (66.7%); Petr Yan: 1 item(s) (33.3%)')
+    expect(text).toContain('[reddit] Merab by decision, the cardio is unreal — https://www.reddit.com/r/MMA/comments/p1/x/c1/')
+    expect(text).toContain('"crowd lean: <n>%" is the share above of the side you propose')
+  })
+  it('says nothing is missing when every community lane ran', () => {
+    const allRan: ResearchReport = {
+      ...sentimentReport,
+      lanes: sentimentReport.lanes!.map(l => ({ ...l, status: 'ran' as const, items: 3, reason: '' })),
+    }
+    const text = formatResearchResult(allRan, 'https://run')
+    expect(text).toContain('Source lanes:')
+    expect(text).not.toContain('forum layer missing')
+    expect(missingForumLanes(allRan)).toEqual([])
+  })
+  it('keeps the missing lanes named even when the web lane found nothing', () => {
+    const text = formatResearchResult({ ...sentimentReport, sources: [] }, 'https://run')
+    expect(text).toMatch(/^\[TOOL ERROR\] deep_research found no readable sources/)
+    expect(text).toContain('forum layer missing: X')
+  })
+  it('does not cry missing on a run that never asked for the forum layer', () => {
+    expect(missingForumLanes(report)).toEqual([])
+    expect(missingForumLanes({ ...sentimentReport, sentiment_requested: false })).toEqual([])
+    expect(formatResearchResult(report, 'https://run')).not.toContain('Source lanes:')
+  })
+  it('lists the lanes that did not run on an ordinary run without flagging them missing', () => {
+    const ordinary: ResearchReport = {
+      ...report, sentiment_requested: false,
+      lanes: [
+        { id: 'web', label: 'Web search', status: 'ran', items: 2, as_of: '2026-10-24T00:00:00Z', reason: '' },
+        { id: 'reddit', label: 'Reddit', status: 'not_configured', items: 0, as_of: '2026-10-24T00:00:00Z', reason: 'no sentiment subjects were supplied for this run' },
+      ],
+    }
+    const text = formatResearchResult(ordinary, 'https://run')
+    expect(text).toContain('- Reddit: NOT CONFIGURED — no sentiment subjects were supplied for this run')
+    expect(text).not.toContain('forum layer missing')
   })
 })

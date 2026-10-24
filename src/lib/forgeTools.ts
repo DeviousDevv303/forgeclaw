@@ -719,13 +719,15 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'deep_research',
-    description: 'Deep web research: runs up to 6 searches server-side, fetches the result pages, extracts their main text and returns numbered evidence excerpts with URLs (2-6 minutes). Use for questions that need several current sources; answer only from the returned sources and cite them as [n]. For a quick fact use web_search instead.',
+    description: 'Deep web research: runs up to 6 searches server-side, fetches the result pages, extracts their main text and returns numbered evidence excerpts with URLs (2-6 minutes). Use for questions that need several current sources; answer only from the returned sources and cite them as [n]. For a quick fact use web_search instead. For fight/event research where the crowd\'s lean matters, also pass sentiment_query (the matchup, e.g. "UFC 333 Dvalishvili vs Yan") and sentiment_sides (the two competitors\' full names): the run then also scans the community lanes (Reddit, X, Facebook) and counts the crowd\'s lean from what it finds. Every lane\'s status is reported in the result — a lane that did not run is named ("forum layer missing: ..."), and a SENTIMENT SCAN built on it must name that gap too.',
     parameters: {
       type: 'object',
       properties: {
         question:    { type: 'string', description: 'The research question' },
         queries:     { type: 'array', description: '3-6 distinct search queries covering different angles of the question', items: { type: 'string' } },
         max_sources: { type: 'number', description: 'Sources to fetch, 1-15, default 8' },
+        sentiment_query: { type: 'string', description: 'Matchup/event for the community sentiment lanes, e.g. "UFC 333 Dvalishvili vs Yan". Only with sentiment_sides.' },
+        sentiment_sides: { type: 'array', description: 'Exactly two competitor names for the crowd-lean count, e.g. ["Merab Dvalishvili", "Petr Yan"]', items: { type: 'string' } },
       },
       required: ['question'],
     },
@@ -2279,7 +2281,9 @@ case 'spawn_agent': {
         const { report, runUrl } = await runDeepResearch(githubRequest, {
           owner: ctx.ghOwner, repo: ctx.ghRepo, token,
           question: String(input.question || ''), queries: normalizeQueries(input.queries),
-          maxSources: Number(input.max_sources) || undefined, signal: ctx.signal,
+          maxSources: Number(input.max_sources) || undefined,
+          sentiment: { query: String(input.sentiment_query || ''), sides: Array.isArray(input.sentiment_sides) ? input.sentiment_sides.map(String) : [] },
+          signal: ctx.signal,
         })
         return formatResearchResult(report, runUrl)
       }
