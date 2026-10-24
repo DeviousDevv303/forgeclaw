@@ -12,10 +12,12 @@
  * This module fetches that file and presents each record to NEXUS through the
  * corpus module's external-candidate path. The default is a pending candidate
  * at the existing approval gate — but under the owner's auto-admission criteria
- * (Cristian, 2026-10-24; see intakeAutoAdmit) an audit-adjudicated record whose
- * loop closed is verified knowledge and is admitted on arrival, through the
- * corpus module's intake admission (appendIntakeExperience), carrying full
- * provenance and the INTAKE_ADMITTED_BY marker. The criteria are the owner's
+ * (Cristian, 2026-10-24; see intakeAutoAdmitMarker) a qualifying record is
+ * admitted on arrival, through the corpus module's intake admission
+ * (appendIntakeExperience), carrying full provenance and its class's marker:
+ * INTAKE_ADMITTED_BY for an audit-adjudicated record whose loop closed, and
+ * OWNER_ADMITTED_BY for the owner's own filed decision record (the second
+ * class, directed by the owner the same day). The criteria are the owner's
  * ruling, implemented literally — this module widens nothing beyond them:
  * canary records (raw sensor output) NEVER auto-admit, and neither does any
  * record missing a field the criteria name.
@@ -37,7 +39,7 @@
  */
 
 import { corpusRepository, type CorpusRepository, type ShellCorpusExperienceInput } from './corpus'
-import { INTAKE_ADMITTED_BY } from './nexusConvergence'
+import { INTAKE_ADMITTED_BY, OWNER_ADMITTED_BY } from './nexusConvergence'
 import { safeGetItem, safeSetItem } from './storage'
 
 export const NEXUS_INTAKE_URL =
@@ -113,6 +115,32 @@ export function intakeAutoAdmit(record: NexusIntakeRecord): boolean {
     && INTAKE_AUTO_ADMIT_KINDS.has(record.kind)
     && record.runId !== ''
     && record.ref !== ''
+}
+
+/**
+ * The owner's SECOND auto-admission class (Cristian, directed 2026-10-24 over his
+ * settled Yan position): a record the owner himself filed about his own decision —
+ * source 'owner-decision', kind 'decision-outcome', with run_id and ref — is admitted
+ * on arrival under the OWNER marker. Same discipline as the audit class (ALL fields
+ * required, no partial credit), different attestation: the owner attested it, no lane
+ * adjudicated it, and the marker never pretends otherwise. Any other owner-source
+ * kind stays a pending candidate at the gate.
+ */
+export const INTAKE_AUTO_ADMIT_OWNER_SOURCE = 'owner-decision'
+export const INTAKE_AUTO_ADMIT_OWNER_KINDS: ReadonlySet<string> = new Set(['decision-outcome'])
+
+export function intakeOwnerAutoAdmit(record: NexusIntakeRecord): boolean {
+  return record.source === INTAKE_AUTO_ADMIT_OWNER_SOURCE
+    && INTAKE_AUTO_ADMIT_OWNER_KINDS.has(record.kind)
+    && record.runId !== ''
+    && record.ref !== ''
+}
+
+/** The admission marker a record qualifies for, or null when it stays a pending candidate. */
+export function intakeAutoAdmitMarker(record: NexusIntakeRecord): string | null {
+  if (intakeAutoAdmit(record)) return INTAKE_ADMITTED_BY
+  if (intakeOwnerAutoAdmit(record)) return OWNER_ADMITTED_BY
+  return null
 }
 
 /** Parses one JSONL line; a blank or malformed line yields null, never a throw. */
@@ -220,19 +248,21 @@ export interface NexusIntakeSyncResult {
 
 /**
  * Fetches the intake file and presents every not-yet-seen record through the
- * corpus module's external-candidate path. A record meeting ALL of the owner's
- * auto-admission criteria (intakeAutoAdmit) is admitted on arrival via
- * appendIntakeExperience, marked INTAKE_ADMITTED_BY with its full provenance;
- * every other record lands as a pending candidate (admissionStatus 'candidate')
- * at the existing approval gate. Admission is idempotent at two levels: the
- * dedupe key (run_id + kind + subject) means a refetch never re-presents or
- * re-admits a record, and — the owner's strengthened rule — a fallacy-audit
- * REF may be admitted at most once ever, even when the same finding arrives
- * again under a different run_id (the 2026-10-24 ledger backfill and a future
- * audit pass can both report F-0NN; it is admitted once). A repeat arrival of
- * an already-admitted ref is recorded as seen and presented no further. Any
- * failure — transport, storage, a broken write — reports 'unavailable' and
- * changes nothing the tab shows beyond records already fully written.
+ * corpus module's external-candidate path. A record meeting ALL of one of the
+ * owner's auto-admission classes (intakeAutoAdmitMarker) is admitted on arrival
+ * via appendIntakeExperience, marked with its class's marker and its full
+ * provenance; every other record lands as a pending candidate (admissionStatus
+ * 'candidate') at the existing approval gate. A record already presented as a
+ * pending candidate is upgraded to admitted when it qualifies (the declined
+ * guard still vetoes). Admission is idempotent at two levels: the dedupe key
+ * (run_id + kind + subject) means a refetch never re-presents or re-admits a
+ * record, and — the owner's strengthened rule — a REF may be admitted at most
+ * once ever, even when the same finding arrives again under a different run_id
+ * (the 2026-10-24 ledger backfill and a future audit pass can both report
+ * F-0NN; it is admitted once). A repeat arrival of an already-admitted ref is
+ * recorded as seen and presented no further. Any failure — transport, storage,
+ * a broken write — reports 'unavailable' and changes nothing the tab shows
+ * beyond records already fully written.
  */
 export async function syncNexusIntake(
   source: NexusIntakeSource = httpNexusIntakeSource(),
@@ -243,19 +273,22 @@ export async function syncNexusIntake(
     const records = parseNexusIntake(text)
     const seen = loadSeenIntakeKeys()
     const candidates = repo.listCandidates()
-    const presented = new Set(
+    const presentedByKey = new Map(
       candidates.flatMap(candidate => {
         const key = candidate.metadata?.intakeKey
-        return typeof key === 'string' && key ? [key] : []
+        return typeof key === 'string' && key ? [[key, candidate] as const] : []
       }),
     )
-    // Refs already admitted under the owner's criteria, read off the candidates
-    // carrying the marker (an audit record's subject IS its ref). This set is
-    // the enforcement of "admitted at most once ever" across run_ids.
+    const presented = new Set(presentedByKey.keys())
+    // Refs already admitted under either of the owner's auto-admission classes,
+    // read off the candidates carrying an admission marker (an admitted record's
+    // subject IS its ref). This set is the enforcement of "admitted at most once
+    // ever" across run_ids — and across classes: one ref, one admission.
     const admittedRefs = new Set(
       candidates.flatMap(candidate => {
         const subject = candidate.metadata?.subject
-        return candidate.metadata?.admittedBy === INTAKE_ADMITTED_BY && typeof subject === 'string' && subject ? [subject] : []
+        const marker = candidate.metadata?.admittedBy
+        return (marker === INTAKE_ADMITTED_BY || marker === OWNER_ADMITTED_BY) && typeof subject === 'string' && subject ? [subject] : []
       }),
     )
     let added = 0
@@ -263,11 +296,25 @@ export async function syncNexusIntake(
     for (const record of records) {
       const key = intakeDedupeKey(record)
       if (seen.has(key) || presented.has(key)) {
+        // Already presented. One exception, and it is the point of the owner's
+        // classes: a record that was presented as a PENDING candidate before it
+        // qualified (e.g. it arrived before the class existed, or before the app
+        // update carrying it) is upgraded to admitted when it qualifies now —
+        // unless the owner declined it, which appendIntakeExperience's declined
+        // guard enforces, or its ref's one admission is already spent.
+        const prior = presentedByKey.get(key)
+        const marker = intakeAutoAdmitMarker(record)
+        if (marker && prior && prior.admissionStatus === 'candidate' && !admittedRefs.has(record.ref)) {
+          await repo.appendIntakeExperience(intakeCandidateInput(record), marker)
+          admittedRefs.add(record.ref)
+          admitted += 1
+        }
         seen.add(key)
         continue
       }
       const input = intakeCandidateInput(record)
-      if (intakeAutoAdmit(record)) {
+      const marker = intakeAutoAdmitMarker(record)
+      if (marker) {
         if (admittedRefs.has(record.ref)) {
           // This ref's one admission is already spent (possibly under another
           // run_id): record the arrival as seen, present nothing further.
@@ -275,7 +322,7 @@ export async function syncNexusIntake(
           presented.add(key)
           continue
         }
-        await repo.appendIntakeExperience(input, INTAKE_ADMITTED_BY)
+        await repo.appendIntakeExperience(input, marker)
         admittedRefs.add(record.ref)
         admitted += 1
       } else {

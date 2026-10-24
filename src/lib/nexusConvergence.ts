@@ -36,6 +36,16 @@ export const CONVERGED_BY = 'nexus-convergence'
  * marker: a sensor tripping is a claim, not an adjudication.
  */
 export const INTAKE_ADMITTED_BY = 'nexus-intake:audit-loop-closed'
+
+/**
+ * Marks knowledge auto-admitted from Stage 3b external intake under the owner's SECOND
+ * auto-admission class (Cristian, directed 2026-10-24 over his settled Yan position): an
+ * owner-decision record — the owner's own call, its reasoning, and its verified outcome,
+ * filed by the owner himself with run_id and ref — is admitted on arrival under its own
+ * marker, never the audit marker: the owner attested it, no lane adjudicated it, and the
+ * label in the Nexus tab says exactly that.
+ */
+export const OWNER_ADMITTED_BY = 'nexus-intake:owner-directed'
 // Same strings as browserLearning.ts and nexusLearning.ts; repeated here because corpus.ts imports this module and
 // those import corpus.ts (a test pins them equal).
 export const PLAYBOOK_SOURCE = 'learning:browser'
@@ -63,6 +73,7 @@ export const UNSIGNED_ADMISSION_UNTIL = '2026-10-14'
 export function knowledgeOrigin(record: { timestamp: string; metadata: Record<string, string> }): string {
   if (record.metadata.admittedBy === CONVERGED_BY) return 'AUTO-ADDED'
   if (record.metadata.admittedBy === INTAKE_ADMITTED_BY) return 'AUTO-ADDED · AUDIT-ADJUDICATED'
+  if (record.metadata.admittedBy === OWNER_ADMITTED_BY) return 'AUTO-ADDED · OWNER-DIRECTED'
   if (record.timestamp < UNSIGNED_ADMISSION_UNTIL) return 'LEGACY · admitted without review (Sep 24 – Oct 13)'
   return 'ADMITTED · origin not recorded'
 }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest'
 import { buildLearningEvent } from './learningEvents'
-import { answerOutcome, convergencePhase, knowledgeOrigin, PLAYBOOK_SOURCE, VISITOR_SOURCE_ID } from './nexusConvergence'
+import { answerOutcome, convergencePhase, INTAKE_ADMITTED_BY, knowledgeOrigin, OWNER_ADMITTED_BY, PLAYBOOK_SOURCE, VISITOR_SOURCE_ID } from './nexusConvergence'
 import { BROWSER_PLAYBOOK_SOURCE } from './browserLearning'
 import { VISITOR_SOURCE } from './nexusLearning'
 import { corpusRepository, type LearningCandidate } from './corpus'
@@ -75,6 +75,8 @@ describe('knowledge: listed, labelled by origin, removable', () => {
   beforeEach(() => localStorage.clear())
   it('labels each origin', () => {
     expect(knowledgeOrigin({ timestamp: '2026-10-21T22:00:00Z', metadata: { admittedBy: 'nexus-convergence' } })).toBe('AUTO-ADDED')
+    expect(knowledgeOrigin({ timestamp: '2026-10-24T22:00:00Z', metadata: { admittedBy: INTAKE_ADMITTED_BY } })).toBe('AUTO-ADDED · AUDIT-ADJUDICATED')
+    expect(knowledgeOrigin({ timestamp: '2026-10-24T22:00:00Z', metadata: { admittedBy: OWNER_ADMITTED_BY } })).toBe('AUTO-ADDED · OWNER-DIRECTED')
     expect(knowledgeOrigin({ timestamp: '2026-10-02T12:00:00Z', metadata: {} })).toMatch(/^LEGACY · admitted without review/)
     expect(knowledgeOrigin({ timestamp: '2026-10-20T12:00:00Z', metadata: {} })).toBe('ADMITTED · origin not recorded')
   })

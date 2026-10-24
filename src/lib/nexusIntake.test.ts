@@ -8,12 +8,13 @@ import {
   intakeAutoAdmit,
   intakeCandidateInput,
   intakeDedupeKey,
+  intakeOwnerAutoAdmit,
   parseNexusIntake,
   parseNexusIntakeLine,
   syncNexusIntake,
   type NexusIntakeSource,
 } from './nexusIntake'
-import { INTAKE_ADMITTED_BY, knowledgeOrigin } from './nexusConvergence'
+import { INTAKE_ADMITTED_BY, OWNER_ADMITTED_BY, knowledgeOrigin } from './nexusConvergence'
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -46,6 +47,16 @@ const AUDIT_LINE = JSON.stringify({
   ref: 'F-031',
   summary: 'README line 21 contradicts line 77 on NEXUS admission',
   provenance: 'ledger §2 + https://github.com/DeviousDevv303/forgeclaw/issues/235#issuecomment-6382826915',
+})
+
+const OWNER_LINE = JSON.stringify({
+  ts: '2026-10-24T20:40:00.000Z',
+  source: 'owner-decision',
+  run_id: 'owner-bet-yan-ufc333-20261024',
+  kind: 'decision-outcome',
+  ref: 'UFC333-YAN-20261024',
+  summary: 'Owner betting case study — the framework leaned Merab; the owner overrode on his own read and won.',
+  provenance: 'Owner-attested in chat 2026-10-24',
 })
 
 function sourceOf(text: string): NexusIntakeSource {
@@ -183,6 +194,79 @@ describe('nexusIntake sync', () => {
     expect(repo.listCandidates()[0].admissionStatus).toBe('candidate')
     expect(repo.getApprovedCount()).toBe(0)
     expect(repo.listKnowledge()).toEqual([])
+  })
+
+  it('AUTO-ADMITS a qualifying owner-decision record (decision-outcome, run_id + ref) under the OWNER marker — never the audit marker', async () => {
+    const record = parseNexusIntakeLine(OWNER_LINE)
+    expect(record && intakeAutoAdmit(record)).toBe(false)
+    expect(record && intakeOwnerAutoAdmit(record)).toBe(true)
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(OWNER_LINE), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+    const candidates = repo.listCandidates()
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0].admissionStatus).toBe('approved')
+    expect(candidates[0].metadata).toMatchObject({
+      intakeSource: 'owner-decision',
+      kind: 'decision-outcome',
+      subject: 'UFC333-YAN-20261024',
+      run: 'owner-bet-yan-ufc333-20261024',
+      admittedBy: OWNER_ADMITTED_BY,
+    })
+    const knowledge = repo.listKnowledge()
+    expect(knowledge).toHaveLength(1)
+    expect(knowledge[0].metadata?.admittedBy).toBe(OWNER_ADMITTED_BY)
+    expect(knowledgeOrigin(knowledge[0])).toBe('AUTO-ADDED · OWNER-DIRECTED')
+  })
+
+  it('keeps an owner-decision record with a non-decision kind PENDING — only decision-outcome qualifies', async () => {
+    const note = JSON.stringify({ ...(JSON.parse(OWNER_LINE) as Record<string, unknown>), kind: 'note' })
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(note), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 1, admitted: 0 })
+    expect(repo.listCandidates()[0].admissionStatus).toBe('candidate')
+    expect(repo.listKnowledge()).toEqual([])
+  })
+
+  it('keeps an owner-decision record missing run_id PENDING', async () => {
+    const broken = { ...(JSON.parse(OWNER_LINE) as Record<string, unknown>) }
+    delete broken.run_id
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(JSON.stringify(broken)), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 1, admitted: 0 })
+    expect(repo.listCandidates()[0].admissionStatus).toBe('candidate')
+    expect(repo.listKnowledge()).toEqual([])
+  })
+
+  it('UPGRADES an owner record that was already presented as a pending candidate (it arrived before the class existed)', async () => {
+    const repo = new CorpusRepository()
+    const record = parseNexusIntakeLine(OWNER_LINE)
+    if (!record) throw new Error('fixture must parse')
+    // Presented the way the pre-class app presented it: a pending candidate.
+    await repo.appendShellExperience(intakeCandidateInput(record))
+    expect(repo.listCandidates()[0].admissionStatus).toBe('candidate')
+    expect(repo.listKnowledge()).toEqual([])
+
+    const result = await syncNexusIntake(sourceOf(OWNER_LINE), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+    expect(repo.listCandidates()).toHaveLength(1)
+    expect(repo.listCandidates()[0].admissionStatus).toBe('approved')
+    expect(repo.listCandidates()[0].metadata?.admittedBy).toBe(OWNER_ADMITTED_BY)
+    expect(repo.listKnowledge()).toHaveLength(1)
+  })
+
+  it('admits an owner ref at most once ever, even when it arrives again under a different run_id', async () => {
+    const secondArrival = JSON.stringify({
+      ...(JSON.parse(OWNER_LINE) as Record<string, unknown>),
+      ts: '2026-10-25T20:40:00.000Z',
+      run_id: 'owner-bet-yan-filed-again',
+      summary: 'Same owner case filed again under another run.',
+    })
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf([OWNER_LINE, secondArrival].join('\n')), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 2, added: 0, admitted: 1 })
+    expect(repo.listKnowledge()).toHaveLength(1)
+    expect(repo.getApprovedCount()).toBe(1)
   })
 
   it('never double-admits on refetch: the same qualifying record syncs to exactly one admission', async () => {
