@@ -12,6 +12,7 @@ import {
   mergeChannelCalls,
   parseChannelCall,
   parseChannelCalls,
+  parseChannelCallsInComment,
   readChannelCallWatermark,
   readPendingChannelCalls,
   savePendingChannelCalls,
@@ -59,6 +60,39 @@ describe('parseChannelCall', () => {
 
   it('ignores a marker for a different format version', () => {
     expect(parseChannelCall(comment({ body: '<!-- forgeclaw-call:v2 id=x -->\nDo things.' }))).toBeNull()
+  })
+})
+
+describe('F-027: one comment can carry more than one call', () => {
+  const twoMarker = () => comment({
+    id: 9001,
+    body: '@ForgeClaw do A\n<!-- forgeclaw-call:v1 id=call-a-001 -->\nand also B\n<!-- forgeclaw-call:v1 id=call-b-002 -->',
+  })
+
+  it('parses every marker in a comment, in marker order', () => {
+    const calls = parseChannelCallsInComment(twoMarker())
+    expect(calls.map(c => c.callId)).toEqual(['call-a-001', 'call-b-002'])
+    expect(calls.map(c => c.commentId)).toEqual([9001, 9001])
+  })
+
+  it('strips every marker from the shared task text', () => {
+    for (const call of parseChannelCallsInComment(twoMarker())) {
+      expect(call.taskText).not.toContain('forgeclaw-call')
+      expect(call.taskText).toContain('do A')
+      expect(call.taskText).toContain('and also B')
+    }
+  })
+
+  it('parseChannelCalls surfaces both calls from the one comment', () => {
+    expect(parseChannelCalls([twoMarker()]).map(c => c.callId)).toEqual(['call-a-001', 'call-b-002'])
+    // parseChannelCall stays the first-call convenience.
+    expect(parseChannelCall(twoMarker())?.callId).toBe('call-a-001')
+  })
+
+  it('merge keeps both calls from one comment (union by call id)', () => {
+    const [a, b] = parseChannelCalls([twoMarker()])
+    const merged = mergeChannelCalls([a], [b])
+    expect(merged.map(c => c.callId)).toEqual(['call-a-001', 'call-b-002'])
   })
 })
 
@@ -156,7 +190,7 @@ describe('pending calls survive a reload until dismissed', () => {
     expect(kept[0].commentId).toBe(11)
   })
 
-  it('merge is a union by comment id, oldest first', () => {
+  it('merge is a union by call id, oldest first', () => {
     expect(mergeChannelCalls([call(5), call(2)], [call(5), call(9)]).map(c => c.commentId)).toEqual([2, 5, 9])
   })
 })

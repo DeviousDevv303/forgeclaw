@@ -3558,14 +3558,14 @@ function App() {
                   const ts = new Date(call.createdAt)
                   const timeStr = Number.isNaN(ts.getTime()) ? '' : `${ts.toLocaleDateString(locale, { month: 'short', day: 'numeric' })} ${ts.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
                   return (
-                    <div key={call.commentId} style={{ padding: '6px 0', borderTop: '1px solid #0f0f0f' }}>
+                    <div key={call.callId} style={{ padding: '6px 0', borderTop: '1px solid #0f0f0f' }}>
                       <div style={{ display: 'flex', gap: '10px', alignItems: 'baseline' }}>
                         <span style={{ color: '#f9731644', fontSize: '8px', letterSpacing: '1px', flexShrink: 0 }}>{t('activity.channelCall')}</span>
                         {timeStr && <span style={{ color: '#333', fontSize: '8px', flexShrink: 0 }}>{timeStr}</span>}
                       </div>
                       <div style={{ color: '#999', fontSize: '10px', whiteSpace: 'pre-wrap', marginTop: '3px' }}>{call.taskText}</div>
                       <button
-                        onClick={() => { const next = channelCalls.filter(c => c.commentId !== call.commentId); savePendingChannelCalls(next); setChannelCalls(next) }}
+                        onClick={() => { const next = channelCalls.filter(c => c.callId !== call.callId); savePendingChannelCalls(next); setChannelCalls(next) }}
                         style={{ marginTop: '4px', background: 'none', border: '1px solid #222', color: '#666', fontSize: '8px', letterSpacing: '1px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer' }}
                       >{t('activity.channelCallDismiss')}</button>
                     </div>
