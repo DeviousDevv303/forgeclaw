@@ -36,7 +36,7 @@ describe('getBalance', () => {
   it('parses cents and the dollar string, and signs the queryless path', async () => {
     const { fetcher, calls } = fakeFetcher(() => ({ json: { balance: 12345, balance_dollars: '123.4500', portfolio_value: 13000, updated_ts: 1 } }))
     const balance = await createKalshiClient(creds, fetcher).getBalance()
-    expect(balance).toEqual({ balanceCents: 12345, balanceDollars: 123.45, portfolioValueCents: 13000 })
+    expect(balance).toEqual({ balanceCents: 12345, balanceDollars: 123.45, portfolioValueCents: 13000, updatedTs: 1, breakdown: null })
     expect(calls[0].url).toBe('https://external-api.demo.kalshi.co/trade-api/v2/portfolio/balance')
     expect(calls[0].headers['KALSHI-ACCESS-KEY']).toBe('test-key-id')
     expect(calls[0].headers['KALSHI-ACCESS-SIGNATURE']).toBeTruthy()
@@ -49,6 +49,46 @@ describe('getBalance', () => {
     expect(calls[0].url).toBe('https://external-api.demo.kalshi.co/trade-api/v2/portfolio/balance?exchange_index=3')
     expect(calls[0].headers['KALSHI-ACCESS-SIGNATURE']).toBeTruthy()
   })
+
+  it('carries the per-shard breakdown and the update timestamp the response reports', async () => {
+    const { fetcher } = fakeFetcher(() => ({
+      json: {
+        balance: 2500, balance_dollars: '25.0000', portfolio_value: 2500, updated_ts: 1761240000,
+        balance_breakdown: [
+          { exchange_index: 0, balance: '25.0000' },
+          { exchange_index: 3, balance: '0.0000' },
+        ],
+      },
+    }))
+    const balance = await createKalshiClient(creds, fetcher).getBalance()
+    expect(balance.updatedTs).toBe(1761240000)
+    expect(balance.breakdown).toEqual([
+      { exchangeIndex: 0, balanceDollars: 25 },
+      { exchangeIndex: 3, balanceDollars: 0 },
+    ])
+  })
+
+  it('drops malformed breakdown entries instead of guessing at them; an empty breakdown stays empty, not null', async () => {
+    const { fetcher } = fakeFetcher(() => ({
+      json: {
+        balance: 100, balance_dollars: '1.0000', portfolio_value: 100, updated_ts: 5,
+        balance_breakdown: [
+          { exchange_index: 2, balance: '1.0000' },
+          { exchange_index: 'soon', balance: '9.0000' },
+          { balance: '9.0000' },
+          'garbage',
+          null,
+        ],
+      },
+    }))
+    const balance = await createKalshiClient(creds, fetcher).getBalance()
+    expect(balance.breakdown).toEqual([{ exchangeIndex: 2, balanceDollars: 1 }])
+
+    const { fetcher: emptyFetcher } = fakeFetcher(() => ({ json: { balance: 0, balance_dollars: '0.0000', portfolio_value: 0, balance_breakdown: [] } }))
+    const empty = await createKalshiClient(creds, emptyFetcher).getBalance()
+    expect(empty.breakdown).toEqual([])
+    expect(empty.updatedTs).toBeNull()
+  })
 })
 
 describe('getMarketQuote', () => {
@@ -58,10 +98,16 @@ describe('getMarketQuote', () => {
     expect(quote).toEqual({ yesAsk: 0.51, noAsk: 0.51, exchangeIndex: 3, status: 'active' })
   })
 
-  it('defaults the shard to 0 when the record omits exchange_index', async () => {
+  it('carries a null shard when the record omits exchange_index — the quote reports what the record said, no default (owner ruling, 2026-10-23)', async () => {
     const { fetcher } = fakeFetcher(() => ({ json: { market: { yes_ask_dollars: '0.5100', no_ask_dollars: '0.5100', status: 'active' } } }))
     const quote = await createKalshiClient(creds, fetcher).getMarketQuote('KX-WEATHER')
-    expect(quote?.exchangeIndex).toBe(0)
+    expect(quote?.exchangeIndex).toBeNull()
+  })
+
+  it('carries a null shard when the record’s exchange_index is unreadable', async () => {
+    const { fetcher } = fakeFetcher(() => ({ json: { market: { yes_ask_dollars: '0.5100', no_ask_dollars: '0.5100', status: 'active', exchange_index: 'soon' } } }))
+    const quote = await createKalshiClient(creds, fetcher).getMarketQuote('KX-WEATHER')
+    expect(quote?.exchangeIndex).toBeNull()
   })
 })
 
