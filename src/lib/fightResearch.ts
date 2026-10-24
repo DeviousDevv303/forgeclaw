@@ -16,13 +16,22 @@
 // The crowd's lean ("crowd lean: 62%": its chance that the proposed side wins) is also kept, as a SentimentSnapshot on the
 // position, so that when the fight settles the ledger can score the crowd against the result (fundsLedger.ts crowdRecord).
 //
+// Owner directive 2026-10-24 (the Yan–Merab trilogy read, generalized by the owner with ChatGPT and ordered into the
+// template the same day): a fight is reasoned as an interaction, not as two records side by side. The MATCHUP
+// NEUTRALIZATION section makes the model run that reasoning in the open: name each fighter's primary path to victory,
+// look for adaptation across prior meetings (or defense shown against the same style), give a verdict — demonstrated
+// or not demonstrated — on whether one fighter has neutralized the other's key strength, and then grade the fight
+// that remains if the strength is taken away. The verdict is evidence for a hypothesis, never a guarantee; the
+// rationale is kept whole on the position, so the thesis is preserved with the outcome and this reasoning type is
+// scored against results over time, like the crowd is.
+//
 // Pure: no network, no storage; the clock is a parameter.
 
 /** Kalshi series whose markets are fights (verified against the public series list 2026-10-24). */
 export const FIGHT_SERIES_PREFIXES = ['KXUFCFIGHT', 'KXMMAFIGHT', 'KXMMAEXFIGHT'] as const
 
 /** A fight proposal's rationale is kept whole up to this length (other proposals keep 2,000). */
-export const FIGHT_RATIONALE_MAX_CHARS = 4000
+export const FIGHT_RATIONALE_MAX_CHARS = 4600
 
 /**
  * The most a crowd (Reddit, forums, social posts, pick'em polls) may weigh in the fusion, as a percent, and only once its
@@ -52,18 +61,19 @@ export interface SentimentSnapshot {
   recordedAt: number
 }
 
-export type FightSectionKey = 'rematch' | 'book' | 'stats' | 'sentiment' | 'fusion' | 'edge' | 'falsifier'
+export type FightSectionKey = 'rematch' | 'book' | 'stats' | 'matchup' | 'sentiment' | 'fusion' | 'edge' | 'falsifier'
 
 export interface FightSection { key: FightSectionKey; label: string; pattern: RegExp; hint: string }
 
 const heading = (label: string) =>
   new RegExp(`^\\s*(?:[-*]\\s*|\\d+[.)]\\s*)?(?:\\*\\*|__)?\\s*${label}\\s*(?:\\*\\*|__)?\\s*[:—–-]\\s*(.*)$`, 'i')
 
-/** The seven sections, in the order they are written. */
+/** The eight sections, in the order they are written. */
 export const FIGHT_SECTIONS: readonly FightSection[] = [
   { key: 'rematch', label: 'REMATCH SEQUENCE', pattern: heading('REMATCH SEQUENCE'), hint: 'prior meetings: date, winner, method, round, what the crowd predicted then versus what happened; or "no prior meeting"' },
   { key: 'book', label: 'BOOK LINE', pattern: heading('BOOK LINE'), hint: 'sharp-book odds at 2+ books, the no-vig probability, and the Kalshi ask; or "unavailable — <reason>"' },
   { key: 'stats', label: 'STATS & FACTS', pattern: heading('STATS (?:&|AND) FACTS'), hint: 'statistics that adjust the baseline, and hard facts (weigh-ins, injuries, camp, changes) each with a source; or "unavailable — <reason>"' },
+  { key: 'matchup', label: 'MATCHUP NEUTRALIZATION', pattern: heading('MATCHUP NEUTRALIZATION'), hint: 'primary path: <each fighter\'s primary path to victory>; neutralization: <demonstrated | not demonstrated — the evidence: adaptation across prior meetings, or defense shown against the same style>; the fight that remains: <the matchup left over if the key strength is taken away, and who it favors>' },
   { key: 'sentiment', label: 'SENTIMENT SCAN', pattern: heading('SENTIMENT SCAN'), hint: 'the threads/forums scanned (with links); "crowd lean: <n>%" = the crowd\'s chance that YOUR side wins; and its record: "N of M comparable fights called correctly"; or "unavailable — <reason>"' },
   { key: 'fusion', label: 'FUSION', pattern: heading('FUSION'), hint: 'range: <low>-<high> (must contain your probability); how each tier moved it; sentiment weight: <n>%' },
   { key: 'edge', label: 'EDGE', pattern: heading('EDGE'), hint: 'net edge: <n>¢ per contract after the fee and the spread' },
@@ -193,6 +203,22 @@ export function checkFightRationale(input: FightCheckInput, bars: FightBars): Fi
   if (book !== undefined && !bookUnavailable && book.length >= 12) {
     if (!/\d/.test(book)) problems.push('BOOK LINE has no numbers (odds or probabilities)')
     else if (!/no[\s-]?vig/i.test(book)) problems.push('BOOK LINE must give the no-vig probability (say "no-vig")')
+  }
+
+  // The owner's matchup-neutralization reasoning, held to its labeled steps: both primary paths named, a
+  // demonstrated / not-demonstrated verdict with its evidence, and the reassessed matchup that remains. This
+  // section has no "unavailable" escape — "not demonstrated" is the honest verdict when the evidence is not there.
+  const matchup = sections.get('matchup')
+  if (matchup !== undefined && matchup.length >= 12) {
+    if (!/primary paths?\s*[:=]/i.test(matchup)) {
+      problems.push('MATCHUP NEUTRALIZATION must name each fighter\'s primary path to victory ("primary path: ...")')
+    }
+    if (!/neutralization\s*[:=]?\s*(not\s+)?demonstrated/i.test(matchup)) {
+      problems.push('MATCHUP NEUTRALIZATION must give its verdict ("neutralization: demonstrated" or "neutralization: not demonstrated") with the evidence for it')
+    }
+    if (!/the fight that remains\s*[:=]/i.test(matchup)) {
+      problems.push('MATCHUP NEUTRALIZATION must reassess the matchup left over if the key strength is taken away ("the fight that remains: ...")')
+    }
   }
 
   const sentiment = sections.get('sentiment')
