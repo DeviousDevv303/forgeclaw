@@ -19,6 +19,7 @@
  */
 
 import { logWarning } from './errorLog'
+import { KalshiAuthError } from './kalshiAuth'
 import {
   KALSHI_SNAPSHOT_MAX_AGE_MS, findSnapshot, formatAge, localStorageSnapshotStore, recordSnapshot, type KalshiSnapshotStore,
 } from './kalshiSnapshot'
@@ -131,6 +132,19 @@ let lastRead: KalshiReadInfo | null = null
 // request, and the budget is already the scarce thing. Module-level for the same reason as the spacing.
 export const KALSHI_SIGNED_READ_COOLDOWN_MS = 5 * 60 * 1000
 let signedReadsRefusedAt = -Infinity
+let signedReadsRefusedWhy = ''
+
+/**
+ * While signing is paused, the sentence that says so (and why), or null. The pause is otherwise
+ * silent: reads fall back to the anonymous budget that was already being rate-limited, and the only
+ * trace would be a warning in a log the owner rarely opens. Surfaces that show the account's state
+ * (the shared balance block) and the 429 message put this sentence in front of the reader.
+ */
+export function describeSignedReadsPause(nowMs: number): string | null {
+  const until = signedReadsRefusedAt + KALSHI_SIGNED_READ_COOLDOWN_MS
+  if (!(nowMs < until) || nowMs < signedReadsRefusedAt) return null
+  return `Signed Kalshi reads are paused until ${new Date(until).toISOString().slice(11, 19)} UTC (${signedReadsRefusedWhy}); market reads are going out anonymously and may be rate-limited.`
+}
 
 /** The last public read's observed outcome (status + Retry-After), or null before any read. */
 export function lastKalshiReadInfo(): KalshiReadInfo | null {
@@ -142,6 +156,7 @@ export function resetKalshiReadSpacing(): void {
   lastPublicReadAt = 0
   lastRead = null
   signedReadsRefusedAt = -Infinity
+  signedReadsRefusedWhy = ''
 }
 
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -322,6 +337,8 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
         // A key that cannot sign (unreadable PEM) is not a reason to fail the read: read anonymously, and say so.
         if (deps.signal?.aborted) throw error
         signedReadsRefusedAt = now()
+        // Only the auth module's own messages are shown: they name the problem and never carry key material.
+        signedReadsRefusedWhy = error instanceof KalshiAuthError ? error.message : 'the saved key could not sign'
         logWarning('kalshi', `signed read skipped for ${path}`, error instanceof Error ? error.message : String(error))
       }
     }
@@ -337,6 +354,7 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
     // Refused for the signature (401) or the key (403): repeat once without it. This is not a rate-limit retry and does not spend one.
     if (signed && (res.status === 401 || res.status === 403)) {
       signedReadsRefusedAt = now()
+      signedReadsRefusedWhy = `Kalshi answered the signed read with HTTP ${res.status}`
       signatureRefused = true
       continue
     }
@@ -346,9 +364,11 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
   }
   if (!res.ok) {
     const retryAfter = retryAfterHeader(res)
+    // A read that went out anonymously only because signing is paused says so (owners with no key never see this).
+    const pauseNote = deps.sign ? describeSignedReadsPause(now()) : null
     // One line: what failed, the status, the header, and that it is not an empty list.
     const err = new KalshiError(res.status === 429
-      ? `Kalshi rate-limited this read: HTTP 429 on ${path} after ${KALSHI_429_RETRY_DELAYS_MS.length} spaced retries · Retry-After: ${retryAfter ?? 'none'} · not an empty market list. Do not repeat this call in this run: it only draws more 429s and the third identical call is stopped as a loop. Tell the owner, and use kalshi_owner_prices if they can type the prices.`
+      ? `Kalshi rate-limited this read: HTTP 429 on ${path} after ${KALSHI_429_RETRY_DELAYS_MS.length} spaced retries · Retry-After: ${retryAfter ?? 'none'} · not an empty market list. Do not repeat this call in this run: it only draws more 429s and the third identical call is stopped as a loop. Tell the owner, and use kalshi_owner_prices if they can type the prices.${pauseNote ? ` ${pauseNote}` : ''}`
       : `Kalshi returned HTTP ${res.status} on ${path} · Retry-After: ${retryAfter ?? 'none'} · not an empty market list.`)
     err.httpStatus = res.status
     err.retryAfter = retryAfter
