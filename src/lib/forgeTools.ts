@@ -625,7 +625,7 @@ export const FORGE_TOOLS: ToolDef[] = [
         series_ticker: { type: 'string', description: 'Only markets of this series' },
         closes_within_hours: { type: 'number', description: 'Only markets that close within this many hours' },
         min_yes_ask: { type: 'number', description: 'Only markets whose YES ask is at least this (0-1), e.g. 0.9 for very likely outcomes' },
-        limit: { type: 'number', description: 'How many markets to show, default 10, max 15' },
+        limit: { type: 'number', description: 'How many markets to show, default 10, max 30 (a UFC card is 28: pass 30 to read it in one call)' },
         orderbook: { type: 'boolean', description: 'With ticker: show the order book (bids and depth) instead of the summary' },
       },
       required: [],

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
-  selectMarkets, type KalshiMarket, KALSHI_429_RETRY_DELAYS_MS, KALSHI_PUBLIC_READ_INTERVAL_MS, resetKalshiReadSpacing,
+  KALSHI_MAX_RESULTS, selectMarkets, type KalshiMarket, KALSHI_429_RETRY_DELAYS_MS, KALSHI_PUBLIC_READ_INTERVAL_MS, resetKalshiReadSpacing,
 } from './kalshiMarkets'
 import { relayFallbackFetcher } from './kalshiTrade'
 
@@ -213,6 +213,8 @@ describe('rate limits on public market reads', () => {
     const err = await runKalshiMarkets({ series_ticker: 'KXHIGHNY' }, { fetcher: async () => { calls++; return limited() }, now: () => NOW, ...time }).catch(e => e)
     expect(err).toBeInstanceOf(KalshiError)
     expect(err.message).toMatch(/rate-limited this read: HTTP 429 on \/markets after 2 spaced retries · Retry-After: none · not an empty market list\./)
+    expect(err.message).toContain('Do not repeat this call in this run')
+    expect(err.message).toContain('kalshi_owner_prices')
     expect(calls).toBe(1 + KALSHI_429_RETRY_DELAYS_MS.length)
     expect(time.waits).toEqual([...KALSHI_429_RETRY_DELAYS_MS])
   })
@@ -240,5 +242,29 @@ describe('rate limits on public market reads', () => {
     const pending = runKalshiMarkets({ ticker: 'KX-A' }, { fetcher: async () => replies.shift() ?? json({ markets: [] }), now: () => NOW, signal: controller.signal })
     controller.abort()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  })
+})
+
+// 2026-10-24: a UFC card is 14 fights x 2 markets = 28 (series KXUFCFIGHT, one request, no paging). With the old cap of 15 the
+// card needed several calls, and the repeats were what rate-limited the 2026-10-23 research run.
+describe('a whole fight card in one read', () => {
+  it('shows all 28 markets of a 14-fight card when the model asks for the cap, in one HTTP request', async () => {
+    const fights = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N']
+    const markets = fights.flatMap((f, i) => [`${f}1`, `${f}2`].map(side => mk({
+      ticker: `KXUFCFIGHT-26OCT24${f}-${side}`, event_ticker: `KXUFCFIGHT-26OCT24${f}`, title: `Fighter ${side} wins`,
+      close_time: '2026-10-26T16:00:00Z', volume_24h_fp: String(1000 - i), exchange_index: 0,
+    })))
+    let requests = 0
+    const out = await runKalshiMarkets({ series_ticker: 'KXUFCFIGHT', limit: KALSHI_MAX_RESULTS }, { fetcher: async () => { requests++; return json({ markets }) }, now: () => NOW })
+    expect(requests).toBe(1)
+    expect(KALSHI_MAX_RESULTS).toBeGreaterThanOrEqual(28)
+    expect(out).toContain('(28 of 28 matched')
+    expect((out.match(/^KXUFCFIGHT-/gm) ?? []).length).toBe(28)
+  })
+
+  it('a time-window filter hides the card, because the markets close days after the fight (why the playbook forbids it)', async () => {
+    const m = mk({ ticker: 'KXUFCFIGHT-26OCT24A-A1', event_ticker: 'KXUFCFIGHT-26OCT24A', close_time: '2026-10-26T16:00:00Z' })
+    const out = await runKalshiMarkets({ series_ticker: 'KXUFCFIGHT', closes_within_hours: 12 }, { fetcher: async () => json({ markets: [m] }), now: () => Date.parse('2026-10-24T01:00:00Z') })
+    expect(out).toMatch(/^No open Kalshi markets matched/)
   })
 })

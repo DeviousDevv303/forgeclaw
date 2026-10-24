@@ -26,7 +26,9 @@ import {
 export const KALSHI_BASE_URL = 'https://external-api.kalshi.com/trade-api/v2'
 export const KALSHI_PAGE_LIMIT = 1000
 export const KALSHI_MAX_PAGES = 3
-export const KALSHI_MAX_RESULTS = 15
+// A UFC card is 14 fights x 2 markets = 28 (verified 2026-10-24, series KXUFCFIGHT): one read must be able to show a whole card,
+// because a card read one fight at a time is 14+ requests, and that is what rate-limited the 2026-10-23 research run.
+export const KALSHI_MAX_RESULTS = 30
 
 export interface KalshiMarket {
   ticker: string
@@ -307,7 +309,7 @@ async function getJson(deps: KalshiDeps, url: string): Promise<unknown> {
     const retryAfter = retryAfterHeader(res)
     // One line: what failed, the status, the header, and that it is not an empty list.
     const err = new KalshiError(res.status === 429
-      ? `Kalshi rate-limited this read: HTTP 429 on ${path} after ${KALSHI_429_RETRY_DELAYS_MS.length} spaced retries · Retry-After: ${retryAfter ?? 'none'} · not an empty market list.`
+      ? `Kalshi rate-limited this read: HTTP 429 on ${path} after ${KALSHI_429_RETRY_DELAYS_MS.length} spaced retries · Retry-After: ${retryAfter ?? 'none'} · not an empty market list. Do not repeat this call in this run: it only draws more 429s and the third identical call is stopped as a loop. Tell the owner, and use kalshi_owner_prices if they can type the prices.`
       : `Kalshi returned HTTP ${res.status} on ${path} · Retry-After: ${retryAfter ?? 'none'} · not an empty market list.`)
     err.httpStatus = res.status
     err.retryAfter = retryAfter
