@@ -25,6 +25,7 @@
 import { KalshiApiError, KalshiNetworkError, type KalshiBalance, type KalshiClient } from './kalshiTrade'
 import { money } from './fundsLedger'
 import { formatAge } from './kalshiSnapshot'
+import { describeSignedReadsPause } from './kalshiMarkets'
 
 /**
  * Maximum age for a last-good balance snapshot. Why 15 minutes (same reasoning as
@@ -147,18 +148,24 @@ export async function readKalshiBalanceBlock(
 ): Promise<string> {
   const now = opts.now ?? Date.now
   const store = opts.store ?? localStorageBalanceStore()
+  // While market-read signing is paused the reader is told, on every surface that shows this block
+  // (typed /funds status, the funds_status tool, the Funds panel): a paused key is otherwise silent.
+  const withPauseNote = (block: string): string => {
+    const note = describeSignedReadsPause(now())
+    return note ? `${block}\n${note}` : block
+  }
   try {
     let balance = await client.getBalance()
     if (balance.breakdown === null) balance = await withScopedBreakdown(client, balance)
     const fetchedAt = now()
     store.save({ balance, fetchedAt, env: opts.env })
-    return formatKalshiBalanceBlock(balance, { env: opts.env, fetchedAt, nowMs: fetchedAt, stale: false })
+    return withPauseNote(formatKalshiBalanceBlock(balance, { env: opts.env, fetchedAt, nowMs: fetchedAt, stale: false }))
   } catch (error) {
     const snapshot = store.load()
     const nowMs = now()
     if (snapshot && snapshot.env === opts.env && snapshot.fetchedAt <= nowMs && nowMs - snapshot.fetchedAt <= KALSHI_BALANCE_MAX_AGE_MS) {
-      return formatKalshiBalanceBlock(snapshot.balance, { env: opts.env, fetchedAt: snapshot.fetchedAt, nowMs, stale: true })
+      return withPauseNote(formatKalshiBalanceBlock(snapshot.balance, { env: opts.env, fetchedAt: snapshot.fetchedAt, nowMs, stale: true }))
     }
-    return `Kalshi (live): could not be read — ${describeBalanceReadError(error)}.`
+    return withPauseNote(`Kalshi (live): could not be read — ${describeBalanceReadError(error)}.`)
   }
 }
