@@ -153,15 +153,22 @@ let signedReadsRefusedAt = -Infinity
 let signedReadsRefusedWhy = ''
 
 /**
- * While signing is paused, the sentence that says so (and why), or null. The pause is otherwise
- * silent: reads fall back to the anonymous budget that was already being rate-limited, and the only
- * trace would be a warning in a log the owner rarely opens. Surfaces that show the account's state
- * (the shared balance block) and the 429 message put this sentence in front of the reader.
+ * While market-read signing is paused, the sentence that says so (and why), or null. The pause is
+ * otherwise silent: market reads fall back to the anonymous budget that was already being
+ * rate-limited, and the only trace would be a warning in a log the owner rarely opens. Surfaces
+ * that show the account's state (the shared balance block) and the 429 message put this sentence
+ * in front of the reader.
+ *
+ * F-024: the pause governs only the market-read path (kalshiMarkets' deps.sign). The balance/order
+ * path (kalshiTrade.request) signs every attempt unconditionally — the balance endpoint is private,
+ * so an anonymous fallback is not an option there — which is why this sentence says "market reads",
+ * never "Kalshi reads": claiming all signed reads are paused would be false for the balance read
+ * rendered in the same block.
  */
 export function describeSignedReadsPause(nowMs: number): string | null {
   const until = signedReadsRefusedAt + KALSHI_SIGNED_READ_COOLDOWN_MS
   if (!(nowMs < until) || nowMs < signedReadsRefusedAt) return null
-  return `Signed Kalshi reads are paused until ${new Date(until).toISOString().slice(11, 19)} UTC (${signedReadsRefusedWhy}); market reads are going out anonymously and may be rate-limited.`
+  return `Signed market reads are paused until ${new Date(until).toISOString().slice(11, 19)} UTC (${signedReadsRefusedWhy}); market reads are going out anonymously and may be rate-limited.`
 }
 
 /** The last public read's observed outcome (status + Retry-After), or null before any read. */
