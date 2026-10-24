@@ -3375,19 +3375,19 @@ function App() {
                 </div>
               ))}
 
-              <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #202024', padding: '10px 0 12px', zIndex: 20 }}>
+              <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #1a1a1a', padding: '12px 0', zIndex: 20 }}>
                 {attachedFile && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: '#f97316', fontSize: '12px' }}>
                     <span>📎 {attachedFile.name}</span>
                     <button onClick={() => setAttachedFile(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '14px' }}>×</button>
                   </div>
                 )}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#101013', border: '1px solid #26262c', borderRadius: '14px', padding: '8px', boxShadow: '0 2px 12px rgba(0,0,0,0.35)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#111', border: '1px solid #222', borderRadius: '8px', padding: '6px 10px' }}>
                   <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={false} />
                   {/* Connector badge — Manus-style active tool indicator */}
                   <button
                     onClick={() => setShowConnectors(s => !s)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', padding: '6px', borderRadius: '8px', position: 'relative', flexShrink: 0 }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', padding: '4px', position: 'relative', flexShrink: 0 }}
                     title={t('chat.toolsTitle')}
                   >
                     <span style={{ fontSize: '16px' }}>🛠️</span>
@@ -3410,9 +3410,9 @@ function App() {
                       minWidth: '48px',
                       height: '32px',
                       padding: '0 6px',
-                      borderRadius: '8px',
-                      background: screenCopied ? '#0b1f3f' : '#0d0d0f',
-                      border: `1px solid ${screenCopied ? '#2563eb' : '#2e2e33'}`,
+                      borderRadius: '6px',
+                      background: screenCopied ? '#0b1f3f' : '#0d0d0d',
+                      border: `1px solid ${screenCopied ? '#2563eb' : '#2a2a2a'}`,
                       color: screenCopied ? '#93c5fd' : '#888',
                       cursor: 'pointer',
                       fontSize: '10px',
@@ -3426,11 +3426,11 @@ function App() {
                   >
                     {screenCopied ? t('chat.screenCopied') : t('chat.screenText')}
                   </button>
-                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', padding: '2px 4px', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder={t('chat.placeholder')} value={input} onChange={e => { setInput(e.target.value); window.forgeCore?.userTyping() }} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
+                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder={t('chat.placeholder')} value={input} onChange={e => { setInput(e.target.value); window.forgeCore?.userTyping() }} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
                   {loading ? (
-                    <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '7px 16px', borderRadius: '9px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={stopGeneration} aria-label={t('chat.stopAria')}>{t('chat.stop')}</button>
+                    <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '6px 14px', borderRadius: '5px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={stopGeneration} aria-label={t('chat.stopAria')}>{t('chat.stop')}</button>
                   ) : (
-                    <button style={{ background: '#f97316', color: '#000', padding: '7px 16px', borderRadius: '9px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage}>{t('chat.send')}</button>
+                    <button style={{ background: '#f97316', color: '#000', padding: '6px 14px', borderRadius: '5px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage}>{t('chat.send')}</button>
                   )}
                 </div>
                 {screenTextFallback && (
@@ -3558,14 +3558,14 @@ function App() {
                   const ts = new Date(call.createdAt)
                   const timeStr = Number.isNaN(ts.getTime()) ? '' : `${ts.toLocaleDateString(locale, { month: 'short', day: 'numeric' })} ${ts.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })}`
                   return (
-                    <div key={call.commentId} style={{ padding: '6px 0', borderTop: '1px solid #0f0f0f' }}>
+                    <div key={call.callId} style={{ padding: '6px 0', borderTop: '1px solid #0f0f0f' }}>
                       <div style={{ display: 'flex', gap: '10px', alignItems: 'baseline' }}>
                         <span style={{ color: '#f9731644', fontSize: '8px', letterSpacing: '1px', flexShrink: 0 }}>{t('activity.channelCall')}</span>
                         {timeStr && <span style={{ color: '#333', fontSize: '8px', flexShrink: 0 }}>{timeStr}</span>}
                       </div>
                       <div style={{ color: '#999', fontSize: '10px', whiteSpace: 'pre-wrap', marginTop: '3px' }}>{call.taskText}</div>
                       <button
-                        onClick={() => { const next = channelCalls.filter(c => c.commentId !== call.commentId); savePendingChannelCalls(next); setChannelCalls(next) }}
+                        onClick={() => { const next = channelCalls.filter(c => c.callId !== call.callId); savePendingChannelCalls(next); setChannelCalls(next) }}
                         style={{ marginTop: '4px', background: 'none', border: '1px solid #222', color: '#666', fontSize: '8px', letterSpacing: '1px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer' }}
                       >{t('activity.channelCallDismiss')}</button>
                     </div>

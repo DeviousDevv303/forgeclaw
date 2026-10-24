@@ -44,7 +44,7 @@ export const CHANNEL_CALL_POLL_MS = 15 * 60_000
  */
 const MAX_PAGES_PER_POLL = 20
 
-const MARKER_RE = /<!--\s*forgeclaw-call:v1\s+id=([A-Za-z0-9._-]+)\s*-->/
+const MARKER_RE_GLOBAL = /<!--\s*forgeclaw-call:v1\s+id=([A-Za-z0-9._-]+)\s*-->/g
 
 export interface ChannelCall {
   callId: string
@@ -62,29 +62,48 @@ export interface GithubIssueCommentLike {
 }
 
 /**
- * Pure parser: one raw issue comment → a channel call, or null when it is not one.
- * A call needs BOTH the owner as author AND the v1 marker; the task text is the body
- * with the marker line removed, trimmed.
+ * Pure parser: one raw issue comment → EVERY channel call it carries (possibly
+ * none). A call needs BOTH the owner as author AND a v1 marker; the task text is
+ * the body with every marker line removed, trimmed.
+ *
+ * F-027: call identity is the marker id, not the comment — the server loop
+ * (tools/server-loop/lib.mjs parseCalls, matchAll) counts one call per marker,
+ * so a comment carrying two markers is two calls there. This parser used to
+ * take only the first marker (and mergeChannelCalls keyed its union by
+ * commentId), so the second call was never surfaced here while the loop could
+ * answer it — the header's "surfaces every call" did not hold. Both surfaces
+ * now count calls the same way.
+ */
+export function parseChannelCallsInComment(comment: GithubIssueCommentLike): ChannelCall[] {
+  if (comment.user?.login !== CHANNEL_CALL_AUTHOR) return []
+  const body = comment.body ?? ''
+  const taskText = body.replace(MARKER_RE_GLOBAL, '').trim()
+  const calls: ChannelCall[] = []
+  for (const marker of body.matchAll(MARKER_RE_GLOBAL)) {
+    calls.push({
+      callId: marker[1],
+      commentId: comment.id,
+      createdAt: comment.created_at,
+      taskText,
+    })
+  }
+  return calls
+}
+
+/**
+ * The first call a comment carries, or null when it carries none. Kept for
+ * callers that only need to know whether a comment is a call at all — the
+ * full per-marker list is parseChannelCallsInComment.
  */
 export function parseChannelCall(comment: GithubIssueCommentLike): ChannelCall | null {
-  if (comment.user?.login !== CHANNEL_CALL_AUTHOR) return null
-  const body = comment.body ?? ''
-  const marker = MARKER_RE.exec(body)
-  if (!marker) return null
-  return {
-    callId: marker[1],
-    commentId: comment.id,
-    createdAt: comment.created_at,
-    taskText: body.replace(MARKER_RE, '').trim(),
-  }
+  return parseChannelCallsInComment(comment)[0] ?? null
 }
 
 /** Parse a page (or the whole thread) of comments into calls, oldest first. */
 export function parseChannelCalls(comments: readonly GithubIssueCommentLike[]): ChannelCall[] {
   const calls: ChannelCall[] = []
   for (const comment of comments) {
-    const call = parseChannelCall(comment)
-    if (call) calls.push(call)
+    calls.push(...parseChannelCallsInComment(comment))
   }
   return calls.sort((a, b) => a.commentId - b.commentId)
 }
@@ -136,10 +155,14 @@ export function readPendingChannelCalls(): ChannelCall[] {
   }
 }
 
-/** Union by comment id, oldest first. */
+/**
+ * Union by call id, oldest first. F-027: keying by commentId collapsed two
+ * calls carried by one comment into one (last wins) — call identity is the
+ * marker id, as in the server loop.
+ */
 export function mergeChannelCalls(existing: readonly ChannelCall[], incoming: readonly ChannelCall[]): ChannelCall[] {
-  const byId = new Map<number, ChannelCall>()
-  for (const call of [...existing, ...incoming]) byId.set(call.commentId, call)
+  const byId = new Map<string, ChannelCall>()
+  for (const call of [...existing, ...incoming]) byId.set(call.callId, call)
   return [...byId.values()].sort((a, b) => a.commentId - b.commentId)
 }
 
