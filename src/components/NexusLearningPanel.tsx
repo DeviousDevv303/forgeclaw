@@ -12,6 +12,7 @@ import { activeHeuristics, decide, loadDecisions, mineHeuristics } from '../lib/
 import { CONVERGED_BY, knowledgeOrigin, NEXUS_PHASES } from '../lib/nexusConvergence'
 import { describeTaste, loadTaste, MIN_TASTE_EVENTS, resetTaste } from '../lib/nexusTaste'
 import { HoldToConfirmButton } from './HoldToConfirmButton'
+import { NexusGrowthGraph } from './NexusGrowthGraph'
 
 const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
 const mono = "'Courier New', monospace"
@@ -69,7 +70,7 @@ export function NexusLearningPanel() {
   }
 
   return (
-    <div style={{ flex: 1, overflowY: 'auto', background: '#080808', padding: '12px', display: 'flex', flexDirection: 'column', gap: '14px' }} data-testid="nexus-page">
+    <div style={{ flex: 1, overflowY: 'auto', background: '#080808', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }} data-testid="nexus-page">
       <header style={{ ...card, borderColor: '#2a1a05' }}>
         <div style={{ fontSize: '11px', color: '#f97316', letterSpacing: '3px', fontFamily: 'monospace', fontWeight: 'bold' }}>{t('nexus.title')}</div>
         <h2 style={{ margin: '6px 0 10px', color: '#eee', fontFamily: mono, fontSize: '20px', letterSpacing: '1px' }}>{NEXUS_MOTTO}</h2>
@@ -119,6 +120,11 @@ export function NexusLearningPanel() {
         ))}
         <div style={card}><div style={heading}>{t('nexus.failureRate')}</div><div style={{ color: summary.failureRate > 0.3 ? '#ef4444' : '#39ff14', fontSize: '22px', fontFamily: mono }}>{Math.round(summary.failureRate * 100)}%</div></div>
         <div style={card}><div style={heading}>{t('nexus.admitted')}</div><div style={{ color: '#eee', fontSize: '22px', fontFamily: mono }}>{approved}</div></div>
+      </section>
+
+      <section style={card} aria-label="Learning growth" data-testid="nexus-growth">
+        <div style={heading}>LEARNING GROWTH · recorded vs admitted, from the stored records</div>
+        <NexusGrowthGraph candidates={candidates} />
       </section>
 
       <section style={card} aria-label="Your taste" data-testid="nexus-taste">
