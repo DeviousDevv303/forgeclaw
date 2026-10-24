@@ -32,6 +32,8 @@ export const READ_ONLY_BASELINE_TOOLS = [
   'kalshi_owner_prices',
   'funds_status',
   'weather_forecast',
+  // Measured fight stats for STATS & FACTS (ESPN Fightcenter), so a fight read cites numbers instead of recall.
+  'espn_fight_stats',
 ] as const
 
 export function baselineToolNames(providerId: string): string[] {
@@ -233,7 +235,7 @@ export const FUNDS_GUIDANCE =
   'WEIGH EVIDENCE IN THIS ORDER. (1) The market itself and the sharp books: the Kalshi price and the no-vig line at two or more sharp books are the baseline, because they already contain most public information; ' +
   'your probability starts there, not at your opinion. (2) Hard facts about THIS fight, each with a source: the confirmed matchup, weigh-in results, injuries and withdrawals, short-notice changes, ' +
   'camp reports from a primary source or two independent outlets, and odds movement. (3) Statistics: record against comparable opposition, finish and decision rates, strike and takedown rates, age, layoff, ' +
-  'weight-class changes, reach and stance — they adjust the baseline, and they are weakest with few fights or a long layoff. (4) Community opinion — forums, subreddits, social posts, fan polls, pick\'em percentages — ' +
+  'weight-class changes, reach and stance — they adjust the baseline, and they are weakest with few fights or a long layoff. Read strike, accuracy and takedown numbers with espn_fight_stats (event and fighter; event_id for an older card) for each fighter\'s recent completed fights, cite them as ESPN Fightcenter per-fight figures, and never present one fight as a career rate. (4) Community opinion — forums, subreddits, social posts, fan polls, pick\'em percentages — ' +
   'carries the LOWEST weight: it is color unless its track record is measured. ' +
   'MEASURE THE CROWD BEFORE USING IT. The owner\'s sentiment source is Reddit and similar forums (for example r/MMA threads on the fighters, a rematch\'s earlier-meeting threads first): ' +
   'use deep_research with queries aimed at them, read what was said BEFORE comparable past fights against what happened, and report how many comparable fights you checked, how many the crowd called correctly, and the links. ' +
