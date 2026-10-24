@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createSpeechController, splitForSpeech, type SpeechUtteranceLike } from './speech'
+import { cleanForSpeech, createSpeechController, splitForSpeech, type SpeechUtteranceLike } from './speech'
 
 function harness() {
   const spoken: Array<{ text: string; u: SpeechUtteranceLike }> = []
@@ -48,6 +48,35 @@ describe('splitForSpeech', () => {
   })
 })
 
+describe('cleanForSpeech', () => {
+  it('compacts a billion-scale number instead of leaving a digit string to count out', () => {
+    expect(cleanForSpeech('The fund holds 1000000000 dollars.')).toBe('The fund holds 1 billion dollars.')
+    expect(cleanForSpeech('Revenue hit $1,250,000,000 this year.')).toBe('Revenue hit $1.25 billion this year.')
+    expect(cleanForSpeech('About 2500000 users, up 1234567% overall.')).toBe('About 2.5 million users, up 1.23 million% overall.')
+    expect(cleanForSpeech('He ran 42000 meters.')).toBe('He ran 42 thousand meters.')
+  })
+
+  it('never lets an arrow survive into the spoken text', () => {
+    const cleaned = cleanForSpeech('Yan → victory, Merab ← defeat, rematch ⇒ soon.')
+    expect(cleaned).toBe('Yan victory, Merab defeat, rematch soon.')
+    expect(cleaned).not.toMatch(/[\u{2190}-\u{21FF}\u{2900}-\u{297F}]/u)
+  })
+
+  it('preserves forward slashes in paths and URLs exactly', () => {
+    const text = 'Open src/lib/speech.ts or deviousdevv303.github.io/forgeclaw/ to check.'
+    expect(cleanForSpeech(text)).toBe(text)
+  })
+
+  it('leaves ordinary sentences and small numbers unchanged', () => {
+    const text = "Petr Yan won in round 3, and he didn't look back — 42 people cheered in 2026."
+    expect(cleanForSpeech(text)).toBe(text)
+  })
+
+  it('keeps the pre-existing emoji and asterisk stripping', () => {
+    expect(cleanForSpeech('**Bold** claim 🎉 done ✅')).toBe('Bold claim done')
+  })
+})
+
 describe('speech controller', () => {
   it('speaks every chunk and clears the active id after the last one ends', () => {
     const h = harness()
@@ -73,21 +102,48 @@ describe('speech controller', () => {
     expect(h.spoken.map(s => s.text)).toEqual(['Message A.', 'Message B.'])
   })
 
+  it('a first click on an idle engine speaks immediately — no cancel in front of it, no start delay', () => {
+    const h = harness()
+    expect(h.controller.speak('a', 'Message A.')).toBe(true)
+    // No timer flushed: the utterance is already with the engine, and cancel was never called.
+    // (Regression: cancel-then-delayed-speak made the owner's first click silent.)
+    expect(h.spoken.map(s => s.text)).toEqual(['Message A.'])
+    expect(h.cancels()).toBe(0)
+    expect(h.controller.current()).toBe('a')
+  })
+
+  it('replacing a live read-aloud still cancels it and settles before the new one speaks', () => {
+    const h = harness()
+    h.controller.speak('a', 'Message A.')
+    h.spoken[0].u.onstart?.()
+    const cancelsBefore = h.cancels()
+    h.controller.speak('b', 'Message B.')
+    expect(h.cancels()).toBeGreaterThan(cancelsBefore)
+    // B waits out the post-cancel settle delay; it is not enqueued yet.
+    expect(h.spoken.map(s => s.text)).toEqual(['Message A.'])
+    h.flush(150)
+    expect(h.spoken.map(s => s.text)).toEqual(['Message A.', 'Message B.'])
+    expect(h.controller.current()).toBe('b')
+  })
+
   it('stop() (used when the mic starts) cancels speech and clears the id', () => {
     const h = harness()
     h.controller.speak('a', 'Message A.')
-    h.flush(150)
+    const cancelsBefore = h.cancels()
     h.controller.stop()
     expect(h.controller.current()).toBeNull()
-    expect(h.cancels()).toBeGreaterThanOrEqual(2)
+    expect(h.cancels()).toBeGreaterThan(cancelsBefore)
   })
 
-  it('stop() before the start delay prevents any speech', () => {
+  it('stop() during the post-cancel settle delay prevents the next message from speaking', () => {
     const h = harness()
     h.controller.speak('a', 'Message A.')
+    h.spoken[0].u.onstart?.()
+    h.controller.speak('b', 'Message B.')
     h.controller.stop()
     h.flush()
-    expect(h.spoken).toHaveLength(0)
+    expect(h.spoken.map(s => s.text)).toEqual(['Message A.'])
+    expect(h.controller.current()).toBeNull()
   })
 
   it('ignores the error events caused by its own cancel', () => {
