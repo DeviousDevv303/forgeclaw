@@ -49,6 +49,7 @@ import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
 import { weatherForecast } from './weather'
+import { espnFightStats } from './espnFightStats'
 import { fetchKalshiMarket, KalshiError, runKalshiMarkets, runKalshiOrderbook, type KalshiDeps } from './kalshiMarkets'
 import { kalshiReadSigner } from './kalshiReadSigner'
 import { formatOwnerPrices, parseOwnerPrices } from './kalshiOwnerPrices'
@@ -612,6 +613,21 @@ export const FORGE_TOOLS: ToolDef[] = [
         day: { type: 'number', description: 'Day to lead with: 0 = today, 1 = tomorrow (optional)' },
       },
       required: ['place'],
+    },
+  },
+  {
+    // Authorized 2026-10-24 by Cristian Nunez: read-only ESPN Fightcenter stats for STATS & FACTS. See espnFightStats.ts.
+    name: 'espn_fight_stats',
+    description: 'Measured per-fight stats from ESPN Fightcenter (read-only, no key) for completed UFC fights: significant and total strikes landed/attempted with accuracy, head/body/leg split, knockdowns, takedowns, control time, method, round and judges\' scores. Use it for STATS & FACTS on a fight instead of recalling numbers. Each figure is one fight, not a career rate. A fight in progress is shown only with include_live and is labelled LIVE (partial, not a result).',
+    parameters: {
+      type: 'object',
+      properties: {
+        event: { type: 'string', description: 'Words from the event name, e.g. "UFC 333" or "Volkanovski Evloev" (this season). Omit for the current event.' },
+        event_id: { type: 'string', description: 'ESPN event id, or a pasted Fightcenter URL (.../fightcenter/_/id/<id>/...). Use for events before this season.' },
+        fighter: { type: 'string', description: 'Only fights with this fighter, e.g. "Yan"' },
+        include_live: { type: 'boolean', description: 'Also show fights in progress (partial numbers)' },
+      },
+      required: [],
     },
   },
   {
@@ -1968,6 +1984,18 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // Free, keyless, browser-allowed: works for the owner and for free-mode visitors alike.
         const day = input.day === undefined || input.day === null || input.day === '' ? null : Number(input.day)
         return await weatherForecast({ place: String(input.place || ''), day: Number.isFinite(day as number) ? day : null, signal: ctx.signal })
+      }
+
+      case 'espn_fight_stats': {
+        // Keyless and browser-allowed (ESPN sends Access-Control-Allow-Origin: *), like weather_forecast.
+        const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+        return await espnFightStats({
+          eventId: text(input.event_id),
+          event: text(input.event),
+          fighter: text(input.fighter),
+          includeLive: input.include_live === true || input.include_live === 'true',
+          signal: ctx.signal,
+        })
       }
 
       case 'kalshi_markets': {

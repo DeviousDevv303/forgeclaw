@@ -167,7 +167,7 @@ describe('funds guidance — Master Money Multiplier, Module 1 (research-backed,
 describe('read-only money baseline', () => {
   it('a hosted model always gets the market, ledger and forecast reads, so any wording of a money question can be researched', () => {
     for (const provider of ['moonshot', 'anthropic']) {
-      expect(baselineToolNames(provider)).toEqual(expect.arrayContaining(['kalshi_markets', 'funds_status', 'weather_forecast']))
+      expect(baselineToolNames(provider)).toEqual(expect.arrayContaining(['kalshi_markets', 'funds_status', 'weather_forecast', 'espn_fight_stats']))
     }
   })
   it('nothing in the baseline proposes, settles, approves or places', () => {
@@ -192,6 +192,12 @@ describe('funds guidance — fight-card playbook (2026-10-24)', () => {
     expect(g).toMatch(/never use closes_within_hours on it/)
     expect(g).toMatch(/Never read a card one fight at a time/)
     expect(g).toMatch(/If Kalshi answers 429, do not repeat the call in this run/)
+  })
+
+  it('sends fight statistics to espn_fight_stats, as per-fight figures and never as career rates', () => {
+    expect(at('espn_fight_stats')).toBeGreaterThan(at('(3) Statistics'))
+    expect(g).toMatch(/never present one fight as a career rate/)
+    expect(FORGE_TOOLS.some(t => t.name === 'espn_fight_stats')).toBe(true)
   })
 
   it('the tool description tells the model the same cap the code enforces', () => {
