@@ -28,6 +28,17 @@ EVENT_FIELDS = {
     "pull_request": ("PR_BODY", "PR_ASSOCIATION"),
 }
 
+# Whether claude.yml reacts to each watched event, i.e. whether it lists the event in its `on:`. F-021: the notice said
+# "@claude starts the Claude Code workflow" for a pull request's description, but claude.yml has no pull_request
+# trigger, so that mention starts nothing. test_channel_watch.py reads claude.yml and fails if this table drifts from it.
+CLAUDE_STARTS_ON = {
+    "issue_comment": True,
+    "pull_request_review_comment": True,
+    "pull_request_review": True,
+    "issues": True,
+    "pull_request": False,
+}
+
 _FENCED = re.compile(r"(```|~~~)[\s\S]*?(\1|\Z)")
 _INLINE = re.compile(r"`[^`\n]*`")
 _QUOTE = re.compile(r"^\s*>.*$", re.MULTILINE)
@@ -42,6 +53,18 @@ LINES = {
     "chatgpt": "- `@chatgpt` is not connected to this repository. Nothing was delivered; ChatGPT sees this only if someone relays it.",
     "muse": "- `@muse` is not connected to this repository. Nothing was delivered; Muse sees this only if someone relays it.",
 }
+# What @claude reaches where claude.yml has no trigger for the event (see CLAUDE_STARTS_ON).
+CLAUDE_NOT_STARTED = (
+    "- `@claude` in a pull request description starts nothing: `claude.yml` reacts to comments and reviews on a pull "
+    "request, not to its description. Comment on the pull request to reach it."
+)
+
+
+def line_for(handle, event):
+    """The notice line for one handle on one event: what that mention reaches there."""
+    if handle == "claude" and not CLAUDE_STARTS_ON.get(event, False):
+        return CLAUDE_NOT_STARTED
+    return LINES[handle]
 
 
 def mentions(text):
@@ -75,7 +98,7 @@ def notice(event, env):
         f"Channel Watch: {', '.join('`@' + h + '`' for h in found)} "
         + ("is a mention, not a delivered request." if len(found) == 1 else "are mentions, not delivered requests."),
         "",
-        *[LINES[h] for h in found],
+        *[line_for(h, event) for h in found],
         "",
         "This is a notice only: no review, approval or execution happened here.",
         ACK_MARKER,

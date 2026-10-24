@@ -1,7 +1,17 @@
 """Run with: python -B -m unittest discover -s .github/scripts -p 'test_*.py'"""
+import re
 import unittest
+from pathlib import Path
 
 import channel_watch as w
+
+CLAUDE_YML = Path(__file__).resolve().parents[1] / "workflows" / "claude.yml"
+
+
+def claude_yml_triggers():
+    """The event names claude.yml lists under its top-level `on:` (text parse; no YAML dependency)."""
+    block = re.search(r"^on:\n((?:[ ]+.*\n|\n)+)", CLAUDE_YML.read_text(), re.MULTILINE)
+    return set(re.findall(r"^  (\w+):", block.group(1), re.MULTILINE))
 
 
 def env(**over):
@@ -28,6 +38,28 @@ class Mentions(unittest.TestCase):
     def test_punctuation_after_a_handle_still_counts(self):
         self.assertEqual(w.mentions("thanks @Muse."), ["muse"])
         self.assertEqual(w.mentions("(@chatgpt)"), ["chatgpt"])
+
+
+class ClaudeClaimMatchesClaudeYml(unittest.TestCase):
+    """F-021: the notice must not say @claude starts something on an event claude.yml does not listen to."""
+
+    def test_the_table_equals_what_claude_yml_actually_listens_to(self):
+        triggers = claude_yml_triggers()
+        self.assertIn("issue_comment", triggers)  # the parse found the real block
+        for event in w.EVENT_FIELDS:
+            self.assertEqual(w.CLAUDE_STARTS_ON[event], event in triggers, event)
+
+    def test_a_pull_request_description_is_told_it_starts_nothing(self):
+        body = w.notice("pull_request", env(PR_BODY="@claude please look", PR_ASSOCIATION="OWNER"))
+        self.assertIn("in a pull request description starts nothing", body)
+        self.assertNotIn("starts the Claude Code workflow", body)
+
+    def test_every_event_that_does_start_claude_keeps_the_original_line(self):
+        for event, fields in w.EVENT_FIELDS.items():
+            if not w.CLAUDE_STARTS_ON[event]:
+                continue
+            body = w.notice(event, env(**{fields[0]: "@claude", fields[1]: "OWNER"}))
+            self.assertIn("starts the Claude Code workflow", body, event)
 
 
 class Notice(unittest.TestCase):
