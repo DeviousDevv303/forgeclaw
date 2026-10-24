@@ -221,7 +221,7 @@ describe('funds guidance — fight-card playbook (2026-10-24)', () => {
     expect(g).toMatch(/Starting defaults, not measured/)
   })
 
-  it('carries the enforced template: the same seven headings the ledger checks, in the same order', () => {
+  it('carries the enforced template: the same eight headings the ledger checks, in the same order', () => {
     const at = FIGHT_SECTIONS.map(section => g.indexOf(`${section.label}: <`))
     expect(at.every(i => i > g.indexOf('THE TEMPLATE (enforced)'))).toBe(true)
     expect([...at].sort((a, b) => a - b)).toEqual(at)

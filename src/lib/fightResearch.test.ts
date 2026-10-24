@@ -12,6 +12,7 @@ const GOOD = [
   'REMATCH SEQUENCE: Merab won decisively in 2023; Yan took the belt back in Dec 2025 (UFC 323). This is the rubber match.',
   'BOOK LINE: DraftKings Yan -150 and BetMGM -148, no-vig 58.1% for Yan; Kalshi YES ask 55c.',
   'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com results page).',
+  'MATCHUP NEUTRALIZATION: primary path: Merab wins by wrestling pace and top control, Yan by standing Muay Thai; neutralization: demonstrated — Yan defended the takedowns for five rounds in the second fight after losing the first to the wrestling; the fight that remains: a standing fight, which favors Yan.',
   `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab: crowd lean: 44%. Record on comparable fights: 6 of 12 called correctly.`,
   'FUSION: range: 58-65%; the book line and facts carry it, statistics adjust it; sentiment weight: 0%.',
   'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
@@ -44,7 +45,7 @@ describe('the template', () => {
     expect(parsed.get('stats')).toBe('facts')
   })
 
-  it('every one of the seven sections is required, and named in the problem', () => {
+  it('every one of the eight sections is required, and named in the problem', () => {
     for (const section of FIGHT_SECTIONS) {
       const without = GOOD.split('\n').filter(line => !section.pattern.test(line)).join('\n')
       const result = check({ rationale: without })
@@ -63,6 +64,22 @@ describe('the template', () => {
     expect(check({ rationale: named }).ok).toBe(true)
     const bare = GOOD.replace(/SENTIMENT SCAN:.*/, 'SENTIMENT SCAN: unavailable now')
     expect(check({ rationale: bare }).problems.join('\n')).toContain('SENTIMENT SCAN says unavailable without a reason')
+  })
+
+  it('the matchup section must run the neutralization steps, not just be present', () => {
+    const noPaths = GOOD.replace(/MATCHUP NEUTRALIZATION:.*/, 'MATCHUP NEUTRALIZATION: neutralization: demonstrated — Yan defended the takedowns in fight two; the fight that remains: a standing fight, which favors Yan.')
+    expect(check({ rationale: noPaths }).problems).toContain('MATCHUP NEUTRALIZATION must name each fighter\'s primary path to victory ("primary path: ...")')
+    const noVerdict = GOOD.replace(/MATCHUP NEUTRALIZATION:.*/, 'MATCHUP NEUTRALIZATION: primary path: Merab by wrestling pace, Yan by standing Muay Thai; the fight that remains: a standing fight, which favors Yan.')
+    expect(check({ rationale: noVerdict }).problems).toContain('MATCHUP NEUTRALIZATION must give its verdict ("neutralization: demonstrated" or "neutralization: not demonstrated") with the evidence for it')
+    const noRemains = GOOD.replace(/MATCHUP NEUTRALIZATION:.*/, 'MATCHUP NEUTRALIZATION: primary path: Merab by wrestling pace, Yan by standing Muay Thai; neutralization: demonstrated — Yan defended the takedowns in fight two.')
+    expect(check({ rationale: noRemains }).problems).toContain('MATCHUP NEUTRALIZATION must reassess the matchup left over if the key strength is taken away ("the fight that remains: ...")')
+  })
+
+  it('"not demonstrated" is a valid neutralization verdict, and "unavailable" does not excuse the section', () => {
+    const notShown = GOOD.replace('neutralization: demonstrated', 'neutralization: not demonstrated')
+    expect(check({ rationale: notShown }).ok).toBe(true)
+    const dodged = GOOD.replace(/MATCHUP NEUTRALIZATION:.*/, 'MATCHUP NEUTRALIZATION: unavailable — no prior meeting to judge from')
+    expect(check({ rationale: dodged }).ok).toBe(false)
   })
 
   it('BOOK LINE and STATS & FACTS cannot both be unavailable', () => {
@@ -86,7 +103,7 @@ describe('the template', () => {
 
   it('too-long rationales are refused rather than silently cut (the falsifier is last)', () => {
     const result = check({ rationale: `${GOOD}\n${'x'.repeat(FIGHT_RATIONALE_MAX_CHARS)}` })
-    expect(result.problems.join('\n')).toMatch(/is kept whole only up to 4000/)
+    expect(result.problems.join('\n')).toMatch(/is kept whole only up to 4600/)
   })
 })
 
@@ -138,12 +155,12 @@ describe('the stated edge is held to the bar and to arithmetic', () => {
 })
 
 describe('the refusal teaches the template', () => {
-  it('lists every problem and the seven headings, so one rewrite can fix it', () => {
+  it('lists every problem and the eight headings, so one rewrite can fix it', () => {
     const result = check({ rationale: 'a hunch about this fight and nothing more to say' })
     const text = fightRefusal('KXUFCFIGHT-26OCT24YANDVA-YAN', result)
     expect(result.problems.length).toBeGreaterThanOrEqual(7)
     for (const section of FIGHT_SECTIONS) expect(text).toContain(`${section.label}: <`)
-    expect(fightTemplateSkeleton().split('\n')).toHaveLength(7)
+    expect(fightTemplateSkeleton().split('\n')).toHaveLength(8)
     expect(text).toContain('the ledger checks it (not the model)')
   })
 })
