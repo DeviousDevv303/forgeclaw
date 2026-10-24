@@ -11,6 +11,7 @@
  * live read takes over. Nothing here may ever turn into a guessed price.
  */
 
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS, httpServerSnapshotSource, loadServerSnapshot, parseServerSnapshot,
@@ -168,5 +169,39 @@ describe('httpServerSnapshotSource', () => {
   it('a non-OK answer (the data branch not seeded yet, say) is unavailability', async () => {
     const source = httpServerSnapshotSource(async () => ({ ok: false, status: 404, json: async () => ({}) }) as unknown as Response)
     expect(await loadServerSnapshot(source, NOW, KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS)).toBeNull()
+  })
+})
+
+// The snapshot workflow is a write-permission scheduled job, and it exists twice: the live copy under .github/workflows and the
+// review copy under tools/server-loop (the connector that edits the review copy cannot write .github/workflows).
+describe('the snapshot workflow', () => {
+  const live = readFileSync(new URL('../../.github/workflows/kalshi-snapshot.yml', import.meta.url), 'utf8')
+  const review = readFileSync(new URL('../../tools/server-loop/kalshi-snapshot.yml', import.meta.url), 'utf8')
+  const trigger = live.slice(live.indexOf('\non:\n'), live.indexOf('\npermissions:'))
+
+  it('the live copy and the review copy are byte-identical', () => {
+    expect(live).toBe(review)
+  })
+
+  it('runs only on a schedule and by hand: never on a push, a pull request or a comment', () => {
+    expect(trigger).toMatch(/^\s+schedule:/m)
+    expect(trigger).toMatch(/^\s+workflow_dispatch:/m)
+    expect(trigger).not.toMatch(/\b(push|pull_request|pull_request_target|issue_comment|issues):/)
+  })
+
+  it('ticks faster than the app\'s staleness limit, with room for one late tick (half a cadence)', () => {
+    const cron = [...trigger.matchAll(/cron:\s*"\*\/(\d+) \* \* \* \*"/g)]
+    expect(cron).toHaveLength(1)
+    const everyMs = Number(cron[0][1]) * 60_000
+    expect(everyMs).toBeLessThan(KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS)
+    expect(everyMs * 1.5).toBeLessThanOrEqual(KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS)
+  })
+
+  it('publishes to the data branch only, and writes nothing else', () => {
+    const permissions = live.slice(live.indexOf('\npermissions:'), live.indexOf('\nconcurrency:')).split('\n').filter(line => line.trim() && !line.trim().startsWith('#'))
+    expect(permissions).toEqual(['permissions:', '  contents: write'])
+    expect(live).toContain('git push origin HEAD:kalshi-snapshot-data')
+    expect([...live.matchAll(/git push[^\n]*/g)]).toHaveLength(1)
+    expect(live).not.toMatch(/secrets\./)
   })
 })

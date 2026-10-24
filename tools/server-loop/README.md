@@ -40,7 +40,7 @@ remembered, inferred, or phrased by a model.
 The second loop job spends none of the owner's browser quota. The app's
 Kalshi price reads originate from the owner's browser, and Kalshi
 rate-limits that per-IP quota — the 429 wall that kept killing reads
-mid-answer. So a scheduled workflow (`kalshi-snapshot.yml`, every 15
+mid-answer. So a scheduled workflow (`kalshi-snapshot.yml`, every 10
 minutes) runs `kalshi-snapshot.mjs`: it reads Kalshi's **public**
 market-data API — unauthenticated, no keys, no credentials — for the
 watchlist in `kalshi-watchlist.json` (UFC/MMA and football game series by
@@ -58,7 +58,7 @@ commits ONE JSON snapshot to the **`kalshi-snapshot-data`** branch:
 
 The app (`src/lib/kalshiServerSnapshot.ts`) reads that file from the data
 branch's raw URL and prefers it for listing reads when it is fresh
-(15 minutes, the workflow's cadence) and covers the query's
+(15 minutes; the workflow runs every 10, leaving room for one late tick) and covers the query's
 ticker/event/series. The honesty rules are enforced by shape, not trust:
 any drift — an unparseable `fetched_at`, a non-numeric price, a failed
 fetch's `error` document — makes the whole snapshot unavailable, and the

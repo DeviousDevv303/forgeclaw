@@ -4,7 +4,7 @@
 
 /**
  * The Stage 2 server snapshot: Kalshi prices the server-side loop fetched
- * (tools/server-loop/kalshi-snapshot.mjs, on a 15-minute workflow) and
+ * (tools/server-loop/kalshi-snapshot.mjs, on a 10-minute workflow) and
  * committed to the `kalshi-snapshot-data` branch. Listings read prices from
  * here first, so the owner's browser stops spending its per-IP Kalshi quota
  * on reads a server can make once for every reader.
@@ -34,10 +34,11 @@ export const KALSHI_SERVER_SNAPSHOT_URL =
 /**
  * Default maximum server-snapshot age. Per-call override via KalshiDeps.maxServerSnapshotAgeMs.
  *
- * Why 15 minutes: it is the snapshot workflow's cadence — a healthy loop keeps a file
- * younger than this on the branch, and one missed tick ages the snapshot out rather than
- * letting 30-minute-old prices pose as current. It matches the local last-good limit
- * (KALSHI_SNAPSHOT_MAX_AGE_MS) so both fallback layers make the same freshness promise.
+ * Why 15 minutes: the workflow runs every 10, so a healthy loop keeps a file well inside
+ * this limit with room for one late tick (GitHub's scheduler is best effort), and a run of
+ * missed ticks ages the snapshot out rather than letting 30-minute-old prices pose as
+ * current. It matches the local last-good limit (KALSHI_SNAPSHOT_MAX_AGE_MS) so both
+ * fallback layers make the same freshness promise.
  */
 export const KALSHI_SERVER_SNAPSHOT_MAX_AGE_MS = 900_000
 
