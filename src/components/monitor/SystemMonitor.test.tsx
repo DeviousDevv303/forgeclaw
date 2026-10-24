@@ -17,4 +17,18 @@ describe('the system monitor strip', () => {
     expect(screen.getByText('This Computer')).toBeTruthy()
     expect(screen.queryByText(/Cristian/)).toBeNull()
   })
+
+  it('says what lands here when expanded with no activity, instead of opening empty', () => {
+    __setLangForTests('en')
+    render(<SystemMonitor events={[]} expanded ownerView />)
+    expect(screen.getByText(/No activity yet/)).toBeTruthy()
+    cleanup()
+    // Collapsed, the line is not rendered at all.
+    render(<SystemMonitor events={[]} ownerView />)
+    expect(screen.queryByText(/No activity yet/)).toBeNull()
+    cleanup()
+    // With an event recorded, the empty state gives way to the event itself.
+    render(<SystemMonitor events={[{ type: 'agent_status', agentId: 'muse', status: 'working', timestamp: 1 }]} expanded ownerView />)
+    expect(screen.queryByText(/No activity yet/)).toBeNull()
+  })
 })

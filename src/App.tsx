@@ -965,6 +965,15 @@ function App() {
   // Last spoken text that fed a prompt, so the learning log can tell voice prompts from typed ones.
   const voiceOriginRef = useRef('')
   const promptInputRef = useRef<HTMLTextAreaElement | null>(null)
+  // The composer input grows with its content (up to ~5 lines, then it scrolls
+  // internally) instead of clipping wrapped text at one row on a phone.
+  const autoGrowPromptInput = useCallback(() => {
+    const el = promptInputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.max(36, Math.min(el.scrollHeight, 120))}px`
+  }, [])
+  useEffect(() => { autoGrowPromptInput() }, [input, autoGrowPromptInput])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const ttsResumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -3418,18 +3427,18 @@ function App() {
                     <button onClick={() => setAttachedFile(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '14px' }}>×</button>
                   </div>
                 )}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#101013', border: '1px solid #26262c', borderRadius: '14px', padding: '8px', boxShadow: '0 2px 12px rgba(0,0,0,0.35)' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: '6px', background: '#101013', border: '1px solid #26262c', borderRadius: '14px', padding: '8px', boxShadow: '0 2px 12px rgba(0,0,0,0.35)' }}>
                   <FileUploadButton onFileSelect={(file, content) => setAttachedFile({ name: file.name, content })} disabled={false} />
                   {/* Connector badge — Manus-style active tool indicator */}
                   <button
                     onClick={() => setShowConnectors(s => !s)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', padding: '6px', borderRadius: '8px', position: 'relative', flexShrink: 0 }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', width: '36px', height: '36px', padding: '0', borderRadius: '10px', position: 'relative', flexShrink: 0 }}
                     title={t('chat.toolsTitle')}
                   >
                     <span style={{ fontSize: '16px' }}>🛠️</span>
                     {activityLog.length > 0 && (
                       <span style={{
-                        position: 'absolute', top: '-4px', right: '-4px',
+                        position: 'absolute', top: '2px', right: '2px',
                         background: '#f97316', color: '#000', fontSize: '9px',
                         fontWeight: 'bold', padding: '1px 4px', borderRadius: '6px',
                         fontFamily: 'monospace', letterSpacing: '0.5px',
@@ -3444,9 +3453,9 @@ function App() {
                     aria-label={t('chat.screenTextTitle')}
                     style={{
                       minWidth: '48px',
-                      height: '32px',
+                      height: '36px',
                       padding: '0 6px',
-                      borderRadius: '8px',
+                      borderRadius: '10px',
                       background: screenCopied ? '#0b1f3f' : '#0d0d0f',
                       border: `1px solid ${screenCopied ? '#2563eb' : '#2e2e33'}`,
                       color: screenCopied ? '#93c5fd' : '#888',
@@ -3456,17 +3465,16 @@ function App() {
                       fontWeight: 'bold',
                       letterSpacing: '1px',
                       textTransform: 'uppercase',
-                      alignSelf: 'center',
                       flexShrink: 0,
                     }}
                   >
                     {screenCopied ? t('chat.screenCopied') : t('chat.screenText')}
                   </button>
-                  <textarea ref={promptInputRef} style={{ flex: 1, background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', padding: '2px 4px', WebkitAppearance: 'none', alignSelf: 'center' }} rows={1} placeholder={t('chat.placeholder', { provider: PROVIDERS[activeProvider].name })} value={input} onChange={e => { setInput(e.target.value); window.forgeCore?.userTyping() }} onInput={e => setInput(e.currentTarget.value)} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
+                  <textarea ref={promptInputRef} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', minHeight: '36px', maxHeight: '120px', overflowY: 'auto', background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', padding: '8px 6px', WebkitAppearance: 'none' }} rows={1} placeholder={t('chat.placeholder', { provider: PROVIDERS[activeProvider].name })} value={input} onChange={e => { setInput(e.target.value); window.forgeCore?.userTyping() }} onInput={e => { setInput(e.currentTarget.value); autoGrowPromptInput() }} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
                   {loading ? (
-                    <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '7px 16px', borderRadius: '9px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={stopGeneration} aria-label={t('chat.stopAria')}>{t('chat.stop')}</button>
+                    <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '7px 16px', borderRadius: '10px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', flexShrink: 0 }} onClick={stopGeneration} aria-label={t('chat.stopAria')}>{t('chat.stop')}</button>
                   ) : (
-                    <button style={{ background: '#f97316', color: '#000', padding: '7px 16px', borderRadius: '9px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', alignSelf: 'center', flexShrink: 0 }} onClick={handleSendMessage}>{t('chat.send')}</button>
+                    <button style={{ background: '#f97316', color: '#000', padding: '7px 16px', borderRadius: '10px', border: 'none', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', flexShrink: 0 }} onClick={handleSendMessage}>{t('chat.send')}</button>
                   )}
                 </div>
                 {screenTextFallback && (
