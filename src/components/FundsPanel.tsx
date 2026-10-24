@@ -16,9 +16,13 @@
  * balance section (balance plan, 2026-10-23) — and re-reads the ledger whenever `refreshKey` changes (App bumps it
  * after every funds command) or the ledger itself broadcasts a save — so a proposal saved
  * by a model tool outside a /funds command shows its OK / No buttons at once.
+ *
+ * The balance section is a floating pop-up, not part of the panel's layout (Cristian's
+ * ask, 2026-10-23): it overlays the chat instead of pushing it up, appears whenever a
+ * fresh balance lands, and dismisses itself after 30 seconds (or on its close button).
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FUNDS_CHANGED_EVENT, loadFunds, money, type FundsPosition } from '../lib/fundsLedger'
 import { effectiveKalshiRelayUrl, loadKalshiCredentials } from '../lib/kalshiAuth'
 import { createKalshiClient, relayFallbackFetcher } from '../lib/kalshiTrade'
@@ -54,6 +58,23 @@ function ProposalRow({ p, onCommand }: { p: FundsPosition; onCommand: (text: str
 }
 
 /**
+ * How long the balance pop-up stays on screen after a fresh read lands (Cristian's
+ * ask, 2026-10-23: "a 30 second pop up"). A constant, not a setting: the owner asked
+ * for one fixed behaviour, and a knob nobody set would just be another silent state.
+ */
+const BALANCE_POPUP_VISIBLE_MS = 30_000
+
+const balancePopupStyle: React.CSSProperties = {
+  position: 'fixed', right: '12px', bottom: '12px', zIndex: 70,
+  width: 'min(430px, calc(100vw - 24px))', boxSizing: 'border-box',
+  background: '#101408', border: '1px solid #2a3319', borderRadius: '10px',
+  padding: '10px 12px', boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
+}
+const closeStyle: React.CSSProperties = {
+  background: 'none', border: 'none', color: '#8a9a6a', cursor: 'pointer', fontSize: '16px', lineHeight: 1, padding: '0 0 4px',
+}
+
+/**
  * The Kalshi (live) section: the exchange's own balance — total, per-shard lines,
  * timestamps — from the shared formatter (kalshiBalanceDisplay), so the panel shows
  * exactly what funds_status and /funds status show. It renders only when this browser
@@ -61,10 +82,18 @@ function ProposalRow({ p, onCommand }: { p: FundsPosition; onCommand: (text: str
  * on demand — never on a timer: the balance endpoint's budget is one read a second
  * and Kalshi's spec advises against polling it. The ledger below is a separate
  * record and the two are never merged (balance plan, 2026-10-23).
+ *
+ * Presentation (Cristian's ask, 2026-10-23): a floating card fixed to the viewport's
+ * bottom-right corner, out of the layout flow, so a balance read no longer pushes
+ * the chat up. Each fresh read shows it and restarts the 30-second countdown; the
+ * close button hides it until the next fresh read. Content, formatting and the
+ * refresh action are unchanged — only where and how long it sits on screen moved.
  */
 function KalshiLiveSection({ refreshKey }: { refreshKey: number }) {
   const [block, setBlock] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
+  const [visible, setVisible] = useState(true)
+  const hideTimer = useRef<number | null>(null)
 
   const refresh = useCallback(async () => {
     const creds = loadKalshiCredentials()
@@ -80,9 +109,30 @@ function KalshiLiveSection({ refreshKey }: { refreshKey: number }) {
 
   useEffect(() => { void refresh() }, [refresh, refreshKey])
 
+  // A fresh balance (re)shows the pop-up and restarts its countdown. The block text
+  // carries its own read timestamp, so every completed read is a new string and
+  // lands here — a manual Refresh therefore re-opens a dismissed pop-up too.
+  useEffect(() => {
+    if (block === null) return
+    setVisible(true)
+    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current)
+    hideTimer.current = window.setTimeout(() => setVisible(false), BALANCE_POPUP_VISIBLE_MS)
+    return () => { if (hideTimer.current !== null) window.clearTimeout(hideTimer.current) }
+  }, [block])
+
+  const close = useCallback(() => {
+    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current)
+    hideTimer.current = null
+    setVisible(false)
+  }, [])
+
   if (!loadKalshiCredentials()) return null
+  if (!visible) return null
   return (
-    <div style={{ marginBottom: '8px' }}>
+    <div style={balancePopupStyle} role="group" aria-label="Kalshi (live) balance">
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <button style={closeStyle} onClick={close} aria-label="Close balance">×</button>
+      </div>
       <div style={{ color: '#cfe3b8', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
         {block ?? 'Kalshi (live): reading…'}
       </div>
@@ -117,19 +167,20 @@ export function FundsPanel({ onCommand, refreshKey }: { onCommand: (text: string
     [refreshKey, ledgerTick],
   )
 
-  // The panel exists while a proposal waits — or, since the balance plan
-  // (2026-10-23), whenever this browser holds Kalshi credentials, so the live
-  // balance section above the proposals is visible with none waiting too.
+  // The proposals panel exists while a proposal waits. The balance section is no
+  // longer inside it (Cristian's ask, 2026-10-23): it floats as its own pop-up
+  // whenever this browser holds credentials, so it renders as a sibling here and
+  // the inline box below belongs to proposals alone.
   const hasCreds = loadKalshiCredentials() !== null
   if (proposed.length === 0 && !hasCreds) return null
 
   const parsed = Number(amount)
   const canAdd = Number.isFinite(parsed) && parsed > 0
   return (
-    <div style={panelStyle} role="group" aria-label="Funds">
+    <>
       <KalshiLiveSection refreshKey={refreshKey} />
       {proposed.length > 0 && (
-        <>
+        <div style={panelStyle} role="group" aria-label="Funds">
           <div style={{ color: '#b8cc7d', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
             Funds — proposals waiting
           </div>
@@ -156,8 +207,8 @@ export function FundsPanel({ onCommand, refreshKey }: { onCommand: (text: string
               Add funds
             </button>
           </div>
-        </>
+        </div>
       )}
-    </div>
+    </>
   )
 }
