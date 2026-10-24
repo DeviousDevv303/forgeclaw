@@ -483,3 +483,62 @@ describe('guards pinned by mutation testing', () => {
     expect(() => applyFundsCommand(withdrawn, { kind: 'approve', id: proposed.position.id }, NOW)).toThrow(/needs .* but only .* is available/)
   })
 })
+
+// Owner directive 2026-10-24 (A): a fight-card proposal is the end of a research chain, and the ledger holds it to the
+// template (fightResearch.ts). No schema change: the chain lives in the rationale text.
+describe('fight-card proposals are held to the research template', () => {
+  const THREAD = 'https://www.reddit.com/r/MMA/comments/1xdgbl2/petr_yan_vs_merab_dvalishvili_faceoff/'
+  const FIGHT_RATIONALE = [
+    'REMATCH SEQUENCE: Merab won decisively in 2023; Yan took the belt back in Dec 2025. This is the rubber match.',
+    'BOOK LINE: DraftKings Yan -150 and BetMGM -148, no-vig 58.1% for Yan; Kalshi YES ask 55c.',
+    'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com).',
+    `SENTIMENT SCAN: r/MMA threads ${THREAD}. The crowd leans Merab. Record on comparable fights: 6 of 12 called correctly.`,
+    'FUSION: range: 58-65%; the book line and facts carry it; sentiment weight: 0%.',
+    'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
+    'FALSIFIER: a late injury report for Yan, or the line moving to Merab -120 before the walkout.',
+  ].join('\n')
+  const fight = (over: Partial<ProposalInput> = {}): ProposalInput => proposal({
+    market: 'KXUFCFIGHT-26OCT24YANDVA-YAN', price: 0.55, probability: 0.62, rationale: FIGHT_RATIONALE, sources: [THREAD], ...over,
+  })
+
+  it('a one-line rationale on a fight market is refused, with the template in the refusal', () => {
+    const attempt = () => proposePosition(funded(), fight({ rationale: 'Yan is the champion and looks sharp, the market is too low on him.' }), NOW)
+    expect(attempt).toThrow(FundsError)
+    expect(attempt).toThrow(/fight-card market, so the rationale must follow the fight template, and the ledger checks it/)
+    expect(attempt).toThrow(/REMATCH SEQUENCE is missing/)
+    expect(attempt).toThrow(/FALSIFIER: <the result or news that would prove this wrong>/)
+  })
+
+  it('the complete template is accepted and kept whole, even past the normal 2,000-character cut', () => {
+    const long = FIGHT_RATIONALE.replace('(source: ufc.com).', `(source: ufc.com). ${'More hard facts from the weigh-ins and camp reports. '.repeat(40)}`)
+    expect(long.length).toBeGreaterThan(2000)
+    const { position } = proposePosition(funded(), fight({ rationale: long }), NOW)
+    expect(position.rationale.length).toBe(long.trim().length)
+    expect(position.rationale).toContain('FALSIFIER: a late injury report')
+  })
+
+  it('paper positions are held to the same chain (the track record is built on paper too)', () => {
+    expect(() => proposePosition(funded(), fight({ mode: 'paper', rationale: 'Yan looks good here, so I like him at this price.' }), NOW)).toThrow(/fight template/)
+    expect(proposePosition(funded(), fight({ mode: 'paper' }), NOW).position.mode).toBe('paper')
+  })
+
+  it('the fusion range must hold the probability the ledger actually records', () => {
+    expect(() => proposePosition(funded(), fight({ probability: 0.7 }), NOW)).toThrow(/outside the FUSION range 58\.0-65\.0%/)
+  })
+
+  it('the crowd cannot be given weight it has not earned', () => {
+    const weighted = FIGHT_RATIONALE.replace('sentiment weight: 0%', 'sentiment weight: 8%')
+    expect(() => proposePosition(funded(), fight({ rationale: weighted }), NOW)).toThrow(/sentiment weight 8% is more than the crowd has earned \(0%\)/)
+    const earned = weighted.replace('6 of 12 called correctly', '9 of 12 called correctly')
+    expect(proposePosition(funded(), fight({ rationale: earned }), NOW).position.market).toBe('KXUFCFIGHT-26OCT24YANDVA-YAN')
+  })
+
+  it('other markets and venues are not held to it (a weather proposal is unchanged)', () => {
+    expect(proposePosition(funded(), proposal(), NOW).position.market).toBe('KX-RAIN-OCT')
+    expect(proposePosition(funded(), proposal({ venue: 'draftkings', market: 'KXUFCFIGHT-26OCT24YANDVA-YAN' }), NOW).position.venue).toBe('draftkings')
+  })
+
+  it('the template gate comes after the funds checks, so an unfunded ledger says so first', () => {
+    expect(() => proposePosition(capped(), fight({ rationale: 'short one liner about this particular fight card tonight.' }), NOW)).toThrow(/No funds in the ledger/)
+  })
+})

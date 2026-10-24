@@ -17,6 +17,8 @@
  */
 
 import { safeGetItem, safeSetItem } from './storage'
+import { FIGHT_RATIONALE_MAX_CHARS, checkFightRationale, fightRefusal, isFightMarket } from './fightResearch'
+import { FUNDS_EXTREME_PRICE_HIGH_CENTS, FUNDS_EXTREME_PRICE_LOW_CENTS, FUNDS_MIN_NET_EDGE_EXTREME_CENTS, FUNDS_MIN_NET_EDGE_TAKER_CENTS } from './toolExposure'
 
 export const FUNDS_STORAGE_KEY = 'forgeclaw_funds_v1'
 
@@ -331,6 +333,16 @@ export function proposePosition(state: FundsState, input: ProposalInput, nowMs: 
   if (mode === 'real' && s.bankroll <= 0) throw new FundsError('No funds in the ledger. The owner adds them with /funds add <amount>.')
   if (mode === 'paper' && s.paperBankroll <= 0) throw new FundsError('The paper bankroll is used up. The owner can reset it with /funds limits paper=<amount>.')
   if (mode === 'real' && state.halted) throw new FundsError(haltedMessage(state.halted))
+  // A fight-card proposal is the end of a research chain (rematch sequence, book line, stats and facts, sentiment scan,
+  // fusion, edge, falsifier). The ledger holds the rationale to that template; no schema change, see fightResearch.ts.
+  const fightCard = isFightMarket(input.venue, input.market)
+  if (fightCard) {
+    const check = checkFightRationale(
+      { rationale: input.rationale, probability: input.probability, price: input.price },
+      { minNetEdgeCents: FUNDS_MIN_NET_EDGE_TAKER_CENTS, minNetEdgeExtremeCents: FUNDS_MIN_NET_EDGE_EXTREME_CENTS, extremeLowCents: FUNDS_EXTREME_PRICE_LOW_CENTS, extremeHighCents: FUNDS_EXTREME_PRICE_HIGH_CENTS },
+    )
+    if (!check.ok) throw new FundsError(fightRefusal(input.market.trim(), check))
+  }
   const sizing = sizePosition({ ...input, mode }, state, nowMs)
   if (sizing.edge <= 0) {
     throw new FundsError(`No edge: your probability ${pct(input.probability)} does not beat the price ${money(input.price)} (${pct(input.price)}). Not proposed.`)
@@ -340,7 +352,7 @@ export function proposePosition(state: FundsState, input: ProposalInput, nowMs: 
   const position: FundsPosition = {
     id: `p${state.nextId}`, createdAt: nowMs, mode, venue: input.venue.trim(), market: input.market.trim(), side: input.side,
     price: input.price, probability: input.probability, contracts: sizing.contracts, stake: sizing.stake, feeEstimate: sizing.fee,
-    rationale: input.rationale.trim().slice(0, 2000), sources: sources.slice(0, 10).map(x => x.slice(0, 300)),
+    rationale: input.rationale.trim().slice(0, fightCard ? FIGHT_RATIONALE_MAX_CHARS : 2000), sources: sources.slice(0, 10).map(x => x.slice(0, 300)),
     // A paper position needs no approval: no money is involved.
     status: mode === 'paper' ? 'placed' : 'proposed', ...(mode === 'paper' ? { placedAt: nowMs } : {}),
   }

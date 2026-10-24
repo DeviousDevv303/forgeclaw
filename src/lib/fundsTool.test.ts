@@ -173,3 +173,39 @@ describe('auto-approve execution deps (the tool path\'s order hooks)', () => {
     expect(loadFunds().positions.find(p => p.id === 'p2')!.status).toBe('proposed')
   })
 })
+
+// Owner directive 2026-10-24 (A), through the tool the model actually calls.
+describe('funds_propose on a fight market', () => {
+  const THREAD = 'https://www.reddit.com/r/MMA/comments/1xdgbl2/petr_yan_vs_merab_dvalishvili_faceoff/'
+  const CHAIN = [
+    'REMATCH SEQUENCE: Merab won decisively in 2023; Yan took the belt back in Dec 2025. This is the rubber match.',
+    'BOOK LINE: DraftKings Yan -150 and BetMGM -148, no-vig 58.1% for Yan; Kalshi YES ask 55c.',
+    'STATS & FACTS: Yan 4-fight streak; both made weight at the official weigh-ins (source: ufc.com).',
+    'SENTIMENT SCAN: unavailable — Reddit search was blocked for the fetcher (HTTP 403), so the crowd weighs 0%.',
+    'FUSION: range: 58-65%; the book line and facts carry it; sentiment weight: 0%.',
+    'EDGE: net edge: 6¢ per contract after the 2¢ fee and the 1¢ spread.',
+    'FALSIFIER: a late injury report for Yan, or the line moving to Merab -120 before the walkout.',
+  ].join('\n')
+  const fightPropose = (over: Record<string, unknown> = {}) => propose({
+    market: 'KXUFCFIGHT-26OCT24YANDVA-YAN', price: 0.55, probability: 0.62, rationale: CHAIN, sources: [THREAD], ...over,
+  })
+
+  it('refuses a hunch, teaches the template in the same answer, and records nothing', async () => {
+    fundAndOpenGate()
+    const out = await fightPropose({ rationale: 'Yan is the champion and the market is too low on him, I like this one a lot.' })
+    expect(out).toMatch(/TOOL ERROR.*Not proposed:.*fight-card market, so the rationale must follow the fight template/)
+    expect(out).toContain('REMATCH SEQUENCE: <')
+    expect(out).toContain('FALSIFIER: <')
+    expect(loadFunds().positions).toHaveLength(0)
+  })
+
+  it('accepts the chain, with the sentiment scan honestly unavailable, and the proposal waits for the owner', async () => {
+    fundAndOpenGate()
+    const out = await fightPropose()
+    expect(out).toMatch(/Proposed p\d+ \[real, proposed\] kalshi "KXUFCFIGHT-26OCT24YANDVA-YAN" YES/)
+    expect(out).toMatch(/Waiting for the owner/)
+    const [stored] = loadFunds().positions
+    expect(stored.rationale).toContain('SENTIMENT SCAN: unavailable — Reddit search was blocked')
+    expect(stored.rationale).toContain('FALSIFIER:')
+  })
+})

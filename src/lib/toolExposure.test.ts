@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { baselineToolNames, FUNDS_CROWD_MAX_MOVE_POINTS, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_GUIDANCE, SHELL_EXEC_GUIDANCE } from './toolExposure'
+import { baselineToolNames, FUNDS_GUIDANCE, SHELL_EXEC_GUIDANCE } from './toolExposure'
+import { FIGHT_SECTIONS, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT } from './fightResearch'
 import { FORGE_TOOLS } from './forgeTools'
 import { KALSHI_MAX_RESULTS } from './kalshiMarkets'
 
@@ -206,12 +207,21 @@ describe('funds guidance — fight-card playbook (2026-10-24)', () => {
   })
 
   it('makes the crowd earn its weight from past fights, with the bars named and zero below them', () => {
-    expect(g).toContain('what forums and public picks said BEFORE comparable past fights and what happened')
+    expect(g).toContain('read what was said BEFORE comparable past fights against what happened')
+    expect(g).toContain('Reddit and similar forums')
     expect(g).toContain(`fewer than ${FUNDS_CROWD_MIN_COMPARABLE_FIGHTS} comparable fights or a crowd hit rate below ${FUNDS_CROWD_MIN_HIT_RATE_PCT}%`)
-    expect(g).toContain('community weight is zero')
-    expect(g).toContain(`never move your estimate by more than ${FUNDS_CROWD_MAX_MOVE_POINTS} points`)
+    expect(g).toContain(`the crowd's weight in your fusion is 0%; above both bars it is at most ${FUNDS_SENTIMENT_MAX_WEIGHT_PCT}%`)
     expect(g).toMatch(/Where a rematch exists, also compare what was predicted for the first fight with what happened/)
     expect(g).toMatch(/Starting defaults, not measured/)
+  })
+
+  it('carries the enforced template: the same seven headings the ledger checks, in the same order', () => {
+    const at = FIGHT_SECTIONS.map(section => g.indexOf(`${section.label}: <`))
+    expect(at.every(i => i > g.indexOf('THE TEMPLATE (enforced)'))).toBe(true)
+    expect([...at].sort((a, b) => a - b)).toEqual(at)
+    expect(g).toMatch(/funds_propose refuses a proposal on a fight market/)
+    expect(g).toMatch(/unavailable — <reason>/)
+    expect(g).toMatch(/It cannot check that your research is true/)
   })
 
   it('does not claim access it lacks, and ends in one proposal with a falsifier, or none', () => {
