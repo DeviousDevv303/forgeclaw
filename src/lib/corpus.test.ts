@@ -152,6 +152,60 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(res.reason).toMatch(/could not be read/)
   })
 
+  it('F-022: a null webhook reply body is still pending, never synced', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    await repository.appendInteraction({ input: 'f22 null in', context: '', result: 'f22 null out', runtime: 'corpus', model: 'local-model' })
+    const res = await repository.syncPending(
+      'https://example.invalid/webhook',
+      vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.reject(new Error('body stream failed')) }),
+    )
+    expect(res.status).toBe('pending')
+    expect(res.admitted).toBe(0)
+    expect(res.reason).toMatch(/empty reply/)
+  })
+
+  it('F-022: an empty webhook reply body is still pending, never synced', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    await repository.appendInteraction({ input: 'f22 empty in', context: '', result: 'f22 empty out', runtime: 'corpus', model: 'local-model' })
+    const empty = await repository.syncPending(
+      'https://example.invalid/webhook',
+      vi.fn().mockResolvedValue(new Response('', { status: 200 })),
+    )
+    expect(empty.status).toBe('pending')
+    expect(empty.admitted).toBe(0)
+    expect(empty.reason).toMatch(/empty reply/)
+    const whitespace = await repository.syncPending(
+      'https://example.invalid/webhook',
+      vi.fn().mockResolvedValue(new Response('  \n ', { status: 200 })),
+    )
+    expect(whitespace.status).toBe('pending')
+    expect(whitespace.admitted).toBe(0)
+    expect(whitespace.reason).toMatch(/empty reply/)
+  })
+
+  it('F-022: a webhook reply without the updates list is still pending, never synced', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    await repository.appendInteraction({ input: 'f22 shape in', context: '', result: 'f22 shape out', runtime: 'corpus', model: 'local-model' })
+    const res = await repository.syncPending(
+      'https://example.invalid/webhook',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 })),
+    )
+    expect(res.status).toBe('pending')
+    expect(res.admitted).toBe(0)
+    expect(res.reason).toMatch(/updates list/)
+  })
+
+  it('F-022: a present-but-empty updates list stays synced (flagged open contract question, PR #273)', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    await repository.appendInteraction({ input: 'f22 empty updates in', context: '', result: 'f22 empty updates out', runtime: 'corpus', model: 'local-model' })
+    const res = await repository.syncPending(
+      'https://example.invalid/webhook',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [] }), { status: 200 })),
+    )
+    expect(res.status).toBe('synced')
+    expect(res.admitted).toBe(0)
+  })
+
   it('H-A: rejects an unauthorized webhook candidate instead of admitting it', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'local pending candidate', context: '', result: 'local result', runtime: 'corpus', model: 'local-model' })
