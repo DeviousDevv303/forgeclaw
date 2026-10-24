@@ -3459,6 +3459,7 @@ function App() {
                     {settledNotices.map(n => (
                       <div key={n.id} style={{ color: '#ccc', fontSize: '12px', marginTop: '4px', fontFamily: 'monospace' }}>
                         {n.id} "{n.market}": settled — {n.outcome} {n.pnl >= 0 ? '+' : '−'}${Math.abs(n.pnl).toFixed(2)}
+                        {n.crowd && <div style={{ color: '#8fb8a0', marginTop: '2px' }}>{n.crowd}</div>}
                       </div>
                     ))}
                   </div>

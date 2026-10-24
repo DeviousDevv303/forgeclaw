@@ -55,7 +55,7 @@ import { formatOwnerPrices, parseOwnerPrices } from './kalshiOwnerPrices'
 import { createKalshiClient, relayFallbackFetcher } from './kalshiTrade'
 import { effectiveKalshiRelayUrl, loadKalshiCredentials } from './kalshiAuth'
 import { readKalshiBalanceBlock } from './kalshiBalanceDisplay'
-import { formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
+import { crowdSettleNote, formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
 import { autoApproveHoldNote, kalshiOrderPlacedJournalEntry, maybeAutoApprove, type KalshiExecutionDeps } from './kalshiExecution'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
@@ -2099,8 +2099,10 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           if (!outcome) { lines.push(`${position.id} not settled: Kalshi shows ${position.market} as ${market.status ?? 'unknown'} with no result yet.`); continue }
           ledger = settlePosition(ledger, position.id, outcome, 'kalshi', Date.now())
           changed = true
-          const pnl = ledger.positions.find(p => p.id === position.id)!.pnl!
-          lines.push(`${position.id} [${position.mode}] settled from Kalshi (result ${market.result}): ${outcome}, P/L ${pnl < 0 ? '-' : ''}$${Math.abs(pnl).toFixed(2)}.`)
+          const settled = ledger.positions.find(p => p.id === position.id)!
+          const pnl = settled.pnl!
+          const crowd = crowdSettleNote(settled)
+          lines.push(`${position.id} [${position.mode}] settled from Kalshi (result ${market.result}): ${outcome}, P/L ${pnl < 0 ? '-' : ''}$${Math.abs(pnl).toFixed(2)}.${crowd ? `\n${crowd}` : ''}`)
         }
         if (ledger.halted && !loadFunds().halted) lines.push(ledger.halted.reason + ' Real trading is HALTED until the owner types /funds resume.')
         return lines.join('\n') + (changed && !saveFunds(ledger) ? NOT_SAVED_WARNING : '')
