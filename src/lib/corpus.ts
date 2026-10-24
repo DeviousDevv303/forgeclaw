@@ -4,7 +4,7 @@
 // Small, deterministic, localStorage-backed corpus ledger. No network is needed
 // to initialize or use this module; synchronization is an explicit optional path.
 
-import { safeGetItem, safeRemoveItem, safeSetItem, strictGetItem, strictSetItem, type StorageResult } from './storage'
+import { safeGetItem, safeRemoveItem, safeSetItem, strictGetItem, strictRemoveItem, strictSetItem, type StorageResult } from './storage'
 import { DEEPSEEK_PRIMARY_CHECKPOINT } from './deepseekCheckpoints'
 import { CONVERGED_BY, convergencePhase } from './nexusConvergence'
 import { type AdmissionTrustConfig, type CandidateAuthorization, type AuthorizationValidation, verifyCandidateAuthorization } from './corpusAdmissionAuth'
@@ -121,8 +121,31 @@ const CANDIDATE_INDEX_KEY = 'forgeclaw_nexus_candidate_index_v1'
 const DECLINED_KEY = 'forgeclaw_nexus_declined_v1'
 const MAX_INDEX_ENTRIES = 10_000
 
-function readIndex(key: string): string[] {
-  const raw = safeGetItem(key)
+/**
+ * Index storage layout (v2, chunked). An index used to be one JSON array of up to MAX_INDEX_ENTRIES ids stored at the
+ * index key itself, so every append re-parsed and re-wrote the whole array: O(n) per append, O(n²) over a full index —
+ * a tax paid on every chat interaction (appendInteraction → saveRecord) and by the 10,000-record test (~31 s alone).
+ * Now the value at the index key is a small meta object ({ v: 2, first, last, count }) and the ids live in chunk keys
+ * (`<key>:chunk:<n>`, n from first to last), each a JSON array of up to INDEX_CHUNK_SIZE ids, oldest first. Appending
+ * rewrites only the tail chunk plus the meta; the cap trim touches only head chunks.
+ * Compatibility: a stored v1 array is still read exactly as before, and the first write converts it to chunks with
+ * the same ids in the same order (lossless, automatic; there is no separate migration step). An unreadable value
+ * still reads as an empty index, as it did before.
+ */
+const INDEX_CHUNK_SIZE = 512
+
+interface IndexMeta {
+  v: 2
+  first: number
+  last: number
+  count: number
+}
+
+function indexChunkKey(key: string, chunk: number): string {
+  return `${key}:chunk:${chunk}`
+}
+
+function parseIdArray(raw: string | null): string[] {
   if (!raw) return []
   try {
     const parsed = JSON.parse(raw) as unknown
@@ -130,6 +153,32 @@ function readIndex(key: string): string[] {
   } catch {
     return []
   }
+}
+
+function parseIndexMeta(raw: string | null): IndexMeta | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<IndexMeta> | null
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.v !== 2) return null
+    const { first, last, count } = parsed
+    if (!Number.isInteger(first) || !Number.isInteger(last) || !Number.isInteger(count)) return null
+    if ((first as number) < 0 || (last as number) < (first as number) || (count as number) < 0) return null
+    return { v: 2, first: first as number, last: last as number, count: count as number }
+  } catch {
+    return null
+  }
+}
+
+function readIndex(key: string): string[] {
+  const raw = safeGetItem(key)
+  if (!raw) return []
+  const meta = parseIndexMeta(raw)
+  if (!meta) return parseIdArray(raw)
+  const ids: string[] = []
+  for (let chunk = meta.first; chunk <= meta.last; chunk += 1) {
+    ids.push(...parseIdArray(safeGetItem(indexChunkKey(key, chunk))))
+  }
+  return ids
 }
 
 /** Records NEXUS removes at a time, oldest first, when the browser's storage is full. */
@@ -150,8 +199,149 @@ function setWithRoom(key: string, value: string, makeRoom: () => number): void {
   throw new Error('NEXUS storage is full and nothing older could be removed to make room')
 }
 
+/** How index chunk/meta writes behave when storage refuses: prune-and-retry, best-effort, or strict (admission). */
+interface IndexWriteOps {
+  set: (key: string, value: string) => void
+  remove: (key: string) => void
+}
+
+const QUIET_INDEX_OPS: IndexWriteOps = {
+  set: (key, value) => safeSetItem(key, value),
+  remove: (key) => safeRemoveItem(key),
+}
+
+/**
+ * Rewrites the whole index in chunked form (the removal/rewrite paths; appends use appendIndexId instead).
+ * Any previous chunk range is removed first, so no stale chunk survives past the new meta's `last`.
+ */
+function writeIndexChunks(key: string, ids: string[], ops: IndexWriteOps): void {
+  const capped = ids.slice(-MAX_INDEX_ENTRIES)
+  const previous = parseIndexMeta(safeGetItem(key))
+  if (previous) {
+    for (let chunk = previous.first; chunk <= previous.last; chunk += 1) ops.remove(indexChunkKey(key, chunk))
+  }
+  const chunkCount = Math.max(1, Math.ceil(capped.length / INDEX_CHUNK_SIZE))
+  for (let chunk = 0; chunk < chunkCount; chunk += 1) {
+    ops.set(indexChunkKey(key, chunk), JSON.stringify(capped.slice(chunk * INDEX_CHUNK_SIZE, (chunk + 1) * INDEX_CHUNK_SIZE)))
+  }
+  const meta: IndexMeta = { v: 2, first: 0, last: chunkCount - 1, count: capped.length }
+  ops.set(key, JSON.stringify(meta))
+}
+
 function writeIndex(key: string, ids: string[], makeRoom: () => number = () => 0): void {
-  setWithRoom(key, JSON.stringify(ids.slice(-MAX_INDEX_ENTRIES)), makeRoom)
+  writeIndexChunks(key, ids, {
+    set: (chunkKey, value) => setWithRoom(chunkKey, value, makeRoom),
+    remove: (chunkKey) => safeRemoveItem(chunkKey),
+  })
+}
+
+/**
+ * Appends one id to the index, rewriting only the tail chunk (≤ INDEX_CHUNK_SIZE ids) and the meta — the fix for the
+ * old behaviour, where every append re-wrote the whole ≤10,000-id array. The MAX_INDEX_ENTRIES cap is enforced by
+ * trimming head chunks. A legacy v1 array is converted to chunks first (same ids, same order).
+ */
+function appendIndexId(key: string, id: string, makeRoom: () => number = () => 0): void {
+  const set = (chunkKey: string, value: string) => setWithRoom(chunkKey, value, makeRoom)
+  const raw = safeGetItem(key)
+  let meta = parseIndexMeta(raw)
+  if (!meta) {
+    writeIndex(key, parseIdArray(raw), makeRoom)
+    meta = parseIndexMeta(safeGetItem(key)) ?? { v: 2, first: 0, last: 0, count: 0 }
+  }
+  let tail = meta.count === 0 ? [] : parseIdArray(safeGetItem(indexChunkKey(key, meta.last)))
+  if (tail.length >= INDEX_CHUNK_SIZE) {
+    meta = { ...meta, last: meta.last + 1 }
+    tail = []
+  }
+  tail.push(id)
+  set(indexChunkKey(key, meta.last), JSON.stringify(tail))
+  meta = { ...meta, count: meta.count + 1 }
+  while (meta.count > MAX_INDEX_ENTRIES) {
+    const excess: number = meta.count - MAX_INDEX_ENTRIES
+    const head: string[] = meta.first === meta.last ? tail : parseIdArray(safeGetItem(indexChunkKey(key, meta.first)))
+    if (meta.first < meta.last && excess >= head.length) {
+      safeRemoveItem(indexChunkKey(key, meta.first))
+      meta = { ...meta, first: meta.first + 1, count: meta.count - head.length }
+    } else {
+      const kept = head.slice(excess)
+      set(indexChunkKey(key, meta.first), JSON.stringify(kept))
+      if (meta.first === meta.last) tail = kept
+      meta = { ...meta, count: meta.count - excess }
+    }
+  }
+  set(key, JSON.stringify(meta))
+}
+
+/** writeIndexChunks with strict failure reporting: the first storage failure aborts and is returned, never swallowed. */
+function writeIndexChunksStrict(key: string, ids: string[]): StorageResult<void> {
+  const capped = ids.slice(-MAX_INDEX_ENTRIES)
+  const previousRaw = strictGetItem(key)
+  if (!previousRaw.ok) return { ok: false, error: previousRaw.error }
+  const previous = parseIndexMeta(previousRaw.value ?? null)
+  if (previous) {
+    for (let chunk = previous.first; chunk <= previous.last; chunk += 1) {
+      const removed = strictRemoveItem(indexChunkKey(key, chunk))
+      if (!removed.ok) return removed
+    }
+  }
+  const chunkCount = Math.max(1, Math.ceil(capped.length / INDEX_CHUNK_SIZE))
+  for (let chunk = 0; chunk < chunkCount; chunk += 1) {
+    const written = strictSetItem(indexChunkKey(key, chunk), JSON.stringify(capped.slice(chunk * INDEX_CHUNK_SIZE, (chunk + 1) * INDEX_CHUNK_SIZE)))
+    if (!written.ok) return written
+  }
+  const meta: IndexMeta = { v: 2, first: 0, last: chunkCount - 1, count: capped.length }
+  return strictSetItem(key, JSON.stringify(meta))
+}
+
+/**
+ * appendIndexId with strict failure reporting (the admission path): same layout and conversion rules as the
+ * non-strict path, but the first storage failure aborts and is returned. A legacy array already containing the id
+ * needs no write; an unreadable value is treated as an empty index, exactly as the strict path has always done.
+ */
+function appendIndexIdStrict(key: string, id: string): StorageResult<void> {
+  const rawResult = strictGetItem(key)
+  if (!rawResult.ok) return { ok: false, error: rawResult.error }
+  const meta = parseIndexMeta(rawResult.value ?? null)
+  if (!meta) {
+    const legacy = parseIdArray(rawResult.value ?? null)
+    if (legacy.includes(id)) return { ok: true }
+    return writeIndexChunksStrict(key, [...legacy, id])
+  }
+  let tail: string[] = []
+  for (let chunk = meta.first; chunk <= meta.last; chunk += 1) {
+    const partResult = strictGetItem(indexChunkKey(key, chunk))
+    if (!partResult.ok) return { ok: false, error: partResult.error }
+    const part = parseIdArray(partResult.value ?? null)
+    if (part.includes(id)) return { ok: true }
+    if (chunk === meta.last) tail = part
+  }
+  let last = meta.last
+  if (tail.length >= INDEX_CHUNK_SIZE) {
+    last += 1
+    tail = []
+  }
+  tail.push(id)
+  const tailWrite = strictSetItem(indexChunkKey(key, last), JSON.stringify(tail))
+  if (!tailWrite.ok) return tailWrite
+  let next: IndexMeta = { ...meta, last, count: meta.count + 1 }
+  while (next.count > MAX_INDEX_ENTRIES) {
+    const excess = next.count - MAX_INDEX_ENTRIES
+    const headResult = strictGetItem(indexChunkKey(key, next.first))
+    if (!headResult.ok) return { ok: false, error: headResult.error }
+    const head = next.first === last ? tail : parseIdArray(headResult.value ?? null)
+    if (next.first < next.last && excess >= head.length) {
+      const removed = strictRemoveItem(indexChunkKey(key, next.first))
+      if (!removed.ok) return removed
+      next = { ...next, first: next.first + 1, count: next.count - head.length }
+    } else {
+      const kept = head.slice(excess)
+      const headWrite = strictSetItem(indexChunkKey(key, next.first), JSON.stringify(kept))
+      if (!headWrite.ok) return headWrite
+      if (next.first === last) tail = kept
+      next = { ...next, count: next.count - excess }
+    }
+  }
+  return strictSetItem(key, JSON.stringify(next))
 }
 
 function tokenise(value: string): string[] {
@@ -271,10 +461,12 @@ export class CorpusRepository {
     const prefix = candidate ? CANDIDATE_PREFIX : RECORD_PREFIX
     const indexKey = candidate ? CANDIDATE_INDEX_KEY : INDEX_KEY
     const makeRoom = () => this.pruneUnapproved(PRUNE_BATCH)
+    // Record ids are content-derived, and prune/removal always delete a record and its index entry together, so a
+    // stored record is indexed unless the index lost it (corruption) — the membership check heals that case exactly
+    // as the old full-index scan did. A genuinely new id takes the append fast path (tail chunk only).
+    const alreadyIndexed = safeGetItem(`${prefix}${record.id}`) !== null && readIndex(indexKey).includes(record.id)
     setWithRoom(`${prefix}${record.id}`, JSON.stringify(record), makeRoom)
-    const index = readIndex(indexKey)
-    if (!index.includes(record.id)) index.push(record.id)
-    writeIndex(indexKey, index, makeRoom)
+    if (!alreadyIndexed) appendIndexId(indexKey, record.id, makeRoom)
   }
 
   /**
@@ -297,8 +489,8 @@ export class CorpusRepository {
     }
     if (removed === 0) return 0
     // The shrunken indexes are smaller than what they replace, so these writes fit.
-    safeSetItem(CANDIDATE_INDEX_KEY, JSON.stringify(keep))
-    if (rawGone.size) safeSetItem(INDEX_KEY, JSON.stringify(readIndex(INDEX_KEY).filter(id => !rawGone.has(id))))
+    writeIndexChunks(CANDIDATE_INDEX_KEY, keep, QUIET_INDEX_OPS)
+    if (rawGone.size) writeIndexChunks(INDEX_KEY, readIndex(INDEX_KEY).filter(id => !rawGone.has(id)), QUIET_INDEX_OPS)
     return removed
   }
 
@@ -306,19 +498,7 @@ export class CorpusRepository {
   private saveRecordStrict(record: CorpusRecord): StorageResult<void> {
     const writeResult = strictSetItem(`${RECORD_PREFIX}${record.id}`, JSON.stringify(record))
     if (!writeResult.ok) return writeResult
-    const indexRead = strictGetItem(INDEX_KEY)
-    if (!indexRead.ok) return { ok: false, error: indexRead.error }
-    let index: string[] = []
-    if (indexRead.value) {
-      try {
-        const parsed = JSON.parse(indexRead.value) as unknown
-        index = Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : []
-      } catch {
-        index = []
-      }
-    }
-    if (!index.includes(record.id)) index.push(record.id)
-    return strictSetItem(INDEX_KEY, JSON.stringify(index.slice(-MAX_INDEX_ENTRIES)))
+    return appendIndexIdStrict(INDEX_KEY, record.id)
   }
 
   getInteractionCount(): number {
