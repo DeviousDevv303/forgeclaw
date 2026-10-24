@@ -6,6 +6,7 @@
 // signed authorization (corpusAdmissionAuth.ts), which this page deliberately does not hold.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { corpusRepository, type LearningCandidate } from '../lib/corpus'
+import { syncNexusIntake } from '../lib/nexusIntake'
 import { LLM_MILESTONES, LLM_ROADMAP, llmReadiness, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, summarizeLearning, type Outcome } from '../lib/nexusLearning'
 import { useI18n } from '../lib/i18n'
 import { activeHeuristics, decide, loadDecisions, mineHeuristics } from '../lib/nexusHeuristics'
@@ -35,6 +36,14 @@ export function NexusLearningPanel() {
     // New runs keep adding candidates while the page is open.
     const timer = globalThis.setInterval(refresh, 5_000)
     return () => globalThis.clearInterval(timer)
+  }, [refresh])
+  useEffect(() => {
+    // Stage 3b: present externally-produced intake records (canary / fallacy-audit)
+    // as candidates through the existing gate. Intake is optional — any failure
+    // leaves this page exactly as it was, so the result is only a refresh trigger.
+    let live = true
+    void syncNexusIntake().then(result => { if (live && result.added + result.admitted > 0) refresh() })
+    return () => { live = false }
   }, [refresh])
 
   const summary = useMemo(() => summarizeLearning(candidates), [candidates])
@@ -253,6 +262,14 @@ export function NexusLearningPanel() {
                     <div style={{ color: '#888', fontSize: '10px', fontFamily: 'monospace' }}>{c.timestamp.slice(0, 19).replace('T', ' ')} · {c.metadata?.channel || c.source}{c.metadata?.tool ? ` · ${c.metadata.tool}` : ''} · {c.model}{auto && c.admissionStatus === 'approved' ? <span style={{ color: '#22c55e' }}> · AUTO-ADDED{phaseLabel ? ` · ${phaseLabel}` : ''}{c.metadata?.admittedAt ? ` · ${String(c.metadata.admittedAt).slice(0, 16).replace('T', ' ')}` : ''}</span> : null}{c.metadata?.run ? <span style={{ color: '#555' }}> · {c.metadata.run.replace(/^run-/, 'run ')}{(c.metadata.runs?.split(',').length ?? 0) > 1 ? ` · seen in ${c.metadata.runs.split(',').length} runs` : ''}</span> : null}{c.admissionStatus === 'rejected' ? <span style={{ color: '#777' }}> · removed</span> : null}{c.metadata?.flags ? <span style={{ color: '#ef4444' }}> · ⚠ {c.metadata.flags}</span> : null}</div>
                     <div style={{ color: '#ccc', fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.input.slice(0, 160)}</div>
                     <div style={{ color: '#666', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(c.generatedResult || '').slice(0, 200)}</div>
+                    {c.metadata?.origin === 'external-intake' && (
+                      <div style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace', overflowWrap: 'anywhere' }}>
+                        EXTERNAL INTAKE · {c.metadata.intakeSource} · {c.metadata.kind} · run {c.metadata.run}
+                        {c.metadata.link
+                          ? <> · <a href={c.metadata.link} target="_blank" rel="noreferrer" style={{ color: '#777' }}>provenance</a></>
+                          : c.metadata.provenance ? ` · ${c.metadata.provenance}` : ''}
+                      </div>
+                    )}
                   </div>
                   {c.admissionStatus !== 'rejected' && <HoldToConfirmButton onConfirm={() => void reject(c)} title={auto ? 'Hold to remove this from what NEXUS knows; it will not be added again' : 'Hold to reject this candidate'} style={{ background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '3px 8px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace' }}>{auto ? 'REMOVE' : t('nexus.reject')}</HoldToConfirmButton>}
                 </div>

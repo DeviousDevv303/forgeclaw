@@ -27,6 +27,15 @@ export const NEXUS_PHASES: ReadonlyArray<{ phase: NexusPhase; label: string; ico
 
 /** Marks knowledge admitted by the convergence rule rather than a signed admission. */
 export const CONVERGED_BY = 'nexus-convergence'
+
+/**
+ * Marks knowledge auto-admitted from Stage 3b external intake under the owner's criteria
+ * (Cristian, 2026-10-24): a fallacy-audit record whose loop closed — a confirmed finding or a
+ * suspect verified cleared, with its run_id and ref — is verified knowledge, because the lanes
+ * tag-teamed and resolved it before the audit lane filed it. Canary records never carry this
+ * marker: a sensor tripping is a claim, not an adjudication.
+ */
+export const INTAKE_ADMITTED_BY = 'nexus-intake:audit-loop-closed'
 // Same strings as browserLearning.ts and nexusLearning.ts; repeated here because corpus.ts imports this module and
 // those import corpus.ts (a test pins them equal).
 export const PLAYBOOK_SOURCE = 'learning:browser'
@@ -53,6 +62,7 @@ export const UNSIGNED_ADMISSION_UNTIL = '2026-10-14'
 /** Where a knowledge record came from, for the NEXUS page. */
 export function knowledgeOrigin(record: { timestamp: string; metadata: Record<string, string> }): string {
   if (record.metadata.admittedBy === CONVERGED_BY) return 'AUTO-ADDED'
+  if (record.metadata.admittedBy === INTAKE_ADMITTED_BY) return 'AUTO-ADDED · AUDIT-ADJUDICATED'
   if (record.timestamp < UNSIGNED_ADMISSION_UNTIL) return 'LEGACY · admitted without review (Sep 24 – Oct 13)'
   return 'ADMITTED · origin not recorded'
 }
