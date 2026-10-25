@@ -955,6 +955,69 @@ class SecondLiveRunTests(unittest.TestCase):
         self.assertEqual(mr.simulated_actions({}), 0)
 
 
+def _entry(rnd, agent, kind, **args):
+    return {'round': rnd, 'timestamp': 't', 'agent_id': agent, 'agent_name': f'a{agent}', 'action_type': kind, 'action_args': args, 'success': True}
+
+
+# The shape of the first completed live run's twitter log (2026-10-25, run 40241533761): five seed posts as round 0, then the
+# platform's first agent round (9) re-logs four of them, with a post_id, beside the agent's own quote.
+SEEDS = [(2, 'UFC 333 main event preview.'), (2, 'Breaking down the trilogy.'), (0, 'Etihad Arena is ready.'),
+         (1, 'I expect to beat him again.'), (3, 'Everyone talks about my age.')]
+RELOGGED_ACTIONS = [_entry(0, a, 'CREATE_POST', content=c) for a, c in SEEDS] + [
+    {'event_type': 'round_start', 'round': 9, 'simulated_hour': 8}] + [
+    _entry(9, a, 'CREATE_POST', content=c, post_id=i + 1) for i, (a, c) in enumerate(SEEDS[1:])] + [
+    _entry(9, 2, 'QUOTE_POST', quote_content='Sets the stage.', original_content='Everyone talks about my age.'),
+    _entry(11, 2, 'CREATE_POST', content='Fight week: both made weight.', post_id=6)]
+
+
+class FirstCompletedRunTests(unittest.TestCase):
+    """The first completed live run (2026-10-25, run 40241533761) built its world, but 9 of its 15 counted agent actions were
+    seed posts MiroFish logs a second time in each platform's first agent round (last_rowid starts at 0 in its script)."""
+
+    def test_seed_posts_relogged_in_the_first_agent_round_are_dropped_and_counted(self):
+        cleaned, dropped = mr.drop_relogged_seed_posts({'twitter': RELOGGED_ACTIONS})
+        self.assertEqual(dropped, 4)
+        after_seed = [e for e in cleaned['twitter'] if e.get('round', 0) >= 1 and 'event_type' not in e]
+        self.assertEqual([e['action_type'] for e in after_seed], ['QUOTE_POST', 'CREATE_POST'])
+        self.assertEqual(sum(1 for e in cleaned['twitter'] if e.get('round') == 0), 5)  # the seed posts themselves stay
+        self.assertEqual(mr.simulated_actions(cleaned), 2)
+
+    def test_only_the_first_agent_round_is_touched_and_each_seed_at_most_once(self):
+        later_repeat = _entry(12, 1, 'CREATE_POST', content='I expect to beat him again.', post_id=9)
+        twice = _entry(9, 1, 'CREATE_POST', content='I expect to beat him again.', post_id=8)
+        other_agent = _entry(9, 0, 'CREATE_POST', content='UFC 333 main event preview.', post_id=7)
+        cleaned, dropped = mr.drop_relogged_seed_posts({'reddit': RELOGGED_ACTIONS + [twice, other_agent, later_repeat]})
+        self.assertEqual(dropped, 4)
+        for kept in (twice, other_agent, later_repeat):  # a second copy, another agent's words, a later round: the agent's own
+            self.assertIn(kept, cleaned['reddit'])
+
+    def test_a_log_without_seed_posts_loses_nothing(self):
+        # The real script with no seed posts, through the fake provider: the same agent posts the same words each round.
+        log = [_entry(r, 0, 'CREATE_POST', content='Yan keeps it standing.', post_id=r - 6) for r in range(7, 11)]
+        cleaned, dropped = mr.drop_relogged_seed_posts({'twitter': log, 'reddit': list(log)})
+        self.assertEqual((dropped, cleaned), (0, {'twitter': log, 'reddit': log}))
+
+    def test_the_world_and_the_record_leave_out_the_repeats(self):
+        env = Env(self)
+        with open(os.path.join(env.mdir, 'backend', 'uploads', 'simulations', 'sim_1', 'reddit', 'actions.jsonl'), 'w') as handle:
+            handle.write('\n'.join(json.dumps(e) for e in RELOGGED_ACTIONS))
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        self.assertEqual((record['config']['simulated_actions'], record['config']['relogged_seed_posts_dropped']), (2, 4))
+        world = read_json(os.path.join(env.out, 'UFC333', record['artifacts']['world_json']))
+        self.assertEqual(world['limits']['events_total'], 5 + 2)
+
+    def test_a_run_whose_only_later_entries_are_repeats_is_a_failure(self):
+        env = Env(self)
+        repeats_only = [e for e in RELOGGED_ACTIONS if e.get('action_type') == 'CREATE_POST' and e.get('round') in (0, 9)]
+        with open(os.path.join(env.mdir, 'backend', 'uploads', 'simulations', 'sim_1', 'reddit', 'actions.jsonl'), 'w') as handle:
+            handle.write('\n'.join(json.dumps(e) for e in repeats_only))
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'failed')
+        self.assertIn('no agent acted in any simulated round', record['reason'])
+        self.assertEqual(record['config']['relogged_seed_posts_dropped'], 4)
+
+
 class DeadlineTests(unittest.TestCase):
     def test_every_stage_is_cut_to_the_run_deadline_and_the_run_still_records_and_cleans_up(self):
         env = Env(self)
