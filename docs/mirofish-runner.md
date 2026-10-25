@@ -69,6 +69,11 @@ prompt token at the cache-miss price), and the provider's usage page is the invo
   not pass reasoning back between turns (the clash with thinking mode is plausible, not observed). `enabled` is filed under
   its own engine label (`kimi-k2.6+thinking`), so grading keeps the two track records apart. `kimi-k2.7-code` has no documented
   toggle and runs at the provider default.
+- **No empty assistant turns.** Moonshot also rejects an assistant message with no text and no tool call ("the message at
+  position 4 with role 'assistant' must not be empty"). camel, the agent library under MiroFish, keeps one in each agent's
+  history after an action, so every later call by that agent failed: its next simulation step and the final poll (third live
+  run). The meter drops such turns for Moonshot and counts them in `usage.request_policy.empty_assistant_dropped`. A turn
+  that carries a tool call is kept, even with empty text; Moonshot accepts those.
 - **Errors say why.** MiroFish logs a rejected call as `status=400` and nothing else. The meter prints every provider and meter
   error to the job log (key redacted) and keeps the first few in `usage.error_samples`; a failed record's `reason` ends with
   the provider's own words.
@@ -131,7 +136,7 @@ Statuses: `completed`, `aborted_budget`, `aborted_agents_over_cap`, `aborted_zep
 
 ## What is verified, and what is not
 
-Verified offline (127 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
+Verified offline (154 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
 and its SVG, the requirement filter, the runner's orchestration and refusals against a **scripted fake MiroFish**, the workflow's
 safety properties, and the intake line against the real TypeScript validator and grader. The hash-pinned CPU install was also
 run for real (1.35 GB, about 2 minutes, `pip check` clean, `import oasis` works).
@@ -164,6 +169,14 @@ It also caught a bug the fake had hidden: the interview results carry `agent_id`
 use integers, so every agent would have shown as `undecided` in the world. The runner converts it, and the fake now returns
 strings, as the real script does. **Still not verified live:** the backend's own run-status and interview endpoints over HTTP,
 the report stage, real cost, and whether real agents' poll answers parse.
+
+**Third live run (2026-10-25, run 40234425538, `SPIKE-UFC333`, `tiny`, thinking off, $0.058, 3 minutes):** the runner fixes
+held live. The clock plan was 60-minute rounds, agents awake from 08:00, 8 idle + 4 active = 12 rounds; 5 agents; the simulation
+finished; the environment opened for interviews; the Zep graph was deleted. The poll then failed on Moonshot's empty-assistant
+rule above (the record's `reason` quoted Moonshot's own words). The same rule was reproduced against the real script offline:
+without the drop, 15 of 21 calls were rejected, including every agent's later simulation steps; with it, 29 empty turns were
+dropped, 0 calls rejected, every action went through and every agent answered the poll. The `SPIKE-UFC333` key has now used
+both its attempts, so the next test needs a new throwaway card.
 
 **Not verified: a completed run against the real MiroFish with real keys.** The fake follows the request and response shapes in
 MiroFish's own handlers, not observed behaviour. Specifically open: whether the interview endpoint answers after a headless run

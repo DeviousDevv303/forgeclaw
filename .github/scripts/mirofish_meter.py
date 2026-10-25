@@ -63,6 +63,12 @@ PINNED_SAMPLING = ('temperature', 'top_p', 'n', 'presence_penalty', 'frequency_p
 REQUEST_POLICY: dict[str, dict[str, tuple[tuple[str, ...], bool]]] = {
     'moonshot': {'kimi-k2.6': (PINNED_SAMPLING, True), 'kimi-k2.7-code': (PINNED_SAMPLING, False)},
 }
+# Moonshot also rejects an assistant message with no text and no tool call: "the message at position 4 with role 'assistant'
+# must not be empty" (live run 40234425538, 2026-10-25). camel, the agent library under MiroFish, keeps such a message in each
+# agent's history after an action, so an agent's every later call failed: its next simulation step, and the final poll. The
+# message carries nothing, so the meter drops it (an assistant message that carries a tool call is kept, empty text and all:
+# Moonshot accepts those). Every drop is counted.
+DROP_EMPTY_ASSISTANT = frozenset({'moonshot'})
 THINKING_CHOICES = ('disabled', 'enabled', 'provider-default')
 ERROR_SAMPLES_KEPT = 8
 ERROR_SAMPLE_CHARS = 600
@@ -87,6 +93,18 @@ def price_for(provider: str, model: str) -> tuple[float, float]:
     if '*' in table:
         return table['*']
     raise MeterError(f'no price for model "{model}" under provider "{provider}" (priced: {sorted(table)}); no price, no meter, no run')
+
+
+def is_empty_assistant(message) -> bool:
+    """An assistant turn with no text and no tool call: it carries nothing, and Moonshot rejects the whole request over it."""
+    if not isinstance(message, dict) or message.get('role') != 'assistant' or message.get('tool_calls'):
+        return False
+    content = message.get('content')
+    if content is None:
+        return True
+    if isinstance(content, str):
+        return not content.strip()
+    return isinstance(content, list) and not content
 
 
 def policy_for(provider: str, model: str) -> tuple[tuple[str, ...], bool]:
@@ -117,6 +135,8 @@ class Meter:
         self.thinking = thinking
         self.fields_removed: dict[str, int] = {}
         self.thinking_overridden = 0
+        self.drop_empty_assistant = provider in DROP_EMPTY_ASSISTANT
+        self.empty_assistant_dropped = 0
         self.error_samples: list[dict] = []
         self._lock = threading.Lock()
         self.calls = 0
@@ -143,8 +163,14 @@ class Meter:
                 self.refused_other += 1
 
     def apply_policy(self, request: dict) -> dict:
-        """The request as the provider must receive it: pinned sampling removed, the run's thinking mode set. Counted."""
+        """The request as the provider must receive it: pinned sampling removed, empty assistant turns dropped, the run's
+        thinking mode set. Counted."""
         out = dict(request)
+        dropped = 0
+        if self.drop_empty_assistant and isinstance(out.get('messages'), list):
+            kept = [m for m in out['messages'] if not is_empty_assistant(m)]
+            dropped = len(out['messages']) - len(kept)
+            out['messages'] = kept
         removed = [field for field in self.pinned_fields if field in out]
         for field in removed:
             del out[field]
@@ -157,6 +183,7 @@ class Meter:
             for field in removed:
                 self.fields_removed[field] = self.fields_removed.get(field, 0) + 1
             self.thinking_overridden += int(overridden)
+            self.empty_assistant_dropped += dropped
         return out
 
     def note_error(self, source: str, status: int, excerpt: str) -> None:
@@ -212,7 +239,8 @@ class Meter:
                 'cost_usd': round(self.cost_usd, 6), 'ceiling_usd': self.ceiling_usd, 'ceiling_hit': self.ceiling_hit,
                 'cost_basis': 'upper bound: every prompt token at the cache-miss price',
                 'request_policy': {'pinned_fields': list(self.pinned_fields), 'fields_removed': dict(self.fields_removed),
-                                   'thinking': self.thinking, 'thinking_overridden': self.thinking_overridden},
+                                   'thinking': self.thinking, 'thinking_overridden': self.thinking_overridden,
+                                   'empty_assistant_dropped': self.empty_assistant_dropped},
                 'error_samples': [dict(s) for s in self.error_samples],
             }
 
