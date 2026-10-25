@@ -11,6 +11,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import types
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -52,6 +53,12 @@ class FakeMiro:
                            'agent_configs': [{'agent_id': i, 'active_hours': list(range(24))} for i in range(6)]}
         self.delete_conflicts = 0  # how many graph deletes answer 409 (GraphInUseError) before one succeeds
         self.stopped = self.closed = False
+        # As in MiroFish: close-env makes the process leave its wait-for-commands loop, and the terminal run status ("completed")
+        # is published only once the process has exited, a moment later. The report is refused (409) until then (seen live).
+        self.exit_polls = 1  # run-status calls after close-env that still answer "running"
+        self.status_after_exit = 'completed'
+        self.close_status = 200
+        self._since_close = 0
         # The real IPC result shape (seen against MiroFish's own script, 2026-10-25): agent_id is a STRING.
         self.interviews = {f'reddit_{i}': {'agent_id': str(i), 'platform': 'reddit', 'timestamp': 't',
                                            'response': f'PICK={"A" if i % 2 else "B"}; P_A={65 if i % 2 else 35}; WHY=x'} for i in range(6)}
@@ -131,8 +138,14 @@ class FakeMiro:
         if path == '/api/simulation/sim_1/config':
             return self.ok(self.sim_config)
         if path == '/api/simulation/sim_1/run-status':
-            if self.stopped or self.closed:  # the process has exited: MiroFish publishes the terminal status
-                return self.ok({'runner_status': 'stopped' if self.stopped else 'completed', 'current_round': self.run_states[-1].get('current_round')})
+            last_round = self.run_states[-1].get('current_round')
+            if self.stopped:
+                return self.ok({'runner_status': 'stopped', 'current_round': last_round})
+            if self.closed:
+                if self._since_close < self.exit_polls:  # still shutting down
+                    self._since_close += 1
+                    return self.ok({**self.run_states[-1], 'runner_status': 'running'})
+                return self.ok({'runner_status': self.status_after_exit, 'current_round': last_round, 'error': 'exit code 1' if self.status_after_exit == 'failed' else None})
             if self.on_run_status:
                 self.on_run_status()
             i = min(self._poll['run'], len(self.run_states) - 1)
@@ -148,9 +161,13 @@ class FakeMiro:
         if path == '/api/simulation/interview/all':
             return self.ok({'interviews_count': len(self.interviews), 'result': {'results': self.interviews}})
         if path == '/api/simulation/close-env':
+            if self.close_status != 200:
+                return self.close_status, {'success': False, 'error': 'close command timed out'}
             self.closed = True
             return self.ok({})
         if path == '/api/report/generate':
+            if not (self.stopped or (self.closed and self._since_close >= self.exit_polls and self.status_after_exit == 'completed')):
+                return 409, {'success': False, 'error': 'Simulation or Zep graph ingestion is still active; wait for a terminal run status before generating a report'}
             return self.ok({'task_id': 't_rep', 'status': 'generating'})
         if path == '/api/report/generate/status':
             return self.ok({'status': 'completed'})
@@ -240,7 +257,9 @@ class SuccessPathTests(unittest.TestCase):
                           cfg['agents_cap'], cfg['agents_prepared'], cfg['locale'], cfg['deadline_s']),
                          ('tiny', 'parallel', 4, 4, 4, 4, 8, 6, 'en', mr.DEFAULT_DEADLINE_S))
         self.assertEqual(cfg['clock'], {'minutes_per_round': 60, 'first_active_round': 1, 'first_active_hour': 0, 'idle_rounds': 0,
-                                        'active_rounds': 4, 'max_rounds': 4, 'config_rounds': 72})
+                                        'active_rounds': 4, 'active_round_numbers': [1, 2, 3, 4], 'activity': 'guaranteed',
+                                        'max_rounds': 4, 'config_rounds': 72})
+        self.assertEqual(cfg['simulated_actions'], 2)  # the fixture's two round-1 actions
         self.assertFalse(cfg['reproducible'])
         self.assertFalse(cfg['counts_toward_bar'])  # a tiny world is a pipeline proof, not a counted sim
         ex = record['extraction']
@@ -849,6 +868,93 @@ class LiveRunRegressionTests(unittest.TestCase):
         self.assertLess(paths.index('/api/simulation/close-env'), paths.index('/api/graph/delete/g1'))
 
 
+# The time config MiroFish generated for the second post-fix live run (2026-10-25, run 40238192399): 4 agents, one of them awake
+# around the clock, and the generator's fixed off-peak multiplier of 0.05 (simulation_config_generator.py).
+LIVE_TIME_CONFIG = {'minutes_per_round': 60, 'total_simulation_hours': 72, 'agents_per_hour_min': 1, 'agents_per_hour_max': 2,
+                    'peak_hours': [19, 20, 21, 22], 'peak_activity_multiplier': 1.5,
+                    'off_peak_hours': [0, 1, 2, 3, 4, 5], 'off_peak_activity_multiplier': 0.05}
+SEEDED_ONLY_ACTIONS = '\n'.join(json.dumps(o) for o in [
+    {'round': 0, 'timestamp': 't0', 'agent_id': 0, 'agent_name': 'Coach', 'action_type': 'CREATE_POST', 'action_args': {'content': 'Seed.'}, 'success': True},
+    {'event_type': 'round_start', 'round': 1, 'simulated_hour': 0},
+    {'event_type': 'round_end', 'round': 1, 'actions_count': 0},
+    {'event_type': 'simulation_end', 'platform': 'reddit', 'total_rounds': 4, 'total_actions': 1},
+])
+
+
+class SecondLiveRunTests(unittest.TestCase):
+    """The second post-fix live run (2026-10-25, run 40238192399) answered the poll (4 agents) and then failed: the report was
+    asked for before MiroFish published the terminal run status (409), and every round fell in off-peak hours, so no agent acted."""
+
+    def test_the_report_waits_for_the_terminal_status_mirofish_requires(self):
+        env = Env(self)
+        env.miro.exit_polls = 3
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        paths = env.miro.paths()
+        after_close = paths[paths.index('/api/simulation/close-env'):paths.index('/api/report/generate')]
+        self.assertEqual(after_close.count('/api/simulation/sim_1/run-status'), 4)  # three "still running", then "completed"
+
+    def test_a_close_env_that_fails_is_followed_by_a_stop_so_the_report_can_still_be_written(self):
+        env = Env(self)
+        env.miro.close_status = 500
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        paths = env.miro.paths()
+        self.assertLess(paths.index('/api/simulation/stop'), paths.index('/api/report/generate'))
+        self.assertEqual(paths.count('/api/simulation/stop'), 1)  # cleanup does not stop it a second time
+        self.assertTrue(any('stopping the simulation instead' in line for line in env.log_lines))
+
+    def test_a_process_that_never_exits_after_close_env_is_stopped_before_its_graph_is_deleted(self):
+        env = Env(self)
+        env.miro.exit_polls = 10 ** 9  # close-env accepted, but the run status never turns terminal
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'timeout')
+        self.assertEqual(record['reason'], 'MiroFish never marked the simulation finished after the poll (ended did not finish within '
+                                           f'{mr.STAGE_TIMEOUTS_S["ended"]} s), so it will not write a report')
+        paths = env.miro.paths()
+        self.assertLess(paths.index('/api/simulation/close-env'), paths.index('/api/simulation/stop'))
+        self.assertLess(paths.index('/api/simulation/stop'), paths.index('/api/graph/delete/g1'))
+        self.assertTrue(record['zep']['deleted'])
+        self.assertEqual(record['extraction']['n'], 6)
+
+    def test_a_simulation_that_fails_after_the_poll_is_recorded_with_its_cause_and_keeps_the_poll(self):
+        env = Env(self)
+        env.miro.status_after_exit = 'failed'
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'failed')
+        self.assertIn('[report] the simulation failed after the poll', record['reason'])
+        self.assertIn('exit code 1', record['reason'])
+        self.assertNotIn('/api/report/generate', env.miro.paths())
+        self.assertEqual(record['extraction']['n'], 6)
+
+    def test_off_peak_rounds_are_skipped_so_agents_act(self):
+        env = Env(self)
+        env.miro.sim_config = {'time_config': LIVE_TIME_CONFIG, 'agent_configs': [{'agent_id': 0, 'active_hours': list(range(24))},
+                                                                                {'agent_id': 1, 'active_hours': list(range(9, 23))}]}
+        env.miro.run_states = [{'runner_status': 'running', 'current_round': 10, 'twitter_completed': True, 'reddit_completed': True}]
+        record, _ = env.run()
+        start = next(r for r in env.miro.requests if r['path'] == '/api/simulation/start')['body']
+        self.assertEqual(start['max_rounds'], 10)  # 00:00 to 05:00 skipped (1 to 2 agents x 0.05 truncates to 0), then 06:00 to 09:00
+        clock = record['config']['clock']
+        self.assertEqual((clock['first_active_hour'], clock['idle_rounds'], clock['active_round_numbers']), (6, 6, [7, 8, 9, 10]))
+        self.assertEqual(record['config']['active_rounds_run'], 4)
+
+    def test_a_run_in_which_no_agent_acted_is_a_failure_not_a_world(self):
+        env = Env(self)
+        with open(os.path.join(env.mdir, 'backend', 'uploads', 'simulations', 'sim_1', 'reddit', 'actions.jsonl'), 'w') as handle:
+            handle.write(SEEDED_ONLY_ACTIONS)
+        record, paths = env.run()
+        self.assertEqual(record['status'], 'failed')
+        self.assertIn('[simulate] no agent acted in any simulated round', record['reason'])
+        self.assertEqual(record['config']['simulated_actions'], 0)
+        self.assertEqual([os.path.basename(p) for p in paths], ['KXUFCFIGHT-26OCT24YANDVA-YAN.1.run-record.json'])
+
+    def test_simulated_actions_count_only_agent_actions_after_the_seeded_round(self):
+        parsed = {'reddit': [json.loads(x) for x in SEEDED_ONLY_ACTIONS.splitlines()], 'twitter': [json.loads(x) for x in ACTIONS.splitlines()]}
+        self.assertEqual(mr.simulated_actions(parsed), 2)
+        self.assertEqual(mr.simulated_actions({}), 0)
+
+
 class DeadlineTests(unittest.TestCase):
     def test_every_stage_is_cut_to_the_run_deadline_and_the_run_still_records_and_cleans_up(self):
         env = Env(self)
@@ -940,6 +1046,33 @@ class ClockPlanTests(unittest.TestCase):
             mr.plan_clock(late, 4)
         with self.assertRaises(mr.RunnerError):
             mr.plan_clock({'time_config': {'minutes_per_round': 0}, 'agent_configs': [{'agent_id': 0}]}, 4)
+
+
+    def test_a_round_that_cannot_pick_an_agent_is_not_counted_even_mid_window(self):
+        config = {'time_config': LIVE_TIME_CONFIG, 'agent_configs': [{'agent_id': 0, 'active_hours': [22, 23, 0, 1, 2]}]}
+        plan = mr.plan_clock(config, 4)
+        # 22:00 and 23:00 on day one, then (00:00 to 02:00 being off-peak) 22:00 and 23:00 on day two
+        self.assertEqual((plan['active_round_numbers'], plan['max_rounds'], plan['idle_rounds'], plan['activity']), ([23, 24, 47, 48], 48, 44, 'guaranteed'))
+        run = types.SimpleNamespace(rounds_run=30, clock_plan=plan)  # a run cut short after round 30
+        self.assertEqual(mr.active_rounds_run(run), 2)
+
+    def test_without_a_certain_hour_it_falls_back_to_hours_where_an_agent_is_possible(self):
+        config = {'time_config': {**LIVE_TIME_CONFIG, 'agents_per_hour_min': 0, 'agents_per_hour_max': 3}, 'agent_configs': [{'agent_id': 0}]}
+        plan = mr.plan_clock(config, 2)
+        self.assertEqual((plan['activity'], plan['first_active_hour'], plan['active_rounds']), ('possible', 8, 2))
+
+    def test_a_schedule_where_no_awake_agent_can_be_picked_is_refused(self):
+        config = {'time_config': LIVE_TIME_CONFIG, 'agent_configs': [{'agent_id': 0, 'active_hours': [0, 1, 2, 3, 4, 5]}]}
+        with self.assertRaises(mr.RunnerError) as ctx:
+            mr.plan_clock(config, 4)
+        self.assertIn('can pick an awake agent', str(ctx.exception))
+        self.assertIn('x0.05 off-peak', str(ctx.exception))
+
+    def test_an_unusable_activity_field_is_refused_not_guessed(self):
+        for name, value in (('peak_hours', None), ('off_peak_activity_multiplier', 'low'), ('agents_per_hour_min', True), ('agents_per_hour_max', -1)):
+            with self.subTest(name=name), self.assertRaises(mr.RunnerError) as ctx:
+                mr.plan_clock({'time_config': {**LIVE_TIME_CONFIG, name: value}, 'agent_configs': [{'agent_id': 0}]}, 4)
+            self.assertIn(f'unusable {name}', str(ctx.exception))
 
 
 class ProgressLogTests(unittest.TestCase):

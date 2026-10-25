@@ -41,10 +41,11 @@ screens for secrets and owner-private words (bankroll, positions, keys) and refu
 | `mid` | 24 | 20 | both | yes | ~$1.83 |
 
 Every preset runs MiroFish's `parallel` script (Twitter and Reddit). Its reddit-only script writes no `actions.jsonl` (only a
-SQLite file) and never reports a platform as finished, so no world could ever be built from it. "Active rounds" are rounds with
-agents awake; the runner adds the idle rounds before the agents' first active hour (see *The clock* below), which make no LLM
-call. **Measured so far:** everything before the simulation (ontology, graph, profiles, config; 7 calls) cost **$0.03** with
-thinking off (run 40166223749). The simulation, poll and report are still unmeasured.
+SQLite file) and never reports a platform as finished, so no world could ever be built from it. "Active rounds" are rounds in
+which MiroFish's script can pick an agent; the runner adds the rounds in which it cannot (see *The clock* below), which make no
+LLM call. **Measured so far:** everything before the simulation (ontology, graph, profiles, config; 7 calls) cost **$0.03** with
+thinking off (run 40166223749); everything through the poll with 4 agents cost **$0.046** (12 calls, run 40238192399), but no
+agent acted in that run's simulation. The simulation proper and the report are still unmeasured.
 
 Estimates are from reading the code (calls × tokens), at third-party-tracker prices ($0.95 in / $4.00 out per M tokens) that
 disagree slightly; thinking tokens bill as output, so real cost may be higher. **Only `tiny` fits the default $0.40 ceiling on
@@ -88,16 +89,28 @@ prompt token at the cache-miss price), and the provider's usage page is the invo
   publishes only once the simulation process exits. The process deliberately stays alive afterwards so the agents can be
   interviewed, so the old signal never came: the first post-fix live run waited the full 90 minutes. The runner then waits
   (bounded, 300 s) for the environment to report `env_alive`, which happens just after the loop ends, before asking the poll.
-- **The clock.** MiroFish's simulated clock starts at 00:00, and an agent only acts in its configured active hours (07:00 to
-  12:00 onward in every config it generates). Four rounds from midnight meant no agent ever acted. The script cannot be given a
-  start hour and runs unmodified, so the runner reads the prepared config (`GET /api/simulation/<id>/config`) and asks for
-  the idle rounds before the first active hour plus the preset's active rounds. The plan is recorded in `config.clock`.
-  `config.active_rounds_run`, the rounds with agents awake, is what the intake line calls `engine.rounds`.
+- **The report waits for the terminal status.** MiroFish refuses a report (`409`) until the run status is `completed` or
+  `stopped`, and publishes that only once the process has exited after `close-env`. The runner now polls the run status
+  (up to 300 s) before asking; a run status of `failed` ends the run with MiroFish's error, keeping the
+  poll. If `close-env` fails, the runner stops the simulation instead, since `stopped` is also accepted and an open environment
+  would never reach either status. Until a terminal status is seen, cleanup still stops the simulation before deleting the graph.
+- **The clock.** MiroFish's simulated clock starts at 00:00. Each round its script picks
+  `int(uniform(agents_per_hour_min, agents_per_hour_max) × the hour's multiplier)` of the agents awake in that hour, so a round
+  acts only when an agent is awake **and** that count is at least 1. Every config MiroFish generates multiplies peak hours by 1.5
+  and off-peak hours (00:00 to 05:59 by default) by 0.05, which truncates a small swarm's count to 0. The script cannot be given a
+  start hour and runs unmodified, so the runner reads the prepared config (`GET /api/simulation/<id>/config`) and counts a
+  round as active only when its hour has an agent awake and `agents_per_hour_min × multiplier ≥ 1`. It asks for rounds up to
+  the preset's last active round; the rounds before and between are idle. If no hour is that certain, it falls back to hours
+  where an acting agent is possible (`agents_per_hour_max × multiplier > 1`, recorded as `activity: possible`). The plan is
+  recorded in `config.clock`. `config.active_rounds_run`, the active rounds actually run, is what the intake line calls
+  `engine.rounds`.
+- **No swarm, no world.** A run in which no agent acted after the seeded posts (`config.simulated_actions: 0`) ends `failed`
+  instead of building a world from the seed alone.
 - **Cleanup order.** On every outcome the runner stops the simulation if it may still run, waits until MiroFish no longer counts
   it as active, then deletes the Zep graph, retrying a `409` (MiroFish's `GraphInUseError`) up to 4 times. `zep.deleted` says
   whether it worked. The first post-fix live run skipped the stop and left its graph in Zep. Cleanup never raises: the record
   is written whatever happens there.
-- **One deadline.** The stage limits add up to 220 minutes; the job is killed at 150. The runner's overall deadline
+- **One deadline.** The stage limits add up to 225 minutes; the job is killed at 150. The runner's overall deadline
   (`--deadline-s 8100`) cuts every stage to fit and keeps 240 s back for cleanup and the record (cleanup calls get a 20 s HTTP limit, so it fits even when MiroFish hangs), so a slow run ends as `timeout`
   with both done. The ontology call, one synchronous LLM call inside MiroFish, now gets its 600 s stage limit, not the 120 s HTTP default.
 - **Watchable while it runs.** The runner prints one line per step to the job log with the spend so far
@@ -138,7 +151,7 @@ Statuses: `completed`, `aborted_budget`, `aborted_agents_over_cap`, `aborted_zep
 
 ## What is verified, and what is not
 
-Verified offline (154 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
+Verified offline (165 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
 and its SVG, the requirement filter, the runner's orchestration and refusals against a **scripted fake MiroFish**, the workflow's
 safety properties, and the intake line against the real TypeScript validator and grader. The hash-pinned CPU install was also
 run for real (1.35 GB, about 2 minutes, `pip check` clean, `import oasis` works).
@@ -180,11 +193,26 @@ without the drop, 15 of 21 calls were rejected, including every agent's later si
 dropped, 0 calls rejected, every action went through and every agent answered the poll. The `SPIKE-UFC333` key has now used
 both its attempts, so the next test needs a new throwaway card.
 
+**Fourth live run (2026-10-25, run 40238192399, `SPIKE2-UFC333` attempt 1, `tiny`, thinking off, $0.046, 129 s):** ontology,
+graph, profiles (4 agents), simulation, environment and poll all worked live, and the empty-assistant drop held (0 dropped,
+0 provider errors). The poll parsed: 4 of 4 answers, 3 for Yan and 1 for the other side, median P_A 53.5, 0 unparsed. The Zep
+graph was deleted. The run then failed for two reasons, both fixed above and reproduced first:
+- the report was asked for within a second of `close-env` and refused (`409`, "Simulation or Zep graph ingestion is still active").
+  The fake now refuses it the same way until the process has exited, and the old runner fails on it exactly as it did live;
+- the clock plan was 4 rounds from 00:00, because one agent was awake at every hour. Those hours are off-peak, so with 1 to 2
+  agents an hour × 0.05 no agent was picked in any round (0 LLM calls during the simulation; the log held only the 4 seeded
+  posts). Checked against MiroFish's own `get_active_agents_for_round`, lifted from the pinned script: in every round the new
+  plan counts, the function picked at least one agent in 3,000 of 3,000 draws; in the six rounds it skips for that config,
+  it picked none. Against the real script end to end (wait-for-commands mode, real meter, fake Moonshot), that config logged
+  0 agent actions with the old 4-round plan and agent actions in rounds 7 to 10 (06:00 to 09:00) on both platforms with the
+  new 10-round plan.
+
+`SPIKE2-UFC333` has one attempt left.
+
 **Not verified: a completed run against the real MiroFish with real keys.** The fake follows the request and response shapes in
-MiroFish's own handlers, not observed behaviour. Specifically open: whether the interview endpoint answers after a headless run
-(the code says the process stays in a waiting-for-commands mode); whether MiroFish or its agent library streams LLM calls
-(the meter refuses streams, so that would fail loudly); real run time (estimated 10–30 minutes for `mid`); whether an agent
-format answer parses at a useful rate; the real Zep quota; and Moonshot's real price and credit.
+MiroFish's own handlers, checked live up to the poll (fourth run above). Specifically open: the report stage; agents acting in
+a live simulation; real run time (estimated 10–30 minutes for `mid`); whether poll answers keep parsing at larger swarm sizes
+(4 of 4 so far); the real Zep quota; and Moonshot's real price and credit.
 
 Not built: the Anthropic engine (it needs OpenAI-to-Messages translation in the meter; spike first), a free local Qwen lane
 (about 3 hours for a `tiny` world, unproven on tool-calling), and a seed packet for NFL.
