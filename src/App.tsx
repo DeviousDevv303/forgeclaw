@@ -177,6 +177,7 @@ import { ledgerContinuationLimit, ledgerContinuationPrompt, owedItems, parseRequ
 import { extractThinking, DEFAULT_GUARDIAN_POSTURE, type GuardianPosture } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { takeGeneratedImage } from './lib/imageArtifact'
+import { SIM_WORLD_MARKER_RE } from './lib/mirofishSim'
 import { runSubAgent, toolsForCapability } from './lib/managedAgent'
 import {
   MAX_AGENT_ITERATIONS,
@@ -242,6 +243,8 @@ interface Message {
   role: MessageRole
   content: string
   imageUrl?: string
+  /** 'sim-world': the illustrated world of a MiroFish sim (shown larger, never fed to image-taste learning). */
+  imageKind?: 'sim-world'
   timestamp: number
   source?: 'local' | 'cloud'
   provider?: string
@@ -1492,6 +1495,10 @@ function App() {
       // Not a bare 'review': that would offer it for "review my workflows".
       'review_code': ['code review', 'review this code', 'review my code'],
       'weather_forecast': ['weather', 'forecast', 'temperature', 'rain', 'snow', 'how hot', 'how cold'],
+      // A sim is asked for in many words ("run the sim", "show me the swarm"); a false match only offers a read-only viewer.
+      // The paid tool only on words that mean this sim; the read-only viewer on looser ones.
+      'mirofish_sim': ['mirofish', 'miro fish', 'swarm sim', 'run the sim', 'run a sim', 'start the sim', 'sim on'],
+      'mirofish_sim_result': ['mirofish', 'miro fish', 'swarm', 'simulation', 'the sim', 'a sim', 'sim result', 'sim world'],
       'espn_fight_stats': ['ufc', 'mma', 'fight stats', 'fightcenter', 'strikes landed', 'significant strikes', 'striking accuracy', 'takedown', 'fight card', 'bantamweight', 'featherweight', 'lightweight', 'welterweight', 'middleweight', 'heavyweight', 'flyweight'],
       'kalshi_markets': ['kalshi', 'prediction market', 'polymarket odds', 'contract price', 'implied probability', 'multiply', 'my funds', 'my money', 'bankroll', 'master plan', 'game plan', 'betting', 'bets'],
       'kalshi_owner_prices': ['kalshi', 'prediction market', 'contract price', 'my prices', 'the prices are', 'priced at', 'betting', 'bets'],
@@ -1862,6 +1869,7 @@ function App() {
       let finalReasoning = ''
       let secondarySynthesisNotice = ''
       let generatedImageUrl: string | undefined
+      let generatedImageKind: 'sim-world' | undefined
       let directImageCompleted = false
       const toolRetryCounts = new Map<string, number>()
       // Loop detection is per run. It was module-level and never cleared, so the same harmless call
@@ -2124,6 +2132,11 @@ function App() {
           break
         }
 
+        // A sim tool registered its illustrated world: attach it to this reply (the model only ever saw the text summary).
+        const simWorld = iterResults.map(toolResult => toolResult.output).join('\n').match(SIM_WORLD_MARKER_RE)
+        const simWorldUrl = simWorld?.[1] ? takeGeneratedImage(simWorld[1]) : undefined
+        if (simWorldUrl) { generatedImageUrl = simWorldUrl; generatedImageKind = 'sim-world' }
+
         // Show progress in the streaming message
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
 
@@ -2229,7 +2242,7 @@ function App() {
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase: effectiveAgentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
 
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: messageContent, imageUrl: generatedImageUrl, plan, agentPhase: effectiveAgentPhase, reportLedger: settledLedger?.items, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: resolvedProvider, model: resolvedModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
+        ? { ...m, content: messageContent, imageUrl: generatedImageUrl, imageKind: generatedImageKind, plan, agentPhase: effectiveAgentPhase, reportLedger: settledLedger?.items, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: resolvedProvider, model: resolvedModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
       setRequestStatus(completionBlocked || hasUnresolvedToolFailure || ledgerIncomplete ? 'blocked' : 'success')
@@ -2458,7 +2471,7 @@ function App() {
   }
   /** 🔥 👍 👎 on a picture (the owner's own, or one ForgeClaw generated): NEXUS learns how he likes things to look. */
   const renderTasteButtons = (msg: Message, idleColor: string, border: string): React.ReactNode => {
-    if (!msg.imageUrl || isPublicVisitor(ghToken)) return null
+    if (!msg.imageUrl || msg.imageKind === 'sim-world' || isPublicVisitor(ghToken)) return null
     return (
       <>
         <span style={{ color: idleColor, fontSize: '10px', fontFamily: 'monospace' }}>{t('chat.taste')}</span>
@@ -3342,7 +3355,7 @@ function App() {
                       {/* Message bubble — clean response only */}
                       <div data-report-ledger={rawMsg.reportLedger ? JSON.stringify(rawMsg.reportLedger) : undefined} data-agent-phase={rawMsg.role === 'assistant' && !rawMsg.streaming ? rawMsg.agentPhase : undefined} style={{ maxWidth: '90%', padding: '12px 16px', borderRadius: '10px', background: msg.role === 'user' ? 'rgba(249, 115, 22, 0.9)' : 'rgba(18, 18, 18, 0.85)', color: msg.role === 'user' ? '#000' : '#ddd8cc', fontSize: msg.role === 'assistant' ? '15px' : '13px', lineHeight: '1.7', fontFamily: msg.role === 'assistant' ? "'Georgia', 'Times New Roman', serif" : 'inherit', fontStyle: msg.role === 'assistant' ? 'italic' : 'normal', border: msg.role === 'assistant' ? '1px solid rgba(40, 40, 40, 0.6)' : 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.4)', width: msg.role === 'assistant' ? '100%' : undefined, minWidth: 0, boxSizing: 'border-box', overflowWrap: 'anywhere' }}>
                         {msg.imageUrl && (
-                          <img src={msg.imageUrl} alt={t('chat.uploadedAlt')} style={{ display: 'block', maxWidth: '100%', maxHeight: '260px', borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
+                          <img src={msg.imageUrl} alt={msg.imageKind === 'sim-world' ? t('chat.simWorldAlt') : t('chat.uploadedAlt')} style={{ display: 'block', maxWidth: '100%', maxHeight: msg.imageKind === 'sim-world' ? 'none' : '260px', width: msg.imageKind === 'sim-world' ? '100%' : undefined, borderRadius: '6px', marginBottom: displayContent.trim() ? '8px' : 0, objectFit: 'contain' }} />
                         )}
                         {msg.streaming ? (
                           <>

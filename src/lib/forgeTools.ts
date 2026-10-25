@@ -28,6 +28,7 @@ import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
+import { buildSimDispatchInputs, dispatchSim, findActiveSimRun, findSimRunByInvocation, formatSimResult, learnFromSim, readSimResult, SIM_CHAT_WAIT_MS, SIM_DEFAULT_CEILING_USD, SIM_MAX_CEILING_USD, SIM_WORKFLOW_ID, svgDataUrl, waitForSimRun, type SimRun } from './mirofishSim'
 import { tasteForImagePrompt } from './nexusTaste'
 import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
 import { journalRecord, type RunJournal } from './runRollback'
@@ -654,6 +655,43 @@ export const FORGE_TOOLS: ToolDef[] = [
     },
   },
   {
+    // Authorized 2026-10-25 by Cristian Nunez ("I want to see everything from ForgeClaw"): run a MiroFish swarm sim from the
+    // chat and show its illustrated world here. See mirofishSim.ts and docs/mirofish-runner.md.
+    name: 'mirofish_sim',
+    description: `Run a MiroFish swarm simulation of a fight and show its illustrated world in this chat. It runs on GitHub Actions with the repository's Moonshot (Kimi K2) and Zep secrets, never a key from this browser, and spends at most ceiling_usd (default $${SIM_DEFAULT_CEILING_USD}, hard maximum $${SIM_MAX_CEILING_USD.toFixed(2)}). It needs a seed packet of public pre-fight facts (200-40000 characters; no betting prices, odds or private notes). MiroFish makes one agent per person or group the packet names, so name crowd voices (analysts, fan communities, media), not just the two fighters. One completed sim per card_id + market_ticker, with at most 2 attempts each. The first completed tiny run took 7 minutes and cost $0.30. If the run takes more than ${SIM_CHAT_WAIT_MS / 60000} minutes this returns its invocation_id; show it later with mirofish_sim_result. A sim is a measurement of simulated personas, never evidence of the outcome. Start one only when the owner asks for a sim; never on your own initiative.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'string', description: 'The card or slate, e.g. "UFC333" (letters, digits, dot, underscore, hyphen). Use a test name such as "TEST-FN1107" for a run that must not reach the track record.' },
+        market_ticker: { type: 'string', description: 'The Kalshi market this sim is for, e.g. "KXUFCFIGHT-26OCT24YANDVA-YAN", or a test key when no market is listed yet' },
+        sides: { type: 'string', description: "Exactly two sides as 'Name A|Name B'. A is the side the poll's P_A is about." },
+        packet: { type: 'string', description: 'The seed packet (markdown): public pre-fight facts, a neutral matchup read, human-state observations. No prices or odds.' },
+        yes_side: { type: 'string', description: "Which side the market's YES contract is on (one of the sides). Leave empty for a test run: then no intake line is filed." },
+        preset: { type: 'string', enum: ['tiny', 'small', 'mid'], description: 'tiny (4 active rounds, up to 8 agents; never counts toward the 10-sim bar), small (12 rounds, up to 14 agents) or mid (24 rounds, up to 20 agents). Default tiny.' },
+        ceiling_usd: { type: 'string', description: `Dollar ceiling for this run, e.g. "0.40" (default ${SIM_DEFAULT_CEILING_USD}, maximum ${SIM_MAX_CEILING_USD.toFixed(2)}). The run stops when its model spend reaches it.` },
+        thinking: { type: 'string', enum: ['disabled', 'enabled'], description: 'Kimi K2.6 thinking mode. Default disabled (cheaper; enabled is filed under its own engine label).' },
+        provenance: { type: 'string', description: 'JSON with stats_snapshot, matchup_read and human_state: a source reference or "absent" each' },
+        position_ref: { type: 'string', description: 'The position or proposal this run is for (optional)' },
+        rerun_reason: { type: 'string', description: "Owner override only: a named reason to run a key again after a completed sim or after its attempt limit. Never set it unless the owner gave the reason." },
+      },
+      required: ['card_id', 'market_ticker', 'sides', 'packet'],
+    },
+  },
+  {
+    name: 'mirofish_sim_result',
+    description: "Show a MiroFish sim's result and its illustrated world in this chat (read-only): status, the final poll, cost, the report's opening and links to every file. Give card_id and market_ticker (the latest attempt unless attempt is given); add invocation_id to check a run mirofish_sim handed off while it was still running.",
+    parameters: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'string', description: 'The card the sim ran under, e.g. "SPIKE2-UFC333"' },
+        market_ticker: { type: 'string', description: 'The market ticker (or test key) the sim ran under' },
+        attempt: { type: 'number', description: 'Which attempt to show (default: the latest)' },
+        invocation_id: { type: 'string', description: 'The invocation_id mirofish_sim returned, to find that exact run' },
+      },
+      required: ['card_id', 'market_ticker'],
+    },
+  },
+  {
     name: 'kalshi_markets',
     description: 'Live Kalshi prediction-market data (read-only, no account): contract prices, the probability the price implies, volume, close time, and order-book depth. Use it for any question about Kalshi prices or odds instead of web_search. It reports what the market charges; a price is an implied chance, not a guarantee, and it never recommends a bet. If Kalshi cannot be reached it says so; never guess a price.',
     parameters: {
@@ -944,7 +982,27 @@ export function formatDeepSeekResultText(
 /** Tools whose effects leave the repository or cannot be recalled; STOP reports them instead of claiming an undo. */
 const SHELL_PATCH_MAX_CHARS = 60_000
 
-const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set(['send_whatsapp', 'gmail_send', 'calendar_create', 'github_create_issue', 'github_create_repo'])
+const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set(['send_whatsapp', 'gmail_send', 'calendar_create', 'github_create_issue', 'github_create_repo', 'mirofish_sim'])
+
+/** A finished sim's record as text for the model, with its world SVG registered for the chat bubble (never sent to the model). */
+async function simResultText(
+  ctx: ToolContext, owner: string, repo: string,
+  key: { cardId: string; marketTicker: string; invocationId?: string; attempt?: number }, run?: SimRun,
+): Promise<string> {
+  const result = await readSimResult(ctx, owner, repo, key)
+  if (!result) {
+    const which = key.invocationId ? ` for run ${key.invocationId}` : key.attempt ? ` for attempt ${key.attempt}` : ''
+    return run
+      ? `MiroFish sim run #${run.run_number} finished as "${run.conclusion ?? 'unknown'}" but published no record${which} (an input refusal or an early failure writes none). Read its log with github_get_run_logs run_id="${run.id}". Run: ${run.html_url}`
+      : `No MiroFish sim record found for ${key.cardId} / ${key.marketTicker}${which} on the sim-results branch.`
+  }
+  // NEXUS learns every sim it sees, once: how the run went, for running the next one better (never evidence).
+  await learnFromSim(result.record)
+  const dataUrl = result.svg ? svgDataUrl(result.svg) : null
+  const worldId = dataUrl ? `sim-${key.invocationId ?? `${key.cardId}-${key.marketTicker}-${result.record.attempt ?? 0}`}-${Math.random().toString(36).slice(2, 6)}` : undefined
+  if (dataUrl && worldId) registerGeneratedImage(worldId, dataUrl)
+  return formatSimResult(result, owner, repo, worldId)
+}
 
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
   const output = await executeToolCore(call, ctx)
@@ -2020,6 +2078,54 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           includeLive: input.include_live === true || input.include_live === 'true',
           signal: ctx.signal,
         })
+      }
+
+      case 'mirofish_sim': {
+        if (!token) throw new Error('No GitHub token configured. mirofish_sim runs as a GitHub Actions workflow and needs gh_token with Actions: write and Contents: read.')
+        // The workflow and its results live in ForgeClaw's own repository, whatever owner/repo the call names.
+        const simOwner = ctx.ghOwner, simRepo = ctx.ghRepo
+        const invocationId = `sim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const inputs = buildSimDispatchInputs(input, invocationId)
+        // Never a second run by accident: ForgeClaw re-runs the last task the page died on by itself.
+        const active = await findActiveSimRun(ctx, simOwner, simRepo)
+        if (active) {
+          return `A MiroFish sim is already running (run #${active.run_number}, ${active.status}), so no new one was started: a second dispatch could spend a key's other attempt.${active.invocationId ? ` Show it when it finishes with mirofish_sim_result and invocation_id "${active.invocationId}".` : ''} Run: ${active.html_url}`
+        }
+        if (!inputs.rerun_reason) {
+          const prior = await readSimResult(ctx, simOwner, simRepo, { cardId: inputs.card_id, marketTicker: inputs.market_ticker })
+          if (prior?.record.status === 'completed') {
+            return `${inputs.card_id} / ${inputs.market_ticker} already has a completed sim (attempt ${prior.record.attempt}), so none was started: one completed sim per key. Show it with mirofish_sim_result. A rerun needs the owner's own named reason in rerun_reason.`
+          }
+        }
+        const dispatchedAt = Date.now()
+        await dispatchSim(ctx, simOwner, simRepo, inputs)
+        journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: SIM_WORKFLOW_ID, since: dispatchedAt, label: `mirofish_sim ${inputs.card_id}/${inputs.market_ticker}` })
+        const { run, finished } = await waitForSimRun(ctx, simOwner, simRepo, invocationId, dispatchedAt)
+        if (!finished) {
+          return [
+            `MiroFish sim dispatched; still running after ${SIM_CHAT_WAIT_MS / 60000} minutes (run #${run.run_number}, ${run.status}). It keeps running on GitHub.`,
+            `Invocation: ${invocationId}`,
+            `Run: ${run.html_url}`,
+            `To show it when it finishes: mirofish_sim_result with card_id "${inputs.card_id}", market_ticker "${inputs.market_ticker}", invocation_id "${invocationId}".`,
+          ].join('\n')
+        }
+        return await simResultText(ctx, simOwner, simRepo, { cardId: inputs.card_id, marketTicker: inputs.market_ticker, invocationId }, run)
+      }
+
+      case 'mirofish_sim_result': {
+        if (!token) throw new Error('No GitHub token configured. mirofish_sim_result reads the sim-results branch and needs gh_token with Contents: read.')
+        const simOwner = ctx.ghOwner, simRepo = ctx.ghRepo
+        const cardId = String(input.card_id ?? '').trim()
+        const marketTicker = String(input.market_ticker ?? '').trim()
+        const invocationId = typeof input.invocation_id === 'string' && input.invocation_id.trim() ? input.invocation_id.trim() : undefined
+        const attempt = input.attempt === undefined || input.attempt === null || input.attempt === '' ? undefined : Number(input.attempt)
+        if (attempt !== undefined && !(Number.isInteger(attempt) && attempt > 0)) throw new Error('attempt must be a positive whole number')
+        let run: SimRun | undefined
+        if (invocationId) {
+          run = await findSimRunByInvocation(ctx, simOwner, simRepo, invocationId)
+          if (run && run.status !== 'completed') return `MiroFish sim ${invocationId} is still running (run #${run.run_number}, ${run.status}). Run: ${run.html_url}`
+        }
+        return await simResultText(ctx, simOwner, simRepo, { cardId, marketTicker, invocationId, attempt }, run)
       }
 
       case 'kalshi_markets': {
