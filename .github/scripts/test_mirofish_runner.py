@@ -43,9 +43,18 @@ class FakeMiro:
         self.requests = []
         self.agents = 6
         self.graph_task = [{'status': 'processing'}, {'status': 'completed', 'result': {'graph_id': 'g1'}}]
-        self.run_states = [{'runner_status': 'running', 'current_round': 2}, {'runner_status': 'completed', 'current_round': 4}]
-        self.env_alive = True
-        self.interviews = {f'reddit_{i}': {'agent_id': i, 'platform': 'reddit', 'response': f'PICK={"A" if i % 2 else "B"}; P_A={65 if i % 2 else 35}; WHY=x'} for i in range(6)}
+        # As seen live (2026-10-25): runner_status stays "running" after the loop (the process waits for the interview), and the
+        # per-platform flags are what say the simulation finished.
+        self.run_states = [{'runner_status': 'running', 'current_round': 2},
+                           {'runner_status': 'running', 'current_round': 4, 'twitter_completed': True, 'reddit_completed': True}]
+        self.env_alive = True  # or a list, consumed one per env-status call (the last value repeats)
+        self.sim_config = {'time_config': {'minutes_per_round': 60, 'total_simulation_hours': 72},
+                           'agent_configs': [{'agent_id': i, 'active_hours': list(range(24))} for i in range(6)]}
+        self.delete_conflicts = 0  # how many graph deletes answer 409 (GraphInUseError) before one succeeds
+        self.stopped = self.closed = False
+        # The real IPC result shape (seen against MiroFish's own script, 2026-10-25): agent_id is a STRING.
+        self.interviews = {f'reddit_{i}': {'agent_id': str(i), 'platform': 'reddit', 'timestamp': 't',
+                                           'response': f'PICK={"A" if i % 2 else "B"}; P_A={65 if i % 2 else 35}; WHY=x'} for i in range(6)}
         self.report_md = '# R\n## Where the crowd settled\nSplit.\n## What moved it\nTakedowns.\n'
         self.graph_data_status = 200
         self.ontology_status = 200
@@ -119,19 +128,27 @@ class FakeMiro:
             return self.ok({'platform': 'reddit', 'count': self.agents, 'profiles': profiles})
         if path == '/api/simulation/start':
             return self.ok({'runner_status': 'running'})
+        if path == '/api/simulation/sim_1/config':
+            return self.ok(self.sim_config)
         if path == '/api/simulation/sim_1/run-status':
+            if self.stopped or self.closed:  # the process has exited: MiroFish publishes the terminal status
+                return self.ok({'runner_status': 'stopped' if self.stopped else 'completed', 'current_round': self.run_states[-1].get('current_round')})
             if self.on_run_status:
                 self.on_run_status()
             i = min(self._poll['run'], len(self.run_states) - 1)
             self._poll['run'] += 1
             return self.ok(self.run_states[i])
         if path == '/api/simulation/stop':
+            self.stopped = True
             return self.ok({'runner_status': 'stopped'})
         if path == '/api/simulation/env-status':
-            return self.ok({'env_alive': self.env_alive})
+            alive = self.env_alive.pop(0) if isinstance(self.env_alive, list) and len(self.env_alive) > 1 else (
+                self.env_alive[0] if isinstance(self.env_alive, list) else self.env_alive)
+            return self.ok({'env_alive': alive})
         if path == '/api/simulation/interview/all':
             return self.ok({'interviews_count': len(self.interviews), 'result': {'results': self.interviews}})
         if path == '/api/simulation/close-env':
+            self.closed = True
             return self.ok({})
         if path == '/api/report/generate':
             return self.ok({'task_id': 't_rep', 'status': 'generating'})
@@ -144,6 +161,9 @@ class FakeMiro:
                 return self.graph_data_status, {'success': False, 'error': '<html>boom</html>'}
             return self.ok({'nodes': [{'uuid': 'n1', 'name': 'Petr Yan', 'labels': ['Entity', 'Fighter'], 'summary': 's'}], 'edges': []})
         if method == 'DELETE' and path == '/api/graph/delete/g1':
+            if self.delete_conflicts > 0:
+                self.delete_conflicts -= 1
+                return 409, {'success': False, 'error': 'Graph g1 is in use by active consumer(s): sim_1'}
             return self.ok({})
         return 404, {'success': False, 'error': f'no route {method} {path}'}
 
@@ -182,7 +202,9 @@ class Env:
     def run(self, **over):
         args = {**self.args, **over}
         miro = mr.Miro(mr.Http(self.miro.url))
-        return mr.run_attempt(args, miro, lambda: dict(self.meter_state), lambda prompt: self.direct_text, sleep=self.sleep, clock=self.clock)
+        self.log_lines = []
+        return mr.run_attempt(args, miro, lambda: dict(self.meter_state), lambda prompt: self.direct_text, sleep=self.sleep, clock=self.clock,
+                              log=self.log_lines.append)
 
 
 def read_json(path):
@@ -214,8 +236,11 @@ class SuccessPathTests(unittest.TestCase):
         self.assertEqual({k: v for k, v in record['engine'].items() if k != 'environment_digest'}, {'name': 'mirofish', **PINS})
         self.assertEqual(record['engine']['environment_digest'], mr.environment_digest(PINS))
         cfg = record['config']
-        self.assertEqual((cfg['preset'], cfg['platform'], cfg['max_rounds'], cfg['rounds_run'], cfg['agents_cap'], cfg['agents_prepared'], cfg['locale']),
-                         ('tiny', 'reddit', 4, 4, 8, 6, 'en'))
+        self.assertEqual((cfg['preset'], cfg['platform'], cfg['active_rounds'], cfg['max_rounds'], cfg['rounds_run'], cfg['active_rounds_run'],
+                          cfg['agents_cap'], cfg['agents_prepared'], cfg['locale'], cfg['deadline_s']),
+                         ('tiny', 'parallel', 4, 4, 4, 4, 8, 6, 'en', mr.DEFAULT_DEADLINE_S))
+        self.assertEqual(cfg['clock'], {'minutes_per_round': 60, 'first_active_round': 1, 'first_active_hour': 0, 'idle_rounds': 0,
+                                        'active_rounds': 4, 'max_rounds': 4, 'config_rounds': 72})
         self.assertFalse(cfg['reproducible'])
         self.assertFalse(cfg['counts_toward_bar'])  # a tiny world is a pipeline proof, not a counted sim
         ex = record['extraction']
@@ -243,9 +268,9 @@ class SuccessPathTests(unittest.TestCase):
         env = Env(self)
         env.run()
         start = next(r for r in env.miro.requests if r['path'] == '/api/simulation/start')['body']
-        self.assertEqual(start, {'simulation_id': 'sim_1', 'platform': 'reddit', 'max_rounds': 4, 'enable_graph_memory_update': False})
+        self.assertEqual(start, {'simulation_id': 'sim_1', 'platform': 'parallel', 'max_rounds': 4, 'enable_graph_memory_update': False})
         create = next(r for r in env.miro.requests if r['path'] == '/api/simulation/create')['body']
-        self.assertEqual((create['enable_twitter'], create['enable_reddit']), (False, True))
+        self.assertEqual((create['enable_twitter'], create['enable_reddit']), (True, True))
         poll = next(r for r in env.miro.requests if r['path'] == '/api/simulation/interview/all')['body']
         self.assertEqual(poll['prompt'], mw.poll_question(A, B))
         self.assertEqual(poll['platform'], 'reddit')
@@ -617,7 +642,8 @@ class HelperTests(unittest.TestCase):
 
     def test_every_preset_has_the_fields_the_runner_reads(self):
         for name, preset in mr.PRESETS.items():
-            self.assertEqual(set(preset), {'platform', 'max_rounds', 'agents_cap', 'parallel_profiles', 'counts_toward_bar'}, name)
+            self.assertEqual(set(preset), {'platform', 'active_rounds', 'agents_cap', 'parallel_profiles', 'counts_toward_bar'}, name)
+            self.assertEqual(preset['platform'], 'parallel', f'{name}: the reddit-only script writes no actions.jsonl, so no world')
         self.assertFalse(mr.PRESETS['tiny']['counts_toward_bar'])
         self.assertTrue(mr.PRESETS['small']['counts_toward_bar'])
 
@@ -729,6 +755,202 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(code, 0)
         record = read_json(os.path.join(self.env.out, 'UFC333', 'KXUFCFIGHT-26OCT24YANDVA-YAN.1.run-record.json'))
         self.assertEqual((record['yes_side'], record['lean_for_yes_side']), (None, None))
+
+
+class LiveRunRegressionTests(unittest.TestCase):
+    """The first post-fix live run (2026-10-25, run 40166223749) hung 91 minutes with zero agents acting and left its Zep graph.
+    Each test pins one cause, as read from MiroFish's source at the pinned commit."""
+
+    def test_finished_means_the_per_platform_flags_even_while_runner_status_stays_running(self):
+        env = Env(self)  # the fake's default is the live shape: runner_status "running", both platform flags set
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        states = [r for r in env.miro.requests if r['path'] == '/api/simulation/sim_1/run-status']
+        self.assertTrue(states)
+
+    def test_one_platform_finished_is_not_finished(self):
+        env = Env(self)
+        env.miro.run_states = [{'runner_status': 'running', 'current_round': 4, 'reddit_completed': True}]  # twitter still going
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'timeout')
+        self.assertIn('simulate did not finish', record['reason'])
+
+    def test_the_poll_waits_for_the_environment_to_open_for_interviews(self):
+        env = Env(self)
+        env.miro.env_alive = [False, False, True]  # the loop has ended; the interview handler is not up yet
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        paths = env.miro.paths()
+        self.assertEqual(paths.count('/api/simulation/env-status'), 3)
+        self.assertLess(max(i for i, x in enumerate(paths) if x == '/api/simulation/env-status'), paths.index('/api/simulation/interview/all'))
+
+    def test_the_clock_reaches_the_agents_waking_hours_and_idle_rounds_are_not_counted_as_simulation(self):
+        env = Env(self)
+        env.miro.sim_config = {'time_config': {'minutes_per_round': 60, 'total_simulation_hours': 72},
+                               'agent_configs': [{'agent_id': 0, 'active_hours': list(range(8, 23))}, {'agent_id': 1, 'active_hours': [12, 13, 20]}]}
+        env.miro.run_states = [{'runner_status': 'running', 'current_round': 12, 'twitter_completed': True, 'reddit_completed': True}]
+        record, _ = env.run(preset='small', repo='DeviousDevv303/forgeclaw')
+        start = next(r for r in env.miro.requests if r['path'] == '/api/simulation/start')['body']
+        self.assertEqual(start['max_rounds'], 8 + 12)  # 8 idle rounds (00:00 to 07:00) + the preset's 12 active ones
+        clock = record['config']['clock']
+        self.assertEqual((clock['idle_rounds'], clock['first_active_hour'], clock['first_active_round']), (8, 8, 9))
+        self.assertEqual((record['config']['rounds_run'], record['config']['active_rounds_run']), (12, 4))
+        line = read_json(os.path.join(env.out, 'UFC333', record['nexus']['file']))
+        self.assertEqual(line['engine']['rounds'], 4)  # grading sees rounds with agents awake, not the idle bookkeeping
+
+    def test_a_timed_out_simulation_is_stopped_before_its_graph_is_deleted(self):
+        env = Env(self)
+        env.miro.run_states = [{'runner_status': 'running', 'current_round': 0}]  # the live hang
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'timeout')
+        paths = env.miro.paths()
+        self.assertLess(paths.index('/api/simulation/stop'), paths.index('/api/graph/delete/g1'))
+        self.assertTrue(record['zep']['deleted'])
+
+    def test_a_graph_still_in_use_is_retried_then_deleted(self):
+        env = Env(self)
+        env.miro.delete_conflicts = 2
+        record, _ = env.run()
+        self.assertEqual(env.miro.paths().count('/api/graph/delete/g1'), 3)
+        self.assertTrue(record['zep']['deleted'])
+
+    def test_a_graph_that_cannot_be_deleted_is_recorded_as_not_deleted_and_the_record_is_still_written(self):
+        env = Env(self)
+        env.miro.delete_conflicts = 99
+        record, paths = env.run()
+        self.assertEqual(env.miro.paths().count('/api/graph/delete/g1'), mr.GRAPH_DELETE_ATTEMPTS)
+        self.assertFalse(record['zep']['deleted'])
+        self.assertTrue(any(p.endswith('run-record.json') for p in paths))
+        self.assertTrue(any('was NOT deleted' in line for line in env.log_lines))
+
+    def test_cleanup_never_raises_even_when_miro_is_unreachable(self):
+        env = Env(self)
+        env.miro.run_states = [{'runner_status': 'running', 'current_round': 0}]
+        original = mr.Miro.delete
+        self.addCleanup(setattr, mr.Miro, 'delete', original)
+        mr.Miro.delete = lambda *a, **k: (_ for _ in ()).throw(ConnectionRefusedError('gone'))
+        record, paths = env.run()
+        self.assertEqual(record['status'], 'timeout')
+        self.assertFalse(record['zep']['deleted'])
+        self.assertTrue(any(p.endswith('run-record.json') for p in paths))
+
+    def test_string_agent_ids_from_the_interview_still_give_every_agent_its_final_pick(self):
+        env = Env(self)
+        record, _ = env.run()
+        world = read_json(os.path.join(env.out, 'UFC333', record['artifacts']['world_json']))
+        self.assertEqual({a['id']: a['final_pick'] for a in world['agents']}, {i: (A if i % 2 else B) for i in range(6)})
+        self.assertTrue(all(isinstance(x['agent'], int) for x in world['poll']['answers']))
+
+    def test_a_completed_run_closes_the_environment_and_does_not_need_a_stop(self):
+        env = Env(self)
+        env.run()
+        paths = env.miro.paths()
+        self.assertNotIn('/api/simulation/stop', paths)
+        self.assertLess(paths.index('/api/simulation/close-env'), paths.index('/api/graph/delete/g1'))
+
+
+class DeadlineTests(unittest.TestCase):
+    def test_every_stage_is_cut_to_the_run_deadline_and_the_run_still_records_and_cleans_up(self):
+        env = Env(self)
+        env.miro.graph_task = [{'status': 'processing'}]  # never finishes
+        started = env.now
+        record, paths = env.run(deadline_s=mr.CLEANUP_RESERVE_S + 60)
+        self.assertEqual(record['status'], 'timeout')
+        self.assertIn('cut short by the run deadline', record['reason'])
+        self.assertLessEqual(env.now - started, 60 + 10)  # not the graph stage's own 1200 s
+        self.assertTrue(any(p.endswith('run-record.json') for p in paths))
+
+    def test_a_deadline_already_spent_starts_nothing(self):
+        env = Env(self)
+        record, _ = env.run(deadline_s=mr.CLEANUP_RESERVE_S)
+        self.assertEqual(record['status'], 'timeout')
+        self.assertIn(f'the run deadline ({mr.CLEANUP_RESERVE_S} s) was reached before ontology', record['reason'])
+        self.assertNotIn('/api/graph/ontology/generate', env.miro.paths())
+
+    def test_the_ontology_call_gets_its_stage_limit_not_the_two_minute_http_default(self):
+        env = Env(self)
+        seen = []
+        original = mr.Http.call
+        self.addCleanup(setattr, mr.Http, 'call', original)
+
+        def spy(http, method, path, *a, **k):
+            if path == '/api/graph/ontology/generate':
+                seen.append(k.get('timeout_s'))
+            return original(http, method, path, *a, **k)
+        mr.Http.call = spy
+        env.run()
+        self.assertEqual(seen, [mr.STAGE_TIMEOUTS_S['ontology']])
+
+    def test_cleanup_fits_its_reserve_even_when_every_call_hangs_to_its_limit(self):
+        worst = (mr.CLEANUP_HTTP_TIMEOUT_S                                       # stop
+                 + mr.INACTIVE_WAIT_S + mr.CLEANUP_HTTP_TIMEOUT_S                # wait until inactive (one call can overrun)
+                 + mr.GRAPH_DELETE_ATTEMPTS * mr.CLEANUP_HTTP_TIMEOUT_S          # deletes
+                 + (mr.GRAPH_DELETE_ATTEMPTS - 1) * mr.GRAPH_DELETE_RETRY_S)     # retry pauses
+        self.assertLessEqual(worst, mr.CLEANUP_RESERVE_S)
+
+    def test_cleanup_calls_use_the_short_http_limit(self):
+        env = Env(self)
+        env.miro.run_states = [{'runner_status': 'running', 'current_round': 0}]
+        seen = []
+        original = mr.Http.call
+        self.addCleanup(setattr, mr.Http, 'call', original)
+
+        def spy(http, method, path, *a, **k):
+            if path in ('/api/simulation/stop', '/api/graph/delete/g1') or (method == 'GET' and env.miro.stopped):
+                seen.append((path, k.get('timeout_s')))
+            return original(http, method, path, *a, **k)
+        mr.Http.call = spy
+        env.run()
+        self.assertTrue(seen)
+        self.assertTrue(all(t == mr.CLEANUP_HTTP_TIMEOUT_S for _, t in seen), seen)
+
+    def test_the_default_deadline_fits_inside_the_job_with_room_for_install_and_publish(self):
+        self.assertLessEqual(mr.DEFAULT_DEADLINE_S + 600, 150 * 60)
+        self.assertGreater(sum(mr.STAGE_TIMEOUTS_S.values()), mr.DEFAULT_DEADLINE_S)  # why a single deadline is needed at all
+
+
+class ClockPlanTests(unittest.TestCase):
+    def test_the_live_failure_four_rounds_from_midnight_now_reach_the_waking_hours(self):
+        config = {'time_config': {'minutes_per_round': 60, 'total_simulation_hours': 72},
+                  'agent_configs': [{'agent_id': 0, 'active_hours': list(range(9, 23))}, {'agent_id': 1, 'active_hours': list(range(7, 24))}]}
+        plan = mr.plan_clock(config, 4)
+        self.assertEqual((plan['idle_rounds'], plan['first_active_hour'], plan['max_rounds'], plan['active_rounds']), (7, 7, 11, 4))
+        awake = set(range(7, 24))
+        hours = [(r * 60 // 60) % 24 for r in range(plan['max_rounds'])]
+        self.assertFalse(set(hours[:plan['idle_rounds']]) & awake)
+        self.assertTrue(all(h in awake for h in hours[plan['idle_rounds']:]))
+
+    def test_the_scripts_own_defaults_apply_when_the_config_leaves_fields_out(self):
+        plan = mr.plan_clock({'agent_configs': [{'agent_id': 0}]}, 4)  # 30-minute rounds, agents awake 08:00 to 22:59
+        self.assertEqual((plan['minutes_per_round'], plan['idle_rounds'], plan['first_active_hour'], plan['max_rounds'], plan['config_rounds']),
+                         (30, 16, 8, 20, 144))
+
+    def test_a_short_schedule_caps_the_rounds(self):
+        config = {'time_config': {'minutes_per_round': 60, 'total_simulation_hours': 6}, 'agent_configs': [{'agent_id': 0, 'active_hours': [4, 5]}]}
+        plan = mr.plan_clock(config, 4)
+        self.assertEqual((plan['max_rounds'], plan['active_rounds']), (6, 2))
+
+    def test_no_waking_hour_in_reach_is_refused_before_anything_is_simulated(self):
+        never = {'time_config': {'minutes_per_round': 60}, 'agent_configs': [{'agent_id': 0, 'active_hours': []}]}
+        with self.assertRaises(mr.RunnerError) as ctx:
+            mr.plan_clock(never, 4)
+        self.assertIn('no prepared agent has any active hour', str(ctx.exception))
+        late = {'time_config': {'minutes_per_round': 60, 'total_simulation_hours': 6}, 'agent_configs': [{'agent_id': 0, 'active_hours': [20]}]}
+        with self.assertRaises(mr.RunnerError):
+            mr.plan_clock(late, 4)
+        with self.assertRaises(mr.RunnerError):
+            mr.plan_clock({'time_config': {'minutes_per_round': 0}, 'agent_configs': [{'agent_id': 0}]}, 4)
+
+
+class ProgressLogTests(unittest.TestCase):
+    def test_every_stage_reports_progress_with_the_spend_so_far(self):
+        env = Env(self)
+        env.run()
+        stages = [re.search(r'\] (\w+):', line).group(1) for line in env.log_lines]
+        order = [s for i, s in enumerate(stages) if i == 0 or s != stages[i - 1]]
+        self.assertEqual(order, ['ontology', 'graph', 'prepare', 'simulate', 'ready', 'poll', 'report', 'done', 'cleanup'])
+        self.assertTrue(all(re.search(r'\(\$\d+\.\d{4} so far, \d+ LLM calls\)$', line) for line in env.log_lines))
+        self.assertTrue(any('round 4 of 4' in line for line in env.log_lines))
 
 
 if __name__ == '__main__':

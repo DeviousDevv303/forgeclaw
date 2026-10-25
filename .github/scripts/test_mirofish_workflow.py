@@ -192,6 +192,38 @@ class NoDriftFromTheCodeItCalls(unittest.TestCase):
         self.assertIn('THINKING=provider-default', fallback)
         self.assertLess(run.index('THINKING=provider-default'), run.index('# 1. The meter'))  # decided before the meter starts
 
+    def test_the_runner_deadline_sits_inside_the_job_timeout_with_room_for_install_and_publish(self):
+        job_minutes = int(re.search(r'timeout-minutes: (\d+)', TEXT).group(1))
+        deadline = int(re.search(r'--deadline-s (\d+)', step_text('Run the simulation')).group(1))
+        self.assertEqual(deadline, mr.DEFAULT_DEADLINE_S)
+        self.assertLessEqual(deadline + 600, job_minutes * 60)
+
+    def test_a_failed_run_prints_the_simulations_own_log_and_mirofish_log_without_the_status_polls(self):
+        run = step_text('Run the simulation')
+        failure = run.split('if [ "$RC" -ne 0 ]; then')[1].split('exit "$RC"')[0]
+        self.assertIn('uploads/simulations/*/simulation.log', failure)
+        self.assertIn("grep -v '/run-status HTTP'", failure)
+
+    def test_the_failure_block_keeps_the_runners_exit_code_whether_or_not_any_log_exists(self):
+        # Run for real under the step's own `set -euo pipefail`: a missing log must not end the step early with another code.
+        import subprocess
+        import tempfile
+        failure = step_text('Run the simulation').split('if [ "$RC" -ne 0 ]; then')[1].split('exit "$RC"')[0]
+        for rc, make_logs in ((1, False), (2, False), (1, True)):
+            with tempfile.TemporaryDirectory() as temp:
+                if make_logs:
+                    Path(temp, 'mirofish.log').write_text('x /run-status HTTP/1.1" 200\nERROR: provider said no\n')
+                    sim = Path(temp, 'mirofish', 'backend', 'uploads', 'simulations', 'sim_1')
+                    sim.mkdir(parents=True)
+                    (sim / 'simulation.log').write_text('Traceback: camel\n')
+                script = f'set -euo pipefail\nRC={rc}\nif [ "$RC" -ne 0 ]; then{failure}exit "$RC"\n'
+                result = subprocess.run(['bash', '-c', script], env={**os.environ, 'RUNNER_TEMP': temp}, capture_output=True, text=True)
+                self.assertEqual(result.returncode, rc, result.stderr)
+                if make_logs:
+                    self.assertIn('ERROR: provider said no', result.stdout)
+                    self.assertNotIn('/run-status HTTP', result.stdout)
+                    self.assertIn('Traceback: camel', result.stdout)
+
     def test_the_whole_meter_log_tail_is_printed_so_a_provider_error_is_visible_in_the_job(self):
         self.assertIn('meter.log" 2>/dev/null | tail -n 40', step_text('Run the simulation'))
 
