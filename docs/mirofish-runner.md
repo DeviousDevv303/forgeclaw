@@ -32,11 +32,17 @@ screens for secrets and owner-private words (bankroll, positions, keys) and refu
 
 ## Presets and cost
 
-| preset | rounds | agent cap | platform | counts toward the 10-sim bar | est. cost on Moonshot K2.6 |
+| preset | active rounds | agent cap | platform | counts toward the 10-sim bar | est. cost on Moonshot K2.6 |
 |---|---|---|---|---|---|
-| `tiny` | 4 | 8 | reddit | **no** (a pipeline proof; never filed to intake) | ~$0.22 |
+| `tiny` | 4 | 8 | both | **no** (a pipeline proof; never filed to intake) | ~$0.22 (now both platforms: likely more) |
 | `small` | 12 | 14 | both | yes | ~$0.72 |
 | `mid` | 24 | 20 | both | yes | ~$1.83 |
+
+Every preset runs MiroFish's `parallel` script (Twitter and Reddit). Its reddit-only script writes no `actions.jsonl` (only a
+SQLite file) and never reports a platform as finished, so no world could ever be built from it. "Active rounds" are rounds with
+agents awake; the runner adds the idle rounds before the agents' first active hour (see *The clock* below), which make no LLM
+call. **Measured so far:** everything before the simulation (ontology, graph, profiles, config; 7 calls) cost **$0.03** with
+thinking off (run 40166223749). The simulation, poll and report are still unmeasured.
 
 Estimates are from reading the code (calls × tokens), at third-party-tracker prices ($0.95 in / $4.00 out per M tokens) that
 disagree slightly; thinking tokens bill as output, so real cost may be higher. **Only `tiny` fits the default $0.40 ceiling on
@@ -68,8 +74,28 @@ prompt token at the cache-miss price), and the provider's usage page is the invo
   the provider's own words.
 - **Agent count.** MiroFish derives it from the packet and an LLM and cannot be told an exact number, so the runner checks the
   prepared count against the preset cap **before** the simulation starts (`aborted_agents_over_cap`) and stamps the actuals.
-- **Reproducibility is not claimed.** MiroFish uses its own temperature (0.7) and sampling; `reproducible: false` is recorded.
-- **The Zep graph is deleted** at the end of every run; `zep.deleted` says whether that worked.
+- **Reproducibility is not claimed.** Sampling is the provider's fixed values on K2 (above) and MiroFish's own elsewhere, and
+  which agents act each round is random; `reproducible: false` is recorded.
+- **Finished means every platform's flag.** The runner waits for MiroFish's per-platform `twitter_completed` and
+  `reddit_completed` (set when it reads each platform's `simulation_end`), not for `runner_status: completed`, which MiroFish
+  publishes only once the simulation process exits. The process deliberately stays alive afterwards so the agents can be
+  interviewed, so the old signal never came: the first post-fix live run waited the full 90 minutes. The runner then waits
+  (bounded, 300 s) for the environment to report `env_alive`, which happens just after the loop ends, before asking the poll.
+- **The clock.** MiroFish's simulated clock starts at 00:00, and an agent only acts in its configured active hours (07:00 to
+  12:00 onward in every config it generates). Four rounds from midnight meant no agent ever acted. The script cannot be given a
+  start hour and runs unmodified, so the runner reads the prepared config (`GET /api/simulation/<id>/config`) and asks for
+  the idle rounds before the first active hour plus the preset's active rounds. The plan is recorded in `config.clock`.
+  `config.active_rounds_run`, the rounds with agents awake, is what the intake line calls `engine.rounds`.
+- **Cleanup order.** On every outcome the runner stops the simulation if it may still run, waits until MiroFish no longer counts
+  it as active, then deletes the Zep graph, retrying a `409` (MiroFish's `GraphInUseError`) up to 4 times. `zep.deleted` says
+  whether it worked. The first post-fix live run skipped the stop and left its graph in Zep. Cleanup never raises: the record
+  is written whatever happens there.
+- **One deadline.** The stage limits add up to 220 minutes; the job is killed at 150. The runner's overall deadline
+  (`--deadline-s 8100`) cuts every stage to fit and keeps 240 s back for cleanup and the record (cleanup calls get a 20 s HTTP limit, so it fits even when MiroFish hangs), so a slow run ends as `timeout`
+  with both done. The ontology call, one synchronous LLM call inside MiroFish, now gets its 600 s stage limit, not the 120 s HTTP default.
+- **Watchable while it runs.** The runner prints one line per step to the job log with the spend so far
+  (`[runner +  312s] simulate: round 9 of 12 ($0.0841 so far, 23 LLM calls)`). On failure the job also prints MiroFish's log
+  without the status polls and the simulation process's own `simulation.log`, which the first live runs never showed.
 
 ## Output
 
@@ -117,6 +143,27 @@ the pinned sampling above, fixed in the meter. The fix was checked end to end of
 Moonshot's documented rule. Without the policy the fake rejects the ontology call exactly as Moonshot did; through the meter
 it passes. Those two runs used both attempts on the real `UFC333` / `KXUFCFIGHT-26OCT24YANDVA-YAN` key, so tests belong on a
 throwaway card.
+
+**Second live run (2026-10-25, run 40166223749, `SPIKE-UFC333`, `tiny`, thinking off):** the meter fix held: 7 Moonshot calls
+accepted, 0 errors, `temperature` removed from each, $0.03. Ontology, graph, profiles and config all completed (3 agents). The
+simulation then sat at round 0 until the 90-minute stage limit. Read from MiroFish's source, the three causes are the finished
+signal, the clock and the cleanup order above. All three are fixed here and covered against the fake.
+That run's Zep graph (`mirofish_c71e989943764fa4`) was left in Zep, holding public pre-fight facts only.
+
+**Checked against MiroFish's real simulation script (offline, 2026-10-25):** `run_parallel_simulation.py` at the pinned commit,
+launched as the backend launches it (wait-for-commands mode), with its LLM calls going through the real meter to a fake that
+enforces Moonshot's rules. Zep is not involved at this step. With a prepared config whose agents wake at 08:00, and the 12
+rounds `plan_clock` asked for (8 idle + 4 active):
+- rounds 1 to 8 logged 0 actions and made 0 LLM calls; all 18 calls came in rounds 9 to 12;
+- both platforms wrote `simulation_end` (what sets the finished flags), and `env_status` turned `alive` just after;
+- the poll, sent through MiroFish's own IPC client, was answered by every agent in about a second, in the shape the runner
+  parses; `close_env` then ended the process;
+- the requests carried only `model`, `messages`, `tools` and `thinking`: no streaming, no sampling fields.
+
+It also caught a bug the fake had hidden: the interview results carry `agent_id` as a string (`"0"`) while profiles and actions
+use integers, so every agent would have shown as `undecided` in the world. The runner converts it, and the fake now returns
+strings, as the real script does. **Still not verified live:** the backend's own run-status and interview endpoints over HTTP,
+the report stage, real cost, and whether real agents' poll answers parse.
 
 **Not verified: a completed run against the real MiroFish with real keys.** The fake follows the request and response shapes in
 MiroFish's own handlers, not observed behaviour. Specifically open: whether the interview endpoint answers after a headless run

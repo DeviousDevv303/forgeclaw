@@ -250,17 +250,26 @@ jobs:
           for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5001/health >/dev/null 2>&1 && break; sleep 2; done
           curl -fsS http://127.0.0.1:5001/health >/dev/null || { echo "::error title=mirofish-sim::MiroFish did not become healthy"; tail -n 40 "$RUNNER_TEMP/mirofish.log"; exit 1; }
 
-          # 3. The runner. A non-zero exit still leaves a record in sim-results, which the next step commits.
+          # 3. The runner. A non-zero exit still leaves a record in sim-results, which the next step commits. It prints one
+          #    progress line per step as it goes (stderr), and its overall deadline (8100 s) sits inside this job's 150 minutes,
+          #    with room for install and publish, so a slow run ends with its record written and its Zep graph deleted.
           set +e
           python "$GITHUB_WORKSPACE/.github/scripts/mirofish_runner.py" \
             --packet "$RUNNER_TEMP/packet.md" --card-id "$CARD_ID" --market-ticker "$MARKET_TICKER" --sides "$SIDES" --yes-side "$YES_SIDE" \
             --preset "$PRESET" --provider "$LLM_PROVIDER" --model "$MODEL" --mirofish-dir "$RUNNER_TEMP/mirofish" \
             --meter-url "http://127.0.0.1:${METER_PORT}" --results-dir "$SIM_RESULTS" --out-dir "$SIM_RESULTS" \
             --pins "$PINS" --provenance "$PROVENANCE" --rerun-reason "$RERUN_REASON" --invocation-id "$INVOCATION_ID" --run-url "$RUN_URL" \
-            --position-ref "$POSITION_REF" --repo "$GITHUB_REPOSITORY"
+            --position-ref "$POSITION_REF" --repo "$GITHUB_REPOSITORY" --deadline-s 8100
           RC=$?
           set -e
-          if [ "$RC" -ne 0 ]; then echo "--- MiroFish log (tail)"; tail -n 60 "$RUNNER_TEMP/mirofish.log" || true; fi
+          if [ "$RC" -ne 0 ]; then
+            # MiroFish's own log, without the run-status polling that buried everything in the first live run.
+            echo "--- MiroFish log (tail, status polls omitted)"; grep -v '/run-status HTTP' "$RUNNER_TEMP/mirofish.log" | tail -n 60 || true
+            # The simulation process logs to its own file, which the first live run never showed.
+            for f in "$RUNNER_TEMP"/mirofish/backend/uploads/simulations/*/simulation.log; do
+              if [ -f "$f" ]; then echo "--- simulation log (tail): ${f#"$RUNNER_TEMP"/}"; tail -n 80 "$f" || true; fi
+            done
+          fi
           exit "$RC"
 
       - name: Publish the record and artifacts to the sim-results branch
