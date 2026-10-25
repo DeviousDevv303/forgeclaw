@@ -1,0 +1,101 @@
+{
+  "artifacts": {
+    "run_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/40164446883"
+  },
+  "attempt": 2,
+  "baseline_direct": null,
+  "config": {
+    "agents_cap": 8,
+    "agents_prepared": null,
+    "counts_toward_bar": false,
+    "llm_model": "kimi-k2.7-code",
+    "llm_provider": "moonshot",
+    "locale": "en",
+    "max_rounds": 4,
+    "platform": "reddit",
+    "preset": "tiny",
+    "reproducible": false,
+    "rounds_run": null,
+    "size_class": "tiny",
+    "temperature": "MiroFish's own default (0.7) for its calls; not controlled by us"
+  },
+  "engine": {
+    "environment_digest": "sha256:5c1a68d8c1923486b5f38ba49a80f15890adabc9ab9424be6a331f698705c876",
+    "name": "mirofish",
+    "python": "3.11",
+    "repo_commit": "7657031ac01184afe2cb220f5ee3545573b5e843",
+    "runner_image": "ubuntu-24.04",
+    "torch": "2.9.1+cpu",
+    "torch_cpu_sha256": "3de2adb9b4443dc9210ef1f1b16da3647ace53553166d6360bbbd7edd6f16e4d",
+    "uv_lock_sha256": "877281f85fe26eb120149503b0b99021fd7e3e577d026f584857d03839595b09",
+    "uv_version": "0.9.26"
+  },
+  "extraction": null,
+  "invocation_id": "yan-merab-u333-muse-003",
+  "key": {
+    "card_id": "UFC333",
+    "market_ticker": "KXUFCFIGHT-26OCT24YANDVA-YAN"
+  },
+  "lean_for_yes_side": null,
+  "nexus": {
+    "emitted": false,
+    "file": null,
+    "reason": "not emitted: the run ended failed"
+  },
+  "reason": "[ontology] MiroFish answered HTTP 502: LLM provider request failed (HTTP 400)",
+  "rerun_of": null,
+  "schema": "forgeclaw.mirofish-run-record.v1",
+  "seed": {
+    "packet_chars": 1157,
+    "packet_sha256": "2413d7508f2824f50ef9c9684efe0ba8aa0033896a872c8c5fa3464a1ef751ec",
+    "provenance": {
+      "human_state": "fight-week public statements (pre-fight)",
+      "matchup_read": "pre-fight rematch read, Muse 2026-10-24",
+      "stats_snapshot": "fight-week research snapshot, Muse 2026-10-24 (pre-fight)"
+    },
+    "thin": true,
+    "thin_reasons": [
+      "packet is 1157 characters (under 1500)"
+    ]
+  },
+  "sides": [
+    "Petr Yan",
+    "Merab Dvalishvili"
+  ],
+  "status": "failed",
+  "timing": {
+    "finished_at": "2026-10-25T05:09:03Z",
+    "started_at": "2026-10-25T05:09:02Z",
+    "wall_seconds": 0.8
+  },
+  "usage": {
+    "cached_tokens_in_reported": 0,
+    "calls": 1,
+    "ceiling_hit": false,
+    "ceiling_usd": 0.4,
+    "cost_basis": "upper bound: every prompt token at the cache-miss price",
+    "cost_usd": 0.0,
+    "model": "kimi-k2.7-code",
+    "price_per_mtok_usd": {
+      "input": 0.95,
+      "output": 4.0
+    },
+    "price_source": "Moonshot figures are from third-party price trackers, which disagree slightly; Moonshot's own pricing page was not reached. Verify before relying on the dollar figures.",
+    "price_table_version": "2026-10-24",
+    "provider": "moonshot",
+    "refused_other": 0,
+    "refused_over_ceiling": 0,
+    "tokens_in": 0,
+    "tokens_out": 0,
+    "unmetered_calls_estimated": 0,
+    "upstream_errors": 1
+  },
+  "yes_side": "Petr Yan",
+  "zep": {
+    "basis": "500-char chunks, 2 credits per chunk; graph-memory updates off. Vendor figures are unverified.",
+    "credits_est": 6,
+    "deleted": null,
+    "episodes_est": 3,
+    "graph_id": null
+  }
+}
