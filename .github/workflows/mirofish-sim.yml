@@ -58,6 +58,11 @@ on:
         required: false
         default: 'kimi-k2.6'
         type: string
+      thinking:
+        description: 'kimi-k2.6 thinking mode: disabled (default; cheaper, and the tool-using agents never pass reasoning back) or enabled (filed under its own engine label). kimi-k2.7-code runs at the provider default.'
+        required: false
+        default: 'disabled'
+        type: string
       ceiling_usd:
         description: 'Dollar ceiling for this run (default 0.40, hard maximum 1.00). Recorded in the usage block.'
         required: false
@@ -110,6 +115,7 @@ jobs:
           SIDES: ${{ inputs.sides }}
           PRESET: ${{ inputs.preset }}
           MODEL: ${{ inputs.model }}
+          THINKING: ${{ inputs.thinking }}
           CEILING_USD: ${{ inputs.ceiling_usd }}
           PACKET: ${{ inputs.packet }}
           MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
@@ -123,6 +129,7 @@ jobs:
           printf '%s' "$SIDES" | grep -Eqx '[^|]{1,80}\|[^|]{1,80}' || fail "sides must be exactly 'Name A|Name B'"
           case "$PRESET" in tiny|small|mid) ;; *) fail "preset must be tiny, small or mid" ;; esac
           case "$MODEL" in kimi-k2.6|kimi-k2.7-code) ;; *) fail "model must be kimi-k2.6 or kimi-k2.7-code (the only models with a price in the meter)" ;; esac
+          case "$THINKING" in disabled|enabled) ;; *) fail "thinking must be disabled or enabled" ;; esac
           printf '%s' "$CEILING_USD" | grep -Eqx '[0-9]+(\.[0-9]{1,2})?' || fail "ceiling_usd must be a plain dollar amount"
           python3 -c "import sys; sys.exit(0 if 0 < float(sys.argv[1]) <= 1.00 else 1)" "$CEILING_USD" || fail "ceiling_usd must be above 0 and at most 1.00; a higher ceiling needs a workflow edit"
           [ "${#PACKET}" -ge 200 ] || fail "the packet is under 200 characters; there is nothing to simulate"
@@ -189,6 +196,7 @@ jobs:
       - name: Run the simulation
         env:
           MODEL: ${{ inputs.model }}
+          THINKING: ${{ inputs.thinking }}
           CEILING_USD: ${{ inputs.ceiling_usd }}
           PACKET: ${{ inputs.packet }}
           CARD_ID: ${{ inputs.card_id }}
@@ -212,13 +220,21 @@ jobs:
           cleanup() {
             [ -n "$MIROFISH_PID" ] && kill "$MIROFISH_PID" 2>/dev/null || true
             if [ -n "$METER_PID" ]; then kill -TERM "$METER_PID" 2>/dev/null || true; wait "$METER_PID" 2>/dev/null || true; fi
-            echo "--- meter log"; cat "$RUNNER_TEMP/meter.log" 2>/dev/null | tail -n 5 || true
+            # Every provider and meter error is a line in this log (key redacted), then the final usage snapshot.
+            echo "--- meter log"; cat "$RUNNER_TEMP/meter.log" 2>/dev/null | tail -n 40 || true
           }
           trap cleanup EXIT
 
-          # 1. The meter holds the provider key; nothing else in this job is given it.
+          # The thinking toggle is documented for kimi-k2.6 only; the meter refuses it anywhere else.
+          if [ "$MODEL" = "kimi-k2.7-code" ]; then
+            echo "::notice title=mirofish-sim::kimi-k2.7-code has no documented thinking toggle; it runs at the provider default"
+            THINKING=provider-default
+          fi
+
+          # 1. The meter holds the provider key; nothing else in this job is given it. It also removes the sampling
+          #    fields Moonshot's K2 models pin (MiroFish sets its own on every call) and sets the run's thinking mode.
           env -i PATH="$PATH" HOME="$HOME" PROVIDER="$LLM_PROVIDER" MODEL="$MODEL" UPSTREAM_BASE="$UPSTREAM_BASE" \
-            API_KEY="$MOONSHOT_API_KEY" CEILING_USD="$CEILING_USD" PORT="$METER_PORT" \
+            API_KEY="$MOONSHOT_API_KEY" CEILING_USD="$CEILING_USD" PORT="$METER_PORT" THINKING="$THINKING" \
             python "$GITHUB_WORKSPACE/.github/scripts/mirofish_meter.py" > "$RUNNER_TEMP/meter.log" 2>&1 &
           METER_PID=$!
           for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:${METER_PORT}/__meter" >/dev/null 2>&1 && break; sleep 1; done

@@ -48,6 +48,7 @@ class FakeMiro:
         self.interviews = {f'reddit_{i}': {'agent_id': i, 'platform': 'reddit', 'response': f'PICK={"A" if i % 2 else "B"}; P_A={65 if i % 2 else 35}; WHY=x'} for i in range(6)}
         self.report_md = '# R\n## Where the crowd settled\nSplit.\n## What moved it\nTakedowns.\n'
         self.graph_data_status = 200
+        self.ontology_status = 200
         self.on_run_status = None
         self._poll = {'graph': 0, 'run': 0}
         outer = self
@@ -98,6 +99,8 @@ class FakeMiro:
 
     def route(self, method, path, body):
         if path == '/api/graph/ontology/generate':
+            if self.ontology_status != 200:  # what MiroFish answers when its LLM call is rejected (seen live, 2026-10-25)
+                return self.ontology_status, {'success': False, 'error': 'LLM provider request failed (HTTP 400)'}
             return self.ok({'project_id': 'proj_1'})
         if path == '/api/graph/build':
             return self.ok({'task_id': 't_graph'})
@@ -397,6 +400,23 @@ class NexusLineTests(unittest.TestCase):
         self.assertEqual(line['median_lean_pct'], record['lean_for_yes_side'])
         self.assertEqual(line['report'], 'https://github.com/DeviousDevv303/forgeclaw/blob/sim-results/UFC333/KXUFCFIGHT-26OCT24YANDVA-YAN.1.sim-world.v1.json')
 
+    def test_a_thinking_enabled_run_is_filed_under_its_own_engine_label(self):
+        policy = {'pinned_fields': ['temperature'], 'fields_removed': {'temperature': 3}, 'thinking': 'enabled', 'thinking_overridden': 0}
+        env = Env(self)
+        env.meter_state['request_policy'] = policy
+        record, _ = env.run(preset='small', repo='DeviousDevv303/forgeclaw')
+        self.assertEqual((record['config']['engine_label'], record['config']['thinking']), ('kimi-k2.6+thinking', 'enabled'))
+        self.assertEqual(self.line_of(env, record)['engine']['model'], 'kimi-k2.6+thinking')
+
+    def test_a_thinking_disabled_run_keeps_the_plain_label_and_says_how_it_was_sampled(self):
+        policy = {'pinned_fields': ['temperature', 'top_p'], 'fields_removed': {'temperature': 3}, 'thinking': 'disabled', 'thinking_overridden': 0}
+        env = Env(self)
+        env.meter_state['request_policy'] = policy
+        record, _ = env.run(preset='small', repo='DeviousDevv303/forgeclaw')
+        self.assertEqual((record['config']['engine_label'], record['config']['thinking']), ('kimi-k2.6', 'disabled'))
+        self.assertIn("the provider's fixed values: the meter removed temperature, top_p", record['config']['sampling'])
+        self.assertEqual(self.line_of(env, record)['engine']['model'], 'kimi-k2.6')
+
     def test_the_line_matches_the_golden_fixture_the_typescript_validator_also_checks(self):
         env, record, _ = self.small()
         self.assertEqual(self.line_of(env, record), read_json(GOLDEN),
@@ -518,6 +538,25 @@ class AbortPathTests(unittest.TestCase):
         self.assertEqual(record['status'], 'timeout')
         self.assertIn('simulate did not finish within 5400 s', record['reason'])
         self.assertEqual(record['zep']['deleted'], True)
+
+    def test_a_provider_rejection_is_recorded_in_the_providers_own_words(self):
+        # The first live runs (2026-10-25): MiroFish reported only "HTTP 400"; the meter kept what Moonshot actually said.
+        env = Env(self)
+        env.miro.ontology_status = 502
+        env.meter_state.update(error_samples=[
+            {'source': 'meter', 'status': 400, 'excerpt': 'meter_one_engine: not this one'},
+            {'source': 'upstream', 'status': 400, 'excerpt': 'invalid temperature: only 1 is allowed for this model'}])
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'failed')
+        self.assertIn('[ontology] MiroFish answered HTTP 502', record['reason'])
+        self.assertIn('the provider said (HTTP 400): invalid temperature: only 1 is allowed', record['reason'])
+        self.assertNotIn('meter_one_engine', record['reason'])  # the provider's words, not the meter's
+
+    def test_a_failure_without_a_provider_error_says_nothing_invented(self):
+        env = Env(self)
+        env.miro.ontology_status = 502
+        record, _ = env.run()
+        self.assertNotIn('the provider said', record['reason'])
 
     def test_a_simulation_that_fails_is_recorded_with_its_cause(self):
         env = Env(self)
