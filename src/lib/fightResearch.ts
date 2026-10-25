@@ -25,6 +25,12 @@
 // rationale is kept whole on the position, so the thesis is preserved with the outcome and this reasoning type is
 // scored against results over time, like the crowd is.
 //
+// The MiroFish swarm-sim lane (owner GO 2026-10-24) may add ONE optional line to FUSION — "swarm sim: <median>%
+// <side> (weight <w>%, run <run_id>)" — the sim's median lean and the weight its settled record has earned
+// (simGrading.ts is the policy's single source; the checker holds the stated weight to the earned one passed in).
+// Optional means optional: a rationale without the line is complete, and at weight 0 the line still renders,
+// because the recorded run is the calibration asset even when it moves nothing.
+//
 // Pure: no network, no storage; the clock is a parameter.
 
 /** Kalshi series whose markets are fights (verified against the public series list 2026-10-24). */
@@ -134,6 +140,19 @@ const weightFromFusion = (fusion: string | undefined): number => {
   return m ? Number(m[1]) : 0
 }
 
+/** The optional MiroFish line a FUSION may carry: "swarm sim: 62% YES (weight 0%, run sim-…)". */
+export const SWARM_SIM_LINE = /swarm\s+sim\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%\s+([^\s(]+)\s*\(\s*weight\s*[:=]?\s*(\d+(?:\.\d+)?)\s*%\s*,\s*run\s+([^\s)]+)\s*\)/i
+
+/** The swarm-sim summary stated in a FUSION, or null when the (optional) line is absent or unreadable. */
+export function swarmSimFromFusion(fusion: string | undefined): { medianPct: number; side: string; weightPct: number; runId: string } | null {
+  if (!fusion) return null
+  const m = SWARM_SIM_LINE.exec(fusion)
+  if (!m) return null
+  const medianPct = Number(m[1])
+  if (!Number.isFinite(medianPct) || medianPct < 0 || medianPct > 100) return null
+  return { medianPct, side: m[2], weightPct: Number(m[3]), runId: m[4] }
+}
+
 /**
  * The snapshot to keep on a fight position, read from its (already checked) rationale. Null only when the rationale has
  * no SENTIMENT SCAN at all, which the gate refuses first.
@@ -155,6 +174,12 @@ export interface FightCheckInput {
   /** The proposal's own probability (0-1) and price (0-1). */
   probability: number
   price: number
+  /**
+   * The MiroFish sim lane's currently earned weight (percent), from simGrading's policy, when the caller has it.
+   * A FUSION "swarm sim:" line, when present, must state exactly this weight. The check stays pure: the weight is
+   * passed in, never read from storage here; when it is not passed, only the line's format is held.
+   */
+  expectedSimWeightPct?: number
 }
 
 export interface FightBars {
@@ -264,6 +289,18 @@ export function checkFightRationale(input: FightCheckInput, bars: FightBars): Fi
       const allowed = allowedSentimentWeightPct(sentiment)
       if (Number(weight[1]) > allowed + 1e-9) {
         problems.push(`sentiment weight ${weight[1]}% is more than the crowd has earned (${allowed}%): it needs a stated record of at least ${FUNDS_CROWD_MIN_COMPARABLE_FIGHTS} comparable fights called ${FUNDS_CROWD_MIN_HIT_RATE_PCT}%+ correctly ("N of M"), and is never more than ${FUNDS_SENTIMENT_MAX_WEIGHT_PCT}%`)
+      }
+    }
+    // The MiroFish swarm-sim line is OPTIONAL — its absence never fails a rationale (most fights have no sim) —
+    // but when it is written it is held like every other number here: the exact format, and, when the caller
+    // passes the lane's earned weight in, the stated weight must be that weight. At weight 0 the line still
+    // belongs: the run is recorded for calibration even when it moves nothing.
+    if (/swarm\s+sim/i.test(fusion)) {
+      const sim = swarmSimFromFusion(fusion)
+      if (!sim) {
+        problems.push('FUSION\'s swarm sim line is malformed (write "swarm sim: <median>% <side> (weight <w>%, run <run_id>)", e.g. "swarm sim: 62% YES (weight 0%, run sim-20261024-yan)")')
+      } else if (input.expectedSimWeightPct !== undefined && Math.abs(sim.weightPct - input.expectedSimWeightPct) > 0.05) {
+        problems.push(`swarm sim weight ${sim.weightPct}% is not the sim lane's earned weight (${input.expectedSimWeightPct}%): the lane weighs 0% until its settled record clears the bars in simGrading, and never more than 10%`)
       }
     }
   }
