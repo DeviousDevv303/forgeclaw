@@ -18,8 +18,8 @@ const makeCall = (name: string, input: Record<string, unknown> = {}): ToolCall =
 
 describe('GuardianPosture', () => {
   describe('DEFAULT_GUARDIAN_POSTURE', () => {
-    it('defaults to operator-shell', () => {
-      expect(DEFAULT_GUARDIAN_POSTURE).toBe('operator-shell')
+    it('defaults to autonomous (owner directive, 2026-10-25)', () => {
+      expect(DEFAULT_GUARDIAN_POSTURE).toBe('autonomous')
     })
   })
 
@@ -121,7 +121,7 @@ describe('protected-branch normalization', () => {
 
 describe('site deployment tools (authorized 2026-10-20: fully autonomous)', () => {
   for (const name of ['github_publish_site', 'github_create_repo']) {
-    it(`${name} runs without co-sign in the default operator-shell posture`, () => {
+    it(`${name} runs without co-sign under the default posture`, () => {
       expect(requiresCoSign(makeCall(name, { repo: 'site' }), DEFAULT_GUARDIAN_POSTURE)).toBe(false)
     })
     it(`${name} still needs co-sign under full-cosign`, () => {

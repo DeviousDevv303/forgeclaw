@@ -174,7 +174,7 @@ import { CANONICAL_IDENTITY } from './lib/canonicalIdentity'
 import { createRunJournal, formatRollbackReport, journalRecord, rollbackRun, setActiveRunJournal, type RunJournal } from './lib/runRollback'
 import { cleanOutput } from './lib/cleanOutput'
 import { ledgerContinuationLimit, ledgerContinuationPrompt, owedItems, parseRequestLedger, reportFormatInstruction, settleLedger, splitPipeTables, type SettledItem } from './lib/requestLedger'
-import { extractThinking, type GuardianPosture } from './lib/guardianGate'
+import { extractThinking, DEFAULT_GUARDIAN_POSTURE, type GuardianPosture } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { takeGeneratedImage } from './lib/imageArtifact'
 import { runSubAgent, toolsForCapability } from './lib/managedAgent'
@@ -914,7 +914,7 @@ function App() {
   const [agentResumedState, setAgentResumedState] = useState<CodingAgentState | null>(null)
   const [resumePrompt, setResumePrompt] = useState<string | null>(null)
   const coSignResolvers = useRef<Map<string, (approved: boolean) => void>>(new Map())
-  const [guardianPosture, setGuardianPosture] = useState<GuardianPosture>('operator-shell')
+  const [guardianPosture, setGuardianPosture] = useState<GuardianPosture>(DEFAULT_GUARDIAN_POSTURE)
   const [newerBuild, setNewerBuild] = useState<DeployedBuild | null>(null)
   useEffect(() => {
     let cancelled = false
