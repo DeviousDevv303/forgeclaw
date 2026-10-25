@@ -1,0 +1,167 @@
+{
+  "artifacts": {
+    "report": "KXUFCFIGHT-26OCT24YANDVA-YAN.2.report.md",
+    "report_sha256": "577dbabc35c76b257d91d874655e9c84a840c8bb87c4c23b5da520d23bf1243c",
+    "run_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/40241533761",
+    "world_json": "KXUFCFIGHT-26OCT24YANDVA-YAN.2.sim-world.v1.json",
+    "world_json_sha256": "bda22a9cf123550c23b674d06c423c90e30c878d5ac52f8c5c0b67889ee947a6",
+    "world_svg": "KXUFCFIGHT-26OCT24YANDVA-YAN.2.world.svg",
+    "world_svg_sha256": "0f1c6cd4b22f1d481a42fe3587039217b7c5b292bbcbcced94d3bff4401bc020",
+    "world_truncated": false
+  },
+  "attempt": 2,
+  "baseline_direct": {
+    "model": "kimi-k2.6",
+    "p_a": 55.0,
+    "parsed": true,
+    "pick": "A",
+    "why": "Yan's prior win and striking edge in trilogy with older, wrestling-heavy opponent."
+  },
+  "config": {
+    "active_rounds": 4,
+    "active_rounds_run": 4,
+    "agents_cap": 8,
+    "agents_prepared": 4,
+    "clock": {
+      "active_round_numbers": [
+        9,
+        10,
+        11,
+        12
+      ],
+      "active_rounds": 4,
+      "activity": "guaranteed",
+      "config_rounds": 96,
+      "first_active_hour": 8,
+      "first_active_round": 9,
+      "idle_rounds": 8,
+      "max_rounds": 12,
+      "minutes_per_round": 60
+    },
+    "counts_toward_bar": false,
+    "deadline_s": 8100,
+    "engine_label": "kimi-k2.6",
+    "llm_model": "kimi-k2.6",
+    "llm_provider": "moonshot",
+    "locale": "en",
+    "max_rounds": 12,
+    "platform": "parallel",
+    "preset": "tiny",
+    "reproducible": false,
+    "rounds_run": 12,
+    "sampling": "the provider's fixed values: the meter removed temperature, top_p, n, presence_penalty, frequency_penalty from MiroFish's calls (this engine rejects any other value); see usage.request_policy",
+    "simulated_actions": 15,
+    "size_class": "tiny",
+    "thinking": "disabled"
+  },
+  "engine": {
+    "environment_digest": "sha256:5c1a68d8c1923486b5f38ba49a80f15890adabc9ab9424be6a331f698705c876",
+    "name": "mirofish",
+    "python": "3.11",
+    "repo_commit": "7657031ac01184afe2cb220f5ee3545573b5e843",
+    "runner_image": "ubuntu-24.04",
+    "torch": "2.9.1+cpu",
+    "torch_cpu_sha256": "3de2adb9b4443dc9210ef1f1b16da3647ace53553166d6360bbbd7edd6f16e4d",
+    "uv_lock_sha256": "877281f85fe26eb120149503b0b99021fd7e3e577d026f584857d03839595b09",
+    "uv_version": "0.9.26"
+  },
+  "extraction": {
+    "inconsistent": 0,
+    "iqr_p_a": 9.8,
+    "median_p_a": 53.5,
+    "method": "agent-poll-v1",
+    "n": 4,
+    "p_a_n": 4,
+    "picks": {
+      "A": 3,
+      "B": 1
+    },
+    "q1_p_a": 47.8,
+    "q3_p_a": 57.5,
+    "question_sha256": "c1426be75e0b519cdf4b8a94eed94af95266ab17efe26ea434779be0e1c130e1",
+    "unparsed": 0
+  },
+  "invocation_id": "spike2-20261025-2",
+  "key": {
+    "card_id": "SPIKE2-UFC333",
+    "market_ticker": "KXUFCFIGHT-26OCT24YANDVA-YAN"
+  },
+  "lean_for_yes_side": 53.5,
+  "nexus": {
+    "emitted": false,
+    "file": null,
+    "reason": "not emitted: the tiny preset does not count toward the 10-sim bar, and intake would count it"
+  },
+  "reason": "",
+  "rerun_of": null,
+  "schema": "forgeclaw.mirofish-run-record.v1",
+  "seed": {
+    "packet_chars": 662,
+    "packet_sha256": "896001433a7087c7006c7aedfc42059e08f81b5a3b84d57aa84ebe74c3b711d8",
+    "provenance": {
+      "human_state": "absent",
+      "matchup_read": "absent",
+      "stats_snapshot": "espn:600061267"
+    },
+    "thin": true,
+    "thin_reasons": [
+      "packet is 662 characters (under 1500)"
+    ]
+  },
+  "sides": [
+    "Petr Yan",
+    "Merab Dvalishvili"
+  ],
+  "status": "completed",
+  "timing": {
+    "finished_at": "2026-10-25T22:50:39Z",
+    "started_at": "2026-10-25T22:43:58Z",
+    "wall_seconds": 401.2
+  },
+  "usage": {
+    "cached_tokens_in_reported": 116224,
+    "calls": 58,
+    "ceiling_hit": false,
+    "ceiling_usd": 0.4,
+    "cost_basis": "upper bound: every prompt token at the cache-miss price",
+    "cost_usd": 0.298718,
+    "error_samples": [],
+    "model": "kimi-k2.6",
+    "price_per_mtok_usd": {
+      "input": 0.95,
+      "output": 4.0
+    },
+    "price_source": "Moonshot figures are from third-party price trackers, which disagree slightly; Moonshot's own pricing page was not reached. Verify before relying on the dollar figures.",
+    "price_table_version": "2026-10-24",
+    "provider": "moonshot",
+    "refused_other": 0,
+    "refused_over_ceiling": 0,
+    "request_policy": {
+      "empty_assistant_dropped": 6,
+      "fields_removed": {
+        "temperature": 47
+      },
+      "pinned_fields": [
+        "temperature",
+        "top_p",
+        "n",
+        "presence_penalty",
+        "frequency_penalty"
+      ],
+      "thinking": "disabled",
+      "thinking_overridden": 0
+    },
+    "tokens_in": 213990,
+    "tokens_out": 23857,
+    "unmetered_calls_estimated": 0,
+    "upstream_errors": 0
+  },
+  "yes_side": "Petr Yan",
+  "zep": {
+    "basis": "500-char chunks, 2 credits per chunk; graph-memory updates off. Vendor figures are unverified.",
+    "credits_est": 4,
+    "deleted": true,
+    "episodes_est": 2,
+    "graph_id": "mirofish_26b72dfd522046e5"
+  }
+}
