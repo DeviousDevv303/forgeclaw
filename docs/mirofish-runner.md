@@ -36,16 +36,16 @@ screens for secrets and owner-private words (bankroll, positions, keys) and refu
 
 | preset | active rounds | agent cap | platform | counts toward the 10-sim bar | est. cost on Moonshot K2.6 |
 |---|---|---|---|---|---|
-| `tiny` | 4 | 8 | both | **no** (a pipeline proof; never filed to intake) | ~$0.22 (now both platforms: likely more) |
+| `tiny` | 4 | 8 | both | **no** (a pipeline proof; never filed to intake) | **$0.30 measured** (4 agents, run 40241533761) |
 | `small` | 12 | 14 | both | yes | ~$0.72 |
 | `mid` | 24 | 20 | both | yes | ~$1.83 |
 
 Every preset runs MiroFish's `parallel` script (Twitter and Reddit). Its reddit-only script writes no `actions.jsonl` (only a
 SQLite file) and never reports a platform as finished, so no world could ever be built from it. "Active rounds" are rounds in
 which MiroFish's script can pick an agent; the runner adds the rounds in which it cannot (see *The clock* below), which make no
-LLM call. **Measured so far:** everything before the simulation (ontology, graph, profiles, config; 7 calls) cost **$0.03** with
-thinking off (run 40166223749); everything through the poll with 4 agents cost **$0.046** (12 calls, run 40238192399), but no
-agent acted in that run's simulation. The simulation proper and the report are still unmeasured.
+LLM call. **Measured:** a complete `tiny` run with 4 agents, thinking off, cost **$0.30** (58 calls, run 40241533761):
+ontology to config $0.038 (8 calls), the simulation $0.018 (6), the poll $0.010 (4), and MiroFish's report with the graph read
+and the baseline **$0.232 (40 calls, 78%)**. The report, not the swarm, is most of the cost. `small` and `mid` are unmeasured.
 
 Estimates are from reading the code (calls × tokens), at third-party-tracker prices ($0.95 in / $4.00 out per M tokens) that
 disagree slightly; thinking tokens bill as output, so real cost may be higher. **Only `tiny` fits the default $0.40 ceiling on
@@ -106,6 +106,10 @@ prompt token at the cache-miss price), and the provider's usage page is the invo
   `engine.rounds`.
 - **No swarm, no world.** A run in which no agent acted after the seeded posts (`config.simulated_actions: 0`) ends `failed`
   instead of building a world from the seed alone.
+- **Seed posts are not counted twice.** MiroFish's script logs its seed posts as round 0, then reads its action table from row 0
+  (`last_rowid = 0`), so each platform's first agent round logs the seed posts again. The runner drops those repeats (only in that
+  round, only an exact match on agent, type and text, each seed at most once) before counting actions or building the world,
+  and records how many in `config.relogged_seed_posts_dropped`.
 - **Cleanup order.** On every outcome the runner stops the simulation if it may still run, waits until MiroFish no longer counts
   it as active, then deletes the Zep graph, retrying a `409` (MiroFish's `GraphInUseError`) up to 4 times. `zep.deleted` says
   whether it worked. The first post-fix live run skipped the stop and left its graph in Zep. Cleanup never raises: the record
@@ -151,7 +155,7 @@ Statuses: `completed`, `aborted_budget`, `aborted_agents_over_cap`, `aborted_zep
 
 ## What is verified, and what is not
 
-Verified offline (165 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
+Verified offline (170 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
 and its SVG, the requirement filter, the runner's orchestration and refusals against a **scripted fake MiroFish**, the workflow's
 safety properties, and the intake line against the real TypeScript validator and grader. The hash-pinned CPU install was also
 run for real (1.35 GB, about 2 minutes, `pip check` clean, `import oasis` works).
@@ -182,8 +186,9 @@ rounds `plan_clock` asked for (8 idle + 4 active):
 
 It also caught a bug the fake had hidden: the interview results carry `agent_id` as a string (`"0"`) while profiles and actions
 use integers, so every agent would have shown as `undecided` in the world. The runner converts it, and the fake now returns
-strings, as the real script does. **Still not verified live:** the backend's own run-status and interview endpoints over HTTP,
-the report stage, real cost, and whether real agents' poll answers parse.
+strings, as the real script does. At that point the backend's own run-status and interview endpoints over HTTP, the report
+stage, real cost and whether real agents' poll answers parse were not verified live; the fourth and fifth runs below verified all
+four.
 
 **Third live run (2026-10-25, run 40234425538, `SPIKE-UFC333`, `tiny`, thinking off, $0.058, 3 minutes):** the runner fixes
 held live. The clock plan was 60-minute rounds, agents awake from 08:00, 8 idle + 4 active = 12 rounds; 5 agents; the simulation
@@ -207,12 +212,31 @@ graph was deleted. The run then failed for two reasons, both fixed above and rep
   0 agent actions with the old 4-round plan and agent actions in rounds 7 to 10 (06:00 to 09:00) on both platforms with the
   new 10-round plan.
 
-`SPIKE2-UFC333` has one attempt left.
+**Fifth live run: the first completed one (2026-10-25, run 40241533761, `SPIKE2-UFC333` attempt 2, `tiny`, thinking off,
+$0.30, 401 s).** Every stage worked live:
+- the clock: agents first able to act at 08:00, so 8 idle + 4 active = 12 rounds;
+- the poll: 4 of 4 answered, 3 for Yan and 1 for the other side, median P_A 53.5, 0 unparsed, the same figures as attempt 1;
+- the end-of-simulation wait: one 5-second poll, then the report was accepted;
+- the report: 26.9 KB in 4 sections, written in 4 minutes;
+- the Zep graph was deleted;
+- the world, its SVG and the report were published to `sim-results` with matching hashes.
 
-**Not verified: a completed run against the real MiroFish with real keys.** The fake follows the request and response shapes in
-MiroFish's own handlers, checked live up to the poll (fourth run above). Specifically open: the report stage; agents acting in
-a live simulation; real run time (estimated 10–30 minutes for `mid`); whether poll answers keep parsing at larger swarm sizes
-(4 of 4 so far); the real Zep quota; and Moonshot's real price and credit.
+Three things limit what the world means:
+1. **The agents are the packet's entities, not a crowd.** MiroFish makes one agent per entity it extracts. The 662-character
+   packet gave the venue (Etihad Arena), ESPN and the two fighters, and each fighter-agent picked itself. As a pipeline proof
+   that is fine; as a forecast the poll means nothing. A counted sim needs a packet that names crowd-type entities (analysts,
+   coaches, training partners, fan communities) and runs past the 1,500-character thin mark.
+2. **9 of the 15 actions it counted were repeated seed posts** (see *Seed posts are not counted twice*, fixed after this run).
+   The genuine agent actions were 6: a quote, a comment, a repost, two posts and one do-nothing. The fix was checked against the
+   real script with seed posts added: it dropped the 5 repeats and kept all 8 agent posts.
+3. **Seed posts can carry the wrong voice.** MiroFish assigns seed posts by entity *type*, round-robin
+   (`_assign_initial_post_agents`). Both fighters share a type, so the post written as Yan was posted by the Merab agent and
+   the reverse. MiroFish runs unmodified, so the world shows this as it happened.
+
+`SPIKE2-UFC333` is closed (completed). The next run needs a new card.
+
+**Still open:** real run time for `small` and `mid` (estimated 10–30 minutes for `mid`) and their cost; whether poll answers
+keep parsing at larger swarm sizes (4 of 4 so far); the real Zep quota; and Moonshot's real price and credit.
 
 Not built: the Anthropic engine (it needs OpenAI-to-Messages translation in the meter; spike first), a free local Qwen lane
 (about 3 hours for a `tiny` world, unproven on tool-calling), and a seed packet for NFL.

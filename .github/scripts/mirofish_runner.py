@@ -31,6 +31,7 @@ Standard library only.
 from __future__ import annotations
 
 import argparse
+import collections
 import glob
 import hashlib
 import json
@@ -326,7 +327,7 @@ class Run:
         self.started = clock()
         self.deadline_s = float(args.get('deadline_s') or DEFAULT_DEADLINE_S)
         self.project_id = self.graph_id = self.simulation_id = None
-        self.agents_prepared = self.rounds_run = self.simulated_actions = None
+        self.agents_prepared = self.rounds_run = self.simulated_actions = self.relogged_seed_posts = None
         self.clock_plan: dict | None = None
         # ended: MiroFish has published a terminal run status, so the process is gone and cleanup need not stop it.
         self.simulation_started = self.simulation_ended = False
@@ -554,6 +555,35 @@ class Run:
             self.sleep(5)
 
 
+def drop_relogged_seed_posts(actions: dict) -> tuple[dict, int]:
+    """Each platform's actions without the seed posts MiroFish logs a second time, and how many were dropped.
+
+    MiroFish's script logs its seed posts as round 0, then reads new actions from its trace table starting at row 0
+    (`last_rowid = 0` in run_parallel_simulation.py at the pinned commit), so its first read, in the platform's first round with
+    an agent step, logs the seed posts again under that round. Seen live (2026-10-25, run 40241533761): 9 of the 15 entries after
+    round 0 were these repeats, shown in the world as agent posts. Only that first round is touched, and an entry is dropped only
+    when it matches a round-0 seed post by agent, action type and text, each seed post at most once: a later post that repeats a
+    seed's words is the agent's own."""
+    def is_action(e: dict) -> bool:
+        return 'event_type' not in e and bool(e.get('action_type')) and isinstance(e.get('round'), int)
+
+    def key(e: dict) -> tuple:
+        return (e.get('agent_id'), e.get('action_type'), str((e.get('action_args') or {}).get('content') or '').strip())
+    cleaned, dropped = {}, 0
+    for platform, entries in actions.items():
+        seeds = collections.Counter(key(e) for e in entries if is_action(e) and e['round'] == 0)
+        first = min((e['round'] for e in entries if is_action(e) and e['round'] >= 1), default=None)
+        kept = []
+        for e in entries:
+            if seeds and is_action(e) and e['round'] == first and seeds[key(e)] > 0:
+                seeds[key(e)] -= 1
+                dropped += 1
+                continue
+            kept.append(e)
+        cleaned[platform] = kept
+    return cleaned, dropped
+
+
 def simulated_actions(actions: dict) -> int:
     """Actions agents took in the simulated rounds. Round 0 holds only the posts the script seeds before its loop."""
     return sum(1 for entries in actions.values() for e in entries
@@ -626,6 +656,7 @@ def build_record(*, args: dict, attempt: int, attempts: list[dict], run: Run, st
         'config': {'preset': args['preset'], 'size_class': args['preset'], 'counts_toward_bar': p['counts_toward_bar'], 'platform': p['platform'],
                    'active_rounds': p['active_rounds'], 'max_rounds': (run.clock_plan or {}).get('max_rounds'), 'clock': run.clock_plan,
                    'rounds_run': run.rounds_run, 'active_rounds_run': active_rounds_run(run), 'simulated_actions': run.simulated_actions,
+                   'relogged_seed_posts_dropped': run.relogged_seed_posts,
                    'agents_cap': p['agents_cap'], 'agents_prepared': run.agents_prepared, 'deadline_s': int(run.deadline_s),
                    'llm_provider': args['provider'], 'llm_model': args['model'], 'engine_label': model_label(args['model'], meter),
                    'thinking': policy.get('thinking', 'provider-default'), 'locale': 'en', 'sampling': sampling, 'reproducible': False},
@@ -802,7 +833,8 @@ def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Calla
     artifact_info: dict = {'run_url': args.get('run_url', '')}
     actions: dict = {}
     if status == 'completed':
-        actions = read_actions(args['mirofish_dir'], run.simulation_id) if args.get('mirofish_dir') else {}
+        actions, run.relogged_seed_posts = drop_relogged_seed_posts(
+            read_actions(args['mirofish_dir'], run.simulation_id) if args.get('mirofish_dir') else {})
         run.simulated_actions = simulated_actions(actions)
         if not actions:
             status, reason = 'failed', '[artifacts] no actions.jsonl was found for the simulation, so the world cannot be built'
