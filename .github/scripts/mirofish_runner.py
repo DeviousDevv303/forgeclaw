@@ -60,12 +60,28 @@ SAFE_ID = re.compile(r'^[A-Za-z0-9._-]{1,120}$')
 HEX40, HEX64 = re.compile(r'^[0-9a-f]{40}$'), re.compile(r'^[0-9a-f]{64}$')
 
 # size_class decides whether a run counts toward the lane's "10 comparable sims" bar: a tiny world is a pipeline proof.
+# Every preset runs MiroFish's `parallel` script: its reddit-only script writes no actions.jsonl (only a SQLite file), so a
+# world could never be built from it, and it never signals completion. `active_rounds` counts rounds with agents awake; the
+# rounds before the agents' first active hour are added on top (see plan_clock) and cost nothing.
 PRESETS = {
-    'tiny': {'platform': 'reddit', 'max_rounds': 4, 'agents_cap': 8, 'parallel_profiles': 3, 'counts_toward_bar': False},
-    'small': {'platform': 'parallel', 'max_rounds': 12, 'agents_cap': 14, 'parallel_profiles': 5, 'counts_toward_bar': True},
-    'mid': {'platform': 'parallel', 'max_rounds': 24, 'agents_cap': 20, 'parallel_profiles': 5, 'counts_toward_bar': True},
+    'tiny': {'platform': 'parallel', 'active_rounds': 4, 'agents_cap': 8, 'parallel_profiles': 3, 'counts_toward_bar': False},
+    'small': {'platform': 'parallel', 'active_rounds': 12, 'agents_cap': 14, 'parallel_profiles': 5, 'counts_toward_bar': True},
+    'mid': {'platform': 'parallel', 'active_rounds': 24, 'agents_cap': 20, 'parallel_profiles': 5, 'counts_toward_bar': True},
 }
-STAGE_TIMEOUTS_S = {'ontology': 600, 'graph': 1200, 'prepare': 2400, 'simulate': 5400, 'poll': 900, 'report': 2400}
+STAGE_TIMEOUTS_S = {'ontology': 600, 'graph': 1200, 'prepare': 2400, 'simulate': 5400, 'ready': 300, 'poll': 900, 'report': 2400}
+# The stage limits add up to more than the workflow's 150-minute job limit, so one overall deadline caps them all. Time is held
+# back for cleanup (stop the simulation, delete the Zep graph) and the record, so a slow run ends as `timeout` with both done
+# instead of being killed by Actions with neither (seen live, 2026-10-25: a 91-minute hang left the graph in Zep).
+DEFAULT_DEADLINE_S = 8100
+CLEANUP_RESERVE_S = 240
+# Cleanup must fit the reserve even when MiroFish hangs, so its calls get a short HTTP limit, not the 120 s default.
+CLEANUP_HTTP_TIMEOUT_S = 20
+# MiroFish's simulation script defaults, used only when its prepared config leaves a field out.
+SCRIPT_MINUTES_PER_ROUND, SCRIPT_TOTAL_HOURS, SCRIPT_ACTIVE_HOURS = 30, 72, tuple(range(8, 23))
+# MiroFish refuses to delete a graph while a simulation using it is in one of these states (GraphInUseError, HTTP 409).
+ACTIVE_RUNNER_STATUSES = ('starting', 'running', 'paused', 'stopping')
+GRAPH_DELETE_ATTEMPTS, GRAPH_DELETE_RETRY_S, INACTIVE_WAIT_S = 4, 10, 60
+PLATFORM_FLAGS = {'parallel': ('twitter_completed', 'reddit_completed'), 'twitter': ('twitter_completed',), 'reddit': ('reddit_completed',)}
 
 # Material that must never reach MiroFish or Zep. A deliberately blunt screen.
 _SECRET_PATTERNS = [
@@ -195,18 +211,46 @@ class Miro:
     def post(self, stage: str, path: str, body: dict, timeout_s: float | None = None):
         return self._ok(stage, *self.http.call('POST', path, body, timeout_s=timeout_s))
 
-    def get(self, stage: str, path: str):
-        return self._ok(stage, *self.http.call('GET', path))
+    def get(self, stage: str, path: str, timeout_s: float | None = None):
+        return self._ok(stage, *self.http.call('GET', path, timeout_s=timeout_s))
 
-    def delete(self, stage: str, path: str):
-        return self._ok(stage, *self.http.call('DELETE', path))
+    def delete(self, stage: str, path: str, timeout_s: float | None = None):
+        return self._ok(stage, *self.http.call('DELETE', path, timeout_s=timeout_s))
 
-    def upload(self, stage: str, path: str, fields: dict, files: list):
+    def upload(self, stage: str, path: str, fields: dict, files: list, timeout_s: float | None = None):
         raw, ctype = multipart(fields, files)
-        return self._ok(stage, *self.http.call('POST', path, raw=raw, headers={'Content-Type': ctype}))
+        return self._ok(stage, *self.http.call('POST', path, raw=raw, headers={'Content-Type': ctype}, timeout_s=timeout_s))
 
 
 # ─── Pipeline ────────────────────────────────────────────────────────────────
+
+def plan_clock(config: dict, active_rounds: int) -> dict:
+    """How many rounds to ask for so the run reaches the agents' waking hours.
+
+    MiroFish's simulated clock starts at 00:00 and an agent only acts in its configured active hours (07:00 to 12:00 onward in
+    every config it generates). The first live run asked for 4 rounds of 60 minutes, 00:00 to 04:00, and no agent ever acted.
+    The script cannot be told a start hour and runs unmodified, so the runner asks for the idle rounds before the first active
+    hour plus `active_rounds`. An idle round makes no LLM call (the script skips it), so the idle rounds cost nothing."""
+    time_config = config.get('time_config') or {}
+    # The same lookups the script makes (a default only when the key is absent), so the plan matches what will run.
+    minutes = time_config.get('minutes_per_round', SCRIPT_MINUTES_PER_ROUND)
+    hours = time_config.get('total_simulation_hours', SCRIPT_TOTAL_HOURS)
+    for name, value in (('minutes_per_round', minutes), ('total_simulation_hours', hours)):
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise RunnerError('prepare', f'the prepared config has an unusable {name} ({value!r}); the simulation script would fail on it')
+    config_rounds = (hours * 60) // minutes
+    awake = set()
+    for agent in config.get('agent_configs') or []:
+        hours = agent.get('active_hours', SCRIPT_ACTIVE_HOURS)
+        awake.update(h for h in hours if isinstance(h, int) and 0 <= h <= 23)
+    if not awake:
+        raise RunnerError('prepare', 'no prepared agent has any active hour, so no agent could ever act. Nothing was simulated.')
+    first = next((r for r in range(config_rounds) if (r * minutes // 60) % 24 in awake), None)
+    if first is None:
+        raise RunnerError('prepare', f'no round of the prepared {config_rounds}-round schedule falls in an active hour. Nothing was simulated.')
+    wanted = min(first + active_rounds, config_rounds)
+    return {'minutes_per_round': minutes, 'first_active_round': first + 1, 'first_active_hour': (first * minutes // 60) % 24,
+            'idle_rounds': first, 'active_rounds': max(wanted - first, 0), 'max_rounds': wanted, 'config_rounds': config_rounds}
 
 def wait_for(stage: str, fetch: Callable[[], dict], is_done: Callable[[dict], bool], is_failed: Callable[[dict], str | None],
              timeout_s: float, sleep: Callable[[float], None], clock: Callable[[], float], interval_s: float = 5.0,
@@ -227,27 +271,67 @@ def wait_for(stage: str, fetch: Callable[[], dict], is_done: Callable[[dict], bo
         sleep(interval_s)
 
 
+def as_agent_id(value):
+    """An agent id as the integer the profiles and actions use, when it is one; anything else unchanged."""
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return value
+
+
 def task_failure(state: dict) -> str | None:
     return f'task failed: {str(state.get("error") or state.get("message") or "no detail")[:300]}' if state.get('status') == 'failed' else None
 
 
 class Run:
-    """One attempt's state. `meter` is a callable returning the metering proxy's snapshot."""
+    """One attempt's state. `meter` is a callable returning the metering proxy's snapshot; `log` prints one progress line."""
 
-    def __init__(self, miro: Miro, args: dict, meter: Callable[[], dict], direct: Callable[[str], str], sleep, clock):
+    def __init__(self, miro: Miro, args: dict, meter: Callable[[], dict], direct: Callable[[str], str], sleep, clock,
+                 log: Callable[[str], None] | None = None):
         self.miro, self.args, self.meter, self.direct, self.sleep, self.clock = miro, args, meter, direct, sleep, clock
+        # Progress goes to stderr: stdout stays the one JSON summary the workflow and the CLI tests read.
+        self.log_line = log or (lambda line: print(line, file=sys.stderr, flush=True))
+        self.started = clock()
+        self.deadline_s = float(args.get('deadline_s') or DEFAULT_DEADLINE_S)
         self.project_id = self.graph_id = self.simulation_id = None
         self.agents_prepared = self.rounds_run = None
+        self.clock_plan: dict | None = None
+        self.simulation_started = self.env_closed = False
         self.poll_answers: list[dict] = []
         self.profiles: list[dict] = []
         self.graph_data: dict = {}
         self.report_markdown = ''
         self.baseline = None
         self.graph_deleted: bool | None = None
+        self._last_round_logged = None
 
     @property
     def preset(self) -> dict:
         return PRESETS[self.args['preset']]
+
+    def log(self, stage: str, message: str) -> None:
+        """One line in the job log per step, with the spend so far: the run is watchable while it runs, not only after."""
+        try:
+            snap = self.meter()
+        except Exception:  # noqa: BLE001 - a progress line must never break the run
+            snap = {}
+        self.log_line(f'[runner +{self.clock() - self.started:5.0f}s] {stage}: {message} '
+                      f'(${float(snap.get("cost_usd") or 0):.4f} so far, {snap.get("calls", 0)} LLM calls)')
+
+    def limit(self, stage: str) -> float:
+        """The stage's own limit, cut short by the run's overall deadline, keeping CLEANUP_RESERVE_S for cleanup and the record."""
+        left = self.started + self.deadline_s - CLEANUP_RESERVE_S - self.clock()
+        if left <= 0:
+            raise RunnerError(stage, f'the run deadline ({int(self.deadline_s)} s) was reached before {stage}', status='timeout')
+        return min(STAGE_TIMEOUTS_S[stage], left)
+
+    def wait(self, stage: str, fetch, is_done, is_failed, on_tick=None) -> dict:
+        limit = self.limit(stage)
+        try:
+            return wait_for(stage, fetch, is_done, is_failed, limit, self.sleep, self.clock, on_tick=on_tick)
+        except RunnerError as error:
+            if error.status == 'timeout' and limit < STAGE_TIMEOUTS_S[stage]:
+                raise RunnerError(stage, f'{error}: cut short by the run deadline ({int(self.deadline_s)} s)', status='timeout') from None
+            raise
 
     def _budget_check(self):
         if self.meter().get('ceiling_hit'):
@@ -257,18 +341,19 @@ class Run:
         a, p = self.args, self.preset
         side_a, side_b = a['sides']
         text = a['packet_text']
-        # 1. ontology
+        # 1. ontology (one synchronous LLM call inside MiroFish, so it gets the stage limit, not the HTTP default)
+        self.log('ontology', 'asking MiroFish to read the packet')
         data = self.miro.upload('ontology', '/api/graph/ontology/generate', {
             'simulation_requirement': f'Predict how the fight between {side_a} and {side_b} will play out, from the seed material.',
             'project_name': f'{a["card_id"]}-{a["market_ticker"]}'[:80], 'additional_context': ''},
-            [('files', 'packet.md', text.encode('utf-8'))])
+            [('files', 'packet.md', text.encode('utf-8'))], timeout_s=self.limit('ontology'))
         self.project_id = data.get('project_id')
         if not self.project_id:
             raise RunnerError('ontology', 'MiroFish returned no project_id')
         # 2. graph (Zep ingestion happens here)
+        self.log('graph', 'building the knowledge graph in Zep')
         task = self.miro.post('graph', '/api/graph/build', {'project_id': self.project_id, 'chunk_size': ZEP_CHUNK_CHARS, 'chunk_overlap': ZEP_CHUNK_OVERLAP})
-        done = wait_for('graph', lambda: self.miro.get('graph', f'/api/graph/task/{task["task_id"]}'), lambda s: s.get('status') == 'completed',
-                        task_failure, STAGE_TIMEOUTS_S['graph'], self.sleep, self.clock)
+        done = self.wait('graph', lambda: self.miro.get('graph', f'/api/graph/task/{task["task_id"]}'), lambda s: s.get('status') == 'completed', task_failure)
         self.graph_id = (done.get('result') or {}).get('graph_id')
         if not self.graph_id:
             raise RunnerError('graph', 'the graph task completed without a graph_id')
@@ -281,12 +366,13 @@ class Run:
         if not self.simulation_id:
             raise RunnerError('create', 'MiroFish returned no simulation_id')
         # 4. prepare (profiles + LLM-generated config)
+        self.log('prepare', f'graph {self.graph_id} ready; generating agent profiles and the simulation config')
         prep = self.miro.post('prepare', '/api/simulation/prepare', {
             'simulation_id': self.simulation_id, 'use_llm_for_profiles': True,
             'parallel_profile_count': p['parallel_profiles'], 'force_regenerate': False})
         if not prep.get('already_prepared'):
-            wait_for('prepare', lambda: self.miro.post('prepare', '/api/simulation/prepare/status', {'task_id': prep['task_id'], 'simulation_id': self.simulation_id}),
-                     lambda s: s.get('status') in ('completed', 'ready'), task_failure, STAGE_TIMEOUTS_S['prepare'], self.sleep, self.clock)
+            self.wait('prepare', lambda: self.miro.post('prepare', '/api/simulation/prepare/status', {'task_id': prep['task_id'], 'simulation_id': self.simulation_id}),
+                      lambda s: s.get('status') in ('completed', 'ready'), task_failure)
         # 5. agent count, checked BEFORE any simulation token is spent
         profile_platform = 'twitter' if platform == 'twitter' else 'reddit'
         profiles = self.miro.get('prepare', f'/api/simulation/{self.simulation_id}/profiles?platform={profile_platform}')
@@ -297,14 +383,27 @@ class Run:
                                          'Nothing was simulated.', status='aborted_agents_over_cap')
         if self.agents_prepared < 2:
             raise RunnerError('prepare', f'MiroFish prepared {self.agents_prepared} agent(s): too few for a swarm')
+        # 6. the clock: enough rounds to reach the agents' waking hours (idle rounds make no LLM call)
+        self.clock_plan = plan_clock(self.miro.get('prepare', f'/api/simulation/{self.simulation_id}/config'), p['active_rounds'])
+        cp = self.clock_plan
+        self.log('prepare', f'{self.agents_prepared} agents; {cp["minutes_per_round"]}-minute rounds, first agent awake at '
+                            f'{cp["first_active_hour"]:02d}:00 (round {cp["first_active_round"]}), so {cp["idle_rounds"]} idle + '
+                            f'{cp["active_rounds"]} active = {cp["max_rounds"]} rounds')
         self._budget_check()
-        # 6. start
+        # 7. start (marked started first: a start that half-succeeds is still stopped by cleanup)
+        self.simulation_started = True
         self.miro.post('start', '/api/simulation/start', {
-            'simulation_id': self.simulation_id, 'platform': platform, 'max_rounds': p['max_rounds'], 'enable_graph_memory_update': False})
-        # 7. simulate
+            'simulation_id': self.simulation_id, 'platform': platform, 'max_rounds': cp['max_rounds'], 'enable_graph_memory_update': False})
+        self.log('simulate', f'started on {platform}')
+        # 8. simulate. Finished means every platform reported its simulation_end (MiroFish's per-platform flag). runner_status
+        # only becomes "completed" once the process exits, and the process deliberately stays alive for the interview poll.
+        flags = PLATFORM_FLAGS[platform]
 
         def tick(state: dict) -> None:
             self.rounds_run = state.get('current_round', self.rounds_run)
+            if self.rounds_run != self._last_round_logged:
+                self._last_round_logged = self.rounds_run
+                self.log('simulate', f'round {self.rounds_run} of {cp["max_rounds"]}')
             if self.meter().get('ceiling_hit'):
                 try:
                     self.miro.post('simulate', '/api/simulation/stop', {'simulation_id': self.simulation_id})
@@ -315,47 +414,91 @@ class Run:
             if state.get('runner_status') in ('failed', 'stopped'):
                 return f'simulation {state.get("runner_status")}: {str(state.get("error") or "no detail")[:300]}'
             return None
-        wait_for('simulate', lambda: self.miro.get('simulate', f'/api/simulation/{self.simulation_id}/run-status'),
-                 lambda s: s.get('runner_status') == 'completed', sim_failure, STAGE_TIMEOUTS_S['simulate'], self.sleep, self.clock, on_tick=tick)
-        # 8. final poll: one fixed question to every agent, on one platform
-        env = self.miro.post('poll', '/api/simulation/env-status', {'simulation_id': self.simulation_id})
-        if not env.get('env_alive'):
-            raise RunnerError('poll', 'the simulation environment is not alive, so the final poll cannot be asked')
+        self.wait('simulate', lambda: self.miro.get('simulate', f'/api/simulation/{self.simulation_id}/run-status'),
+                  lambda s: all(s.get(f) for f in flags) or s.get('runner_status') == 'completed', sim_failure, on_tick=tick)
+        # 9. the environment opens for interviews just after the loop ends ("alive"); asking before that fails
+        self.log('ready', f'simulation finished after {self.rounds_run} rounds; waiting for the agents to take questions')
+        try:
+            self.wait('ready', lambda: self.miro.post('ready', '/api/simulation/env-status', {'simulation_id': self.simulation_id}),
+                      lambda s: bool(s.get('env_alive')), lambda s: None)
+        except RunnerError as error:
+            if 'run deadline' in str(error):
+                raise
+            raise RunnerError('ready', f'the simulation finished but its environment never opened for interviews ({error}), '
+                                       'so the final poll cannot be asked') from None
+        # 10. final poll: one fixed question to every agent, on one platform
         poll_platform = 'twitter' if platform == 'twitter' else 'reddit'
+        poll_limit = self.limit('poll')
         answered = self.miro.post('poll', '/api/simulation/interview/all', {
             'simulation_id': self.simulation_id, 'prompt': world_mod.poll_question(side_a, side_b), 'platform': poll_platform,
-            'timeout': STAGE_TIMEOUTS_S['poll']}, timeout_s=STAGE_TIMEOUTS_S['poll'] + 60)
+            'timeout': int(poll_limit)}, timeout_s=poll_limit + 60)
         results = (answered.get('result') or {}).get('results') or {}
-        self.poll_answers = [{'agent_id': r.get('agent_id'), 'text': str(r.get('response', ''))} for _, r in sorted(results.items())]
+        # MiroFish's interview results carry agent_id as a string ('0'); profiles and actions use integers, and the world matches
+        # them by key, so an unconverted id would leave every agent "undecided" (seen against the real script, 2026-10-25).
+        self.poll_answers = [{'agent_id': as_agent_id(r.get('agent_id')), 'text': str(r.get('response', ''))} for _, r in sorted(results.items())]
+        self.log('poll', f'{len(self.poll_answers)} agents answered the poll')
         try:
             self.miro.post('poll', '/api/simulation/close-env', {'simulation_id': self.simulation_id})
+            self.env_closed = True
         except RunnerError:
-            pass  # best effort; the job ends the process anyway
+            pass  # cleanup stops the simulation instead
         self._budget_check()
-        # 9. report (narrative only: stored, never parsed for numbers)
+        # 11. report (narrative only: stored, never parsed for numbers)
+        self.log('report', 'MiroFish is writing its report')
         gen = self.miro.post('report', '/api/report/generate', {'simulation_id': self.simulation_id, 'force_regenerate': False})
         if not gen.get('already_completed') and gen.get('status') != 'completed':
-            wait_for('report', lambda: self.miro.post('report', '/api/report/generate/status', {'task_id': gen.get('task_id'), 'simulation_id': self.simulation_id}),
-                     lambda s: s.get('status') == 'completed', task_failure, STAGE_TIMEOUTS_S['report'], self.sleep, self.clock)
+            self.wait('report', lambda: self.miro.post('report', '/api/report/generate/status', {'task_id': gen.get('task_id'), 'simulation_id': self.simulation_id}),
+                      lambda s: s.get('status') == 'completed', task_failure)
         report = self.miro.get('report', f'/api/report/by-simulation/{self.simulation_id}')
         self.report_markdown = str(report.get('markdown_content') or '')
         if not self.report_markdown and report.get('report_id'):
             self.report_markdown = str(self.miro.get('report', f'/api/report/{report["report_id"]}').get('markdown_content') or '')
-        # 10. the graph, for the world (it must be read now: cleanup deletes it from Zep)
+        # 12. the graph, for the world (it must be read now: cleanup deletes it from Zep)
         self.graph_data = self.miro.get('artifacts', f'/api/graph/data/{self.graph_id}')
-        # 11. baseline: one direct call on the same packet (counted by the meter like any other call)
+        # 13. baseline: one direct call on the same packet (counted by the meter like any other call)
         try:
             self.baseline = self.direct(f'{text}\n\n{world_mod.poll_question(side_a, side_b)}')
         except Exception as error:  # noqa: BLE001 - recorded, never fatal: the swarm result stands without it
             self.baseline = {'error': f'{type(error).__name__}: {error}'[:200]}
+        self.log('done', 'report, graph and baseline collected')
 
     def cleanup(self) -> None:
-        if self.graph_id:
+        """Stop the simulation if it may still be running, wait until MiroFish no longer counts it as active, then delete the
+        Zep graph. MiroFish refuses to delete a graph an active simulation uses (409, GraphInUseError): the first live run's
+        timeout path skipped the stop and left its graph in Zep. Never raises: the record is written whatever happens here."""
+        if self.simulation_started and not self.env_closed:
             try:
-                self.miro.delete('cleanup', f'/api/graph/delete/{self.graph_id}')
+                self.miro.post('cleanup', '/api/simulation/stop', {'simulation_id': self.simulation_id}, timeout_s=CLEANUP_HTTP_TIMEOUT_S)
+                self.log('cleanup', 'stopped the simulation')
+            except Exception as error:  # noqa: BLE001 - best effort; the delete below says whether it mattered
+                self.log('cleanup', f'could not stop the simulation: {str(error)[:200]}')
+        if self.simulation_started:
+            self._wait_until_inactive()
+        if not self.graph_id:
+            return
+        for attempt in range(1, GRAPH_DELETE_ATTEMPTS + 1):
+            try:
+                self.miro.delete('cleanup', f'/api/graph/delete/{self.graph_id}', timeout_s=CLEANUP_HTTP_TIMEOUT_S)
                 self.graph_deleted = True
-            except RunnerError:
+                self.log('cleanup', f'deleted the Zep graph {self.graph_id}')
+                return
+            except Exception as error:  # noqa: BLE001 - recorded, never raised
                 self.graph_deleted = False
+                if 'HTTP 409' not in str(error) or attempt == GRAPH_DELETE_ATTEMPTS:
+                    self.log('cleanup', f'the Zep graph {self.graph_id} was NOT deleted: {str(error)[:200]}')
+                    return
+                self.sleep(GRAPH_DELETE_RETRY_S)
+
+    def _wait_until_inactive(self) -> None:
+        give_up = self.clock() + INACTIVE_WAIT_S
+        while self.clock() < give_up:
+            try:
+                state = self.miro.get('cleanup', f'/api/simulation/{self.simulation_id}/run-status', timeout_s=CLEANUP_HTTP_TIMEOUT_S)
+            except Exception:  # noqa: BLE001 - the delete's own answer decides
+                return
+            if str(state.get('runner_status', '')).lower() not in ACTIVE_RUNNER_STATUSES:
+                return
+            self.sleep(5)
 
 
 def read_actions(mirofish_dir: str, simulation_id: str) -> dict:
@@ -422,7 +565,9 @@ def build_record(*, args: dict, attempt: int, attempts: list[dict], run: Run, st
         'engine': {'name': 'mirofish', **{k: args['pins'].get(k) for k in ('repo_commit', 'uv_lock_sha256', 'python', 'torch', 'torch_cpu_sha256', 'uv_version', 'runner_image')},
                    'environment_digest': environment_digest(args['pins'])},
         'config': {'preset': args['preset'], 'size_class': args['preset'], 'counts_toward_bar': p['counts_toward_bar'], 'platform': p['platform'],
-                   'max_rounds': p['max_rounds'], 'rounds_run': run.rounds_run, 'agents_cap': p['agents_cap'], 'agents_prepared': run.agents_prepared,
+                   'active_rounds': p['active_rounds'], 'max_rounds': (run.clock_plan or {}).get('max_rounds'), 'clock': run.clock_plan,
+                   'rounds_run': run.rounds_run, 'active_rounds_run': active_rounds_run(run),
+                   'agents_cap': p['agents_cap'], 'agents_prepared': run.agents_prepared, 'deadline_s': int(run.deadline_s),
                    'llm_provider': args['provider'], 'llm_model': args['model'], 'engine_label': model_label(args['model'], meter),
                    'thinking': policy.get('thinking', 'provider-default'), 'locale': 'en', 'sampling': sampling, 'reproducible': False},
         'extraction': stats, 'lean_for_yes_side': lean_yes, 'baseline_direct': run.baseline,
@@ -523,7 +668,7 @@ def build_nexus_line(record: dict, args: dict) -> tuple[dict | None, str]:
         'ref': args['market_ticker'], 'position_ref': args.get('position_ref') or f'shadow:{args["card_id"]}:{args["market_ticker"]}',
         'seed': {'stats_snapshot': snapshot if present(snapshot) else None, 'matchup_read': present(prov.get('matchup_read')),
                  'human_state': present(prov.get('human_state'))},
-        'engine': {'agents': record['config']['agents_prepared'], 'model': record['config']['engine_label'], 'rounds': record['config']['rounds_run'],
+        'engine': {'agents': record['config']['agents_prepared'], 'model': record['config']['engine_label'], 'rounds': record['config']['active_rounds_run'],
                    'mirofish_commit': pins['repo_commit'], 'image_digest': digest, 'digest_kind': 'source-install-environment',
                    'uv_lock_sha256': pins['uv_lock_sha256']},
         'median_lean_pct': lean, 'side': 'YES', 'report': report,
@@ -556,7 +701,15 @@ def utc(clock_seconds: float) -> str:
     return datetime.fromtimestamp(clock_seconds, timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
-def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Callable[[str], str], *, sleep=time.sleep, clock=time.time) -> tuple[dict, list[str]]:
+def active_rounds_run(run: Run) -> int | None:
+    """Rounds run with agents awake: the idle rounds before the first active hour are bookkeeping, not simulation."""
+    if run.rounds_run is None or run.clock_plan is None:
+        return run.rounds_run
+    return max(int(run.rounds_run) - run.clock_plan['idle_rounds'], 0)
+
+
+def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Callable[[str], str], *, sleep=time.sleep, clock=time.time,
+                log: Callable[[str], None] | None = None) -> tuple[dict, list[str]]:
     """Pre-flight, one pipeline attempt, record. Raises Refusal before spending anything; otherwise always returns a record."""
     if args['preset'] not in PRESETS:
         raise Refusal(f'unknown preset {args["preset"]!r}; known: {sorted(PRESETS)}')
@@ -570,7 +723,7 @@ def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Calla
     attempt = decide_slot(attempts, args.get('rerun_reason', ''))
     side_a, side_b = args['sides']
     started_at = clock()
-    run = Run(miro, args, meter, lambda prompt: parse_direct(direct(prompt), side_a, side_b, args['model']), sleep, clock)
+    run = Run(miro, args, meter, lambda prompt: parse_direct(direct(prompt), side_a, side_b, args['model']), sleep, clock, log)
     status, reason = 'completed', ''
     try:
         run.execute()
@@ -658,6 +811,8 @@ def parse_args(argv=None) -> dict:
     ap.add_argument('--rerun-reason', default='')
     ap.add_argument('--invocation-id', default='')
     ap.add_argument('--run-url', default='')
+    ap.add_argument('--deadline-s', type=int, default=DEFAULT_DEADLINE_S,
+                    help='overall limit for the run, under the job timeout: every stage is cut to fit, with time kept for cleanup and the record')
     ns = ap.parse_args(argv)
     with open(ns.packet, encoding='utf-8') as handle:
         packet_text = handle.read()
@@ -671,7 +826,7 @@ def parse_args(argv=None) -> dict:
             'provider': ns.provider, 'model': ns.model, 'mirofish_url': ns.mirofish_url, 'mirofish_dir': ns.mirofish_dir,
             'meter_url': ns.meter_url, 'results_dir': ns.results_dir, 'out_dir': ns.out_dir, 'pins': pins, 'provenance': provenance,
             'rerun_reason': ns.rerun_reason, 'invocation_id': ns.invocation_id, 'run_url': ns.run_url,
-            'position_ref': ns.position_ref.strip(), 'repo': ns.repo.strip()}
+            'position_ref': ns.position_ref.strip(), 'repo': ns.repo.strip(), 'deadline_s': ns.deadline_s}
 
 
 def main(argv=None) -> int:
