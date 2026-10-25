@@ -117,6 +117,28 @@ function parsePublishFiles(raw: unknown): PublishFile[] {
   return raw as PublishFile[]
 }
 
+/**
+ * GitHub workflow_dispatch inputs are a flat map of strings. Validate the
+ * optional `inputs` argument of github_run_workflow before it is forwarded:
+ * every key must be a non-empty string and every value a string, otherwise
+ * the dispatch fails at GitHub with an opaque 422. Returns the validated map,
+ * or undefined when no inputs were provided (the dispatch body then stays
+ * exactly `{ ref }`, as before).
+ */
+function parseWorkflowDispatchInputs(raw: unknown): Record<string, string> | undefined {
+  if (raw === undefined) return undefined
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new Error('inputs must be an object mapping input names to string values')
+  }
+  const inputs: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (!key) throw new Error('inputs keys must be non-empty strings')
+    if (typeof value !== 'string') throw new Error(`inputs.${key} must be a string (workflow_dispatch inputs are strings)`)
+    inputs[key] = value
+  }
+  return inputs
+}
+
 // These runtime envelopes are for the chat/model boundary only. They must not
 // become part of a user-facing image prompt, where Stable Diffusion may render
 // the labels as visible text or use them as semantic prompt content.
@@ -273,12 +295,13 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'github_run_workflow',
-    description: 'Trigger a GitHub Actions workflow dispatch.',
+    description: 'Trigger a GitHub Actions workflow dispatch. Workflows that declare workflow_dispatch inputs (e.g. mirofish-sim.yml) require them: pass every input via `inputs`.',
     parameters: {
       type: 'object',
       properties: {
         workflow: { type: 'string', description: 'Workflow file name, e.g. deploy.yml' },
         ref:      { type: 'string', description: 'Branch or tag to run on (default: main)' },
+        inputs:   { type: 'object', description: 'Optional workflow_dispatch inputs as a flat map of input names to string values. Omit for workflows that declare no inputs.' },
         owner:    { type: 'string', description: 'GitHub owner' },
         repo:     { type: 'string', description: 'GitHub repo' },
       },
@@ -1211,10 +1234,11 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       case 'github_run_workflow': {
         const workflow = input.workflow as string
         const ref = (input.ref as string) || 'main'
+        const inputs = parseWorkflowDispatchInputs(input.inputs)
         if (!token) throw new Error('No GitHub token configured.')
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
         const runWorkflowSince = Date.now()
-        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, { method: 'POST', headers, body: JSON.stringify({ ref }) })
+        const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, { method: 'POST', headers, body: JSON.stringify(inputs ? { ref, inputs } : { ref }) })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow, since: runWorkflowSince, label: `github_run_workflow ${workflow}` })
         return `✓ Triggered ${workflow} on ${ref} in ${owner}/${repo}`

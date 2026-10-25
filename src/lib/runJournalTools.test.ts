@@ -76,3 +76,66 @@ describe('write tools record rollback information', () => {
     expect(journal.entries()).toEqual([])
   })
 })
+
+describe('github_run_workflow dispatch inputs', () => {
+  beforeEach(() => { vi.stubGlobal('localStorage', new MemoryStorage()) })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  function captureFetch() {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init })
+      return new Response(null, { status: 204 })
+    }))
+    return calls
+  }
+
+  it('forwards inputs to the dispatch request body alongside the ref', async () => {
+    const calls = captureFetch()
+    const journal = createRunJournal()
+    const out = await executeTool({ id: '1', name: 'github_run_workflow', input: { workflow: 'mirofish-sim.yml', inputs: { invocation_id: 'sim-1', card_id: 'UFC333', preset: 'tiny' } } }, ctxWith(journal))
+    expect(out).toContain('Triggered mirofish-sim.yml on main')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].url).toBe('https://api.github.com/repos/o/r/actions/workflows/mirofish-sim.yml/dispatches')
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({ ref: 'main', inputs: { invocation_id: 'sim-1', card_id: 'UFC333', preset: 'tiny' } })
+    expect(journal.entries()).toEqual([expect.objectContaining({ kind: 'workflow_dispatch', workflow: 'mirofish-sim.yml' })])
+  })
+
+  it('without inputs the dispatch body stays exactly { ref }', async () => {
+    const calls = captureFetch()
+    const journal = createRunJournal()
+    await executeTool({ id: '1', name: 'github_run_workflow', input: { workflow: 'build-gate.yml', ref: 'feat/x' } }, ctxWith(journal))
+    expect(calls).toHaveLength(1)
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({ ref: 'feat/x' })
+  })
+
+  it('rejects a non-string input value before any request is made', async () => {
+    const calls = captureFetch()
+    const journal = createRunJournal()
+    const out = await executeTool({ id: '1', name: 'github_run_workflow', input: { workflow: 'mirofish-sim.yml', inputs: { ceiling_usd: 0.4 } } }, ctxWith(journal))
+    expect(out).toMatch(/TOOL ERROR/)
+    expect(out).toContain('inputs.ceiling_usd must be a string')
+    expect(calls).toHaveLength(0)
+    expect(journal.entries()).toEqual([])
+  })
+
+  it('rejects an empty input key before any request is made', async () => {
+    const calls = captureFetch()
+    const journal = createRunJournal()
+    const out = await executeTool({ id: '1', name: 'github_run_workflow', input: { workflow: 'mirofish-sim.yml', inputs: { '': 'x' } } }, ctxWith(journal))
+    expect(out).toMatch(/TOOL ERROR/)
+    expect(out).toContain('inputs keys must be non-empty strings')
+    expect(calls).toHaveLength(0)
+    expect(journal.entries()).toEqual([])
+  })
+
+  it('rejects non-object inputs before any request is made', async () => {
+    const calls = captureFetch()
+    const journal = createRunJournal()
+    const out = await executeTool({ id: '1', name: 'github_run_workflow', input: { workflow: 'mirofish-sim.yml', inputs: 'preset=tiny' } }, ctxWith(journal))
+    expect(out).toMatch(/TOOL ERROR/)
+    expect(out).toContain('inputs must be an object')
+    expect(calls).toHaveLength(0)
+    expect(journal.entries()).toEqual([])
+  })
+})
