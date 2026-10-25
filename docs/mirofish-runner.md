@@ -18,7 +18,9 @@ grading can tell whether the swarm adds anything beyond the packet.
 ## Dispatch
 
 Workflow `MiroFish Sim` (`.github/workflows/mirofish-sim.yml`), manual dispatch only (also from the ForgeClaw chat through
-`github_run_workflow` with `inputs`, which Guardian always asks the owner to co-sign). Inputs: `invocation_id`, `card_id`,
+`github_run_workflow` with `inputs`). Under Guardian's default `autonomous` posture (owner directive, 2026-10-25, #308) the chat
+dispatches without a co-sign, so each run's limits are the dollar ceiling (default $0.40, hard maximum $1.00) and the
+one-sim-per-key rule below; the stricter postures still ask the owner first. Inputs: `invocation_id`, `card_id`,
 `market_ticker`, `sides` (`Name A|Name B`), `yes_side`, `position_ref`, `preset`, `model`, `thinking`, `ceiling_usd`, `packet`,
 `provenance`, `rerun_reason`. Repository secrets (it refuses to start, spending nothing, if either is missing):
 
