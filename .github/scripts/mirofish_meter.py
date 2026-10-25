@@ -20,12 +20,17 @@ Honesty rules, all deliberate:
     by the concurrency, and the snapshot reports it as it is.
   * Streaming is refused (HTTP 400), because a stream cannot be metered here. If MiroFish ever streams, the run fails
     loudly instead of being silently mis-metered.
+  * A provider that pins sampling parameters gets them removed from the request (REQUEST_POLICY), and every removal is
+    counted. MiroFish stays unmodified; the provider applies its own fixed values.
+  * Every error, the provider's or the meter's own, is printed to this process's log and kept (key redacted, truncated) in
+    the snapshot. MiroFish logs only "status=400", so without this a rejected call says nothing about why.
 
 Standard library only, so the runner needs nothing installed beyond MiroFish itself.
 """
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -44,6 +49,23 @@ PRICES: dict[str, dict[str, tuple[float, float]]] = {
 }
 UNMETERED_INPUT_CHARS_PER_TOKEN = 3.5
 UNMETERED_OUTPUT_FALLBACK_TOKENS = 1024
+
+# Moonshot's K2 models pin their sampling and reject any other value with HTTP 400. Moonshot's kimi-k2.6 quickstart (read
+# 2026-10-25): temperature "will use a fixed value 1.0, non-thinking mode will use a fixed value 0.6", top_p 0.95, n 1,
+# presence and frequency penalty 0.0, and "any other value will result in an error". MiroFish sets its own on every call
+# (temperature 0.3 for the ontology, 0.5 and 0.7 elsewhere), which is what failed the first live runs on both K2 models:
+# the ontology call, HTTP 400. MiroFish runs unmodified, so the meter removes those fields and the provider applies its fixed
+# values. Removing rather than setting 1.0 is deliberate: the fixed value depends on the thinking mode.
+PINNED_SAMPLING = ('temperature', 'top_p', 'n', 'presence_penalty', 'frequency_penalty')
+# provider -> model -> (request fields the provider pins, whether the model documents the thinking toggle). The toggle,
+# `thinking: {"type": "enabled" | "disabled"}` (enabled by default), is documented for kimi-k2.6; it was not checked for
+# kimi-k2.7-code, so that model only runs at the provider's default.
+REQUEST_POLICY: dict[str, dict[str, tuple[tuple[str, ...], bool]]] = {
+    'moonshot': {'kimi-k2.6': (PINNED_SAMPLING, True), 'kimi-k2.7-code': (PINNED_SAMPLING, False)},
+}
+THINKING_CHOICES = ('disabled', 'enabled', 'provider-default')
+ERROR_SAMPLES_KEPT = 8
+ERROR_SAMPLE_CHARS = 600
 
 Fetch = Callable[[str, str, dict, bytes | None], tuple]  # (url, method, headers, body) -> (status, content_type, body_bytes)
 
@@ -67,6 +89,11 @@ def price_for(provider: str, model: str) -> tuple[float, float]:
     raise MeterError(f'no price for model "{model}" under provider "{provider}" (priced: {sorted(table)}); no price, no meter, no run')
 
 
+def policy_for(provider: str, model: str) -> tuple[tuple[str, ...], bool]:
+    """(pinned fields to remove, whether the thinking toggle is documented) for this engine; nothing for an unlisted one."""
+    return REQUEST_POLICY.get(provider, {}).get(model, ((), False))
+
+
 def default_fetch(url: str, method: str, headers: dict, body: bytes | None) -> tuple:
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
@@ -79,9 +106,18 @@ def default_fetch(url: str, method: str, headers: dict, body: bytes | None) -> t
 class Meter:
     """Thread-safe tally of what a run has spent."""
 
-    def __init__(self, provider: str, model: str, ceiling_usd: float):
+    def __init__(self, provider: str, model: str, ceiling_usd: float, thinking: str = 'provider-default'):
         self.provider, self.model, self.ceiling_usd = provider, model, float(ceiling_usd)
         self.price_in, self.price_out = price_for(provider, model)
+        self.pinned_fields, toggle_documented = policy_for(provider, model)
+        if thinking not in THINKING_CHOICES:
+            raise MeterError(f'thinking must be one of {list(THINKING_CHOICES)}; got {thinking!r}')
+        if thinking != 'provider-default' and not toggle_documented:
+            raise MeterError(f'the thinking toggle is not documented for {provider}/{model}; run it with thinking=provider-default')
+        self.thinking = thinking
+        self.fields_removed: dict[str, int] = {}
+        self.thinking_overridden = 0
+        self.error_samples: list[dict] = []
         self._lock = threading.Lock()
         self.calls = 0
         self.tokens_in = 0
@@ -105,6 +141,32 @@ class Meter:
                 self.ceiling_hit = True
             else:
                 self.refused_other += 1
+
+    def apply_policy(self, request: dict) -> dict:
+        """The request as the provider must receive it: pinned sampling removed, the run's thinking mode set. Counted."""
+        out = dict(request)
+        removed = [field for field in self.pinned_fields if field in out]
+        for field in removed:
+            del out[field]
+        overridden = False
+        if self.thinking != 'provider-default':
+            wanted = {'type': self.thinking}
+            overridden = 'thinking' in out and out['thinking'] != wanted  # one thinking mode per run, like one model
+            out['thinking'] = wanted
+        with self._lock:
+            for field in removed:
+                self.fields_removed[field] = self.fields_removed.get(field, 0) + 1
+            self.thinking_overridden += int(overridden)
+        return out
+
+    def note_error(self, source: str, status: int, excerpt: str) -> None:
+        """Print every error to the log; keep the first few distinct ones (already redacted by the caller) in the snapshot."""
+        excerpt = excerpt[:ERROR_SAMPLE_CHARS]
+        print(f'{source} error HTTP {status}: {excerpt}', file=sys.stderr, flush=True)
+        with self._lock:
+            sample = {'source': source, 'status': status, 'excerpt': excerpt}
+            if len(self.error_samples) < ERROR_SAMPLES_KEPT and sample not in self.error_samples:
+                self.error_samples.append(sample)
 
     def record(self, request_body: bytes, response_status: int, response_body: bytes) -> None:
         tokens_in = tokens_out = cached = 0
@@ -149,6 +211,9 @@ class Meter:
                 'refused_over_ceiling': self.refused_over_ceiling, 'refused_other': self.refused_other,
                 'cost_usd': round(self.cost_usd, 6), 'ceiling_usd': self.ceiling_usd, 'ceiling_hit': self.ceiling_hit,
                 'cost_basis': 'upper bound: every prompt token at the cache-miss price',
+                'request_policy': {'pinned_fields': list(self.pinned_fields), 'fields_removed': dict(self.fields_removed),
+                                   'thinking': self.thinking, 'thinking_overridden': self.thinking_overridden},
+                'error_samples': [dict(s) for s in self.error_samples],
             }
 
 
@@ -156,8 +221,8 @@ class MeterProxy:
     """Local HTTP server that forwards chat-completion calls to the configured upstream and meters them."""
 
     def __init__(self, upstream_base: str, api_key: str, provider: str, model: str, ceiling_usd: float,
-                 host: str = '127.0.0.1', port: int = 0, fetch: Fetch | None = None):
-        self.meter = Meter(provider, model, ceiling_usd)
+                 host: str = '127.0.0.1', port: int = 0, fetch: Fetch | None = None, thinking: str = 'provider-default'):
+        self.meter = Meter(provider, model, ceiling_usd, thinking)
         self.upstream_base = upstream_base.rstrip('/')
         self._api_key = api_key
         self._fetch = fetch or default_fetch
@@ -178,6 +243,11 @@ class MeterProxy:
         self._server.shutdown()
         self._server.server_close()
 
+    def redact(self, body: bytes) -> str:
+        """A provider error body as text, with the key removed in case anything ever echoes it."""
+        text = body.decode('utf-8', 'replace') if isinstance(body, bytes) else str(body)
+        return text.replace(self._api_key, '[redacted]') if self._api_key else text
+
     def _handler(self):
         proxy = self
 
@@ -193,6 +263,7 @@ class MeterProxy:
                 self.wfile.write(body)
 
             def _error(self, status: int, kind: str, message: str) -> None:
+                proxy.meter.note_error('meter', status, f'{kind}: {message}')
                 self._send(status, json.dumps({'error': {'type': kind, 'message': message}}).encode())
 
             def _upstream_url(self) -> str:
@@ -230,27 +301,30 @@ class MeterProxy:
                     proxy.meter.note_refusal(True)
                     self._error(429, 'meter_ceiling', f'run ceiling of ${proxy.meter.ceiling_usd:.2f} reached')
                     return
+                forwarded = json.dumps(proxy.meter.apply_policy(request), ensure_ascii=False).encode('utf-8')
                 try:
-                    status, ctype, body = proxy._fetch(self._upstream_url(), 'POST', self._headers(), raw)
+                    status, ctype, body = proxy._fetch(self._upstream_url(), 'POST', self._headers(), forwarded)
                 except Exception as error:  # noqa: BLE001 - reported to the caller and counted, never swallowed
                     with proxy.meter._lock:
                         proxy.meter.upstream_errors += 1
                     self._error(502, 'meter_upstream_unreachable', f'{type(error).__name__}: {error}'[:300])
                     return
-                proxy.meter.record(raw, status, body)
+                if status >= 400:
+                    proxy.meter.note_error('upstream', status, proxy.redact(body))
+                proxy.meter.record(forwarded, status, body)
                 self._send(status, body, ctype)
 
         return Handler
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the proxy standalone (the runner normally embeds it): reads PROVIDER, MODEL, UPSTREAM_BASE, CEILING_USD, API_KEY."""
+    """Run the proxy standalone (the runner normally embeds it): reads PROVIDER, MODEL, UPSTREAM_BASE, CEILING_USD, API_KEY, THINKING."""
     import os
     import signal
-    import sys
     try:
         proxy = MeterProxy(os.environ['UPSTREAM_BASE'], os.environ['API_KEY'], os.environ['PROVIDER'], os.environ['MODEL'],
-                           float(os.environ.get('CEILING_USD', '0.40')), port=int(os.environ.get('PORT', '0')))
+                           float(os.environ.get('CEILING_USD', '0.40')), port=int(os.environ.get('PORT', '0')),
+                           thinking=os.environ.get('THINKING', 'provider-default'))
     except (KeyError, ValueError, MeterError) as error:
         print(f'::error title=mirofish-meter::{error}', file=sys.stderr)
         return 1

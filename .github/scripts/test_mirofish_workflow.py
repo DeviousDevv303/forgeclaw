@@ -174,6 +174,27 @@ class NoDriftFromTheCodeItCalls(unittest.TestCase):
         pins = {k: 'x' for k in needed}
         self.assertIsNotNone(mr.environment_digest(pins), 'the workflow must pin every piece environment_digest reads')
 
+    def test_the_thinking_choices_are_ones_the_meter_accepts_and_default_to_disabled(self):
+        allow = re.search(r'case "\$THINKING" in ([^)]+)\)', TEXT).group(1).split('|')
+        self.assertEqual(sorted(allow), ['disabled', 'enabled'])
+        self.assertTrue(set(allow) <= set(mm.THINKING_CHOICES))
+        self.assertRegex(TEXT, r"thinking:\n(?:.*\n)*?\s+default: 'disabled'")
+
+    def test_the_thinking_mode_reaches_the_meter_through_env_and_falls_back_where_the_toggle_is_undocumented(self):
+        run = step_text('Run the simulation')
+        meter = run.split('# 1. The meter')[1].split('# 2. MiroFish')[0]
+        self.assertIn('THINKING="$THINKING"', meter)
+        self.assertIn('THINKING: ${{ inputs.thinking }}', run)
+        self.assertIn('THINKING: ${{ inputs.thinking }}', step_text('Validate inputs'))
+        undocumented = sorted(m for m, (_, toggle) in mm.REQUEST_POLICY['moonshot'].items() if not toggle)
+        self.assertEqual(undocumented, ['kimi-k2.7-code'])
+        fallback = re.search(r'if \[ "\$MODEL" = "kimi-k2\.7-code" \]; then\n(.*?)\n\s*fi\n', run, re.S).group(1)
+        self.assertIn('THINKING=provider-default', fallback)
+        self.assertLess(run.index('THINKING=provider-default'), run.index('# 1. The meter'))  # decided before the meter starts
+
+    def test_the_whole_meter_log_tail_is_printed_so_a_provider_error_is_visible_in_the_job(self):
+        self.assertIn('meter.log" 2>/dev/null | tail -n 40', step_text('Run the simulation'))
+
     def test_the_default_ceiling_matches_the_spec_and_the_meter(self):
         self.assertRegex(TEXT, r"ceiling_usd:\n(?:.*\n)*?\s+default: '0\.40'")
 

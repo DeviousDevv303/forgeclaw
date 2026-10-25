@@ -17,8 +17,9 @@ grading can tell whether the swarm adds anything beyond the packet.
 
 ## Dispatch
 
-Workflow `MiroFish Sim` (`.github/workflows/mirofish-sim.yml`), manual dispatch only. Inputs: `invocation_id`, `card_id`,
-`market_ticker`, `sides` (`Name A|Name B`), `yes_side`, `position_ref`, `preset`, `model`, `ceiling_usd`, `packet`,
+Workflow `MiroFish Sim` (`.github/workflows/mirofish-sim.yml`), manual dispatch only (also from the ForgeClaw chat through
+`github_run_workflow` with `inputs`, which Guardian always asks the owner to co-sign). Inputs: `invocation_id`, `card_id`,
+`market_ticker`, `sides` (`Name A|Name B`), `yes_side`, `position_ref`, `preset`, `model`, `thinking`, `ceiling_usd`, `packet`,
 `provenance`, `rerun_reason`. Repository secrets (it refuses to start, spending nothing, if either is missing):
 
 | Secret | What it is |
@@ -52,7 +53,19 @@ prompt token at the cache-miss price), and the provider's usage page is the invo
   (an owner override), recorded as `rerun_of`.
 - **A dollar ceiling.** `LLM_BASE_URL` points at a local meter that tallies every call and cuts off with HTTP 429 at the
   ceiling (record status `aborted_budget`). Calls already in flight finish, so overshoot is bounded by concurrency.
-- **One engine per run.** The meter refuses any other model. MiroFish never holds the provider key.
+- **One engine per run.** The meter refuses any other model, and sets one thinking mode for every call. MiroFish never holds
+  the provider key.
+- **The provider's rules, not MiroFish's sampling.** Moonshot's K2 models pin `temperature` (1.0 with thinking, 0.6 without),
+  `top_p`, `n` and both penalties, and reject any other value with HTTP 400 (Moonshot's kimi-k2.6 quickstart). MiroFish sets
+  its own temperature on every call, so the meter removes those five fields and the provider applies its fixed values. Each
+  removal is counted in `usage.request_policy`, and `config.sampling` says so. This was the cause of the first live failures.
+- **Thinking mode** (`thinking`, kimi-k2.6 only): `disabled` by default. It is cheaper, and MiroFish's tool-using agents do
+  not pass reasoning back between turns (the clash with thinking mode is plausible, not observed). `enabled` is filed under
+  its own engine label (`kimi-k2.6+thinking`), so grading keeps the two track records apart. `kimi-k2.7-code` has no documented
+  toggle and runs at the provider default.
+- **Errors say why.** MiroFish logs a rejected call as `status=400` and nothing else. The meter prints every provider and meter
+  error to the job log (key redacted) and keeps the first few in `usage.error_samples`; a failed record's `reason` ends with
+  the provider's own words.
 - **Agent count.** MiroFish derives it from the packet and an LLM and cannot be told an exact number, so the runner checks the
   prepared count against the preset cap **before** the simulation starts (`aborted_agents_over_cap`) and stamps the actuals.
 - **Reproducibility is not claimed.** MiroFish uses its own temperature (0.7) and sampling; `reproducible: false` is recorded.
@@ -97,7 +110,15 @@ and its SVG, the requirement filter, the runner's orchestration and refusals aga
 safety properties, and the intake line against the real TypeScript validator and grader. The hash-pinned CPU install was also
 run for real (1.35 GB, about 2 minutes, `pip check` clean, `import oasis` works).
 
-**Not verified: a run against the real MiroFish with real keys.** The fake follows the request and response shapes in
+**First live contact (2026-10-25):** both secrets in place, the pinned install and MiroFish start worked, and the first LLM
+call (the ontology) was rejected by Moonshot with HTTP 400 on both K2 models (runs 40164232338 and 40164446883; cost $0). Cause:
+the pinned sampling above, fixed in the meter. The fix was checked end to end offline: MiroFish's own request code (the
+`openai` SDK and its `openai_chat_compat` at the pinned commit) through the real meter process to a fake that enforces
+Moonshot's documented rule. Without the policy the fake rejects the ontology call exactly as Moonshot did; through the meter
+it passes. Those two runs used both attempts on the real `UFC333` / `KXUFCFIGHT-26OCT24YANDVA-YAN` key, so tests belong on a
+throwaway card.
+
+**Not verified: a completed run against the real MiroFish with real keys.** The fake follows the request and response shapes in
 MiroFish's own handlers, not observed behaviour. Specifically open: whether the interview endpoint answers after a headless run
 (the code says the process stays in a waiting-for-commands mode); whether MiroFish or its agent library streams LLM calls
 (the meter refuses streams, so that would fail loudly); real run time (estimated 10–30 minutes for `mid`); whether an agent

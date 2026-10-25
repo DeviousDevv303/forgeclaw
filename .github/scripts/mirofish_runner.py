@@ -369,6 +369,12 @@ def read_actions(mirofish_dir: str, simulation_id: str) -> dict:
     return found
 
 
+def provider_said(meter: dict) -> str:
+    """The first provider error the meter kept, as a reason suffix. MiroFish reports only the status, never the provider's words."""
+    sample = next((s for s in meter.get('error_samples') or [] if s.get('source') == 'upstream'), None)
+    return f'; the provider said (HTTP {sample.get("status")}): {str(sample.get("excerpt", ""))[:240]}' if sample else ''
+
+
 def classify(error: RunnerError, meter: dict) -> tuple[str, str]:
     """The record status for a pipeline failure."""
     if error.status != 'failed':
@@ -377,7 +383,13 @@ def classify(error: RunnerError, meter: dict) -> tuple[str, str]:
         return 'aborted_budget', f'{error}; the metering ceiling had been reached'
     if error.stage == 'graph' and re.search(r'(?i)quota|credit|rate.?limit|429|too many', str(error)):
         return 'aborted_zep_quota', str(error)
-    return 'failed', f'[{error.stage}] {error}'
+    return 'failed', f'[{error.stage}] {error}{provider_said(meter)}'
+
+
+def model_label(model: str, meter: dict) -> str:
+    """The engine label grading keys on. A thinking-enabled run is a different engine for the track record, so it is labelled apart."""
+    thinking = (meter.get('request_policy') or {}).get('thinking')
+    return f'{model}+thinking' if thinking == 'enabled' else model
 
 
 def parse_direct(text: str, side_a: str, side_b: str, model: str) -> dict:
@@ -398,6 +410,10 @@ def build_record(*, args: dict, attempt: int, attempts: list[dict], run: Run, st
     if stats and stats.get('median_p_a') is not None and yes in (side_a, side_b):
         lean_yes = stats['median_p_a'] if yes == side_a else round(100 - stats['median_p_a'], 1)
     previous = next((a for a in reversed(attempts) if a.get('status') == 'completed'), None)
+    policy = meter.get('request_policy') or {}
+    sampling = ("MiroFish's own per-call values (0.3 to 0.7), passed through" if not policy.get('pinned_fields') else
+                f"the provider's fixed values: the meter removed {', '.join(policy['pinned_fields'])} from MiroFish's calls "
+                '(this engine rejects any other value); see usage.request_policy')
     return {
         'schema': RECORD_SCHEMA, 'attempt': attempt, 'key': {'card_id': args['card_id'], 'market_ticker': args['market_ticker']},
         'sides': [side_a, side_b], 'yes_side': yes, 'status': status, 'reason': reason,
@@ -407,8 +423,8 @@ def build_record(*, args: dict, attempt: int, attempts: list[dict], run: Run, st
                    'environment_digest': environment_digest(args['pins'])},
         'config': {'preset': args['preset'], 'size_class': args['preset'], 'counts_toward_bar': p['counts_toward_bar'], 'platform': p['platform'],
                    'max_rounds': p['max_rounds'], 'rounds_run': run.rounds_run, 'agents_cap': p['agents_cap'], 'agents_prepared': run.agents_prepared,
-                   'llm_provider': args['provider'], 'llm_model': args['model'], 'locale': 'en',
-                   'temperature': "MiroFish's own default (0.7) for its calls; not controlled by us", 'reproducible': False},
+                   'llm_provider': args['provider'], 'llm_model': args['model'], 'engine_label': model_label(args['model'], meter),
+                   'thinking': policy.get('thinking', 'provider-default'), 'locale': 'en', 'sampling': sampling, 'reproducible': False},
         'extraction': stats, 'lean_for_yes_side': lean_yes, 'baseline_direct': run.baseline,
         'usage': meter, 'zep': {'graph_id': run.graph_id, 'deleted': run.graph_deleted, **estimate_zep(len(packet))},
         'artifacts': artifact_info, 'timing': {'started_at': started, 'finished_at': finished, 'wall_seconds': round(wall_seconds, 1)},
@@ -507,7 +523,7 @@ def build_nexus_line(record: dict, args: dict) -> tuple[dict | None, str]:
         'ref': args['market_ticker'], 'position_ref': args.get('position_ref') or f'shadow:{args["card_id"]}:{args["market_ticker"]}',
         'seed': {'stats_snapshot': snapshot if present(snapshot) else None, 'matchup_read': present(prov.get('matchup_read')),
                  'human_state': present(prov.get('human_state'))},
-        'engine': {'agents': record['config']['agents_prepared'], 'model': record['config']['llm_model'], 'rounds': record['config']['rounds_run'],
+        'engine': {'agents': record['config']['agents_prepared'], 'model': record['config']['engine_label'], 'rounds': record['config']['rounds_run'],
                    'mirofish_commit': pins['repo_commit'], 'image_digest': digest, 'digest_kind': 'source-install-environment',
                    'uv_lock_sha256': pins['uv_lock_sha256']},
         'median_lean_pct': lean, 'side': 'YES', 'report': report,
