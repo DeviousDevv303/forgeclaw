@@ -29,7 +29,7 @@ function browserActionsInteractive(raw: unknown): boolean {
 // Co-signed even under the 'autonomous' posture: a merge changes what runs in production and cannot be undone from chat.
 const NEVER_AUTONOMOUS = new Set(['github_merge_pr'])
 
-// Autonomous in the default operator-shell posture, co-signed under full-cosign. Authorized by Cristian
+// Autonomous in the operator-shell posture, co-signed under full-cosign. Authorized by Cristian
 // Nunez on 2026-10-20 ("fully autonomous" site deployment): publishing a static site to a non-default
 // branch of a repository other than ForgeClaw, and creating the repository it lives in. The publisher
 // itself refuses the default branch, workflow paths and the ForgeClaw repository (githubPublish.ts).
@@ -61,8 +61,9 @@ export function extractThinking(text: string): string | null {
 //
 export type GuardianPosture = 'autonomous' | 'operator-shell' | 'full-cosign'
 
-/** Default posture: operator shell runs free, repo changes need approval. */
-export const DEFAULT_GUARDIAN_POSTURE: GuardianPosture = 'operator-shell'
+/** Default posture: autonomous (owner directive, Cristian, 2026-10-25). Everything runs
+ * without co-sign except merges, which stay co-signed in every posture (NEVER_AUTONOMOUS). */
+export const DEFAULT_GUARDIAN_POSTURE: GuardianPosture = 'autonomous'
 
 /** Map legacy boolean tier1Active to the new posture model. */
 export function postureFromTier1Active(tier1Active: boolean): GuardianPosture {

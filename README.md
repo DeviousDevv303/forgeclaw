@@ -89,7 +89,7 @@ Playwright scripts can be run through the repository's automation workflow. This
 The application includes project-local checks for scope, action impact, identity, contracts, and integrity. Guardian also enforces these rules:
 - **Offered tools only:** a model can only run tools offered for this turn.
 - **Repo creation cap:** at most 2 repositories can be created per run.
-- **Postures:** operator-shell (the default: shell and site deploys run, repository writes need a co-sign), full-cosign, or autonomous.
+- **Postures:** autonomous (the default: everything runs without a co-sign except merges), operator-shell (shell and site deploys run, repository writes need a co-sign), or full-cosign.
 
 Paths in `.github/protected-paths.txt` (workflows, manifests, build configs, Guardian and tool dispatch) cannot be changed by autonomous workflows. These are ordinary application controls implemented in this repository, not a dependency on a proprietary platform or service.
 
