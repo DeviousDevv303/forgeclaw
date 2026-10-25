@@ -265,6 +265,43 @@ class RequestPolicyTests(unittest.TestCase):
         with self.assertRaises(mm.MeterError):
             mm.MeterProxy(self.up.base, 'k', 'moonshot', MODEL, 0.40, thinking='off')
 
+    # The history shape every agent carried into its next call in live run 40234425538 (and reproduced against MiroFish's real
+    # script): Moonshot answered "the message at position 4 with role 'assistant' must not be empty".
+    LIVE_HISTORY = [
+        {'role': 'system', 'content': 'You are a fight fan.'},
+        {'role': 'user', 'content': 'Here is your feed.'},
+        {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'c1', 'type': 'function', 'function': {'name': 'create_post', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'c1', 'content': '{"success": true}'},
+        {'role': 'assistant', 'content': ''},
+        {'role': 'user', 'content': 'Who wins? PICK=...'},
+    ]
+
+    def test_an_empty_assistant_turn_is_dropped_and_a_tool_call_turn_is_kept(self):
+        port = self.proxy()
+        status, _ = post(port, {**CALL, 'messages': self.LIVE_HISTORY})
+        self.assertEqual(status, 200)
+        sent = self.up.seen[0]['body']['messages']
+        self.assertEqual([m['role'] for m in sent], ['system', 'user', 'assistant', 'tool', 'user'])
+        self.assertTrue(sent[2]['tool_calls'])  # the tool-call turn survives with its empty text: Moonshot accepts it
+        self.assertEqual(snapshot(port)['request_policy']['empty_assistant_dropped'], 1)
+
+    def test_only_turns_that_carry_nothing_are_dropped(self):
+        self.assertTrue(mm.is_empty_assistant({'role': 'assistant', 'content': None}))
+        self.assertTrue(mm.is_empty_assistant({'role': 'assistant', 'content': '  \n'}))
+        self.assertTrue(mm.is_empty_assistant({'role': 'assistant', 'content': []}))
+        self.assertTrue(mm.is_empty_assistant({'role': 'assistant'}))
+        self.assertFalse(mm.is_empty_assistant({'role': 'assistant', 'content': 'Yan by decision.'}))
+        self.assertFalse(mm.is_empty_assistant({'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'x'}]}))
+        self.assertFalse(mm.is_empty_assistant({'role': 'assistant', 'content': [{'type': 'text', 'text': 'hi'}]}))
+        self.assertFalse(mm.is_empty_assistant({'role': 'user', 'content': ''}))
+        self.assertFalse(mm.is_empty_assistant('not a message'))
+
+    def test_other_providers_keep_their_history_exactly(self):
+        port = self.proxy(provider='local', model='qwen3-8b')
+        post(port, {**CALL, 'model': 'qwen3-8b', 'messages': self.LIVE_HISTORY})
+        self.assertEqual(self.up.seen[0]['body']['messages'], self.LIVE_HISTORY)
+        self.assertEqual(snapshot(port)['request_policy']['empty_assistant_dropped'], 0)
+
     def test_an_engine_without_a_policy_is_forwarded_untouched(self):
         port = self.proxy(provider='local', model='qwen3-8b')
         post(port, {**self.MIROFISH_ONTOLOGY_CALL, 'model': 'qwen3-8b'})
