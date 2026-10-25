@@ -16,6 +16,7 @@ const ALWAYS_COSIGN = new Set([
   'calendar_create',     // creates real calendar events
   'shell_exec',          // dispatches GitHub Actions runner — real external execution
   'github_merge_pr',     // merges a pull request into the default branch (irreversible from here)
+  'mirofish_sim',        // dispatches a paid swarm simulation (Moonshot + Zep, capped by its ceiling)
 ])
 
 /** Clicking, typing and key presses act on a page; goto/scroll/wait/back only look. Unreadable input counts as acting. */
