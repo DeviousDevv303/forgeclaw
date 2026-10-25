@@ -87,6 +87,25 @@ export interface ImageGenerationLearningInput {
   invocationId: string
 }
 
+/** One MiroFish sim run, as NEXUS learns it: how the run went, so the next one is run better. Never evidence about a fight. */
+export interface SimRunLearningInput {
+  simKey: string
+  invocationId: string
+  status: string
+  reason: string
+  preset: string
+  model: string
+  packetSha256: string
+  packetChars: number | null
+  agents: number | null
+  simulatedActions: number | null
+  reloggedSeedPosts: number | null
+  pollAnswered: number | null
+  costUsd: number | null
+  calls: number | null
+  runUrl: string
+}
+
 export interface AutonomousFixLearningInput {
   filesChanged: string[]
   description: string
@@ -682,6 +701,28 @@ export class CorpusRepository {
     })
   }
 
+  appendSimRunLearning(input: SimRunLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+    const n = (v: number | null) => (v === null ? 'unknown' : String(v))
+    const outcome = `${input.status}${input.reason ? ` (${input.reason})` : ''}; agents ${n(input.agents)}; agent actions ${n(input.simulatedActions)}; ` +
+      `repeated seed posts dropped ${n(input.reloggedSeedPosts)}; poll answered ${n(input.pollAnswered)}; cost $${input.costUsd === null ? 'unknown' : input.costUsd.toFixed(4)} over ${n(input.calls)} model calls`
+    return this.appendInteraction({
+      input: `[SIM_RUN] ${input.simKey}, preset ${input.preset}, ${input.model}; packet ${n(input.packetChars)} chars, sha256 ${input.packetSha256 || 'unknown'}`,
+      context: `invocation_id=${input.invocationId}; run=${input.runUrl}`,
+      result: `[SIM_OUTCOME] ${outcome}. A record of how the run went, for running the next one better; its poll measures simulated personas and is never evidence about the fight.`,
+      runtime: 'github-actions',
+      model: `mirofish+${input.model}`,
+      // No channel or outcome field: a sim record never converges on its own (nexusConvergence.ts); the owner reviews it.
+      source: 'mirofish:github-actions',
+      metadata: {
+        keywords: tokenise(`mirofish swarm simulation sim ${input.preset} ${input.status} ${input.reason}`).slice(0, 24).join(','),
+        taskType: 'swarm-simulation',
+        complexity: 'moderate',
+        simKey: input.simKey,
+        notEvidence: 'true',
+      },
+    })
+  }
+
   appendAutonomousFixLearning(input: AutonomousFixLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
     return this.appendInteraction({
       input: JSON.stringify({ filesChanged: input.filesChanged, description: input.description }),
@@ -993,6 +1034,11 @@ export function checkNexusKnowledge(task: string): NexusKnowledge | null {
 /** Record a FLUX generation request as an unapproved local learning candidate. */
 export function appendImageGenerationLearning(input: ImageGenerationLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
   return corpusRepository.appendImageGenerationLearning(input)
+}
+
+/** Record one MiroFish sim run as an unapproved learning candidate (how it went, never evidence about the fight). */
+export function appendSimRunLearning(input: SimRunLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+  return corpusRepository.appendSimRunLearning(input)
 }
 
 /** Record verified autonomous-fix facts as an unapproved learning candidate. */

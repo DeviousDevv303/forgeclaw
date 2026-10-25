@@ -17,10 +17,29 @@ grading can tell whether the swarm adds anything beyond the packet.
 
 ## Dispatch
 
-Workflow `MiroFish Sim` (`.github/workflows/mirofish-sim.yml`), manual dispatch only (also from the ForgeClaw chat through
-`github_run_workflow` with `inputs`). Under Guardian's default `autonomous` posture (owner directive, 2026-10-25, #308) the chat
-dispatches without a co-sign, so each run's limits are the dollar ceiling (default $0.40, hard maximum $1.00) and the
-one-sim-per-key rule below; the stricter postures still ask the owner first. Inputs: `invocation_id`, `card_id`,
+Workflow `MiroFish Sim` (`.github/workflows/mirofish-sim.yml`), manual dispatch only. Under Guardian's default `autonomous`
+posture (owner directive, 2026-10-25, #308) the chat dispatches without a co-sign, so each run's limits are the dollar ceiling
+(default $0.40, hard maximum $1.00) and the one-sim-per-key rule below; the stricter postures still ask the owner first.
+
+**From the ForgeClaw chat** (owner, 2026-10-25: "I want to see everything from ForgeClaw"), two tools (`src/lib/mirofishSim.ts`):
+- `mirofish_sim` checks the workflow's own input rules, then dispatches. It refuses to start a second run while one is
+  running, because ForgeClaw re-runs the last task a closed page left by itself, and a second dispatch could spend a key's
+  other attempt. It also refuses to rerun a key that already has a completed sim, unless the owner named a `rerun_reason`. It
+  then finds the run by its invocation ID and waits up to 20 minutes. When the run finishes, it shows the result: the record in
+  plain lines for the model, and the world SVG as a picture in the reply. The picture travels through the image registry
+  (`imageArtifact.ts`), never the model's context. A run still going is handed off with its invocation ID.
+- `mirofish_sim_result` is read-only. It shows any finished run the same way, by card and market (latest attempt, or a given
+  one), or a handed-off run by invocation ID.
+
+The sim always runs on GitHub with the repository secrets below, whatever model drives the chat.
+
+**NEXUS learns from every sim it sees, once each.** It records how the run went: the packet's size and hash, preset, model,
+agents, real agent actions, repeated seed posts dropped, poll size, cost and the status or failure reason. Each sim is stored as
+an unapproved learning candidate, which the owner reviews, and never converges into knowledge by itself. Both sim tools are in
+`NOT_EVIDENCE_TOOLS`: a chat answer that rests on a sim counts as `completed`, never `verified`, because the poll measures
+simulated personas, not the fight.
+
+Inputs: `invocation_id`, `card_id`,
 `market_ticker`, `sides` (`Name A|Name B`), `yes_side`, `position_ref`, `preset`, `model`, `thinking`, `ceiling_usd`, `packet`,
 `provenance`, `rerun_reason`. Repository secrets (it refuses to start, spending nothing, if either is missing):
 
@@ -243,6 +262,16 @@ Not built: the Anthropic engine (it needs OpenAI-to-Messages translation in the 
 
 ## Licence boundary
 
-MiroFish is cloned inside the job at the pinned commit, installed from its own lockfile, and run unmodified as a separate
-process. No MiroFish code is vendored into this repository. If it is ever patched *and* reached by users over a network,
-AGPL-3.0 section 13 requires offering that source. This is not legal advice.
+MiroFish is cloned inside the job at the pinned commit, installed from its own lockfile, and run as a separate process. No
+MiroFish code is vendored into this repository. If it is ever patched *and* reached by users over a network, AGPL-3.0 section
+13 requires offering that source. This is not legal advice.
+
+**Owner directive (2026-10-25): MiroFish may be modified to fit ForgeClaw**, including for running on Kimi through Moonshot.
+The "runs unmodified" constraint is lifted. The form is a fork in its own repository (AGPL-3.0, still an external process,
+never vendored here), with the fork's commit pinned in the run record as the upstream commit is today. It is not a build order:
+reach for it when a fit problem belongs to the engine. Candidates so far, each worked around in the runner today:
+- the simulated clock starting at 00:00 with off-peak activity scaling (`plan_clock`);
+- the report's terminal-status gate (the runner waits);
+- the seed posts logged twice (`last_rowid = 0`; the runner drops the repeats);
+- seed posts assigned by entity type (`_assign_initial_post_agents`; not worked around);
+- a configurable Zep endpoint.

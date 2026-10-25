@@ -91,6 +91,8 @@ export const NOT_EVIDENCE_TOOLS: ReadonlySet<string> = new Set([
   'funds_status', 'funds_propose',
   // Prices the owner typed, not read from Kalshi: usable for research, never evidence (owner condition, 2026-10-23).
   'kalshi_owner_prices',
+  // A MiroFish sim's poll measures simulated personas built from a packet; it is never evidence about a fight.
+  'mirofish_sim', 'mirofish_sim_result',
 ])
 
 /** How a final answer is recorded: blocked, verified (a successful evidence tool backs it), or merely completed. */

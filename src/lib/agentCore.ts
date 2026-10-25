@@ -162,6 +162,7 @@ const DESTRUCTIVE_NAMES = new Set([
   'calendar_create',
   'send_whatsapp',
   'memory_write',
+  'mirofish_sim',
 ])
 
 export function isDestructiveTool(toolName: string, input?: Record<string, unknown>): boolean {
@@ -188,6 +189,7 @@ export const DESTRUCTIVE_TOOL_DESCRIPTIONS: Record<string, string> = {
   calendar_create: 'creates calendar events',
   send_whatsapp: 'sends messages',
   memory_write: 'modifies persistent state',
+  mirofish_sim: 'dispatches a paid swarm simulation and spends one of its key\'s two attempts',
 }
 
 export function getDestructiveReason(toolName: string): string {
