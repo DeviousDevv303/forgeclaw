@@ -105,7 +105,7 @@ Statuses: `completed`, `aborted_budget`, `aborted_agents_over_cap`, `aborted_zep
 
 ## What is verified, and what is not
 
-Verified offline (200+ Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
+Verified offline (127 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
 and its SVG, the requirement filter, the runner's orchestration and refusals against a **scripted fake MiroFish**, the workflow's
 safety properties, and the intake line against the real TypeScript validator and grader. The hash-pinned CPU install was also
 run for real (1.35 GB, about 2 minutes, `pip check` clean, `import oasis` works).
