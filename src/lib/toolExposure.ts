@@ -9,6 +9,7 @@
 
 import { KALSHI_MAX_RESULTS } from './kalshiMarkets'
 import { FIGHTER_STATE_MAX_WEIGHT_PCT, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT, fightTemplateSkeleton } from './fightResearch'
+import { SIM_MIN_HIT_RATE, SIM_MIN_SETTLED_RUNS, SIM_WEIGHT_CAP } from './simGrading'
 
 /** Providers whose models call tools natively and reliably; local llama.cpp is deliberately excluded. */
 export const HOSTED_TOOL_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'moonshot', 'muse'])
@@ -253,9 +254,14 @@ export const FUNDS_GUIDANCE =
   'Teams often run these accounts, so a post is weak evidence of mood, and a post is a lead, not a fact: an injury or cut mentioned in a post belongs in STATS & FACTS only once a primary source or two independent outlets confirm it. ' +
   'Coverage is partial (found through web search, not the platforms\' own feeds): a fighter with no verified recent post is written "unavailable — <reason>" and the owner is told, never skipped. ' +
   'The owner\'s ruling: this read carries a small fixed weight, at most ' + FIGHTER_STATE_MAX_WEIGHT_PCT + '% in the fusion (stated as "fighter-state weight: N%"), and 0% when nothing was read; it is never a reason to cross the net-edge bar by itself. ' +
+  'SWARM SIM: a MiroFish swarm simulation, when one was run for this fight, is a crowd-family signal, not an outcome oracle: it simulates how a crowd of agents converges on the fight. ' +
+  'If a sim-run record exists for this market, FUSION may carry one line — "swarm sim: <median>% <side> (weight <w>%, run <run_id>)" — the swarm\'s median lean, the weight the lane has earned, and the run\'s id; ' +
+  'the line is optional and its absence is never a gap. The owner\'s ruling: the sim weighs 0% until its settled record shows at least ' + SIM_MIN_SETTLED_RUNS + ' settled sims with a directional hit rate of at least ' + Math.round(SIM_MIN_HIT_RATE * 100) + '%; ' +
+  'then it weighs its hit rate, never more than ' + Math.round(SIM_WEIGHT_CAP * 100) + '% of the fusion; state the earned weight exactly, and at 0% the line still belongs there because the run is kept and graded at settlement like the crowd is. ' +
+  'A sim is never a reason to cross the net-edge bar by itself, and never invent a sim line for a run that did not happen. ' +
   'THE TEMPLATE (enforced): funds_propose refuses a proposal on a fight market (series KXUFCFIGHT, KXMMAFIGHT, KXMMAEXFIGHT) unless its rationale has these nine labeled lines:\n' + fightTemplateSkeleton() + '\n' +
   'The ledger checks that each section is there and not empty, that BOOK LINE gives a no-vig number, that MATCHUP NEUTRALIZATION names each fighter\'s primary path to victory, gives a "neutralization: demonstrated / not demonstrated" verdict with its evidence, and reassesses "the fight that remains" if the key strength is taken away, that SENTIMENT SCAN links what it scanned and states "crowd lean: N%" (the crowd\'s chance that YOUR side wins; the ledger keeps it with the position and scores the crowd against the result when the fight settles) or says unavailable with a reason, that FUSION\'s range contains your probability ' +
-  'and states "sentiment weight: N%" within what the crowd has earned and "fighter-state weight: N%" within the cap (0% unless FIGHTER STATE links the posts it read), that FIGHTER STATE links its posts or says unavailable with a reason, that EDGE\'s net edge in cents clears the bar in rule 3 and cannot exceed probability minus price, and that BOOK LINE and STATS & FACTS are not both unavailable. ' +
+  'and states "sentiment weight: N%" within what the crowd has earned and "fighter-state weight: N%" within the cap (0% unless FIGHTER STATE links the posts it read), that a "swarm sim:" line, when FUSION carries one, matches the exact format and states the sim lane\'s earned weight, that FIGHTER STATE links its posts or says unavailable with a reason, that EDGE\'s net edge in cents clears the bar in rule 3 and cannot exceed probability minus price, and that BOOK LINE and STATS & FACTS are not both unavailable. ' +
   'It cannot check that your research is true: say what you could not verify. THE OUTPUT: if the owner\'s own framework appears in this prompt, structure the analysis with it; ' +
   'propose AT MOST ONE position, with its falsifier (the result or news that would prove you wrong) — or say that no bet clears the bar and propose nothing, which is a correct answer. ' +
   'Nothing predicts a fight with certainty: never write "guaranteed", "lock" or "sure thing", and say what you could not verify.'
