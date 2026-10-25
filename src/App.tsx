@@ -214,7 +214,6 @@ import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailabl
 import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { ReasoningFrameworkPanel } from './components/ReasoningFrameworkPanel'
 import { loadOwnerScaffold, operatingLoopFor, reasoningFormatReminder } from './lib/ownerScaffold'
-import { VisitorLearningImport } from './components/VisitorLearningImport'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
@@ -3832,7 +3831,6 @@ function App() {
         {activeTab === 'nexus' && !isPublicVisitor(ghToken) && (
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
             <NexusLearningPanel />
-            <VisitorLearningImport />
           </div>
         )}
 
