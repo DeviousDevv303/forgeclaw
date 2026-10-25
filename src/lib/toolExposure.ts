@@ -2,7 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 //
 // Which tools a chat turn is offered. ForgeClaw normally offers tools by keyword, so browser-local
-// models do not drown in a large tool protocol. Hosted models with native tool calling (Claude, Kimi)
+// models do not drown in a large tool protocol. Hosted models with native tool calling (Claude, Kimi, Muse)
 // do not have that problem, and the keyword gate left them with no tools at all for ordinary repo
 // requests: "look through my GitHub repo and look for efficiency improvements on workflows" matched
 // nothing, so Claude truthfully said it had no GitHub access, and on earlier turns invented commits.
@@ -12,7 +12,7 @@ import { FIGHTER_STATE_MAX_WEIGHT_PCT, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_
 import { SIM_MIN_HIT_RATE, SIM_MIN_SETTLED_RUNS, SIM_WEIGHT_CAP } from './simGrading'
 
 /** Providers whose models call tools natively and reliably; local llama.cpp is deliberately excluded. */
-export const HOSTED_TOOL_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'moonshot'])
+export const HOSTED_TOOL_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'moonshot', 'muse'])
 
 /** Read-only evidence tools a hosted model always gets. Writes stay keyword/task-gated and behind Guardian. */
 export const READ_ONLY_BASELINE_TOOLS = [
