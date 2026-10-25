@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useState, useRef, useCallback } from 'react'
-import type { GuardianPosture } from '../lib/guardianGate'
+import { DEFAULT_GUARDIAN_POSTURE, type GuardianPosture } from '../lib/guardianGate'
 import { safeGetItem, safeSetItem, safeJsonParse } from '../lib/storage'
 import type { ProviderId } from '../lib/modelProviders'
 import { modelSupportsTools } from '../lib/modelProviders'
@@ -96,7 +96,7 @@ function CapabilityChip({ label, tone }: { label: string; tone: ChipTone }) {
   )
 }
 
-export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPosture = 'operator-shell', requestGuardianApproval }: AgentsPanelProps) {
+export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPosture = DEFAULT_GUARDIAN_POSTURE, requestGuardianApproval }: AgentsPanelProps) {
   const { t, locale } = useI18n()
   const [agents, setAgents] = useState<CustomAgent[]>(loadAgents)
   const [activeAgent, setActiveAgent] = useState<CustomAgent | null>(null)

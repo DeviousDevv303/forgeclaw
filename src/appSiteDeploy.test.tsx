@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // End-to-end site deployment through the real App, tool dispatcher and Guardian gate, with Kimi:
 // create repo -> publish all files in one commit -> poll Pages -> report. Authorized 2026-10-20 to run
-// without co-sign in the default operator-shell posture.
+// without co-sign under the default posture.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
