@@ -1,0 +1,283 @@
+# ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+# Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+name: MiroFish Sim
+
+# run-name carries the caller's correlation ID (workflow_dispatch returns no run ID).
+run-name: MiroFish sim ${{ inputs.invocation_id }}
+
+# One MiroFish swarm simulation for the swarm-sim lane (owner GO 2026-10-24: weight zero until it earns weight, never a
+# fourth judge). Seed packet in; a run-record, the illustrated world (sim-world.v1.json, world.svg, report.md) and, for a completed
+# run of a counted size, one line in the intake lane's own sim-run schema out, committed to the sim-results branch. It runs only when dispatched. It spends money only through the metering proxy, which
+# enforces a dollar ceiling; it never places a wager and never touches Guardian or the funds ledger.
+#
+# MiroFish is AGPL-3.0 and stays an EXTERNAL process: cloned here at a pinned commit inside the job, installed from its own
+# lockfile, never vendored into this repository and never patched. Every installed package, including the CPU build of
+# torch, is verified by hash (--require-hashes). MiroFish never sees the provider key: its LLM_BASE_URL is the local meter,
+# which holds the key. It does hold the Zep key (it needs it), and the seed packet goes to Zep Cloud: public data and
+# analysis only, enforced by a screen in the runner. The Zep graph is deleted at the end of every run.
+#
+# Secrets (repository secrets; the run refuses to start if either is missing):
+#   MOONSHOT_API_KEY  the owner's existing Moonshot account, API credit assumed (unverified).
+#   ZEP_API_KEY       Zep Cloud free tier. Read the real monthly quota in the Zep dashboard once the key exists.
+on:
+  workflow_dispatch:
+    inputs:
+      invocation_id:
+        description: 'Caller correlation ID'
+        required: true
+        type: string
+      card_id:
+        description: 'The card or slate, e.g. UFC333 (letters, digits, dot, underscore, hyphen)'
+        required: true
+        type: string
+      market_ticker:
+        description: 'The market this sim is for, e.g. KXUFCFIGHT-26OCT24YANDVA-YAN. One completed sim per card_id + market_ticker.'
+        required: true
+        type: string
+      sides:
+        description: "Exactly two sides as 'Name A|Name B'. A is the side P_A is asked about."
+        required: true
+        type: string
+      yes_side:
+        description: 'Which side the market YES contract is on (one of the sides). Without it no intake line is emitted: intake needs a lean for one named side.'
+        required: false
+        default: ''
+        type: string
+      position_ref:
+        description: 'The position or proposal this run is for; empty files it as shadow:<card_id>:<market_ticker>'
+        required: false
+        default: ''
+        type: string
+      preset:
+        description: 'tiny (4 rounds, <=8 agents; does not count toward the 10-sim bar), small, or mid'
+        required: false
+        default: 'tiny'
+        type: string
+      model:
+        description: 'Moonshot model (one engine per run): kimi-k2.6 or kimi-k2.7-code'
+        required: false
+        default: 'kimi-k2.6'
+        type: string
+      ceiling_usd:
+        description: 'Dollar ceiling for this run (default 0.40, hard maximum 1.00). Recorded in the usage block.'
+        required: false
+        default: '0.40'
+        type: string
+      packet:
+        description: 'Seed packet, markdown: stats snapshot, matchup read, human-state observations. Public data and analysis only.'
+        required: true
+        type: string
+      provenance:
+        description: 'JSON: stats_snapshot, matchup_read, human_state (a ref or hash each, or "absent")'
+        required: false
+        default: '{}'
+        type: string
+      rerun_reason:
+        description: 'Owner override only: a named reason to run again after a completed sim, or after the attempt limit'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+# Same card + market never runs twice at once, so the one-sim-per-key rule cannot race itself.
+concurrency:
+  group: mirofish-sim-${{ inputs.card_id }}-${{ inputs.market_ticker }}
+  cancel-in-progress: false
+
+jobs:
+  sim:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      MIROFISH_REPO: https://github.com/666ghj/MiroFish.git
+      # Measured 2026-10-24: HEAD of main at the time, and the sha256 of backend/uv.lock at that commit.
+      MIROFISH_COMMIT: 7657031ac01184afe2cb220f5ee3545573b5e843
+      UV_LOCK_SHA256: 877281f85fe26eb120149503b0b99021fd7e3e577d026f584857d03839595b09
+      # torch 2.9.1+cpu, cp311, manylinux_2_28 x86_64, from download.pytorch.org/whl/cpu (the locked version, CPU build).
+      TORCH_CPU_SHA256: 3de2adb9b4443dc9210ef1f1b16da3647ace53553166d6360bbbd7edd6f16e4d
+      UV_VERSION: '0.9.26'
+      LLM_PROVIDER: moonshot
+      UPSTREAM_BASE: https://api.moonshot.ai/v1
+      METER_PORT: '8765'
+    steps:
+      - name: Validate inputs and secrets
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          CARD_ID: ${{ inputs.card_id }}
+          MARKET_TICKER: ${{ inputs.market_ticker }}
+          SIDES: ${{ inputs.sides }}
+          PRESET: ${{ inputs.preset }}
+          MODEL: ${{ inputs.model }}
+          CEILING_USD: ${{ inputs.ceiling_usd }}
+          PACKET: ${{ inputs.packet }}
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          ZEP_API_KEY: ${{ secrets.ZEP_API_KEY }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error title=mirofish-sim::$1"; exit 1; }
+          printf '%s' "$INVOCATION_ID" | grep -Eqx '[A-Za-z0-9._-]{1,120}' || fail "invalid invocation_id"
+          printf '%s' "$CARD_ID" | grep -Eqx '[A-Za-z0-9._-]{1,120}' || fail "invalid card_id"
+          printf '%s' "$MARKET_TICKER" | grep -Eqx '[A-Za-z0-9._-]{1,120}' || fail "invalid market_ticker"
+          printf '%s' "$SIDES" | grep -Eqx '[^|]{1,80}\|[^|]{1,80}' || fail "sides must be exactly 'Name A|Name B'"
+          case "$PRESET" in tiny|small|mid) ;; *) fail "preset must be tiny, small or mid" ;; esac
+          case "$MODEL" in kimi-k2.6|kimi-k2.7-code) ;; *) fail "model must be kimi-k2.6 or kimi-k2.7-code (the only models with a price in the meter)" ;; esac
+          printf '%s' "$CEILING_USD" | grep -Eqx '[0-9]+(\.[0-9]{1,2})?' || fail "ceiling_usd must be a plain dollar amount"
+          python3 -c "import sys; sys.exit(0 if 0 < float(sys.argv[1]) <= 1.00 else 1)" "$CEILING_USD" || fail "ceiling_usd must be above 0 and at most 1.00; a higher ceiling needs a workflow edit"
+          [ "${#PACKET}" -ge 200 ] || fail "the packet is under 200 characters; there is nothing to simulate"
+          [ "${#PACKET}" -le 40000 ] || fail "the packet is over 40000 characters"
+          [ -n "$MOONSHOT_API_KEY" ] || fail "repository secret MOONSHOT_API_KEY is not set; nothing was started and nothing was spent"
+          [ -n "$ZEP_API_KEY" ] || fail "repository secret ZEP_API_KEY is not set; nothing was started and nothing was spent"
+
+      - uses: actions/checkout@v4
+        with:
+          # Only our own scripts are executed from this checkout; no write credential is left in .git/config.
+          # The results push authenticates explicitly with the job token instead.
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache the pinned dependency downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: mirofish-uv-${{ env.UV_LOCK_SHA256 }}-${{ env.TORCH_CPU_SHA256 }}
+
+      - name: Open the sim-results branch (read for the one-sim-per-key rule, written at the end)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git() { command git -c "http.https://github.com/.extraheader=$AUTH" "$@"; }
+          git fetch origin sim-results || true
+          WT="$RUNNER_TEMP/sim-results"
+          if git show-ref --verify --quiet refs/remotes/origin/sim-results; then
+            git worktree add "$WT" origin/sim-results
+            git -C "$WT" checkout -B sim-results
+          else
+            git worktree add --detach "$WT" HEAD
+            git -C "$WT" checkout --orphan sim-results
+            git -C "$WT" rm -rf . >/dev/null 2>&1 || true
+          fi
+          echo "SIM_RESULTS=$WT" >> "$GITHUB_ENV"
+
+      - name: Install MiroFish at the pinned commit, CPU-only, every package hash-verified
+        run: |
+          set -euo pipefail
+          python -m pip install -q "uv==${UV_VERSION}"
+          git clone --quiet "$MIROFISH_REPO" "$RUNNER_TEMP/mirofish"
+          git -C "$RUNNER_TEMP/mirofish" checkout --quiet --detach "$MIROFISH_COMMIT"
+          [ "$(git -C "$RUNNER_TEMP/mirofish" rev-parse HEAD)" = "$MIROFISH_COMMIT" ] || { echo "::error title=mirofish-sim::the checkout is not the pinned commit"; exit 1; }
+          [ "$(sha256sum "$RUNNER_TEMP/mirofish/backend/uv.lock" | cut -d' ' -f1)" = "$UV_LOCK_SHA256" ] || { echo "::error title=mirofish-sim::uv.lock does not match the pinned hash"; exit 1; }
+          cd "$RUNNER_TEMP/mirofish/backend"
+          uv export --frozen --no-emit-project --python 3.11 > "$RUNNER_TEMP/req_all.txt"
+          python "$GITHUB_WORKSPACE/.github/scripts/mirofish_requirements.py" "$RUNNER_TEMP/req_all.txt" \
+            --torch-cpu-sha256 "$TORCH_CPU_SHA256" --out-main "$RUNNER_TEMP/req_main.txt" --out-torch "$RUNNER_TEMP/req_torch.txt"
+          uv venv --python 3.11 "$RUNNER_TEMP/venv"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" --require-hashes --no-deps --index-url https://download.pytorch.org/whl/cpu -r "$RUNNER_TEMP/req_torch.txt"
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" --require-hashes --no-deps -r "$RUNNER_TEMP/req_main.txt"
+          uv pip check --python "$RUNNER_TEMP/venv/bin/python"
+          if "$RUNNER_TEMP/venv/bin/python" -m pip list 2>/dev/null | grep -qiE '^(nvidia|triton)'; then echo "::error title=mirofish-sim::a GPU package was installed"; exit 1; fi
+          TORCH_VERSION="$("$RUNNER_TEMP/venv/bin/python" -c 'import torch; print(torch.__version__)')"
+          echo "TORCH_VERSION=$TORCH_VERSION" >> "$GITHUB_ENV"
+          df -h / | tail -1
+
+      - name: Run the simulation
+        env:
+          MODEL: ${{ inputs.model }}
+          CEILING_USD: ${{ inputs.ceiling_usd }}
+          PACKET: ${{ inputs.packet }}
+          CARD_ID: ${{ inputs.card_id }}
+          MARKET_TICKER: ${{ inputs.market_ticker }}
+          SIDES: ${{ inputs.sides }}
+          YES_SIDE: ${{ inputs.yes_side }}
+          POSITION_REF: ${{ inputs.position_ref }}
+          PRESET: ${{ inputs.preset }}
+          PROVENANCE: ${{ inputs.provenance }}
+          RERUN_REASON: ${{ inputs.rerun_reason }}
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          ZEP_API_KEY: ${{ secrets.ZEP_API_KEY }}
+        run: |
+          set -euo pipefail
+          VENV="$RUNNER_TEMP/venv"
+          printf '%s' "$PACKET" > "$RUNNER_TEMP/packet.md"
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          PINS="$(python -c 'import json,os; print(json.dumps({"repo_commit": os.environ["MIROFISH_COMMIT"], "uv_lock_sha256": os.environ["UV_LOCK_SHA256"], "python": "3.11", "torch": os.environ["TORCH_VERSION"], "torch_cpu_sha256": os.environ["TORCH_CPU_SHA256"], "uv_version": os.environ["UV_VERSION"], "runner_image": "ubuntu-24.04"}))')"
+          MIROFISH_PID=""; METER_PID=""
+          cleanup() {
+            [ -n "$MIROFISH_PID" ] && kill "$MIROFISH_PID" 2>/dev/null || true
+            if [ -n "$METER_PID" ]; then kill -TERM "$METER_PID" 2>/dev/null || true; wait "$METER_PID" 2>/dev/null || true; fi
+            echo "--- meter log"; cat "$RUNNER_TEMP/meter.log" 2>/dev/null | tail -n 5 || true
+          }
+          trap cleanup EXIT
+
+          # 1. The meter holds the provider key; nothing else in this job is given it.
+          env -i PATH="$PATH" HOME="$HOME" PROVIDER="$LLM_PROVIDER" MODEL="$MODEL" UPSTREAM_BASE="$UPSTREAM_BASE" \
+            API_KEY="$MOONSHOT_API_KEY" CEILING_USD="$CEILING_USD" PORT="$METER_PORT" \
+            python "$GITHUB_WORKSPACE/.github/scripts/mirofish_meter.py" > "$RUNNER_TEMP/meter.log" 2>&1 &
+          METER_PID=$!
+          for i in $(seq 1 30); do curl -fsS "http://127.0.0.1:${METER_PORT}/__meter" >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS "http://127.0.0.1:${METER_PORT}/__meter" >/dev/null || { echo "::error title=mirofish-sim::the meter did not start"; cat "$RUNNER_TEMP/meter.log"; exit 1; }
+
+          # 2. MiroFish, bound to localhost, with a minimal environment: a dummy LLM key, the meter as its LLM endpoint, the Zep key.
+          ( cd "$RUNNER_TEMP/mirofish/backend" && exec env -i PATH="$VENV/bin:$PATH" HOME="$HOME" PYTHONUNBUFFERED=1 HF_HOME="$RUNNER_TEMP/hf" \
+              FLASK_HOST=127.0.0.1 FLASK_PORT=5001 FLASK_DEBUG=false \
+              LLM_API_KEY=local-meter-dummy LLM_BASE_URL="http://127.0.0.1:${METER_PORT}/v1" LLM_MODEL_NAME="$MODEL" \
+              ZEP_API_KEY="$ZEP_API_KEY" \
+              "$VENV/bin/python" run.py > "$RUNNER_TEMP/mirofish.log" 2>&1 ) &
+          MIROFISH_PID=$!
+          for i in $(seq 1 90); do curl -fsS http://127.0.0.1:5001/health >/dev/null 2>&1 && break; sleep 2; done
+          curl -fsS http://127.0.0.1:5001/health >/dev/null || { echo "::error title=mirofish-sim::MiroFish did not become healthy"; tail -n 40 "$RUNNER_TEMP/mirofish.log"; exit 1; }
+
+          # 3. The runner. A non-zero exit still leaves a record in sim-results, which the next step commits.
+          set +e
+          python "$GITHUB_WORKSPACE/.github/scripts/mirofish_runner.py" \
+            --packet "$RUNNER_TEMP/packet.md" --card-id "$CARD_ID" --market-ticker "$MARKET_TICKER" --sides "$SIDES" --yes-side "$YES_SIDE" \
+            --preset "$PRESET" --provider "$LLM_PROVIDER" --model "$MODEL" --mirofish-dir "$RUNNER_TEMP/mirofish" \
+            --meter-url "http://127.0.0.1:${METER_PORT}" --results-dir "$SIM_RESULTS" --out-dir "$SIM_RESULTS" \
+            --pins "$PINS" --provenance "$PROVENANCE" --rerun-reason "$RERUN_REASON" --invocation-id "$INVOCATION_ID" --run-url "$RUN_URL" \
+            --position-ref "$POSITION_REF" --repo "$GITHUB_REPOSITORY"
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then echo "--- MiroFish log (tail)"; tail -n 60 "$RUNNER_TEMP/mirofish.log" || true; fi
+          exit "$RC"
+
+      - name: Publish the record and artifacts to the sim-results branch
+        if: ${{ always() && env.SIM_RESULTS != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: |
+          set -euo pipefail
+          WT="$SIM_RESULTS"
+          if [ -z "$(git -C "$WT" status --porcelain)" ]; then echo "No record was written (a refusal or an early failure); nothing to publish."; exit 0; fi
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git() { command git -c "http.https://github.com/.extraheader=$AUTH" "$@"; }
+          git config user.name 'ForgeClaw Sim'
+          git config user.email 'forgeclaw-sim@local'
+          git -C "$WT" config user.name 'ForgeClaw Sim'
+          git -C "$WT" config user.email 'forgeclaw-sim@local'
+          git -C "$WT" add -A
+          git -C "$WT" commit -m "sim: ${INVOCATION_ID}"
+          for attempt in 1 2 3 4; do
+            if git -C "$WT" push origin HEAD:sim-results; then break; fi
+            if [ "$attempt" = 4 ]; then echo "::warning::publish to sim-results failed after 4 attempts; the artifact remains"; exit 1; fi
+            git -C "$WT" fetch origin sim-results
+            git -C "$WT" rebase origin/sim-results
+            sleep $((attempt * 2))
+          done
+
+      - name: Upload the record and artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirofish-sim-${{ inputs.invocation_id }}
+          path: |
+            ${{ runner.temp }}/sim-results/${{ inputs.card_id }}/${{ inputs.market_ticker }}.*
+          if-no-files-found: warn
+          retention-days: 30

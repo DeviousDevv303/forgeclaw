@@ -1,0 +1,25 @@
+{
+  "engine": {
+    "agents": 6,
+    "digest_kind": "source-install-environment",
+    "image_digest": "sha256:8a4fb4cb817083ab35a14c6a95f4904ef3cad463854bdf03906e9bb7ae734084",
+    "mirofish_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "model": "kimi-k2.6",
+    "rounds": 4,
+    "uv_lock_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "kind": "sim-run",
+  "median_lean_pct": 50.0,
+  "position_ref": "shadow:UFC333:KXUFCFIGHT-26OCT24YANDVA-YAN",
+  "ref": "KXUFCFIGHT-26OCT24YANDVA-YAN",
+  "report": "https://github.com/DeviousDevv303/forgeclaw/blob/sim-results/UFC333/KXUFCFIGHT-26OCT24YANDVA-YAN.1.sim-world.v1.json",
+  "run_id": "sim-UFC333-KXUFCFIGHT-26OCT24YANDVA-YAN-a1",
+  "seed": {
+    "human_state": false,
+    "matchup_read": true,
+    "stats_snapshot": "espn:600061267"
+  },
+  "side": "YES",
+  "source": "mirofish-runner",
+  "ts": "2027-01-15T08:00:10Z"
+}
