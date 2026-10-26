@@ -666,7 +666,7 @@ export const FORGE_TOOLS: ToolDef[] = [
         market_ticker: { type: 'string', description: 'The Kalshi market this sim is for, e.g. "KXUFCFIGHT-26OCT24YANDVA-YAN", or a test key when no market is listed yet' },
         sides: { type: 'string', description: "Exactly two sides as 'Name A|Name B'. A is the side the poll's P_A is about." },
         packet: { type: 'string', description: 'The seed packet (markdown): public pre-fight facts, a neutral matchup read, human-state observations. No prices or odds.' },
-        yes_side: { type: 'string', description: "Which side the market's YES contract is on (one of the sides). Leave empty for a test run: then no intake line is filed." },
+        yes_side: { type: 'string', description: "Which side the market's YES contract is on (one of the sides). It files a track-record line only for a counted preset (small or mid) whose Kalshi market is still open when the run starts. Leave it empty for a test run or a fight already fought." },
         preset: { type: 'string', enum: ['tiny', 'small', 'mid'], description: 'tiny (4 active rounds, up to 8 agents; never counts toward the 10-sim bar), small (12 rounds, up to 14 agents) or mid (24 rounds, up to 20 agents). Default tiny.' },
         ceiling_usd: { type: 'string', description: `Dollar ceiling for this run, e.g. "0.40" (default ${SIM_DEFAULT_CEILING_USD}, maximum ${SIM_MAX_CEILING_USD.toFixed(2)}). The run stops when its model spend reaches it.` },
         thinking: { type: 'string', enum: ['disabled', 'enabled'], description: 'Kimi K2.6 thinking mode. Default disabled (cheaper; enabled is filed under its own engine label).' },
