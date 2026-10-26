@@ -59,6 +59,7 @@ import { effectiveKalshiRelayUrl, loadKalshiCredentials } from './kalshiAuth'
 import { readKalshiBalanceBlock } from './kalshiBalanceDisplay'
 import { crowdSettleNote, formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
 import { autoApproveHoldNote, kalshiOrderPlacedJournalEntry, maybeAutoApprove, type KalshiExecutionDeps } from './kalshiExecution'
+import { joinNexusGuidance, nexusGuidanceForDeepSeek, splitNexusGuidance } from './nexusGuidance'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -1339,6 +1340,17 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           return formatDeepSeekResultText(answer.invocationId, owner, repo, 'main', `Stages: dispatch=public-relay; result-retrieval=relay-artifact; checkpoint=${answer.model || 'unknown'}`, '(public relay run)', answer.result)
         }
         if (!token) throw new Error('No GitHub token configured.')
+        // The NEXUS guidance block is the owner's teaching, not task-matched context: it is set aside here, exempt from
+        // the overlap rule below, and put back in front. Before this, "write a poem about cats" reached the 16B with
+        // no guidance at all because the whole context string was zeroed.
+        const nexusGuidance = splitNexusGuidance(context)
+        context = nexusGuidance.rest
+        // A call that did not come through the router (hand-typed, a saved agent, a future path) carries no guidance block.
+        // The dispatch is the one place every path passes, so it attaches the owner's teaching itself: Nexus rides every
+        // path. The long-output profiles hold a whole page or file in an 8K window, so they get the small block.
+        if (!nexusGuidance.guidance) {
+          nexusGuidance.guidance = nexusGuidanceForDeepSeek(task, input.profile === 'site' || input.profile === 'code' ? { maxChars: 600 } : {}).text
+        }
         // Defense-in-depth: drop context that shares no significant words with the task.
         // Stale context (e.g. 18h-old SHA Q&A) confuses DeepSeek into answering the wrong question.
         if (context && task) {
@@ -1350,6 +1362,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
             context = ''
           }
         }
+        context = joinNexusGuidance(nexusGuidance.guidance, context)
         if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {
           throw new Error('Invalid workflow ref.')
         }
@@ -1413,7 +1426,9 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         }
         const checkpoint = completed.model || 'checkpoint metadata unavailable'
         const role = completed.role ? ` (${completed.role})` : ''
-        const stages = `Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=${completed.source}; result-extraction=complete; checkpoint=${checkpoint}${role}; learning-persistence=${learningStatus}.`
+        // The workflow cut the prompt to fit the window: say so, and say what happened to the NEXUS guidance (never silent).
+        const trim = completed.promptTrimmed ? `; prompt-trimmed=true; nexus-guidance=${completed.nexusGuidance || 'unknown'}` : ''
+        const stages = `Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=${completed.source}; result-extraction=complete; checkpoint=${checkpoint}${role}${trim}; learning-persistence=${learningStatus}.`
         return formatDeepSeekResultText(invocationId, owner, repo, ref, stages, completed.run.html_url, completed.result)
       }
 

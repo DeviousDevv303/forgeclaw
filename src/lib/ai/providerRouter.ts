@@ -14,6 +14,7 @@ import { buildDeepSeekTaskPayload, extractOriginalDeepSeekTask } from './deepsee
 import { stripReasoningArtifacts } from './responseFilter'
 import { withResponseLanguage } from '../responseLanguage'
 import { currentDateNote, needsCurrentInfo } from '../currentInfo'
+import { nexusGuidanceForDeepSeek } from '../nexusGuidance'
 import { extractRewrittenFile, readFileBody, sculptTarget, sculptTask } from './deepseekSculpt'
 import { extractSiteHtml, isSiteDeployRequest, parseCreatedRepo, parsePublishedCommit, siteGenerationTask, siteRepoName } from './deepseekSite'
 
@@ -65,6 +66,14 @@ function failedDeepSeekToolResult(request: AIRequest): { content: string } | und
   return result?.role === 'tool' ? { content: result.content } : undefined
 }
 function isGuardianBlockedResult(content: string) { return /^\s*\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(content) }
+/** When the workflow cut the prompt to fit the model window, the chat says so (the Stages line carries the facts). */
+function promptTrimNote(content: string): string {
+  const header = content.split('\n\n')[0] ?? ''
+  if (!/\bprompt-trimmed=true\b/.test(header)) return ''
+  const guidance = /\bnexus-guidance=(\w+)/.exec(header)?.[1]
+  const tail = guidance === 'kept' ? ' Your NEXUS guidance was kept.' : guidance === 'cut' ? ' Your NEXUS guidance was also cut.' : ''
+  return `Note: the model's window could not hold everything supplied, so part of the context was cut.${tail}`
+}
 function isSuccessfulDeepSeekToolResult(content: string) { return content.startsWith('✓ DeepSeek-16B completed as ') }
 function deepSeekCheckpointLabel(content: string) { return content.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable' }
 function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: ProviderId): boolean {
@@ -149,7 +158,7 @@ function nextSiteStep(request: AIRequest, model: string, selected: ProviderId): 
   const fail = (message: string) => ({ success: false as const, error: classifyError(new Error(message), selected) })
 
   const generated = toolResultFor(request, 'deepseek_reason')
-  if (!generated) return call('deepseek_reason', { task: siteGenerationTask(text), profile: 'site', nexus_learn: true }, 'generate')
+  if (!generated) return call('deepseek_reason', { task: siteGenerationTask(text), profile: 'site', nexus_learn: true, ...chainGuidance(text) }, 'generate')
   if (isFailure(generated) || !isSuccessfulDeepSeekToolResult(generated)) return fail(`DeepSeek could not generate the site, so nothing was published. ${generated.slice(0, 300)}`)
   const html = extractSiteHtml(generated.split('\n\n').slice(1).join('\n\n'))
   if (!html) return fail('DeepSeek returned an incomplete or repetitive page (no complete <html>...</html> document), so nothing was published. Try a shorter request, or use Kimi or Claude for larger sites.')
@@ -191,7 +200,7 @@ function nextSculptStep(request: AIRequest, model: string, selected: ProviderId)
   if ('error' in file) return fail(`Self-sculpt of ${path} stopped before any change: ${file.error}`)
 
   const rewritten = toolResultFor(request, 'deepseek_reason')
-  if (!rewritten) return call('deepseek_reason', { task: sculptTask(text, path, file.content), profile: 'code', nexus_learn: true }, 'rewrite')
+  if (!rewritten) return call('deepseek_reason', { task: sculptTask(text, path, file.content), profile: 'code', nexus_learn: true, ...chainGuidance(text) }, 'rewrite')
   if (isFailure(rewritten) || !isSuccessfulDeepSeekToolResult(rewritten)) return fail(`DeepSeek could not rewrite ${path}, so nothing was proposed. ${rewritten.slice(0, 300)}`)
   const next = extractRewrittenFile(rewritten.split('\n\n').slice(1).join('\n\n'), file.content)
   if ('error' in next) return fail(`${next.error}, so nothing was proposed for ${path}.`)
@@ -200,6 +209,16 @@ function nextSculptStep(request: AIRequest, model: string, selected: ProviderId)
   if (!proposed) return call('sculpt_self', { file_path: path, content: next.content, reason: `DeepSeek self-sculpt: ${text.replace(/\s+/g, ' ').slice(0, 200)}` }, 'propose')
   if (isFailure(proposed)) return fail(`The self-sculpt proposal for ${path} did not go through. ${proposed.replace(/^\s*\[TOOL ERROR\]\s*/i, '').slice(0, 400)}`)
   return success({ text: proposed.replace(/^✓\s*/, ''), provider: 'deepseek', model: 'DeepSeek self-sculpt chain', stopReason: 'deepseek-sculpt-complete' })
+}
+
+/**
+ * NEXUS guidance for the fixed chains, which build their own task and so skip buildDeepSeekTaskPayload. The cap is small
+ * because the window is 8K tokens and the sculpt task carries a whole source file.
+ */
+const CHAIN_GUIDANCE_CHARS = 600
+function chainGuidance(task: string): { context?: string } {
+  const text = nexusGuidanceForDeepSeek(task, { maxChars: CHAIN_GUIDANCE_CHARS }).text
+  return text ? { context: text } : {}
 }
 
 function shouldBootstrapDeepSeekReasoning(request: AIRequest, providerId: ProviderId): boolean {
@@ -271,7 +290,8 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
       if (!answer) {
         return { success: false, error: classifyError(new Error('DeepSeek generated an empty or garbled response. Please try rephrasing your question.'), selected) }
       }
-      if (answer) return success({ text: answer, provider: 'deepseek', model: `DeepSeek 16B Actions (${deepSeekCheckpointLabel(latest.content)})`, stopReason: 'deepseek-synthesis-complete' })
+      const trimNote = promptTrimNote(latest.content)
+      if (answer) return success({ text: trimNote ? `${answer}\n\n${trimNote}` : answer, provider: 'deepseek', model: `DeepSeek 16B Actions (${deepSeekCheckpointLabel(latest.content)})`, stopReason: 'deepseek-synthesis-complete' })
     }
     if (isDeepSeekProvider(selected)) return { success: false, error: classifyError(new Error('deepseek-not-dispatched: the request reached the DeepSeek provider without the deepseek_reason tool, so no workflow was dispatched and GitHub Actions was never contacted.'), selected) }
     return success(selected === 'local' ? await sendLocalWithTimeout(request, apiKey) : await provider.send(request, apiKey))

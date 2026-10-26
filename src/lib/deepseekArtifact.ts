@@ -65,9 +65,15 @@ export interface DeepSeekResultDelivery {
   model?: string
   role?: string
   elapsedSeconds?: string
+  /** The workflow had to cut the prompt to fit the model window (result_meta.txt `prompt_trimmed=true`). */
+  promptTrimmed?: boolean
+  /** What the workflow did with the NEXUS guidance block: 'none' (no block), 'kept' or 'cut' (`nexus_guidance=`). */
+  nexusGuidance?: string
 }
 
-function parseResultMetadata(text: string): Pick<DeepSeekResultDelivery, 'model' | 'role' | 'elapsedSeconds'> {
+type ResultMetadata = Pick<DeepSeekResultDelivery, 'model' | 'role' | 'elapsedSeconds' | 'promptTrimmed' | 'nexusGuidance'>
+
+function parseResultMetadata(text: string): ResultMetadata {
   const fields = new Map<string, string>()
   for (const line of text.split(/\r?\n/)) {
     const separator = line.indexOf('=')
@@ -80,6 +86,8 @@ function parseResultMetadata(text: string): Pick<DeepSeekResultDelivery, 'model'
     ...(fields.get('model') ? { model: fields.get('model') } : {}),
     ...(fields.get('role') ? { role: fields.get('role') } : {}),
     ...(fields.get('elapsed_seconds') ? { elapsedSeconds: fields.get('elapsed_seconds') } : {}),
+    ...(fields.get('prompt_trimmed') === 'true' ? { promptTrimmed: true } : {}),
+    ...(fields.get('nexus_guidance') ? { nexusGuidance: fields.get('nexus_guidance') } : {}),
   }
 }
 
@@ -261,7 +269,7 @@ export async function readDeepSeekMirror(ctx: ToolContext, owner: string, repo: 
     if (!response.ok) return undefined
     const text = normalizeDeepSeekOutput(await response.text())
     if (!text) return undefined
-    let metadata: Pick<DeepSeekResultDelivery, 'model' | 'role' | 'elapsedSeconds'> = {}
+    let metadata: ResultMetadata = {}
     try {
       const metaResponse = await toolFetch(mirrorContext, deepseekMirrorUrl(owner, repo, `${invocationId}.meta`), { cache: 'no-store' })
       if (metaResponse.ok) metadata = parseResultMetadata(await metaResponse.text())

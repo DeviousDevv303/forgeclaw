@@ -284,7 +284,7 @@ jobs:
           GGUF_DIR = os.path.expanduser('~/.cache/forgeclaw-gguf')
           FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 420  # a partial answer is returned (and flagged) rather than waiting longer
           fast = {'llm': None, 'failed': False, 'file': None, 'load_s': 0.0, 'tokens': 0, 'gen_s': 0.0,
-                  'timed_out': False, 'trimmed': False, 'version': None, 'error': None}
+                  'timed_out': False, 'trimmed': False, 'version': None, 'error': None, 'guidance': 'none'}
 
           def fast_engine():
               if os.environ.get('DEEPSEEK_ENGINE', 'gguf') == 'hf' or fast['failed']:
@@ -308,13 +308,47 @@ jobs:
                       return None
               return fast['llm']
 
+          # --- NEXUS guidance protection (begin) ---------------------------------------------------------
+          # deepseek_gguf.fit_text cuts the MIDDLE of an over-long prompt, and the supplied context sits in the middle.
+          # The owner's NEXUS guidance (delimited by forgeTools/nexusGuidance.ts) must never be what gets cut: it is set
+          # aside, the rest is fitted into the remaining budget, and the guidance is put back. Returns
+          # (prompt, trimmed, guidance) where guidance is 'none' (no block), 'kept' or 'cut'.
+          GUIDANCE_START = 'NEXUS GUIDANCE ('
+          GUIDANCE_END = '[END NEXUS GUIDANCE]'
+          GUIDANCE_HOLDER = '<<NEXUS_GUIDANCE>>'
+          TRIM_MARKER = '[... context trimmed to fit the model window ...]'
+
+          def fit_keeping_guidance(prompt, count_tokens, budget):
+              start = prompt.find(GUIDANCE_START)
+              end = prompt.find(GUIDANCE_END, start) if start >= 0 else -1
+              if start < 0 or end < 0:
+                  fitted, trimmed = deepseek_gguf.fit_text(prompt, count_tokens, budget)
+                  return fitted, trimmed, 'none'
+              end += len(GUIDANCE_END)
+              guidance = prompt[start:end]
+              if count_tokens(prompt) <= budget:
+                  return prompt, False, 'kept'
+              holder = prompt[:start] + GUIDANCE_HOLDER + prompt[end:]
+              room = max(200, budget - count_tokens(guidance) - 8)
+              fitted, _ = deepseek_gguf.fit_text(holder, count_tokens, room)
+              if GUIDANCE_HOLDER in fitted:
+                  restored = fitted.replace(GUIDANCE_HOLDER, guidance)
+              else:
+                  # The holder fell in the cut middle: the guidance goes right after the trim marker, ahead of the tail.
+                  cut = fitted.find(TRIM_MARKER)
+                  at = cut + len(TRIM_MARKER) if cut >= 0 else 0
+                  restored = fitted[:at] + '\n' + guidance + '\n' + fitted[at:]
+              return restored, True, 'kept' if guidance in restored else 'cut'
+          # --- NEXUS guidance protection (end) -----------------------------------------------------------
+
           def run_fast(llm, active_messages, max_new_tokens):
               system_text = '\n\n'.join(m['content'] for m in active_messages if m['role'] == 'system')
               user_text = '\n\n'.join(m['content'] for m in active_messages if m['role'] == 'user')
               prompt = deepseek_gguf.build_prompt(system_text, user_text)
               budget = deepseek_gguf.N_CTX - max_new_tokens - 16
-              prompt, trimmed = deepseek_gguf.fit_text(
+              prompt, trimmed, guidance = fit_keeping_guidance(
                   prompt, lambda text: len(llm.tokenize(text.encode('utf-8'), add_bos=False)), budget)
+              fast['guidance'] = guidance
               stream = llm.create_completion(prompt, max_tokens=max_new_tokens, temperature=0.6, top_p=0.9,
                                              repeat_penalty=1.1 if SITE else 1.0,
                                              stop=deepseek_gguf.STOP, stream=True)
@@ -494,6 +528,7 @@ jobs:
                       f'generation_seconds={fast["gen_s"]}\n'
                       f'stopped_by_time_budget={str(fast["timed_out"]).lower()}\n'
                       f'prompt_trimmed={str(fast["trimmed"]).lower()}\n'
+                      f'nexus_guidance={fast["guidance"]}\n'
                       f'llama_cpp_python={fast["version"]}\n'
                       if fast['llm'] is not None and not fast['failed'] and model_used == PRIMARY_MODEL else
                       f'engine=transformers float16 (slow fallback: {FALLBACK_MODEL})\n'
