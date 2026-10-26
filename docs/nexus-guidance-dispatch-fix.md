@@ -18,6 +18,14 @@ to end — dispatch through generation to the visible chat response. No stage ma
 it. This document covers the two known violations; the acceptance rule at the end covers future
 dispatch paths.
 
+**Owner's rationale (2026-10-25 23:19 CDT):** NEXUS was formed walking with paid-tier models —
+the owner's lanes run on paid-tier systems — and its approved guidance carries that tier's
+judgment. Letting NEXUS walk with every provider is how that standard reaches the free and
+local models too: the guidance's influence on their work should be positive — better answers,
+the owner's lessons applied — never ceremonial. Influence here means guidance present in the
+prompt/context, steering the response. It does **not** mean NEXUS rewriting or approving the
+final reply; that would be a separate design the owner has not ordered.
+
 ## The defect
 
 `buildDeepSeekTaskPayload` (`src/lib/ai/deepseekContext.ts:66`) assembles one `context` string
