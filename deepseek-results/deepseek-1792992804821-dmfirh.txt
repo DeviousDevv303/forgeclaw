@@ -1,0 +1,3 @@
+```tool_call
+{"name": "github_list_prs", "arguments": {"path": "kalshi-snapshot-data"}}
+```
