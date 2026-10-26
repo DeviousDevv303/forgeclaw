@@ -72,6 +72,12 @@ describe('MiroFish sims from the ForgeClaw chat', () => {
     expect(names).toContain('mirofish_sim_result')
   }, 30_000)
 
+  it('the owner\'s own spelling ("Myrofish") offers the sim tools too', async () => {
+    await send('rerun the Myrofish sim with the trimmed packet')
+    await waitFor(() => expect(kimiBodies().length).toBeGreaterThan(0), { timeout: 8000 })
+    expect((kimiBodies()[0].tools ?? []).map(t => t.function.name)).toContain('mirofish_sim')
+  }, 30_000)
+
   it('shows the world in the reply, full width and without taste buttons, while the model reads only the summary', async () => {
     await send('show me the last mirofish sim for SPIKE2-UFC333')
     const img = await screen.findByAltText(/MiroFish sim world/, undefined, { timeout: 15_000 }) as HTMLImageElement

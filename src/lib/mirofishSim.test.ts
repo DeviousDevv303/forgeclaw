@@ -90,6 +90,12 @@ describe('the workflow\'s input rules are checked before anything is dispatched'
     expect(inputs).toMatchObject({ invocation_id: 'sim-1', preset: 'tiny', model: 'kimi-k2.6', thinking: 'disabled', ceiling_usd: '0.40', provenance: '{}', yes_side: '' })
   })
 
+  it('the default ceiling follows the preset: small and mid get $1.00, since small runs died at $0.40 (2026-10-26)', () => {
+    expect(buildSimDispatchInputs({ ...baseInput, preset: 'small' }, 'sim-1').ceiling_usd).toBe('1.00')
+    expect(buildSimDispatchInputs({ ...baseInput, preset: 'mid' }, 'sim-1').ceiling_usd).toBe('1.00')
+    expect(buildSimDispatchInputs({ ...baseInput, preset: 'small', ceiling_usd: '0.60' }, 'sim-1').ceiling_usd).toBe('0.60')  // an explicit one wins
+  })
+
   it.each([
     [{ sides: 'Petr Yan' }, /sides must be exactly/],
     [{ sides: 'A|B|C' }, /sides must be exactly/],

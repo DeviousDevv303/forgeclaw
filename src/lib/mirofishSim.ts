@@ -20,6 +20,11 @@ export const SIM_MODELS = ['kimi-k2.6', 'kimi-k2.7-code'] as const
 /** The workflow refuses a higher ceiling; raising it needs a workflow edit. */
 export const SIM_MAX_CEILING_USD = 1
 export const SIM_DEFAULT_CEILING_USD = '0.40'
+/**
+ * The chat's default ceiling per preset. Two small runs with 9 and 10 agents (2026-10-26) both hit $0.40 before their poll,
+ * losing everything spent; an unused ceiling costs nothing. tiny keeps the workflow's own $0.40 (a 5-agent tiny run: $0.25).
+ */
+export const SIM_DEFAULT_CEILING_BY_PRESET: Record<string, string> = { tiny: SIM_DEFAULT_CEILING_USD, small: '1.00', mid: '1.00' }
 /** How long the chat waits before handing the run off to mirofish_sim_result. The first completed tiny run took 7 minutes. */
 export const SIM_CHAT_WAIT_MS = 20 * 60 * 1000
 const SIM_DISCOVERY_TIMEOUT_MS = 120_000
@@ -91,7 +96,7 @@ export function buildSimDispatchInputs(raw: Record<string, unknown>, invocationI
   if (!(SIM_MODELS as readonly string[]).includes(model)) throw new Error('model must be kimi-k2.6 or kimi-k2.7-code')
   const thinking = text('thinking') || 'disabled'
   if (thinking !== 'disabled' && thinking !== 'enabled') throw new Error('thinking must be disabled or enabled')
-  const ceiling = text('ceiling_usd') || SIM_DEFAULT_CEILING_USD
+  const ceiling = text('ceiling_usd') || SIM_DEFAULT_CEILING_BY_PRESET[preset] || SIM_DEFAULT_CEILING_USD
   if (!/^[0-9]+(\.[0-9]{1,2})?$/.test(ceiling) || !(Number(ceiling) > 0 && Number(ceiling) <= SIM_MAX_CEILING_USD)) {
     throw new Error(`ceiling_usd must be a dollar amount above 0 and at most ${SIM_MAX_CEILING_USD.toFixed(2)}`)
   }

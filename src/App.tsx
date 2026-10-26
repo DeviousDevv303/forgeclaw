@@ -1496,8 +1496,9 @@ function App() {
       'weather_forecast': ['weather', 'forecast', 'temperature', 'rain', 'snow', 'how hot', 'how cold'],
       // A sim is asked for in many words ("run the sim", "show me the swarm"); a false match only offers a read-only viewer.
       // The paid tool only on words that mean this sim; the read-only viewer on looser ones.
-      'mirofish_sim': ['mirofish', 'miro fish', 'swarm sim', 'run the sim', 'run a sim', 'start the sim', 'sim on'],
-      'mirofish_sim_result': ['mirofish', 'miro fish', 'swarm', 'simulation', 'the sim', 'a sim', 'sim result', 'sim world'],
+      // The owner writes it several ways ("Myrofish", "miro fish"); a follow-up without the name inherits it from his last messages.
+      'mirofish_sim': ['mirofish', 'myrofish', 'miro fish', 'myro fish', 'swarm sim', 'run the sim', 'run a sim', 'start the sim', 'rerun the sim', 'sim on', 'seed packet'],
+      'mirofish_sim_result': ['mirofish', 'myrofish', 'miro fish', 'myro fish', 'swarm', 'simulation', 'the sim', 'a sim', 'sim result', 'sim world'],
       'espn_fight_stats': ['ufc', 'mma', 'fight stats', 'fightcenter', 'strikes landed', 'significant strikes', 'striking accuracy', 'takedown', 'fight card', 'bantamweight', 'featherweight', 'lightweight', 'welterweight', 'middleweight', 'heavyweight', 'flyweight'],
       'kalshi_markets': ['kalshi', 'prediction market', 'polymarket odds', 'contract price', 'implied probability', 'multiply', 'my funds', 'my money', 'bankroll', 'master plan', 'game plan', 'betting', 'bets'],
       'kalshi_owner_prices': ['kalshi', 'prediction market', 'contract price', 'my prices', 'the prices are', 'priced at', 'betting', 'bets'],
