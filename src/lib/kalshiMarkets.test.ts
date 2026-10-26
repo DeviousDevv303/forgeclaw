@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  KALSHI_MAX_RESULTS, KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
+  KALSHI_GAME_SERIES, KALSHI_MAX_RESULTS, KALSHI_DISCLAIMER, KalshiError, buildMarketsUrl, fetchKalshiMarket, formatMarket, formatOrderbook, parseDollars, parseExchangeIndex, parseOrderbook, runKalshiMarkets, runKalshiOrderbook,
   selectMarkets, type KalshiMarket, KALSHI_429_RETRY_DELAYS_MS, KALSHI_PUBLIC_READ_INTERVAL_MS, resetKalshiReadSpacing,
 } from './kalshiMarkets'
 import { relayFallbackFetcher } from './kalshiTrade'
@@ -22,6 +22,14 @@ describe('formatMarket shard', () => {
     expect(formatMarket(mk({}), NOW)).toContain('shard n/a;')
     expect(formatMarket(mk({ exchange_index: -1 }), NOW)).toContain('shard n/a;')
     expect(formatMarket(mk({ exchange_index: '2' as unknown as number }), NOW)).toContain('shard n/a;')
+  })
+})
+
+describe('formatMarket combo label', () => {
+  it('labels a multivariate combo leg so it cannot be mistaken for a game market', () => {
+    expect(formatMarket(mk({ event_ticker: 'KXMVECROSSCATEGORY-26OCT26' }), NOW)).toContain('multivariate combo leg — not a single-game market')
+    expect(formatMarket(mk({ event_ticker: 'KXNFLGAME-26OCT26DALPHI' }), NOW)).not.toContain('multivariate combo leg')
+    expect(formatMarket(mk({}), NOW)).not.toContain('multivariate combo leg')
   })
 })
 
@@ -94,12 +102,15 @@ describe('runKalshiMarkets', () => {
     const urls: string[] = []
     const fetcher = async (url: string) => {
       urls.push(url)
-      return json({ markets: [mk({ ticker: `KX-${urls.length}` })], cursor: 'next' })
+      if (url.includes('series_ticker=')) return json({ markets: [mk({ ticker: `KX-S-${urls.length}` })] })
+      return json({ markets: [mk({ ticker: `KX-U-${urls.length}` })], cursor: 'next' })
     }
     const out = await runKalshiMarkets({}, { fetcher, now: () => NOW })
-    expect(urls).toHaveLength(3)
-    expect(urls[1]).toContain('cursor=next')
-    expect(out).toContain('3 scanned')
+    const universe = urls.filter(u => !u.includes('series_ticker='))
+    expect(universe).toHaveLength(3)
+    expect(universe[1]).toContain('cursor=next')
+    expect(urls.filter(u => u.includes('series_ticker='))).toHaveLength(KALSHI_GAME_SERIES.length)
+    expect(out).toContain('9 scanned')
   })
   it('looks up one ticker on a single page, regardless of status', async () => {
     const urls: string[] = []
@@ -110,8 +121,43 @@ describe('runKalshiMarkets', () => {
   })
   it('says nothing matched instead of inventing a market', async () => {
     const out = await runKalshiMarkets({ query: 'zzz' }, { fetcher: async () => json({ markets: [mk({})] }), now: () => NOW })
-    expect(out).toContain('No open Kalshi markets matched (1 scanned)')
+    expect(out).toContain('No open Kalshi markets matched (1 scanned; board scan read the game/fight series')
+    expect(out).toContain('KXNFLGAME')
+    expect(out).toContain('in full)')
     expect(out).not.toContain('KX-A —')
+  })
+  it('a board scan finds the individual game markets even when the universe listing is all combos', async () => {
+    // The 2026-10-25 failure: the unscoped listing returned only KXMVECROSSCATEGORY combo legs
+    // (zero bids, zero volume) and the app reported "no football markets" while the Cowboys–
+    // Eagles game market sat at 342k volume on its own series.
+    const combo = mk({
+      ticker: 'KXMVECROSSCATEGORY-26OCT26DALPHI', event_ticker: 'KXMVECROSSCATEGORY-26OCT26',
+      title: 'Dallas Cowboys Philadelphia Eagles cross-category combo',
+      yes_bid_dollars: '0.0000', yes_ask_dollars: '0.0000', volume_fp: '0.00', volume_24h_fp: '0.00', open_interest_fp: '0.00',
+    })
+    const game = mk({
+      ticker: 'KXNFLGAME-26OCT26DALPHI-DAL', event_ticker: 'KXNFLGAME-26OCT26DALPHI',
+      title: 'Dallas vs Philadelphia', yes_sub_title: 'Dallas',
+      yes_bid_dollars: '0.6600', yes_ask_dollars: '0.6800', volume_fp: '341849.00', volume_24h_fp: '166102.00', open_interest_fp: '309981.00',
+    })
+    const fetcher = async (url: string) => {
+      if (url.includes('series_ticker=KXNFLGAME')) return json({ markets: [game] })
+      if (url.includes('series_ticker=')) return json({ markets: [] })
+      return json({ markets: [combo] })
+    }
+    const out = await runKalshiMarkets({ query: 'dallas philadelphia' }, { fetcher, now: () => NOW })
+    expect(out).toContain('KXNFLGAME-26OCT26DALPHI-DAL — Dallas vs Philadelphia')
+    expect(out).toContain('bid $0.66 / ask $0.68')
+    expect(out).toContain('multivariate combo leg — not a single-game market')
+  })
+  it('names a game series it could not read instead of silently answering without it', async () => {
+    const fetcher = async (url: string) => {
+      if (url.includes('series_ticker=KXNFLGAME')) throw new TypeError('Failed to fetch')
+      return json({ markets: [mk({})] })
+    }
+    const out = await runKalshiMarkets({}, { fetcher, now: () => NOW })
+    expect(out).toContain('KX-A — Will A happen?')
+    expect(out).toContain('could not read series KXNFLGAME')
   })
   it('turns a blocked or offline fetch into a named error, never an empty list', async () => {
     await expect(runKalshiMarkets({}, { fetcher: async () => { throw new TypeError('Failed to fetch') } })).rejects.toThrow(/could not be reached.*CORS/)
@@ -320,7 +366,8 @@ describe('server snapshot preference (Stage 2)', () => {
     const source = { load: async () => { loads++; return snapDoc() } }
     await runKalshiMarkets({ query: 'a happen' }, { ...live, now: () => NOW, serverSnapshot: source })
     expect(loads).toBe(0)
-    expect(live.calls()).toBe(1)
+    // A board scan reads live: the universe listing plus one full read per game/fight series.
+    expect(live.calls()).toBe(1 + KALSHI_GAME_SERIES.length)
   })
 
   it('serverSnapshot: null disables the preference; the live read runs exactly as before', async () => {
