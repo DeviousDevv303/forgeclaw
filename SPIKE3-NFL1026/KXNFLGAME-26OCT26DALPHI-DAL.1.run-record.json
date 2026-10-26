@@ -1,0 +1,177 @@
+{
+  "artifacts": {
+    "run_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/40259253348"
+  },
+  "attempt": 1,
+  "baseline_direct": null,
+  "config": {
+    "active_rounds": 12,
+    "active_rounds_run": 12,
+    "agents_cap": 14,
+    "agents_prepared": 9,
+    "clock": {
+      "active_round_numbers": [
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ],
+      "active_rounds": 12,
+      "activity": "guaranteed",
+      "config_rounds": 48,
+      "first_active_hour": 8,
+      "first_active_round": 9,
+      "idle_rounds": 8,
+      "max_rounds": 20,
+      "minutes_per_round": 60
+    },
+    "counts_toward_bar": true,
+    "deadline_s": 8100,
+    "engine_label": "kimi-k2.6",
+    "llm_model": "kimi-k2.6",
+    "llm_provider": "moonshot",
+    "locale": "en",
+    "max_rounds": 20,
+    "platform": "parallel",
+    "preset": "small",
+    "relogged_seed_posts_dropped": null,
+    "reproducible": false,
+    "rounds_run": 20,
+    "sampling": "the provider's fixed values: the meter removed temperature, top_p, n, presence_penalty, frequency_penalty from MiroFish's calls (this engine rejects any other value); see usage.request_policy",
+    "simulated_actions": null,
+    "size_class": "small",
+    "thinking": "disabled"
+  },
+  "engine": {
+    "environment_digest": "sha256:5c1a68d8c1923486b5f38ba49a80f15890adabc9ab9424be6a331f698705c876",
+    "name": "mirofish",
+    "python": "3.11",
+    "repo_commit": "7657031ac01184afe2cb220f5ee3545573b5e843",
+    "runner_image": "ubuntu-24.04",
+    "torch": "2.9.1+cpu",
+    "torch_cpu_sha256": "3de2adb9b4443dc9210ef1f1b16da3647ace53553166d6360bbbd7edd6f16e4d",
+    "uv_lock_sha256": "877281f85fe26eb120149503b0b99021fd7e3e577d026f584857d03839595b09",
+    "uv_version": "0.9.26"
+  },
+  "extraction": {
+    "inconsistent": 0,
+    "iqr_p_a": 15.0,
+    "median_p_a": 52.0,
+    "method": "agent-poll-v1",
+    "n": 9,
+    "p_a_n": 9,
+    "picks": {
+      "A": 5,
+      "B": 4
+    },
+    "q1_p_a": 40.0,
+    "q3_p_a": 55.0,
+    "question_sha256": "95368ba53efb9cecd35deed052bf960436c5bf1c5f2637f14c4dd05602215eee",
+    "unparsed": 0
+  },
+  "invocation_id": "sim-1792981697006-3btg31",
+  "key": {
+    "card_id": "SPIKE3-NFL1026",
+    "market_ticker": "KXNFLGAME-26OCT26DALPHI-DAL"
+  },
+  "lean_for_yes_side": 52.0,
+  "market_at_start": {
+    "checked": true,
+    "close_time": "2026-10-29T00:15:00Z",
+    "open": true,
+    "status": "active"
+  },
+  "nexus": {
+    "emitted": false,
+    "file": null,
+    "reason": "not emitted: the run ended aborted_budget"
+  },
+  "reason": "task failed: Error code: 429 - {'error': {'type': 'meter_ceiling', 'message': 'run ceiling of $0.40 reached'}}; the metering ceiling had been reached",
+  "rerun_of": null,
+  "schema": "forgeclaw.mirofish-run-record.v1",
+  "seed": {
+    "packet_chars": 2064,
+    "packet_sha256": "a311c64cf20e0a91ca4f8eea2d232ce0e399107a5ce4577a758e79c6faedff94",
+    "provenance": {},
+    "thin": true,
+    "thin_reasons": [
+      "provenance.stats_snapshot missing",
+      "provenance.matchup_read missing",
+      "provenance.human_state missing"
+    ]
+  },
+  "sides": [
+    "Dallas_Cowboys",
+    "Philadelphia_Eagles"
+  ],
+  "status": "aborted_budget",
+  "timing": {
+    "finished_at": "2026-10-26T02:36:07Z",
+    "started_at": "2026-10-26T02:28:43Z",
+    "wall_seconds": 444.2
+  },
+  "usage": {
+    "balance_after_usd": 3.7448401,
+    "balance_before_usd": 4.1339703,
+    "billed_cost_basis": "Moonshot account balance delta across the run window (available_balance before the run, and after cleanup plus a 20 s settle): an account-level figure — any other spend on the same key inside the window is included. usage.cost_usd stays the meter upper bound the ceiling enforces.",
+    "billed_cost_usd": 0.38913,
+    "cached_tokens_in_reported": 141312,
+    "calls": 90,
+    "ceiling_hit": true,
+    "ceiling_usd": 0.4,
+    "cost_basis": "upper bound: every prompt token at the cache-miss price",
+    "cost_usd": 0.408329,
+    "error_samples": [
+      {
+        "excerpt": "meter_ceiling: run ceiling of $0.40 reached",
+        "source": "meter",
+        "status": 429
+      }
+    ],
+    "model": "kimi-k2.6",
+    "price_per_mtok_usd": {
+      "input": 0.95,
+      "output": 4.0
+    },
+    "price_source": "Moonshot figures are from third-party price trackers, which disagree slightly; Moonshot's own pricing page was not reached. Verify before relying on the dollar figures.",
+    "price_table_version": "2026-10-24",
+    "provider": "moonshot",
+    "refused_other": 0,
+    "refused_over_ceiling": 3,
+    "request_policy": {
+      "empty_assistant_dropped": 90,
+      "fields_removed": {
+        "temperature": 33
+      },
+      "pinned_fields": [
+        "temperature",
+        "top_p",
+        "n",
+        "presence_penalty",
+        "frequency_penalty"
+      ],
+      "thinking": "disabled",
+      "thinking_overridden": 0
+    },
+    "tokens_in": 323567,
+    "tokens_out": 25235,
+    "unmetered_calls_estimated": 0,
+    "upstream_errors": 0
+  },
+  "yes_side": "Dallas_Cowboys",
+  "zep": {
+    "basis": "500-char chunks, 2 credits per chunk; graph-memory updates off. Vendor figures are unverified.",
+    "credits_est": 10,
+    "deleted": true,
+    "episodes_est": 5,
+    "graph_id": "mirofish_e31f2cfdd0e54d98"
+  }
+}
