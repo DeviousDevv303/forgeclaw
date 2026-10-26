@@ -1,0 +1,123 @@
+{
+  "artifacts": {
+    "run_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/40248310648"
+  },
+  "attempt": 1,
+  "baseline_direct": null,
+  "config": {
+    "active_rounds": 12,
+    "active_rounds_run": null,
+    "agents_cap": 14,
+    "agents_prepared": 18,
+    "clock": null,
+    "counts_toward_bar": true,
+    "deadline_s": 8100,
+    "engine_label": "kimi-k2.6",
+    "llm_model": "kimi-k2.6",
+    "llm_provider": "moonshot",
+    "locale": "en",
+    "max_rounds": null,
+    "platform": "parallel",
+    "preset": "small",
+    "relogged_seed_posts_dropped": null,
+    "reproducible": false,
+    "rounds_run": null,
+    "sampling": "the provider's fixed values: the meter removed temperature, top_p, n, presence_penalty, frequency_penalty from MiroFish's calls (this engine rejects any other value); see usage.request_policy",
+    "simulated_actions": null,
+    "size_class": "small",
+    "thinking": "disabled"
+  },
+  "engine": {
+    "environment_digest": "sha256:5c1a68d8c1923486b5f38ba49a80f15890adabc9ab9424be6a331f698705c876",
+    "name": "mirofish",
+    "python": "3.11",
+    "repo_commit": "7657031ac01184afe2cb220f5ee3545573b5e843",
+    "runner_image": "ubuntu-24.04",
+    "torch": "2.9.1+cpu",
+    "torch_cpu_sha256": "3de2adb9b4443dc9210ef1f1b16da3647ace53553166d6360bbbd7edd6f16e4d",
+    "uv_lock_sha256": "877281f85fe26eb120149503b0b99021fd7e3e577d026f584857d03839595b09",
+    "uv_version": "0.9.26"
+  },
+  "extraction": null,
+  "invocation_id": "sim-1792973612761-2hq5e9",
+  "key": {
+    "card_id": "SPIKE3-UFC333",
+    "market_ticker": "KXUFCFIGHT-26OCT24YANDVA-YAN"
+  },
+  "lean_for_yes_side": null,
+  "nexus": {
+    "emitted": false,
+    "file": null,
+    "reason": "not emitted: the run ended aborted_agents_over_cap"
+  },
+  "reason": "MiroFish prepared 18 agents; the small cap is 14. Nothing was simulated.",
+  "rerun_of": null,
+  "schema": "forgeclaw.mirofish-run-record.v1",
+  "seed": {
+    "packet_chars": 3656,
+    "packet_sha256": "cb933e8d05e096c3e1ceecc490c09938e0d053f68b84b36e31da2ff4d190cfb1",
+    "provenance": {
+      "human_state": "web_search_previews",
+      "matchup_read": "web_search_previews",
+      "stats_snapshot": "espn_fight_stats"
+    },
+    "thin": false,
+    "thin_reasons": []
+  },
+  "sides": [
+    "Yan",
+    "Merab"
+  ],
+  "status": "aborted_agents_over_cap",
+  "timing": {
+    "finished_at": "2026-10-26T00:18:00Z",
+    "started_at": "2026-10-26T00:13:58Z",
+    "wall_seconds": 241.5
+  },
+  "usage": {
+    "cached_tokens_in_reported": 0,
+    "calls": 23,
+    "ceiling_hit": false,
+    "ceiling_usd": 0.4,
+    "cost_basis": "upper bound: every prompt token at the cache-miss price",
+    "cost_usd": 0.131812,
+    "error_samples": [],
+    "model": "kimi-k2.6",
+    "price_per_mtok_usd": {
+      "input": 0.95,
+      "output": 4.0
+    },
+    "price_source": "Moonshot figures are from third-party price trackers, which disagree slightly; Moonshot's own pricing page was not reached. Verify before relying on the dollar figures.",
+    "price_table_version": "2026-10-24",
+    "provider": "moonshot",
+    "refused_other": 0,
+    "refused_over_ceiling": 0,
+    "request_policy": {
+      "empty_assistant_dropped": 0,
+      "fields_removed": {
+        "temperature": 23
+      },
+      "pinned_fields": [
+        "temperature",
+        "top_p",
+        "n",
+        "presence_penalty",
+        "frequency_penalty"
+      ],
+      "thinking": "disabled",
+      "thinking_overridden": 0
+    },
+    "tokens_in": 32981,
+    "tokens_out": 25120,
+    "unmetered_calls_estimated": 0,
+    "upstream_errors": 0
+  },
+  "yes_side": "Yan",
+  "zep": {
+    "basis": "500-char chunks, 2 credits per chunk; graph-memory updates off. Vendor figures are unverified.",
+    "credits_est": 18,
+    "deleted": true,
+    "episodes_est": 9,
+    "graph_id": "mirofish_123ff0cc16c349d8"
+  }
+}
