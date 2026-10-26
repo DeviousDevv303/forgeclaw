@@ -159,6 +159,16 @@ describe('runKalshiMarkets', () => {
     expect(out).toContain('KX-A — Will A happen?')
     expect(out).toContain('could not read series KXNFLGAME')
   })
+  it('a failed series is not also claimed as read in full in the no-match verdict (F-036)', async () => {
+    const fetcher = async (url: string) => {
+      if (url.includes('series_ticker=KXNFLGAME')) return json({ nope: 1 }, 500)
+      return json({ markets: [] })
+    }
+    const out = await runKalshiMarkets({ query: 'zzz' }, { fetcher, now: () => NOW })
+    expect(out).toContain('could not read KXNFLGAME')
+    expect(out).toContain('KXNCAAFGAME in full; could not read KXNFLGAME')
+    expect(out).not.toContain('KXNFLGAME, KXNCAAFGAME in full')
+  })
   it('turns a blocked or offline fetch into a named error, never an empty list', async () => {
     await expect(runKalshiMarkets({}, { fetcher: async () => { throw new TypeError('Failed to fetch') } })).rejects.toThrow(/could not be reached.*CORS/)
   })
