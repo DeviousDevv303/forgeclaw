@@ -52,6 +52,19 @@ describe('dispatch to the 16B workflow', () => {
   })
 })
 
+describe('stale context is still dropped when NEXUS has taught nothing', () => {
+  it('sends an empty context for unrelated stale records', async () => {
+    localStorage.clear()
+    let sent: Record<string, string> | undefined
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (/dispatches$/.test(String(url))) { sent = JSON.parse(String(init?.body)).inputs; throw new Error('stop after dispatch') }
+      return new Response('{}', { status: 404 })
+    }))
+    await executeTool({ id: 'p', name: 'deepseek_reason', input: { task: 'write a poem about cats', context: 'Yesterday commit deadbeefdeadbeef answered quantum chromodynamics' } }, { ...loadToolContext(), ghToken: 't', guardianPosture: 'operator-shell', actor: 'operator', requestGuardianApproval: async () => true }).catch(() => {})
+    expect(sent?.context).toBe('')
+  })
+})
+
 describe('the fixed DeepSeek chains', () => {
   const turn = (prompt: string, tools: string[], results: Array<[string, string]> = []): AIRequest => ({
     model: 'deepseek-16b', systemPrompt: '', tools: tools.map(name => ({ name, description: name, parameters: {} })),
