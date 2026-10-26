@@ -417,11 +417,11 @@ describe('saved-agent run reaches real tools without native function calling', (
 
 describe('existing systems are untouched', () => {
   it('keeps the provider registry and its tool-support facts intact', () => {
-    expect(Object.keys(PROVIDERS).sort()).toEqual(['anthropic', 'corpus', 'deepseek', 'deepseekapi', 'local', 'moonshot', 'muse', 'nexus'])
+    expect(Object.keys(PROVIDERS).sort()).toEqual(['anthropic', 'corpus', 'deepseek', 'deepseekapi', 'local', 'moonshot', 'muse', 'nexus', 'openrouter'])
     expect(modelSupportsTools('nexus', 'qwen')).toBe(false)
     expect(modelSupportsTools('local', 'qwen2.5:1.5b')).toBe(true)
     expect(modelSupportsTools('deepseek', 'deepseek-16b')).toBe(true)
-    expect(Object.keys(PROVIDERS).length).toBe(8)
+    expect(Object.keys(PROVIDERS).length).toBe(9)
   })
 
   it('keeps every pre-existing tool name in the registry', () => {

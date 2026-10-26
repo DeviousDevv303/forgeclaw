@@ -12,7 +12,7 @@ import { FIGHTER_STATE_MAX_WEIGHT_PCT, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_
 import { SIM_MIN_HIT_RATE, SIM_MIN_SETTLED_RUNS, SIM_WEIGHT_CAP } from './simGrading'
 
 /** Providers whose models call tools natively and reliably; local llama.cpp is deliberately excluded. */
-export const HOSTED_TOOL_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'moonshot', 'deepseekapi', 'muse'])
+export const HOSTED_TOOL_PROVIDERS: ReadonlySet<string> = new Set(['anthropic', 'moonshot', 'deepseekapi', 'openrouter', 'muse'])
 
 /** Read-only evidence tools a hosted model always gets. Writes stay keyword/task-gated and behind Guardian. */
 export const READ_ONLY_BASELINE_TOOLS = [
