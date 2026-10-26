@@ -1268,5 +1268,66 @@ class ProgressLogTests(unittest.TestCase):
         self.assertTrue(any('round 4 of 4' in line for line in env.log_lines))
 
 
+class BalanceCostTests(unittest.TestCase):
+    """Claude's design (2026-10-25): the run's real billed cost is the Moonshot account balance delta — read through the meter
+    before the run and after cleanup with a settle wait — recorded next to the meter's upper-bound estimate."""
+
+    def _run(self, env, balance):
+        sleeps = []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            env.sleep(seconds)
+
+        miro = mr.Miro(mr.Http(env.miro.url))
+        record, _ = mr.run_attempt(env.args, miro, lambda: dict(env.meter_state), lambda prompt: env.direct_text,
+                                   sleep=sleep, clock=env.clock, log=lambda line: None, balance=balance)
+        return record, sleeps
+
+    def test_the_balance_delta_is_recorded_next_to_the_meter_upper_bound(self):
+        env = Env(self)
+        readings = iter([100.0, 99.71])
+        record, sleeps = self._run(env, lambda: next(readings))
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        usage = record['usage']
+        self.assertEqual(usage['cost_usd'], 0.11)  # the fake meter's upper bound, untouched
+        self.assertEqual(usage['billed_cost_usd'], 0.29)
+        self.assertEqual(usage['balance_before_usd'], 100.0)
+        self.assertEqual(usage['balance_after_usd'], 99.71)
+        self.assertIn('account', usage['billed_cost_basis'])
+        self.assertEqual(sleeps[-1], mr.BALANCE_SETTLE_S)  # the settle wait is the last sleep, after cleanup
+
+    def test_a_missing_second_reading_records_no_billed_cost_and_still_completes(self):
+        env = Env(self)
+        readings = iter([100.0, None])
+        record, _ = self._run(env, lambda: next(readings))
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        self.assertNotIn('billed_cost_usd', record['usage'])
+
+    def test_a_balance_read_that_raises_never_fails_the_run(self):
+        env = Env(self)
+
+        def broken():
+            raise RuntimeError('balance endpoint down')
+
+        record, _ = self._run(env, broken)
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        self.assertNotIn('billed_cost_usd', record['usage'])
+
+    def test_no_balance_reader_means_no_billing_fields(self):
+        env = Env(self)
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        self.assertNotIn('billed_cost_usd', record['usage'])
+
+    def test_parse_available_balance_reads_only_the_documented_shape(self):
+        self.assertEqual(mr.parse_available_balance({'code': 0, 'data': {'available_balance': 9.87, 'cash_balance': 9.87}}), 9.87)
+        self.assertEqual(mr.parse_available_balance({'data': {'available_balance': 5}}), 5.0)
+        self.assertIsNone(mr.parse_available_balance({'data': {}}))
+        self.assertIsNone(mr.parse_available_balance({'data': {'available_balance': '9.87'}}))
+        self.assertIsNone(mr.parse_available_balance({'available_balance': 9.87}))
+        self.assertIsNone(mr.parse_available_balance(None))
+
+
 if __name__ == '__main__':
     unittest.main()

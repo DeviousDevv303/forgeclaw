@@ -70,7 +70,10 @@ Estimates are from reading the code (calls × tokens), at third-party-tracker pr
 disagree slightly; thinking tokens bill as output, so real cost may be higher. **Only `tiny` fits the default $0.40 ceiling on
 K2.6**, and `tiny` does not count toward the bar, so **on this engine at this ceiling no run builds the track record.** Counted
 sims need `small` at a higher `ceiling_usd` (hard maximum in the workflow: 1.00; `small` is est. $0.72), or a cheaper engine. The meter replaces the estimate with measured usage after the first run; its figure is an upper bound (every
-prompt token at the cache-miss price), and the provider's usage page is the invoice.
+prompt token at the cache-miss price), and the provider's usage page is the invoice. On Moonshot the runner also reads the
+account balance (`/v1/users/me/balance`, through the meter) before the run and after cleanup plus a 20-second settle, and
+records the delta as `usage.billed_cost_usd` next to the upper bound — an account-level figure (any other spend on the same
+key inside the window is included), so the bound stays the number the ceiling enforces.
 
 ## Discipline, and where each rule is enforced
 
@@ -183,7 +186,7 @@ Statuses: `completed`, `aborted_budget`, `aborted_agents_over_cap`, `aborted_zep
 
 ## What is verified, and what is not
 
-Verified offline (179 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
+Verified offline (184 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
 and its SVG, the requirement filter, the runner's orchestration and refusals against a **scripted fake MiroFish**, the workflow's
 safety properties, and the intake line against the real TypeScript validator and grader. The hash-pinned CPU install was also
 run for real (1.35 GB, about 2 minutes, `pip check` clean, `import oasis` works).
