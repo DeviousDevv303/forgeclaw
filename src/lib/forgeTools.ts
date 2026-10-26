@@ -4,7 +4,7 @@
 // Gives ForgeMind hands. Each tool maps to a real browser-executable action.
 // Tool calling is routed through the active provider adapter.
 
-import { safeGetItem, safeSetItem } from './storage'
+import { safeGetItem, verifiedSetItem } from './storage'
 import { resolveGithubToken } from './githubAuth'
 import { describeGithubDispatchFailure } from './githubDispatchErrors'
 import { describeGithubHttpFailure, describeGithubTransportFailure, toolFetch } from './githubFetch'
@@ -1547,7 +1547,15 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
       // ── Memory ───────────────────────────────────────────────────────────────
       case 'memory_write': {
         const key = `fc_mem_${input.key as string}`
-        safeSetItem(key, input.value as string)
+        // F-032: safeSetItem swallowed write failures (quota / private mode), so this
+        // result claimed "Stored" for values that were never persisted — a following
+        // memory_read found nothing. The claim is now made only by read-back
+        // (verifiedSetItem); on a false verdict the result says so, so the caller
+        // can retry or warn instead of building on a lost value.
+        const write = verifiedSetItem(key, input.value as string)
+        if (!write.ok) {
+          return `✗ NOT stored — memory write for "${input.key}" failed verification (${write.error ?? 'storage unavailable'}); nothing was persisted. Free up storage or retry — do not treat this value as saved.`
+        }
         return `✓ Stored "${input.key}" in memory.`
       }
       case 'memory_read': {
@@ -2440,6 +2448,24 @@ case 'spawn_agent': {
           blockers: blocker ? [...previous.blockers, blocker] : previous.blockers,
           activity: appendActivity(previous, 'coding_task_update', `${status}${blocker ? ` — blocker: ${blocker}` : ''}`),
         })
+        // F-032: this claim used to be printed from the in-memory object while the
+        // write underneath (saveCodingAgentState → safeSetItem) swallowed failures —
+        // the state whose whole purpose is resuming after reload could be gone with
+        // no signal. Verify against the artifact: reload and require the stored
+        // record to carry this update — its updatedAt stamp and every field the
+        // claim below asserts. (On an aborted signal saveState writes nothing and
+        // returns the already-persisted state, which passes truthfully.)
+        const persisted = loadState()
+        const verified =
+          persisted.updatedAt === next.updatedAt &&
+          persisted.taskStatus === next.taskStatus &&
+          persisted.owner === next.owner &&
+          persisted.repo === next.repo &&
+          persisted.branch === next.branch &&
+          persisted.headSha === next.headSha
+        if (!verified) {
+          return `✗ NOT persisted — coding agent state could not be verified in storage after the write; the update may be lost (storage full or unavailable) and the task may not resume after reload. In-memory only — status: ${next.taskStatus}, repo: ${next.owner}/${next.repo}@${next.branch}, HEAD: ${next.headShaShort || '(unknown)'}. Retry before relying on resume.`
+        }
         return `✓ Coding agent state persisted — status: ${next.taskStatus}, repo: ${next.owner}/${next.repo}@${next.branch}, HEAD: ${next.headShaShort || '(unknown)'}, updated: ${next.updatedAt}`
       }
 
