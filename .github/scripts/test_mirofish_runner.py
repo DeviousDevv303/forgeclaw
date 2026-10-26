@@ -404,18 +404,33 @@ class RefusalTests(unittest.TestCase):
 
     def test_aborted_attempts_do_not_take_the_slot_until_the_limit(self):
         env = Env(self)
-        env.miro.agents = 99  # over the cap: aborts before spending
+        env.meter_state['ceiling_hit'] = True  # a budget abort: it counts toward the limit
         first, _ = env.run()
-        self.assertEqual((first['status'], first['attempt']), ('aborted_agents_over_cap', 1))
+        self.assertEqual((first['status'], first['attempt']), ('aborted_budget', 1))
         env2 = Env(self)
         shutil.copytree(env.out, env2.results, dirs_exist_ok=True)
-        env2.miro.agents = 99
+        env2.meter_state['ceiling_hit'] = True
         second, _ = env2.run()
-        self.assertEqual((second['status'], second['attempt']), ('aborted_agents_over_cap', 2))
+        self.assertEqual((second['status'], second['attempt']), ('aborted_budget', 2))
         env3 = Env(self)
         shutil.copytree(env.out, env3.results, dirs_exist_ok=True)   # both recorded attempts are visible to the next one
         shutil.copytree(env2.out, env3.results, dirs_exist_ok=True)
         self.assertIn('limit 2', self.refused(env3))
+
+    def test_over_cap_refusals_leave_the_attempts_for_a_real_run(self):
+        env = Env(self)
+        env.miro.agents = 99  # over the cap: refused before any profile is written
+        first, _ = env.run()
+        env2 = Env(self)
+        shutil.copytree(env.out, env2.results, dirs_exist_ok=True)
+        env2.miro.agents = 99
+        second, _ = env2.run()
+        self.assertEqual([r['status'] for r in (first, second)], ['aborted_agents_over_cap'] * 2)
+        env3 = Env(self)
+        shutil.copytree(env.out, env3.results, dirs_exist_ok=True)
+        shutil.copytree(env2.out, env3.results, dirs_exist_ok=True)
+        third, _ = env3.run()  # two refusals recorded, and still no override needed
+        self.assertEqual((third['status'], third['attempt']), ('completed', 3))
 
     def test_an_unreadable_existing_record_is_refused_not_guessed(self):
         env = Env(self)
@@ -423,6 +438,14 @@ class RefusalTests(unittest.TestCase):
         with open(os.path.join(env.results, 'UFC333', 'KXUFCFIGHT-26OCT24YANDVA-YAN.1.run-record.json'), 'w') as handle:
             handle.write('{not json')
         self.assertIn('unreadable', self.refused(env))
+
+    def test_over_cap_refusals_do_not_use_up_a_keys_attempts(self):
+        # 2026-10-26: four over-cap refusals in a row (about $0.01 each, nothing simulated) spent SPIKE3-UFC333's attempts.
+        refusals = [{'attempt': n, 'status': 'aborted_agents_over_cap'} for n in (1, 2, 3)]
+        self.assertEqual(mr.decide_slot(refusals), 4)
+        with self.assertRaises(mr.Refusal) as ctx:
+            mr.decide_slot(refusals + [{'attempt': 4, 'status': 'aborted_budget'}, {'attempt': 5, 'status': 'failed'}])
+        self.assertIn('over-cap refusals do not count', str(ctx.exception))
 
     def test_slot_decision_units(self):
         self.assertEqual(mr.decide_slot([]), 1)
