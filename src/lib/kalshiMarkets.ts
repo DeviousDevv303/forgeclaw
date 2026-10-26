@@ -586,7 +586,13 @@ export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promis
   const nowMs = now()
   const selected = selectMarkets(all, q, nowMs)
   if (store) recordSnapshot(store, q, selected, all.length, nowMs)
-  const scan: KalshiScanInfo | undefined = isBoardScan(q) ? { seriesRead: [...KALSHI_GAME_SERIES], seriesFailed } : undefined
+  // F-036: seriesRead names only the series actually read in full. Listing every series
+  // unconditionally put a failed series in both halves of the no-match verdict ("read the
+  // game/fight series …, KXNFLGAME, … in full; could not read KXNFLGAME") — the evidence
+  // sentence contradicting itself about the very series it failed to read.
+  const scan: KalshiScanInfo | undefined = isBoardScan(q)
+    ? { seriesRead: KALSHI_GAME_SERIES.filter(s => !seriesFailed.includes(s)), seriesFailed }
+    : undefined
   return formatMarkets(selected, q, nowMs, all.length, KALSHI_DISCLAIMER, scan)
 }
 
