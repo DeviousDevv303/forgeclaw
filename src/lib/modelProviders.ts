@@ -3,6 +3,7 @@ import type { AIMessage, AIRequest } from './ai/types'
 import { ANTHROPIC_MODELS, DEFAULT_ANTHROPIC_MODEL, anthropicProvider } from './ai/providers/anthropicProvider'
 import { DEFAULT_MOONSHOT_MODEL, moonshotProvider, MOONSHOT_MODELS } from './ai/providers/moonshotProvider'
 import { DEFAULT_META_MODEL, metaProvider, META_MODELS } from './ai/providers/metaProvider'
+import { DEFAULT_OPENROUTER_MODEL, OPENROUTER_CHAT_URL, OPENROUTER_MODELS, openrouterProvider } from './ai/providers/openrouterProvider'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL, localInferenceProvider } from './ai/providers/localInferenceProvider'
 import { corpusProvider } from './ai/providers/corpusProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
@@ -16,12 +17,13 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   moonshot: { id: 'moonshot', name: 'Moonshot (Kimi)', url: 'https://api.moonshot.ai/v1/chat/completions', models: MOONSHOT_MODELS, keyPlaceholder: 'sk-...', keyPrefix: 'sk-' },
   anthropic: { id: 'anthropic', name: 'Anthropic (Claude)', url: 'https://api.anthropic.com/v1/messages', models: ANTHROPIC_MODELS, keyPlaceholder: 'sk-ant-...', keyPrefix: 'sk-ant-' },
   muse: { id: 'muse', name: 'Muse · Meta', url: 'https://api.meta.ai/v1/chat/completions', models: META_MODELS, keyPlaceholder: 'LLM_...', keyPrefix: 'LLM_' },
+  openrouter: { id: 'openrouter', name: 'OpenRouter', url: OPENROUTER_CHAT_URL, models: OPENROUTER_MODELS, keyPlaceholder: 'sk-or-...', keyPrefix: 'sk-or-' },
   local: { id: 'local', name: 'Local Inference (llama.cpp)', url: `${DEFAULT_LOCAL_ENDPOINT}/chat/completions`, models: localInferenceProvider.models.map(model => ({ ...model })), keyPlaceholder: DEFAULT_LOCAL_ENDPOINT },
   nexus: { id: 'nexus', name: 'DeepSeek 16B (legacy saved-session alias)', url: 'https://github.com/DeviousDevv303/forgeclaw/actions/workflows/deepseek-16b.yml', models: corpusProvider.models.map(model => ({ ...model })), keyPlaceholder: 'Use the DeepSeek workflow token' },
   deepseek: { id: 'deepseek', name: 'DeepSeek 16B', url: 'https://github.com/DeviousDevv303/forgeclaw/actions/workflows/deepseek-16b.yml', models: corpusProvider.models.map(model => ({ ...model })), keyPlaceholder: 'No API key required; DeepSeek workflow uses GitHub authorization' },
 }
-export const PROVIDER_ORDER: ProviderId[] = ['deepseek', 'moonshot', 'corpus', 'local', 'anthropic', 'muse']
-export const DEFAULT_MODEL: Record<ProviderId, string> = { corpus: 'deepseek-16b', deepseek: 'deepseek-16b', moonshot: DEFAULT_MOONSHOT_MODEL, anthropic: DEFAULT_ANTHROPIC_MODEL, muse: DEFAULT_META_MODEL, local: DEFAULT_LOCAL_MODEL, nexus: 'deepseek-16b' }
+export const PROVIDER_ORDER: ProviderId[] = ['deepseek', 'moonshot', 'corpus', 'local', 'anthropic', 'muse', 'openrouter']
+export const DEFAULT_MODEL: Record<ProviderId, string> = { corpus: 'deepseek-16b', deepseek: 'deepseek-16b', moonshot: DEFAULT_MOONSHOT_MODEL, anthropic: DEFAULT_ANTHROPIC_MODEL, muse: DEFAULT_META_MODEL, openrouter: DEFAULT_OPENROUTER_MODEL, local: DEFAULT_LOCAL_MODEL, nexus: 'deepseek-16b' }
 export type ChatMessage = AIMessage
 export interface CallResult { text: string; provider: ProviderId; model: string; toolCalls?: ToolCall[]; stopReason?: string }
 export interface CallOptions { tools?: ToolDef[]; onToken?: (token: string) => void; signal?: AbortSignal; maxTokens?: number }
@@ -31,6 +33,7 @@ export async function callProvider(providerId: ProviderId, model: string, system
   if (providerId === 'moonshot') { const response = await moonshotProvider.send({ ...request, model: model || DEFAULT_MOONSHOT_MODEL }, apiKey); return { text: response.text, provider: 'moonshot', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
   if (providerId === 'anthropic') { const response = await anthropicProvider.send({ ...request, model: model || DEFAULT_ANTHROPIC_MODEL }, apiKey); return { text: response.text, provider: 'anthropic', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
   if (providerId === 'muse') { const response = await metaProvider.send({ ...request, model: model || DEFAULT_META_MODEL }, apiKey); return { text: response.text, provider: 'muse', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
+  if (providerId === 'openrouter') { const response = await openrouterProvider.send({ ...request, model: model || DEFAULT_OPENROUTER_MODEL }, apiKey); return { text: response.text, provider: 'openrouter', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
   const response = await localInferenceProvider.send({ ...request, model: model || DEFAULT_LOCAL_MODEL }, apiKey)
   return { text: response.text, provider: 'local', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
 }
@@ -39,6 +42,7 @@ export function modelSupportsTools(providerId: ProviderId, modelId: string): boo
   if (providerId === 'moonshot') return moonshotProvider.supportsTools(modelId)
   if (providerId === 'anthropic') return anthropicProvider.supportsTools(modelId)
   if (providerId === 'muse') return metaProvider.supportsTools(modelId)
+  if (providerId === 'openrouter') return openrouterProvider.supportsTools(modelId)
   return localInferenceProvider.supportsTools(modelId)
 }
 export async function testProviderKey(providerId: ProviderId, _model: string, apiKey: string): Promise<void> {
@@ -46,5 +50,6 @@ export async function testProviderKey(providerId: ProviderId, _model: string, ap
   if (providerId === 'moonshot') { await moonshotProvider.test(apiKey); return }
   if (providerId === 'anthropic') { await anthropicProvider.test(apiKey); return }
   if (providerId === 'muse') { await metaProvider.test(apiKey); return }
+  if (providerId === 'openrouter') { await openrouterProvider.test(apiKey); return }
   await localInferenceProvider.test(apiKey)
 }

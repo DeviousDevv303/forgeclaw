@@ -23,6 +23,8 @@ export interface AIMessage {
   tool_calls?: AIToolCall[]
   /** Kimi thinking output from the turn that made tool_calls; Moonshot needs it sent back in tool-call loops. */
   reasoning_content?: string
+  /** OpenRouter reasoning blocks from the turn that made tool_calls, sent back as returned (signatures included). */
+  reasoning_details?: unknown[]
 }
 
 export interface AIToolDef {
@@ -64,6 +66,8 @@ export interface AIResponse {
   stopReason?: string
   /** Provider reasoning text (Kimi reasoning_content). Never shown as the answer. */
   reasoningContent?: string
+  /** OpenRouter's structured reasoning blocks, kept only to send back on the next tool-call turn. */
+  reasoningDetails?: unknown[]
   diagnostics?: {
     primaryReasoning?: PrimaryReasoningDiagnostic
     secondarySynthesis?: SecondarySynthesisDiagnostic
