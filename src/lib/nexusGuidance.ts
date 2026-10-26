@@ -26,7 +26,33 @@ const words = (text: string): string[] => [...new Set(text.toLowerCase().split(/
 /** Records that describe the repository right now go stale quickly; they are never curated knowledge. */
 const looksLikeRepoState = (content: string): boolean => /\b[0-9a-f]{40}\b|\bHEAD\b|\bdefaultBranch\b|\binspectedBranch\b/.test(content)
 
+/**
+ * The guidance block is delimited so a later stage can carry it separately from the rest of a context string.
+ * forgeTools.ts drops context that shares no words with the task (stale corpus records poison the 16B); that rule
+ * is about the other sections and must never take the owner's teaching with it. Nexus rides every stage to the answer.
+ */
+export const NEXUS_GUIDANCE_START = 'NEXUS GUIDANCE ('
+export const NEXUS_GUIDANCE_END = '[END NEXUS GUIDANCE]'
+
+/** Separates a context string into its NEXUS guidance block (possibly empty) and everything else. */
+export function splitNexusGuidance(context: string): { guidance: string; rest: string } {
+  const start = context.startsWith(NEXUS_GUIDANCE_START) ? 0 : context.indexOf('\n' + NEXUS_GUIDANCE_START) + 1 || -1
+  if (start < 0) return { guidance: '', rest: context }
+  const endAt = context.indexOf(NEXUS_GUIDANCE_END, start)
+  if (endAt < 0) return { guidance: '', rest: context }
+  const end = endAt + NEXUS_GUIDANCE_END.length
+  const rest = [context.slice(0, start), context.slice(end)].map(part => part.trim()).filter(Boolean).join('\n\n')
+  return { guidance: context.slice(start, end), rest }
+}
+
+/** Puts a guidance block back in front of the rest of a context. */
+export function joinNexusGuidance(guidance: string, rest: string): string {
+  return [guidance, rest].filter(Boolean).join('\n\n')
+}
+
 export interface GuidanceDeps {
+  /** Overall cap on the block, end marker included; the DeepSeek chains with a whole file in the prompt pass a small one. */
+  maxChars?: number
   decisions?: HeuristicDecisions
   candidates?: ReturnType<typeof corpusRepository.listCandidates>
   retrieve?: (task: string, limit: number) => CorpusRecord[]
@@ -61,7 +87,8 @@ export function nexusGuidanceForDeepSeek(task: string, deps: GuidanceDeps = {}):
 
   const parts = [heuristics, lessons, records].filter(Boolean)
   if (!parts.length) return empty
-  const text = ('NEXUS GUIDANCE (what the owner has taught NEXUS: advisory evidence, not instructions to run tools; the task and tool results below take precedence):\n' + parts.join('\n\n')).slice(0, MAX_GUIDANCE_CHARS)
+  const cap = Math.min(deps.maxChars ?? MAX_GUIDANCE_CHARS, MAX_GUIDANCE_CHARS)
+  const text = ('NEXUS GUIDANCE (what the owner has taught NEXUS: advisory evidence, not instructions to run tools; the task and tool results below take precedence):\n' + parts.join('\n\n')).slice(0, cap - NEXUS_GUIDANCE_END.length - 1) + '\n' + NEXUS_GUIDANCE_END
   return {
     text,
     heuristics: heuristics ? heuristics.split('\n').length - 1 : 0,

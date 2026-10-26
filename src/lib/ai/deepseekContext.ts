@@ -67,12 +67,13 @@ export function buildDeepSeekTaskPayload(rawTask: string, verifiedToolResults = 
   const { task, runtimeContext } = separateRuntimeEnvelope(rawTask)
   const sections: string[] = []
 
-  if (asksAboutForgeClawArchitecture(task)) sections.push(FORGECLAW_ARCHITECTURE_CONTEXT)
-  if (runtimeContext) sections.push(`ForgeClaw runtime envelope (identity/routing hints only; not repository evidence):\n${runtimeContext}`)
-
   // What the owner has taught NEXUS (approved heuristics, recurring failures, approved knowledge) reaches DeepSeek too.
+  // It goes first: the size budget below cuts from the end, so a long envelope or tool result never trims it away.
   const guidance = nexusGuidanceForDeepSeek(task).text
   if (guidance) sections.push(guidance)
+
+  if (asksAboutForgeClawArchitecture(task)) sections.push(FORGECLAW_ARCHITECTURE_CONTEXT)
+  if (runtimeContext) sections.push(`ForgeClaw runtime envelope (identity/routing hints only; not repository evidence):\n${runtimeContext}`)
 
   const CORPUS_FRESHNESS_MS = 60 * 60 * 1000 // 1 hour — stale records poison DeepSeek
   const freshCorpusRecords = corpusRepository.retrieve(task, 3).filter(r => {
