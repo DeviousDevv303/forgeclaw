@@ -96,13 +96,18 @@ describe('the workflow\'s input rules are checked before anything is dispatched'
     expect(buildSimDispatchInputs({ ...baseInput, preset: 'small', ceiling_usd: '0.60' }, 'sim-1').ceiling_usd).toBe('0.60')  // an explicit one wins
   })
 
+  it('preview is a preset, with the $0.40 ceiling (it builds the graph only, about $0.01)', () => {
+    expect(buildSimDispatchInputs({ ...baseInput, preset: 'preview' }, 'sim-1')).toMatchObject({ preset: 'preview', ceiling_usd: '0.40' })
+    expect(FORGE_TOOLS.find(t => t.name === 'mirofish_sim')!.parameters.properties.preset.enum).toEqual(['tiny', 'small', 'mid', 'preview'])
+  })
+
   it.each([
     [{ sides: 'Petr Yan' }, /sides must be exactly/],
     [{ sides: 'A|B|C' }, /sides must be exactly/],
     [{ yes_side: 'Someone Else' }, /yes_side must be one of the two sides/],
     [{ ceiling_usd: '1.50' }, /at most 1\.00/],
     [{ ceiling_usd: '0' }, /above 0/],
-    [{ preset: 'huge' }, /preset must be tiny, small or mid/],
+    [{ preset: 'huge' }, /preset must be tiny, small, mid or preview/],
     [{ packet: 'too short' }, /under 200 characters/],
     [{ card_id: 'has space' }, /card_id must be/],
     [{ provenance: 'not json' }, /provenance must be JSON/],
@@ -181,6 +186,20 @@ describe('never a second run by accident', () => {
     expect(gh.seen.some(r => r.method === 'POST')).toBe(true)
   })
 
+  it('a preview runs even on a key with a completed sim: it simulates nothing and uses no attempt', async () => {
+    const gh = fakeGithub({ records: { 1: record({ attempt: 1 }), 2: null } })
+    await simCall({ ...baseInput, preset: 'preview' })
+    const dispatch = gh.seen.find(r => r.method === 'POST')
+    expect(JSON.parse(dispatch!.body!).inputs).toMatchObject({ preset: 'preview', rerun_reason: '' })
+  })
+
+  it('a preview recorded after a completed sim does not hide that sim from the guard', async () => {
+    const gh = fakeGithub({ records: { 1: record({ attempt: 1 }), 2: record({ attempt: 2, status: 'previewed' }) } })
+    const out = await simCall(baseInput)
+    expect(out).toMatch(/already has a completed sim \(attempt 1\), so none was started/)
+    expect(gh.seen.some(r => r.method === 'POST')).toBe(false)
+  })
+
   it('the tool tells the model never to start a sim on its own', () => {
     expect(FORGE_TOOLS.find(t => t.name === 'mirofish_sim')!.description).toMatch(/only when the owner asks for a sim; never on your own initiative/)
   })
@@ -224,6 +243,27 @@ describe('the world image', () => {
     const excerpt = reportExcerpt(REPORT, 40)
     expect(excerpt.startsWith('> The simulation')).toBe(true)
     expect(excerpt.endsWith('…')).toBe(true)
+  })
+
+  it('a preview lists the cast and the presets it fits, and claims no poll or world', () => {
+    const preview = record({
+      status: 'previewed', extraction: null, lean_for_yes_side: null, baseline_direct: null, artifacts: { run_url: 'https://github.com/o/r/actions/runs/5' },
+      preview: { count: 10, fits: ['small', 'mid'], entities: [{ name: 'Petr Yan', type: 'Fighter' }, { name: 'Yan camp', type: 'Coach' }] },
+    })
+    const out = formatSimResult({ record: preview, recordPath: 'SPIKE2-UFC333/x.2.run-record.json' }, 'o', 'r')
+    expect(out).toContain('attempt 2: the packet makes 10 agents. Nothing was simulated, and a preview never uses up one of the key\'s attempts.')
+    expect(out).toContain('Fits the small, mid presets.')
+    expect(out).toContain('- Petr Yan (Fighter)\n- Yan camp (Coach)\n…and 8 more')
+    expect(out).toMatch(/drop corners and camps/)
+    expect(out).toContain('Run: https://github.com/o/r/actions/runs/5')
+    expect(out).not.toMatch(/Final poll|could not be shown|Intake line/)
+    expect(out).not.toMatch(SIM_WORLD_MARKER_RE)
+  })
+
+  it('a preview too big for any preset, or with nobody in it, says so', () => {
+    const format = (pv: SimRecord['preview']) => formatSimResult({ record: record({ status: 'previewed', preview: pv }), recordPath: 'S/x.1.run-record.json' }, 'o', 'r')
+    expect(format({ count: 25, fits: [], entities: [] })).toMatch(/Too many for any preset: trim the packet/)
+    expect(format({ count: 0, fits: [], entities: [] })).toMatch(/found no one in the packet to simulate/)
   })
 
   it('a completed record with no world says so instead of a marker', () => {
