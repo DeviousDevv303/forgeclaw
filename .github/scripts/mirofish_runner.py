@@ -69,7 +69,12 @@ PRESETS = {
     'tiny': {'platform': 'parallel', 'active_rounds': 4, 'agents_cap': 8, 'parallel_profiles': 3, 'counts_toward_bar': False},
     'small': {'platform': 'parallel', 'active_rounds': 12, 'agents_cap': 14, 'parallel_profiles': 5, 'counts_toward_bar': True},
     'mid': {'platform': 'parallel', 'active_rounds': 24, 'agents_cap': 20, 'parallel_profiles': 5, 'counts_toward_bar': True},
+    # Builds the graph and lists who the agents would be, then stops: no profile, no simulation, about $0.01. For fixing a
+    # packet before a real run (owner go, 2026-10-26): too many actors, corners or camps, a venue as an agent.
+    'preview': {'platform': 'parallel', 'active_rounds': 0, 'agents_cap': 20, 'parallel_profiles': 0, 'counts_toward_bar': False,
+                'preview': True},
 }
+PREVIEW_ENTITIES_KEPT, PREVIEW_SUMMARY_CHARS = 60, 200
 STAGE_TIMEOUTS_S = {'ontology': 600, 'graph': 1200, 'prepare': 2400, 'simulate': 5400, 'ready': 300, 'poll': 900, 'ended': 300, 'report': 2400}
 # The run's real billed cost is read from the provider's account balance (design: Claude, 2026-10-25): one reading before the
 # run, one after cleanup plus this settle wait, so the final charges have landed before the second reading.
@@ -157,13 +162,28 @@ def load_attempts(results_dir: str, card_id: str, ticker: str) -> list[dict]:
     return attempts
 
 
-def decide_slot(attempts: list[dict], rerun_reason: str = '') -> int:
-    """The next attempt number, or a Refusal. A completed run takes the slot for good (an owner override needs a named reason)."""
+def preview_entities(response: dict) -> list[dict]:
+    """MiroFish's agent entities as name, type and a short summary: who the agents would be."""
+    out = []
+    for e in (response.get('entities') or [])[:PREVIEW_ENTITIES_KEPT]:
+        if not isinstance(e, dict):
+            continue
+        labels = [label for label in (e.get('labels') or []) if label not in ('Entity', 'Node')]
+        out.append({'name': str(e.get('name') or '?')[:120], 'type': labels[0] if labels else 'Entity',
+                    'summary': re.sub(r'\s+', ' ', str(e.get('summary') or '')).strip()[:PREVIEW_SUMMARY_CHARS]})
+    return out
+
+
+def decide_slot(attempts: list[dict], rerun_reason: str = '', preview: bool = False) -> int:
+    """The next attempt number, or a Refusal. A completed run takes the slot for good (an owner override needs a named reason).
+    A preview never needs one: it simulates nothing, so it may run on any key, and it never counts toward the limit."""
+    if preview:
+        return max([a.get('attempt', 0) for a in attempts], default=0) + 1
     completed = [a for a in attempts if a.get('status') == 'completed']
     # An over-cap refusal simulated nothing and produced no result, so it cannot be part of "run again until the story is
     # better", which is what the limit guards against. Counting it let packets with too many named actors (SPIKE3-UFC333,
     # 2026-10-26: four in a row) spend a key's attempts on refusals that cost about $0.01 each.
-    counted = [a for a in attempts if a.get('status') != 'aborted_agents_over_cap']
+    counted = [a for a in attempts if a.get('status') not in ('aborted_agents_over_cap', 'previewed')]
     if completed and not rerun_reason.strip():
         raise Refusal('this (card_id, market_ticker) already has a completed sim; one sim per market per card. '
                       'An owner override needs a named reason (rerun_reason), and it is recorded as rerun_of.')
@@ -341,6 +361,8 @@ class Run:
         self.deadline_s = float(args.get('deadline_s') or DEFAULT_DEADLINE_S)
         self.project_id = self.graph_id = self.simulation_id = None
         self.agents_prepared = self.rounds_run = self.simulated_actions = self.relogged_seed_posts = None
+        self.previewed = False
+        self.preview_entities: list[dict] = []
         self.clock_plan: dict | None = None
         # ended: MiroFish has published a terminal run status, so the process is gone and cleanup need not stop it.
         self.simulation_started = self.simulation_ended = False
@@ -409,10 +431,20 @@ class Run:
         # packet spent $0.13 on 18 profiles before being refused (seen live, 2026-10-26, SPIKE3-UFC333 attempt 1). This reads the
         # same entity filter prepare uses, from Zep, with no LLM call. If it cannot be read, the check after prepare decides.
         try:
-            expected = self.miro.get('prepare', f'/api/simulation/entities/{self.graph_id}?enrich=false').get('filtered_count')
+            entities = self.miro.get('prepare', f'/api/simulation/entities/{self.graph_id}?enrich=false')
         except RunnerError as error:
-            expected = None
+            if p.get('preview'):
+                raise RunnerError('prepare', f'the preview could not read the agent entities ({str(error)[:160]})') from None
+            entities = {}
             self.log('prepare', f'could not count the agents before writing their profiles ({str(error)[:120]}); checking after instead')
+        expected = entities.get('filtered_count')
+        if p.get('preview'):
+            self.preview_entities = preview_entities(entities)
+            self.agents_prepared = expected if isinstance(expected, int) and not isinstance(expected, bool) else len(self.preview_entities)
+            self.previewed = True
+            names = ', '.join(e['name'] for e in self.preview_entities[:12])
+            self.log('preview', f'{self.agents_prepared} agent entities: {names}{"…" if len(self.preview_entities) > 12 else ""}')
+            return
         if isinstance(expected, int) and not isinstance(expected, bool):
             self.log('prepare', f'the graph holds {expected} agent entities (the {a["preset"]} cap is {p["agents_cap"]})')
             if expected > p['agents_cap']:
@@ -687,6 +719,9 @@ def build_record(*, args: dict, attempt: int, attempts: list[dict], run: Run, st
                    'agents_cap': p['agents_cap'], 'agents_prepared': run.agents_prepared, 'deadline_s': int(run.deadline_s),
                    'llm_provider': args['provider'], 'llm_model': args['model'], 'engine_label': model_label(args['model'], meter),
                    'thinking': policy.get('thinking', 'provider-default'), 'locale': 'en', 'sampling': sampling, 'reproducible': False},
+        'preview': ({'count': run.agents_prepared, 'entities': run.preview_entities,
+                     'fits': [name for name, cfg in PRESETS.items() if not cfg.get('preview') and 0 < run.agents_prepared <= cfg['agents_cap']]}
+                    if run.previewed else None),
         'extraction': stats, 'lean_for_yes_side': lean_yes, 'baseline_direct': run.baseline,
         'usage': ({**meter, **billing} if billing else meter), 'zep': {'graph_id': run.graph_id, 'deleted': run.graph_deleted, **estimate_zep(len(packet))},
         'artifacts': artifact_info, 'timing': {'started_at': started, 'finished_at': finished, 'wall_seconds': round(wall_seconds, 1)},
@@ -878,7 +913,7 @@ def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Calla
     if why:
         raise Refusal(why)
     attempts = load_attempts(args['results_dir'], args['card_id'], args['market_ticker'])
-    attempt = decide_slot(attempts, args.get('rerun_reason', ''))
+    attempt = decide_slot(attempts, args.get('rerun_reason', ''), preview=bool(PRESETS[args['preset']].get('preview')))
     side_a, side_b = args['sides']
     started_at = clock()
     balance_before = _read_balance(balance)
@@ -890,6 +925,8 @@ def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Calla
     status, reason = 'completed', ''
     try:
         run.execute()
+        if run.previewed:
+            status = 'previewed'
     except RunnerError as error:
         status, reason = classify(error, meter())
     except Exception as error:  # noqa: BLE001 - an unexpected failure is still recorded, never swallowed
@@ -1054,7 +1091,7 @@ def main(argv=None) -> int:
                       'cost_usd': record['usage'].get('cost_usd'), 'billed_cost_usd': record['usage'].get('billed_cost_usd'),
                       'agents': record['config']['agents_prepared'],
                       'rounds_run': record['config']['rounds_run'], 'nexus': record['nexus']}, indent=2))
-    if record['status'] != 'completed':
+    if record['status'] not in ('completed', 'previewed'):
         print(f'::error title=mirofish-runner::run ended {record["status"]}: {record["reason"]}', file=sys.stderr)
         return 1
     return 0

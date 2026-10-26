@@ -49,7 +49,7 @@ on:
         default: ''
         type: string
       preset:
-        description: 'tiny (4 rounds, <=8 agents; does not count toward the 10-sim bar), small, or mid'
+        description: 'tiny (4 rounds, <=8 agents; does not count toward the 10-sim bar), small, mid, or preview (builds the graph and lists the agents it would make, then stops: about $0.01, simulates nothing)'
         required: false
         default: 'tiny'
         type: string
@@ -127,7 +127,7 @@ jobs:
           printf '%s' "$CARD_ID" | grep -Eqx '[A-Za-z0-9._-]{1,120}' || fail "invalid card_id"
           printf '%s' "$MARKET_TICKER" | grep -Eqx '[A-Za-z0-9._-]{1,120}' || fail "invalid market_ticker"
           printf '%s' "$SIDES" | grep -Eqx '[^|]{1,80}\|[^|]{1,80}' || fail "sides must be exactly 'Name A|Name B'"
-          case "$PRESET" in tiny|small|mid) ;; *) fail "preset must be tiny, small or mid" ;; esac
+          case "$PRESET" in tiny|small|mid|preview) ;; *) fail "preset must be tiny, small, mid or preview" ;; esac
           case "$MODEL" in kimi-k2.6|kimi-k2.7-code) ;; *) fail "model must be kimi-k2.6 or kimi-k2.7-code (the only models with a price in the meter)" ;; esac
           case "$THINKING" in disabled|enabled) ;; *) fail "thinking must be disabled or enabled" ;; esac
           printf '%s' "$CEILING_USD" | grep -Eqx '[0-9]+(\.[0-9]{1,2})?' || fail "ceiling_usd must be a plain dollar amount"

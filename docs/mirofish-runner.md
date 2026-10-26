@@ -58,6 +58,16 @@ screens for secrets and owner-private words (bankroll, positions, keys) and refu
 | `tiny` | 4 | 8 | both | **no** (a pipeline proof; never filed to intake) | **$0.30 measured** (4 agents, run 40241533761) |
 | `small` | 12 | 14 | both | yes | ~$0.72 |
 | `mid` | 24 | 20 | both | yes | ~$1.83 |
+| `preview` | none | (lists up to 60) | none | **no** (simulates nothing) | about $0.01 |
+
+**`preview`** (owner go, 2026-10-26) builds the graph and lists the agents the packet would make, then stops: no profile,
+simulation, poll, report or baseline. The list comes from the same entity filter MiroFish's `prepare` uses, read from Zep with no
+LLM call, so the spend is whatever happens before `prepare` (the over-cap refusals that stopped at the same point cost about
+$0.01 each), plus Zep credits for the graph. The
+record (`status: previewed`) carries `preview: {count, entities: [{name, type, summary}], fits}`, where `fits` names the presets
+whose agent cap holds the cast. A preview never counts toward a key's attempt limit and runs even on a key with a completed sim,
+since it simulates nothing; the chat's completed-key guard skips previews when it looks for a completed sim. Use it to fix a
+packet before a paid run: too many named actors, corners or camps (they vote for their own side), a venue as an agent.
 
 Every preset runs MiroFish's `parallel` script (Twitter and Reddit). Its reddit-only script writes no `actions.jsonl` (only a
 SQLite file) and never reports a platform as finished, so no world could ever be built from it. "Active rounds" are rounds in
@@ -203,7 +213,7 @@ Statuses: `completed`, `aborted_budget`, `aborted_agents_over_cap`, `aborted_zep
 
 ## What is verified, and what is not
 
-Verified offline (186 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
+Verified offline (192 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
 and its SVG, the requirement filter, the runner's orchestration and refusals against a **scripted fake MiroFish**, the workflow's
 safety properties, and the intake line against the real TypeScript validator and grader. The hash-pinned CPU install was also
 run for real (1.35 GB, about 2 minutes, `pip check` clean, `import oasis` works).

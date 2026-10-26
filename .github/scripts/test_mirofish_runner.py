@@ -67,6 +67,7 @@ class FakeMiro:
         self.ontology_status = 200
         self.on_run_status = None
         self.entities_status = 200  # the agent count read before profiles are written
+        self.entities = None  # the agent entities the graph holds (default: one Person per agent)
         self._poll = {'graph': 0, 'run': 0}
         outer = self
 
@@ -139,7 +140,9 @@ class FakeMiro:
         if path == '/api/simulation/entities/g1':
             if self.entities_status != 200:
                 return self.entities_status, {'success': False, 'error': 'no such route'}
-            return self.ok({'entities': [], 'entity_types': ['Person'], 'total_count': self.agents + 2, 'filtered_count': self.agents})
+            entities = self.entities if self.entities is not None else [
+                {'uuid': f'e{i}', 'name': f'Person {i}', 'labels': ['Entity', 'Person'], 'summary': 's'} for i in range(self.agents)]
+            return self.ok({'entities': entities, 'entity_types': ['Person'], 'total_count': len(entities) + 2, 'filtered_count': len(entities)})
         if path == '/api/simulation/sim_1/config':
             return self.ok(self.sim_config)
         if path == '/api/simulation/sim_1/run-status':
@@ -568,6 +571,76 @@ class NexusLineTests(unittest.TestCase):
         self.assertIsNone(mr.nexus_line_problem({**good, 'extra_field': 'ignored, as the TypeScript validator ignores it'}))
 
 
+class PreviewTests(unittest.TestCase):
+    """preview (owner go, 2026-10-26): build the graph, list who the agents would be, stop. For fixing a packet before a real run."""
+
+    CAST = [{'uuid': 'e1', 'name': A, 'labels': ['Entity', 'Fighter'], 'summary': 'Side A.'},
+            {'uuid': 'e2', 'name': B, 'labels': ['Entity', 'Node', 'Fighter'], 'summary': 'Side B.'},
+            {'uuid': 'e3', 'name': 'Yan camp', 'labels': ['Entity', 'Coach'], 'summary': '  Corner\n\n  of  Yan.  ' + 'x' * 300},
+            {'uuid': 'e4', 'name': 'Rogers Arena', 'labels': ['Entity'], 'summary': ''}]
+
+    def test_a_preview_lists_the_agents_and_stops_before_any_profile_or_simulation(self):
+        env = Env(self, preset='preview')
+        env.miro.entities = self.CAST
+        record, paths = env.run()
+        self.assertEqual((record['status'], record['reason'], record['attempt']), ('previewed', '', 1))
+        for path in ('/api/simulation/create', '/api/simulation/prepare', '/api/simulation/start', '/api/report/generate'):
+            self.assertNotIn(path, env.miro.paths())
+        self.assertEqual(record['preview']['count'], 4)
+        self.assertEqual([(e['name'], e['type']) for e in record['preview']['entities']],
+                         [(A, 'Fighter'), (B, 'Fighter'), ('Yan camp', 'Coach'), ('Rogers Arena', 'Entity')])
+        summary = record['preview']['entities'][2]['summary']
+        self.assertTrue(summary.startswith('Corner of Yan. xxx'))
+        self.assertEqual(len(summary), mr.PREVIEW_SUMMARY_CHARS)
+        self.assertEqual(record['preview']['fits'], ['tiny', 'small', 'mid'])
+        self.assertEqual(record['config']['agents_prepared'], 4)
+        self.assertEqual(record['zep']['deleted'], True)
+        self.assertIsNone(record['baseline_direct'])  # no direct model call: a preview spends only the graph build
+        self.assertEqual(record['nexus']['emitted'], False)
+        self.assertEqual([os.path.basename(p) for p in paths], ['KXUFCFIGHT-26OCT24YANDVA-YAN.1.run-record.json'])
+        self.assertTrue(any('4 agent entities: Merab Dvalishvili, Petr Yan, Yan camp, Rogers Arena' in line for line in env.log_lines))
+
+    def test_fits_names_only_the_presets_whose_agent_cap_holds_the_cast(self):
+        for agents, fits in ((10, ['small', 'mid']), (25, []), (0, [])):
+            env = Env(self, preset='preview')
+            env.miro.agents = agents
+            record, _ = env.run()
+            self.assertEqual((record['status'], record['preview']['count'], record['preview']['fits']), ('previewed', agents, fits))
+
+    def test_a_preview_never_takes_an_attempt_and_runs_even_on_a_key_with_a_completed_sim(self):
+        first, second = Env(self, preset='preview'), Env(self, preset='preview')
+        a, _ = first.run()
+        shutil.copytree(first.out, second.results, dirs_exist_ok=True)
+        b, _ = second.run()
+        self.assertEqual([(r['status'], r['attempt']) for r in (a, b)], [('previewed', 1), ('previewed', 2)])
+        real = Env(self)
+        shutil.copytree(first.out, real.results, dirs_exist_ok=True)
+        shutil.copytree(second.out, real.results, dirs_exist_ok=True)
+        third, _ = real.run()  # two previews recorded, and the real run still needs no override
+        self.assertEqual((third['status'], third['attempt']), ('completed', 3))
+        after = Env(self, preset='preview')
+        shutil.copytree(real.out, after.results, dirs_exist_ok=True)
+        fourth, _ = after.run()  # a completed sim refuses a real run, never a preview
+        self.assertEqual((fourth['status'], fourth['attempt']), ('previewed', 4))
+
+    def test_previews_do_not_count_toward_the_attempt_limit(self):
+        previews = [{'attempt': n, 'status': 'previewed'} for n in (1, 2, 3)]
+        self.assertEqual(mr.decide_slot(previews + [{'attempt': 4, 'status': 'failed'}]), 5)
+        self.assertEqual(mr.decide_slot([{'attempt': 1, 'status': 'completed'}], preview=True), 2)
+        with self.assertRaises(mr.Refusal):
+            mr.decide_slot([{'attempt': 1, 'status': 'completed'}])
+
+    def test_a_preview_that_cannot_read_the_agents_fails_instead_of_preparing_them(self):
+        env = Env(self, preset='preview')
+        env.miro.entities_status = 404
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'failed')
+        self.assertIn('the preview could not read the agent entities', record['reason'])
+        self.assertIsNone(record['preview'])
+        self.assertNotIn('/api/simulation/prepare', env.miro.paths())
+        self.assertEqual(record['zep']['deleted'], True)
+
+
 class AbortPathTests(unittest.TestCase):
     def test_too_many_agents_aborts_before_a_single_profile_or_simulation_token_is_spent(self):
         env = Env(self)
@@ -708,10 +781,12 @@ class HelperTests(unittest.TestCase):
 
     def test_every_preset_has_the_fields_the_runner_reads(self):
         for name, preset in mr.PRESETS.items():
-            self.assertEqual(set(preset), {'platform', 'active_rounds', 'agents_cap', 'parallel_profiles', 'counts_toward_bar'}, name)
+            self.assertEqual(set(preset) - {'preview'}, {'platform', 'active_rounds', 'agents_cap', 'parallel_profiles', 'counts_toward_bar'}, name)
             self.assertEqual(preset['platform'], 'parallel', f'{name}: the reddit-only script writes no actions.jsonl, so no world')
         self.assertFalse(mr.PRESETS['tiny']['counts_toward_bar'])
         self.assertTrue(mr.PRESETS['small']['counts_toward_bar'])
+        self.assertEqual([name for name, preset in mr.PRESETS.items() if preset.get('preview')], ['preview'])
+        self.assertFalse(mr.PRESETS['preview']['counts_toward_bar'])
 
     def test_direct_answers_parse_with_the_same_rules_as_the_poll(self):
         d = mr.parse_direct('PICK=A; P_A=61; WHY=pace', A, B, 'm')
@@ -803,6 +878,11 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn('aborted_agents_over_cap', err)
         self.assertTrue(os.path.isfile(os.path.join(self.env.out, 'UFC333', 'KXUFCFIGHT-26OCT24YANDVA-YAN.1.run-record.json')))
+
+    def test_a_preview_exits_zero(self):
+        code, out, err = self.run_main(**{'--preset': 'preview'})
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)['status'], 'previewed')
 
     def test_a_refusal_exits_two_writes_nothing_and_never_calls_mirofish(self):
         code, out, err = self.run_main(**{'--pins': '{}'})

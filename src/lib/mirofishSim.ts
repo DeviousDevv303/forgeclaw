@@ -15,7 +15,7 @@ import { safeGetItem, safeSetItem } from './storage'
 
 export const SIM_WORKFLOW_ID = 'mirofish-sim.yml'
 export const SIM_RESULTS_BRANCH = 'sim-results'
-export const SIM_PRESETS = ['tiny', 'small', 'mid'] as const
+export const SIM_PRESETS = ['tiny', 'small', 'mid', 'preview'] as const
 export const SIM_MODELS = ['kimi-k2.6', 'kimi-k2.7-code'] as const
 /** The workflow refuses a higher ceiling; raising it needs a workflow edit. */
 export const SIM_MAX_CEILING_USD = 1
@@ -24,7 +24,7 @@ export const SIM_DEFAULT_CEILING_USD = '0.40'
  * The chat's default ceiling per preset. Two small runs with 9 and 10 agents (2026-10-26) both hit $0.40 before their poll,
  * losing everything spent; an unused ceiling costs nothing. tiny keeps the workflow's own $0.40 (a 5-agent tiny run: $0.25).
  */
-export const SIM_DEFAULT_CEILING_BY_PRESET: Record<string, string> = { tiny: SIM_DEFAULT_CEILING_USD, small: '1.00', mid: '1.00' }
+export const SIM_DEFAULT_CEILING_BY_PRESET: Record<string, string> = { tiny: SIM_DEFAULT_CEILING_USD, small: '1.00', mid: '1.00', preview: SIM_DEFAULT_CEILING_USD }
 /** How long the chat waits before handing the run off to mirofish_sim_result. The first completed tiny run took 7 minutes. */
 export const SIM_CHAT_WAIT_MS = 20 * 60 * 1000
 const SIM_DISCOVERY_TIMEOUT_MS = 120_000
@@ -68,6 +68,8 @@ export interface SimRecord {
   zep?: { deleted?: boolean | null }
   artifacts?: { run_url?: string; world_svg?: string; report?: string; world_json?: string }
   nexus?: { emitted?: boolean; reason?: string }
+  /** A preview's cast: the agent entities the graph holds, and the presets whose agent cap they fit. */
+  preview?: { count?: number | null; entities?: Array<{ name?: string; type?: string; summary?: string }>; fits?: string[] } | null
 }
 
 export interface SimResult {
@@ -91,7 +93,7 @@ export function buildSimDispatchInputs(raw: Record<string, unknown>, invocationI
   const yesSide = text('yes_side')
   if (yesSide && !parts.map(p => p.trim()).includes(yesSide)) throw new Error('yes_side must be one of the two sides, or empty (then no intake line is filed)')
   const preset = text('preset') || 'tiny'
-  if (!(SIM_PRESETS as readonly string[]).includes(preset)) throw new Error('preset must be tiny, small or mid')
+  if (!(SIM_PRESETS as readonly string[]).includes(preset)) throw new Error('preset must be tiny, small, mid or preview')
   const model = text('model') || 'kimi-k2.6'
   if (!(SIM_MODELS as readonly string[]).includes(model)) throw new Error('model must be kimi-k2.6 or kimi-k2.7-code')
   const thinking = text('thinking') || 'disabled'
@@ -245,10 +247,12 @@ async function readBranchFile(ctx: ToolContext, owner: string, repo: string, pat
 
 /**
  * A run's record and world from the sim-results branch: the attempt that carries `invocationId` when given, else the given
- * attempt, else the latest. Null when the key has no record (an early failure or a refusal writes none).
+ * attempt, else the latest (with `skipPreviews`, the latest that was not a preview). Null when the key has no record (an early
+ * failure or a refusal writes none).
  */
 export async function readSimResult(
-  ctx: ToolContext, owner: string, repo: string, key: { cardId: string; marketTicker: string; invocationId?: string; attempt?: number },
+  ctx: ToolContext, owner: string, repo: string,
+  key: { cardId: string; marketTicker: string; invocationId?: string; attempt?: number; skipPreviews?: boolean },
 ): Promise<SimResult | null> {
   if (!KEY_RE.test(key.cardId) || !KEY_RE.test(key.marketTicker)) throw new Error('card_id and market_ticker must be letters, digits, dots, underscores or hyphens')
   const listing = await readBranchListing(ctx, owner, repo, key.cardId)
@@ -265,6 +269,7 @@ export async function readSimResult(
     let record: SimRecord
     try { record = JSON.parse(raw) as SimRecord } catch { throw new Error(`${recordPath} on ${SIM_RESULTS_BRANCH} is not valid JSON`) }
     if (key.invocationId && record.invocation_id !== key.invocationId) continue
+    if (key.skipPreviews && record.status === 'previewed') continue
     const art = record.artifacts || {}
     const svg = art.world_svg ? await readBranchFile(ctx, owner, repo, `${key.cardId}/${art.world_svg}`) : null
     const report = art.report ? await readBranchFile(ctx, owner, repo, `${key.cardId}/${art.report}`) : null
@@ -353,14 +358,40 @@ export function reportExcerpt(markdown: string, maxChars = 700): string {
   return cut.replace(/\n{3,}/g, '\n\n')
 }
 
+const costLine = (r: SimRecord): string => {
+  const u = r.usage || {}
+  return `Cost: $${typeof u.cost_usd === 'number' ? u.cost_usd.toFixed(4) : '—'} upper bound, ${u.calls ?? '—'} model calls, ceiling $${u.ceiling_usd ?? '—'}${u.ceiling_hit ? ' (reached)' : ''} · Zep graph deleted: ${r.zep?.deleted === true ? 'yes' : r.zep?.deleted === false ? 'NO' : 'unknown'}`
+}
+
+/** A preview: who the agents would be, so the packet can be fixed before a run that costs real money. Nothing was simulated. */
+function formatSimPreview(r: SimRecord, dir: string): string {
+  const pv = r.preview || {}
+  const entities = pv.entities || []
+  const count = typeof pv.count === 'number' ? pv.count : entities.length
+  const fits = pv.fits || []
+  const lines = [
+    `MiroFish preview ${r.key?.card_id ?? ''} / ${r.key?.market_ticker ?? ''}, attempt ${r.attempt ?? '?'}: the packet makes ${count} agent${count === 1 ? '' : 's'}. Nothing was simulated, and a preview never uses up one of the key's attempts.`,
+    count === 0 ? 'MiroFish found no one in the packet to simulate.'
+      : fits.length ? `Fits the ${fits.join(', ')} preset${fits.length === 1 ? '' : 's'}.` : 'Too many for any preset: trim the packet before a real run.',
+  ]
+  if (entities.length) lines.push('', 'Agents (one per person or group the packet names):', ...entities.map(e => `- ${e.name ?? '?'} (${e.type ?? 'Entity'})`))
+  if (count > entities.length && entities.length) lines.push(`…and ${count - entities.length} more (the record keeps the first ${entities.length}).`)
+  lines.push(
+    '', 'To change the cast, edit the packet: keep the two fighters and the neutral voices the sim needs (analysts, fan communities, media); drop corners and camps, which only vote for their own side, and places or things that cannot hold a view. Then preview again, or run the sim on the same key.',
+    costLine(r), '', `Files: ${dir}`,
+  )
+  if (r.artifacts?.run_url) lines.push(`Run: ${r.artifacts.run_url}`)
+  return lines.join('\n')
+}
+
 /** What the model reads (and the owner sees in the trace): the record in plain lines. `worldId` is set when the image was registered. */
 export function formatSimResult(result: SimResult, owner: string, repo: string, worldId?: string): string {
   const r = result.record
+  const dir = `https://github.com/${owner}/${repo}/blob/${SIM_RESULTS_BRANCH}/${result.recordPath.split('/')[0]}`
+  if (r.status === 'previewed') return formatSimPreview(r, dir)
   const [a, b] = r.sides || ['A', 'B']
   const cfg = (r.config || {}) as Record<string, unknown>
   const ex = r.extraction
-  const u = r.usage || {}
-  const dir = `https://github.com/${owner}/${repo}/blob/${SIM_RESULTS_BRANCH}/${result.recordPath.split('/')[0]}`
   const lines = [
     `MiroFish sim ${r.key?.card_id ?? ''} / ${r.key?.market_ticker ?? ''}, attempt ${r.attempt ?? '?'}: ${r.status ?? 'unknown'}${r.reason ? ` (${r.reason})` : ''}`,
     `Agents: ${pct(cfg.agents_prepared)} · rounds run ${pct(cfg.rounds_run)} (${pct(cfg.active_rounds_run)} in which agents could act) · agent actions ${pct(cfg.simulated_actions)}`,
@@ -371,7 +402,7 @@ export function formatSimResult(result: SimResult, owner: string, repo: string, 
   if (r.yes_side && typeof r.lean_for_yes_side === 'number') lines.push(`Lean for the YES side (${r.yes_side}): ${r.lean_for_yes_side}`)
   const base = r.baseline_direct
   if (base && base.parsed) lines.push(`Baseline (one direct model call on the same packet): ${base.pick === 'A' ? a : base.pick === 'B' ? b : base.pick}, P(${a}) ${pct(base.p_a)}`)
-  lines.push(`Cost: $${typeof u.cost_usd === 'number' ? u.cost_usd.toFixed(4) : '—'} upper bound, ${u.calls ?? '—'} model calls, ceiling $${u.ceiling_usd ?? '—'}${u.ceiling_hit ? ' (reached)' : ''} · Zep graph deleted: ${r.zep?.deleted === true ? 'yes' : r.zep?.deleted === false ? 'NO' : 'unknown'}`)
+  lines.push(costLine(r))
   if (r.nexus) lines.push(`Intake line: ${r.nexus.emitted ? 'filed' : r.nexus.reason ?? 'not filed'}`)
   if (result.report) lines.push('', 'Report (opening, MiroFish\'s own narrative; never a source of numbers):', reportExcerpt(result.report))
   lines.push('', `Files: ${dir}`)
