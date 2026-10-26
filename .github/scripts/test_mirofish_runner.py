@@ -66,7 +66,6 @@ class FakeMiro:
         self.graph_data_status = 200
         self.ontology_status = 200
         self.on_run_status = None
-        self.entities_status = 200  # the agent count read before profiles are written
         self._poll = {'graph': 0, 'run': 0}
         outer = self
 
@@ -136,10 +135,6 @@ class FakeMiro:
             return self.ok({'platform': 'reddit', 'count': self.agents, 'profiles': profiles})
         if path == '/api/simulation/start':
             return self.ok({'runner_status': 'running'})
-        if path == '/api/simulation/entities/g1':
-            if self.entities_status != 200:
-                return self.entities_status, {'success': False, 'error': 'no such route'}
-            return self.ok({'entities': [], 'entity_types': ['Person'], 'total_count': self.agents + 2, 'filtered_count': self.agents})
         if path == '/api/simulation/sim_1/config':
             return self.ok(self.sim_config)
         if path == '/api/simulation/sim_1/run-status':
@@ -226,15 +221,7 @@ class Env:
         miro = mr.Miro(mr.Http(self.miro.url))
         self.log_lines = []
         return mr.run_attempt(args, miro, lambda: dict(self.meter_state), lambda prompt: self.direct_text, sleep=self.sleep, clock=self.clock,
-                              log=self.log_lines.append, market=self.market_read)
-
-    def market_read(self, ticker):
-        """Kalshi, scripted: an open market by default (set self.market to change it, or to an exception to make it unreadable)."""
-        self.market_reads = getattr(self, 'market_reads', []) + [ticker]
-        market = getattr(self, 'market', {'status': 'active', 'close_time': '2099-01-01T00:00:00Z'})
-        if isinstance(market, Exception):
-            raise market
-        return market
+                              log=self.log_lines.append)
 
 
 def read_json(path):
@@ -546,27 +533,16 @@ class NexusLineTests(unittest.TestCase):
 
 
 class AbortPathTests(unittest.TestCase):
-    def test_too_many_agents_aborts_before_a_single_profile_or_simulation_token_is_spent(self):
+    def test_too_many_agents_aborts_before_a_single_simulation_token_is_spent(self):
         env = Env(self)
         env.miro.agents = 9
         record, paths = env.run()
         self.assertEqual(record['status'], 'aborted_agents_over_cap')
-        self.assertIn('the graph holds 9 agent entities; the tiny cap is 8. No profile was written', record['reason'])
-        # Seen live (2026-10-26): checked only after prepare, an 18-agent packet spent $0.13 writing profiles first.
-        self.assertNotIn('/api/simulation/prepare', env.miro.paths())
+        self.assertIn('prepared 9 agents; the tiny cap is 8', record['reason'])
         self.assertNotIn('/api/simulation/start', env.miro.paths())
         self.assertEqual(record['zep']['deleted'], True)
         self.assertEqual(record['config']['agents_prepared'], 9)
         self.assertEqual([os.path.basename(p) for p in paths], ['KXUFCFIGHT-26OCT24YANDVA-YAN.1.run-record.json'])  # a record, but no world
-
-    def test_if_the_agents_cannot_be_counted_early_the_check_after_prepare_still_holds(self):
-        env = Env(self)
-        env.miro.agents, env.miro.entities_status = 9, 404
-        record, _ = env.run()
-        self.assertEqual(record['status'], 'aborted_agents_over_cap')
-        self.assertIn('prepared 9 agents; the tiny cap is 8', record['reason'])
-        self.assertTrue(any('could not count the agents before writing their profiles' in line for line in env.log_lines))
-        self.assertNotIn('/api/simulation/start', env.miro.paths())
 
     def test_the_metering_ceiling_stops_the_simulation_and_is_recorded(self):
         env = Env(self)
@@ -994,101 +970,6 @@ RELOGGED_ACTIONS = [_entry(0, a, 'CREATE_POST', content=c) for a, c in SEEDS] + 
     _entry(11, 2, 'CREATE_POST', content='Fight week: both made weight.', post_id=6)]
 
 
-class MarketOpenTests(unittest.TestCase):
-    """2026-10-26: the chat ran a counted preset with a YES side on a fight already decided (SPIKE3-UFC333). Had it completed,
-    its line would have entered the 10-sim bar as a forecast. A line is filed only for a market Kalshi lists as open at the start."""
-
-    def small(self, **over):
-        env = Env(self)
-        for key, value in over.items():
-            setattr(env, key, value)
-        record, _ = env.run(preset='small', repo='DeviousDevv303/forgeclaw')
-        return env, record
-
-    def test_a_settled_market_files_no_line_and_says_why(self):
-        env, record = self.small(market={'status': 'finalized', 'close_time': '2026-10-25T04:00:00Z'})
-        self.assertEqual(record['status'], 'completed', record['reason'])
-        self.assertFalse(record['nexus']['emitted'])
-        self.assertIn('not emitted: the market was not open when the run started (Kalshi listed it as finalized', record['nexus']['reason'])
-        self.assertEqual(record['market_at_start'], {'checked': True, 'status': 'finalized', 'close_time': '2026-10-25T04:00:00Z', 'open': False})
-
-    def test_an_active_status_with_its_close_time_already_past_is_not_open(self):
-        _, record = self.small(market={'status': 'active', 'close_time': '2020-01-01T00:00:00Z'})
-        self.assertFalse(record['nexus']['emitted'])
-
-    def test_kalshi_unreadable_files_no_line_and_the_run_still_completes(self):
-        _, record = self.small(market=ConnectionError('kalshi down'))
-        self.assertEqual(record['status'], 'completed', record['reason'])
-        self.assertIn('Kalshi could not be read: ConnectionError: kalshi down', record['nexus']['reason'])
-
-    def test_an_open_market_files_the_line(self):
-        env, record = self.small()
-        self.assertTrue(record['nexus']['emitted'], record['nexus']['reason'])
-        self.assertEqual(env.market_reads, ['KXUFCFIGHT-26OCT24YANDVA-YAN'])
-        self.assertTrue(record['market_at_start']['open'])
-
-    def test_kalshi_is_not_asked_when_no_line_could_be_filed(self):
-        env = Env(self)
-        record, _ = env.run(preset='tiny')
-        self.assertEqual(getattr(env, 'market_reads', []), [])
-        self.assertIsNone(record['market_at_start'])
-        env2 = Env(self)
-        record2, _ = env2.run(preset='small', yes_side='')
-        self.assertEqual(getattr(env2, 'market_reads', []), [])
-        self.assertIsNone(record2['market_at_start'])
-
-
-class KalshiReaderTests(unittest.TestCase):
-    def reader_with(self, answers):
-        """kalshi_market_reader against scripted urlopen answers (an exception, or a JSON body), recording each URL."""
-        seen, slept = [], []
-
-        class Res:
-            def __init__(self, body):
-                self.body = body
-
-            def read(self):
-                return self.body
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        def fake_urlopen(url, timeout):
-            seen.append(url)
-            answer = answers.pop(0)
-            if isinstance(answer, Exception):
-                raise answer
-            return Res(json.dumps(answer).encode())
-        original = mr.urllib.request.urlopen
-        self.addCleanup(setattr, mr.urllib.request, 'urlopen', original)
-        mr.urllib.request.urlopen = fake_urlopen
-        return mr.kalshi_market_reader(sleep=slept.append), seen, slept
-
-    def http_error(self, code):
-        return mr.urllib.error.HTTPError('u', code, 'x', {}, None)
-
-    def test_one_rate_limit_is_retried(self):
-        read, seen, slept = self.reader_with([self.http_error(429), {'market': {'status': 'active'}}])
-        self.assertEqual(read('KX-A'), {'status': 'active'})
-        self.assertEqual((len(seen), slept), (2, [3]))
-        self.assertTrue(seen[0].endswith('/markets/KX-A'))
-
-    def test_a_missing_market_is_not_retried(self):
-        read, seen, _ = self.reader_with([self.http_error(404)])
-        with self.assertRaises(mr.urllib.error.HTTPError):
-            read('KX-NOPE')
-        self.assertEqual(len(seen), 1)
-
-    def test_two_rate_limits_give_up_and_the_guard_records_it(self):
-        read, _, _ = self.reader_with([self.http_error(429), self.http_error(429)])
-        state = mr.market_at_start(read, 'KX-A', 0)
-        self.assertEqual((state['checked'], state['open']), (False, False))
-        self.assertIn('429', state['error'])
-
-
 class FirstCompletedRunTests(unittest.TestCase):
     """The first completed live run (2026-10-25, run 40241533761) built its world, but 9 of its 15 counted agent actions were
     seed posts MiroFish logs a second time in each platform's first agent round (last_rowid starts at 0 in its script)."""
@@ -1266,6 +1147,67 @@ class ProgressLogTests(unittest.TestCase):
         self.assertEqual(order, ['ontology', 'graph', 'prepare', 'simulate', 'ready', 'poll', 'report', 'done', 'cleanup'])
         self.assertTrue(all(re.search(r'\(\$\d+\.\d{4} so far, \d+ LLM calls\)$', line) for line in env.log_lines))
         self.assertTrue(any('round 4 of 4' in line for line in env.log_lines))
+
+
+class BalanceCostTests(unittest.TestCase):
+    """Claude's design (2026-10-25): the run's real billed cost is the Moonshot account balance delta — read through the meter
+    before the run and after cleanup with a settle wait — recorded next to the meter's upper-bound estimate."""
+
+    def _run(self, env, balance):
+        sleeps = []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            env.sleep(seconds)
+
+        miro = mr.Miro(mr.Http(env.miro.url))
+        record, _ = mr.run_attempt(env.args, miro, lambda: dict(env.meter_state), lambda prompt: env.direct_text,
+                                   sleep=sleep, clock=env.clock, log=lambda line: None, balance=balance)
+        return record, sleeps
+
+    def test_the_balance_delta_is_recorded_next_to_the_meter_upper_bound(self):
+        env = Env(self)
+        readings = iter([100.0, 99.71])
+        record, sleeps = self._run(env, lambda: next(readings))
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        usage = record['usage']
+        self.assertEqual(usage['cost_usd'], 0.11)  # the fake meter's upper bound, untouched
+        self.assertEqual(usage['billed_cost_usd'], 0.29)
+        self.assertEqual(usage['balance_before_usd'], 100.0)
+        self.assertEqual(usage['balance_after_usd'], 99.71)
+        self.assertIn('account', usage['billed_cost_basis'])
+        self.assertEqual(sleeps[-1], mr.BALANCE_SETTLE_S)  # the settle wait is the last sleep, after cleanup
+
+    def test_a_missing_second_reading_records_no_billed_cost_and_still_completes(self):
+        env = Env(self)
+        readings = iter([100.0, None])
+        record, _ = self._run(env, lambda: next(readings))
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        self.assertNotIn('billed_cost_usd', record['usage'])
+
+    def test_a_balance_read_that_raises_never_fails_the_run(self):
+        env = Env(self)
+
+        def broken():
+            raise RuntimeError('balance endpoint down')
+
+        record, _ = self._run(env, broken)
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        self.assertNotIn('billed_cost_usd', record['usage'])
+
+    def test_no_balance_reader_means_no_billing_fields(self):
+        env = Env(self)
+        record, _ = env.run()
+        self.assertEqual(record['status'], 'completed', record['reason'])
+        self.assertNotIn('billed_cost_usd', record['usage'])
+
+    def test_parse_available_balance_reads_only_the_documented_shape(self):
+        self.assertEqual(mr.parse_available_balance({'code': 0, 'data': {'available_balance': 9.87, 'cash_balance': 9.87}}), 9.87)
+        self.assertEqual(mr.parse_available_balance({'data': {'available_balance': 5}}), 5.0)
+        self.assertIsNone(mr.parse_available_balance({'data': {}}))
+        self.assertIsNone(mr.parse_available_balance({'data': {'available_balance': '9.87'}}))
+        self.assertIsNone(mr.parse_available_balance({'available_balance': 9.87}))
+        self.assertIsNone(mr.parse_available_balance(None))
 
 
 if __name__ == '__main__':

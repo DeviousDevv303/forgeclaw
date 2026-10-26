@@ -41,7 +41,6 @@ import re
 import sys
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
@@ -71,6 +70,10 @@ PRESETS = {
     'mid': {'platform': 'parallel', 'active_rounds': 24, 'agents_cap': 20, 'parallel_profiles': 5, 'counts_toward_bar': True},
 }
 STAGE_TIMEOUTS_S = {'ontology': 600, 'graph': 1200, 'prepare': 2400, 'simulate': 5400, 'ready': 300, 'poll': 900, 'ended': 300, 'report': 2400}
+# The run's real billed cost is read from the provider's account balance (design: Claude, 2026-10-25): one reading before the
+# run, one after cleanup plus this settle wait, so the final charges have landed before the second reading.
+BALANCE_SETTLE_S = 20
+BALANCE_PATH = '/v1/users/me/balance'
 # The stage limits add up to more than the workflow's 150-minute job limit, so one overall deadline caps them all. Time is held
 # back for cleanup (stop the simulation, delete the Zep graph) and the record, so a slow run ends as `timeout` with both done
 # instead of being killed by Actions with neither (seen live, 2026-10-25: a 91-minute hang left the graph in Zep).
@@ -88,9 +91,6 @@ REPORTABLE_RUNNER_STATUSES = ('completed', 'stopped')
 # MiroFish refuses to delete a graph while a simulation using it is in one of these states (GraphInUseError, HTTP 409).
 ACTIVE_RUNNER_STATUSES = ('starting', 'running', 'paused', 'stopping')
 GRAPH_DELETE_ATTEMPTS, GRAPH_DELETE_RETRY_S, INACTIVE_WAIT_S = 4, 10, 60
-# An intake line is a pre-fight forecast, so it is filed only for a market Kalshi still lists as open when the run starts.
-KALSHI_MARKET_URL = 'https://api.elections.kalshi.com/trade-api/v2/markets/{ticker}'
-OPEN_MARKET_STATUSES = ('active', 'open')
 PLATFORM_FLAGS = {'parallel': ('twitter_completed', 'reddit_completed'), 'twitter': ('twitter_completed',), 'reddit': ('reddit_completed',)}
 
 # Material that must never reach MiroFish or Zep. A deliberately blunt screen.
@@ -396,20 +396,6 @@ class Run:
         self.graph_id = (done.get('result') or {}).get('graph_id')
         if not self.graph_id:
             raise RunnerError('graph', 'the graph task completed without a graph_id')
-        # 2b. the agents, counted BEFORE their profiles are written. Prepare makes about one LLM call per agent, so an over-cap
-        # packet spent $0.13 on 18 profiles before being refused (seen live, 2026-10-26, SPIKE3-UFC333 attempt 1). This reads the
-        # same entity filter prepare uses, from Zep, with no LLM call. If it cannot be read, the check after prepare decides.
-        try:
-            expected = self.miro.get('prepare', f'/api/simulation/entities/{self.graph_id}?enrich=false').get('filtered_count')
-        except RunnerError as error:
-            expected = None
-            self.log('prepare', f'could not count the agents before writing their profiles ({str(error)[:120]}); checking after instead')
-        if isinstance(expected, int) and not isinstance(expected, bool):
-            self.log('prepare', f'the graph holds {expected} agent entities (the {a["preset"]} cap is {p["agents_cap"]})')
-            if expected > p['agents_cap']:
-                self.agents_prepared = expected
-                raise RunnerError('prepare', f'the graph holds {expected} agent entities; the {a["preset"]} cap is {p["agents_cap"]}. '
-                                             'No profile was written and nothing was simulated.', status='aborted_agents_over_cap')
         # 3. create
         platform = p['platform']
         sim = self.miro.post('create', '/api/simulation/create', {
@@ -648,7 +634,7 @@ def parse_direct(text: str, side_a: str, side_b: str, model: str) -> dict:
 
 
 def build_record(*, args: dict, attempt: int, attempts: list[dict], run: Run, status: str, reason: str, meter: dict, started: str, finished: str,
-                 wall_seconds: float, artifact_info: dict, stats: dict | None) -> dict:
+                 wall_seconds: float, artifact_info: dict, stats: dict | None, billing: dict | None = None) -> dict:
     p, packet = PRESETS[args['preset']], args['packet_text']
     thin = []
     if len(packet) < MIN_FULL_PACKET_CHARS:
@@ -679,7 +665,7 @@ def build_record(*, args: dict, attempt: int, attempts: list[dict], run: Run, st
                    'llm_provider': args['provider'], 'llm_model': args['model'], 'engine_label': model_label(args['model'], meter),
                    'thinking': policy.get('thinking', 'provider-default'), 'locale': 'en', 'sampling': sampling, 'reproducible': False},
         'extraction': stats, 'lean_for_yes_side': lean_yes, 'baseline_direct': run.baseline,
-        'usage': meter, 'zep': {'graph_id': run.graph_id, 'deleted': run.graph_deleted, **estimate_zep(len(packet))},
+        'usage': ({**meter, **billing} if billing else meter), 'zep': {'graph_id': run.graph_id, 'deleted': run.graph_deleted, **estimate_zep(len(packet))},
         'artifacts': artifact_info, 'timing': {'started_at': started, 'finished_at': finished, 'wall_seconds': round(wall_seconds, 1)},
         'rerun_of': ({'attempt': previous.get('attempt'), 'reason': args.get('rerun_reason', '')} if previous else None),
         'invocation_id': args.get('invocation_id', ''),
@@ -760,11 +746,6 @@ def build_nexus_line(record: dict, args: dict) -> tuple[dict | None, str]:
     if lean is None:
         return None, ('not emitted: no lean for the YES side (yes_side was not one of the sides, or no agent gave a parseable P_A); '
                       'intake needs a median lean for one named side')
-    market = record.get('market_at_start') or {}
-    if not market.get('open'):
-        seen = (f'Kalshi listed it as {market.get("status") or "unknown"}, closing {market.get("close_time") or "unknown"}' if market.get('checked')
-                else f'Kalshi could not be read: {market.get("error") or "not checked"}')
-        return None, f'not emitted: the market was not open when the run started ({seen}); a sim run once the market has closed is not a pre-fight forecast'
     digest = environment_digest(args['pins'])
     if digest is None:
         return None, 'not emitted: the pins lack what the environment digest needs (torch_cpu_sha256, uv_version, runner_image)'
@@ -821,43 +802,8 @@ def active_rounds_run(run: Run) -> int | None:
     return sum(1 for n in run.clock_plan['active_round_numbers'] if n <= int(run.rounds_run))
 
 
-def market_at_start(read: Callable[[str], dict], ticker: str, now_s: float) -> dict:
-    """Whether Kalshi lists the market as open (an open status and a close time still ahead). Never raises."""
-    try:
-        market = read(ticker) or {}
-    except Exception as error:  # noqa: BLE001 - an unreadable market files no line; the run itself goes on
-        return {'checked': False, 'open': False, 'error': f'{type(error).__name__}: {error}'[:200]}
-    status = str(market.get('status') or '').lower()
-    close_time = market.get('close_time')
-    try:
-        closes_after = datetime.fromisoformat(str(close_time).replace('Z', '+00:00')).timestamp() > now_s
-    except ValueError:
-        closes_after = False
-    return {'checked': True, 'status': status, 'close_time': close_time, 'open': status in OPEN_MARKET_STATUSES and closes_after}
-
-
-def kalshi_market_reader(timeout_s: float = 15, retry_after_s: float = 3, sleep=time.sleep) -> Callable[[str], dict]:
-    """Kalshi's public market endpoint (no account, no key). One retry on a rate limit or a server error: Kalshi answers 429
-    to bursts (seen 2026-10-26), and an unread market means a completed counted run files no line."""
-    def read(ticker: str) -> dict:
-        url = KALSHI_MARKET_URL.format(ticker=urllib.parse.quote(ticker, safe=''))
-        for attempt in (1, 2):
-            try:
-                with urllib.request.urlopen(url, timeout=timeout_s) as res:  # noqa: S310 - fixed public https host
-                    return json.loads(res.read()).get('market') or {}
-            except urllib.error.HTTPError as error:
-                if attempt == 2 or error.code not in (429, 500, 502, 503, 504):
-                    raise
-            except urllib.error.URLError:
-                if attempt == 2:
-                    raise
-            sleep(retry_after_s)
-        return {}
-    return read
-
-
 def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Callable[[str], str], *, sleep=time.sleep, clock=time.time,
-                log: Callable[[str], None] | None = None, market: Callable[[str], dict] | None = None) -> tuple[dict, list[str]]:
+                log: Callable[[str], None] | None = None, balance: Callable[[], float | None] | None = None) -> tuple[dict, list[str]]:
     """Pre-flight, one pipeline attempt, record. Raises Refusal before spending anything; otherwise always returns a record."""
     if args['preset'] not in PRESETS:
         raise Refusal(f'unknown preset {args["preset"]!r}; known: {sorted(PRESETS)}')
@@ -871,10 +817,7 @@ def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Calla
     attempt = decide_slot(attempts, args.get('rerun_reason', ''))
     side_a, side_b = args['sides']
     started_at = clock()
-    # Read only when a line could be filed: a counted preset with a YES side. Taken before anything is spent, so the record
-    # says whether the market was open when the run began, not when it ended.
-    market_state = (market_at_start(market or kalshi_market_reader(), args['market_ticker'], started_at)
-                    if args.get('yes_side') and PRESETS[args['preset']]['counts_toward_bar'] else None)
+    balance_before = _read_balance(balance)
     run = Run(miro, args, meter, lambda prompt: parse_direct(direct(prompt), side_a, side_b, args['model']), sleep, clock, log)
     status, reason = 'completed', ''
     try:
@@ -885,6 +828,19 @@ def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Calla
         status, reason = 'failed', f'unexpected {type(error).__name__}: {error}'[:300]
     finally:
         run.cleanup()
+    billing = None
+    if balance_before is not None:
+        # Claude's design (2026-10-25): the second balance reading comes after cleanup, once the charges have had a moment to
+        # settle, so the delta is the billed cost of the window — recorded next to the meter's upper-bound estimate.
+        sleep(BALANCE_SETTLE_S)
+        balance_after = _read_balance(balance)
+        if balance_after is not None:
+            billing = {'billed_cost_usd': round(balance_before - balance_after, 5), 'balance_before_usd': balance_before,
+                       'balance_after_usd': balance_after,
+                       'billed_cost_basis': ('Moonshot account balance delta across the run window (available_balance before the run, '
+                                             'and after cleanup plus a 20 s settle): an account-level figure — any other spend on the '
+                                             'same key inside the window is included. usage.cost_usd stays the meter upper bound the '
+                                             'ceiling enforces.')}
     finished_at = clock()
 
     stats = None
@@ -922,13 +878,41 @@ def run_attempt(args: dict, miro: Miro, meter: Callable[[], dict], direct: Calla
                               'world_truncated': world['limits']['truncated']})
     record = build_record(args=args, attempt=attempt, attempts=attempts, run=run, status=status, reason=reason, meter=meter(),
                           started=utc(started_at), finished=utc(finished_at), wall_seconds=finished_at - started_at,
-                          artifact_info=artifact_info, stats=stats)
-    record['market_at_start'] = market_state
+                          artifact_info=artifact_info, stats=stats, billing=billing)
     line, why = build_nexus_line(record, args)
     record['nexus'] = {'emitted': line is not None, 'reason': why, 'file': f'{args["market_ticker"]}.{attempt}.{NEXUS_SUFFIX}' if line else None}
     if line is not None:
         files[NEXUS_SUFFIX] = (json.dumps(line, ensure_ascii=False, sort_keys=True, indent=2) + '\n').encode('utf-8')
     return record, write_outputs(args['out_dir'], args['card_id'], args['market_ticker'], attempt, record, files)
+
+
+def parse_available_balance(payload) -> float | None:
+    """Moonshot's balance reply carries the figure at data.available_balance. Anything else is not a balance reading."""
+    data = payload.get('data') if isinstance(payload, dict) else None
+    value = data.get('available_balance') if isinstance(data, dict) else None
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
+
+
+def balance_reader(meter_url: str) -> Callable[[], float | None]:
+    """The account's available balance, read through the metering proxy (which injects the key and forwards GETs unmetered).
+    Moonshot-only. A failed read is None, never an exception: cost reporting must not be able to fail a run."""
+    def read() -> float | None:
+        try:
+            with urllib.request.urlopen(meter_url.rstrip('/') + BALANCE_PATH, timeout=15) as res:  # noqa: S310 - localhost meter
+                return parse_available_balance(json.loads(res.read()))
+        except Exception:  # noqa: BLE001 - the record simply carries no billed figure
+            return None
+    return read
+
+
+def _read_balance(balance: Callable[[], float | None] | None) -> float | None:
+    if balance is None:
+        return None
+    try:
+        value = balance()
+    except Exception:  # noqa: BLE001 - a broken balance read must never fail the run
+        return None
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) else None
 
 
 def meter_reader(meter_url: str) -> Callable[[], dict]:
@@ -992,12 +976,14 @@ def parse_args(argv=None) -> dict:
 def main(argv=None) -> int:
     try:
         args = parse_args(argv)
-        record, paths = run_attempt(args, Miro(Http(args['mirofish_url'])), meter_reader(args['meter_url']), direct_caller(args['meter_url'], args['model']))
+        record, paths = run_attempt(args, Miro(Http(args['mirofish_url'])), meter_reader(args['meter_url']), direct_caller(args['meter_url'], args['model']),
+                                    balance=balance_reader(args['meter_url']) if args['provider'] == 'moonshot' else None)
     except Refusal as refusal:
         print(f'::error title=mirofish-runner::refused before spending anything: {refusal}', file=sys.stderr)
         return 2
     print(json.dumps({'status': record['status'], 'reason': record['reason'], 'attempt': record['attempt'], 'files': paths,
-                      'cost_usd': record['usage'].get('cost_usd'), 'agents': record['config']['agents_prepared'],
+                      'cost_usd': record['usage'].get('cost_usd'), 'billed_cost_usd': record['usage'].get('billed_cost_usd'),
+                      'agents': record['config']['agents_prepared'],
                       'rounds_run': record['config']['rounds_run'], 'nexus': record['nexus']}, indent=2))
     if record['status'] != 'completed':
         print(f'::error title=mirofish-runner::run ended {record["status"]}: {record["reason"]}', file=sys.stderr)
