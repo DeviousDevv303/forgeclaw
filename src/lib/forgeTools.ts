@@ -59,6 +59,7 @@ import { effectiveKalshiRelayUrl, loadKalshiCredentials } from './kalshiAuth'
 import { readKalshiBalanceBlock } from './kalshiBalanceDisplay'
 import { crowdSettleNote, formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
 import { autoApproveHoldNote, kalshiOrderPlacedJournalEntry, maybeAutoApprove, type KalshiExecutionDeps } from './kalshiExecution'
+import { joinNexusGuidance, splitNexusGuidance } from './nexusGuidance'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -1339,6 +1340,11 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           return formatDeepSeekResultText(answer.invocationId, owner, repo, 'main', `Stages: dispatch=public-relay; result-retrieval=relay-artifact; checkpoint=${answer.model || 'unknown'}`, '(public relay run)', answer.result)
         }
         if (!token) throw new Error('No GitHub token configured.')
+        // The NEXUS guidance block is the owner's teaching, not task-matched context: it is set aside here, exempt from
+        // the overlap rule below, and put back in front. Before this, "write a poem about cats" reached the 16B with
+        // no guidance at all because the whole context string was zeroed.
+        const nexusGuidance = splitNexusGuidance(context)
+        context = nexusGuidance.rest
         // Defense-in-depth: drop context that shares no significant words with the task.
         // Stale context (e.g. 18h-old SHA Q&A) confuses DeepSeek into answering the wrong question.
         if (context && task) {
@@ -1350,6 +1356,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
             context = ''
           }
         }
+        context = joinNexusGuidance(nexusGuidance.guidance, context)
         if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {
           throw new Error('Invalid workflow ref.')
         }
