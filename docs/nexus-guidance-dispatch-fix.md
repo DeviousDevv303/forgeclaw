@@ -110,3 +110,23 @@ On the builder's branch, before the owner merges:
   (the builder's own ruling, adopted here).
 - No change to which records NEXUS admits or approves; this is a dispatch-plumbing fix, not
   an intake change.
+
+## Status (updated 2026-10-25, late)
+
+Implemented by the app lane on branch `ccr-59f50f85-gymfis` (no PR open at this writing):
+the overlap exemption (split/join helpers in `nexusGuidance.ts`, `[END NEXUS GUIDANCE]`
+marker), guidance-first ordering in the context assembly, capped (600-char) guidance on
+the website and improve chains, the tool-less plain-chat prompt fix in `App.tsx`, and the
+shared-system-prompt coverage the lane verified for the tool path. Muse spot-verified:
+the `forgeTools.ts` hunk matches Part 1 exactly, and `src/lib/nexusContinuity.test.ts`
+passed in Muse's run; after the lane added this spec's missing regression test (stale
+context with no guidance stored still drops), its full-suite count is 2015 passed /
+8 skipped / 0 failed (lane-observed). Line-cite note: the `deepseekContext.ts:74` cite
+above describes the pre-fix layout; the fix moved the guidance to the top of the
+assembled context.
+
+Still open, both awaiting the owner's word: (1) `deepseek-16b.yml` middle-trims over-long
+prompts and can cut the guidance; `prompt_trimmed` is recorded in run metadata but never
+surfaced in chat — fixing needs a protected workflow edit. (2) Hand-typed
+`deepseek_reason` calls carry only the typed context — attaching guidance inside
+`executeTool` would close the last unguarded path.
