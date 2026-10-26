@@ -61,6 +61,21 @@ export function strictSetItem(key: string, value: string): StorageResult<void> {
   }
 }
 
+/**
+ * Write, then read back: ok only when storage now holds exactly `value`.
+ * A try/catch alone cannot see a silent drop (a setItem that returns
+ * without storing), so persistence CLAIMS are made from this verdict (F-032).
+ */
+export function verifiedSetItem(key: string, value: string): StorageResult<void> {
+  const write = strictSetItem(key, value)
+  if (!write.ok) return write
+  const read = strictGetItem(key)
+  if (!read.ok) return { ok: false, error: read.error ?? 'storage_readback_failed' }
+  return read.value === value
+    ? { ok: true }
+    : { ok: false, error: 'storage_readback_mismatch' }
+}
+
 export function strictRemoveItem(key: string): StorageResult<void> {
   try {
     localStorage.removeItem(key)
