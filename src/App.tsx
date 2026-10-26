@@ -1628,11 +1628,13 @@ function App() {
     // Native function calling is not required: the router injects a compact
     // manual protocol when runtimeTools are present and the App loop parses it.
     const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.\n${NO_TOOLS_NOTICE}`
+    // A tool-less turn is still a NEXUS turn: the owner's approved heuristics apply to the plain chat answer too.
+    const conversationalPrompt = ownerHeuristics ? `${conversationalSystemPrompt}\n\n${ownerHeuristics}` : conversationalSystemPrompt
     // A numbered request is a ledger: every item it enumerates is owed a section before the run may end (requestLedger.ts).
     const requestLedger = parseRequestLedger(promptText, FORGE_TOOLS.map(tool => tool.name))
     const ledgerInstruction = requestLedger ? `\n\n${reportFormatInstruction(requestLedger)}` : ''
     const activeSystemPrompt = (runtimeTools.length === 0
-      ? conversationalSystemPrompt
+      ? conversationalPrompt
       // The owner's reasoning format is repeated last, after lessons and past interactions, nearest to where reasoning starts.
       : finalSystemPrompt + reasoningFormatReminder(ownerScaffold)) + ledgerInstruction
 
