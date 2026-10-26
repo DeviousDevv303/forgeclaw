@@ -160,11 +160,16 @@ def load_attempts(results_dir: str, card_id: str, ticker: str) -> list[dict]:
 def decide_slot(attempts: list[dict], rerun_reason: str = '') -> int:
     """The next attempt number, or a Refusal. A completed run takes the slot for good (an owner override needs a named reason)."""
     completed = [a for a in attempts if a.get('status') == 'completed']
+    # An over-cap refusal simulated nothing and produced no result, so it cannot be part of "run again until the story is
+    # better", which is what the limit guards against. Counting it let packets with too many named actors (SPIKE3-UFC333,
+    # 2026-10-26: four in a row) spend a key's attempts on refusals that cost about $0.01 each.
+    counted = [a for a in attempts if a.get('status') != 'aborted_agents_over_cap']
     if completed and not rerun_reason.strip():
         raise Refusal('this (card_id, market_ticker) already has a completed sim; one sim per market per card. '
                       'An owner override needs a named reason (rerun_reason), and it is recorded as rerun_of.')
-    if not completed and len(attempts) >= MAX_ATTEMPTS and not rerun_reason.strip():
-        raise Refusal(f'{len(attempts)} aborted or failed attempts already recorded (limit {MAX_ATTEMPTS}); a further attempt needs a named reason')
+    if not completed and len(counted) >= MAX_ATTEMPTS and not rerun_reason.strip():
+        raise Refusal(f'{len(counted)} aborted or failed attempts already recorded (limit {MAX_ATTEMPTS}; over-cap refusals do not count); '
+                      'a further attempt needs a named reason')
     return max([a.get('attempt', 0) for a in attempts], default=0) + 1
 
 
