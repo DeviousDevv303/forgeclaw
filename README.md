@@ -34,6 +34,7 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 | **DeepSeek 16B** (default; legacy name) | **Qwen/Qwen3-8B**, 4-bit GGUF (Q4_K_M), 8K context, via llama.cpp (`llama-cpp-python` 0.3.36); labelled `deepseek-coder-1.3b` fallback only if it cannot run | `deepseek-16b.yml` on a free CPU runner; opt-in GPU runner | A GitHub token |
 | Moonshot · Kimi | Kimi K2.6, K2.7 Code (+ Highspeed), K3 | Moonshot API | A Moonshot key |
 | Anthropic · Claude | Claude Haiku / Sonnet / Opus 5.5 | Anthropic API | An Anthropic key |
+| OpenRouter | Any tool-capable OpenRouter model (the Settings field lists the live catalogue with prices); default Claude Haiku 5.5 | OpenRouter API | An OpenRouter key (`sk-or-`) |
 | Local | llama.cpp server you run | Your machine | — |
 
 Qwen3-8B was chosen by benchmark on the runner's 4 CPU threads (2026-10-20). The old `deepseek-llm-7b-chat` got a two-step time question wrong and looped on HTML; Qwen3-8B answered correctly and completely at 3.3–4.1 tokens/s. A short answer took 43 s with the model cached (run 39439006131). Long answers take minutes; the chat shows elapsed time.
