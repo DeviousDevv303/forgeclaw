@@ -5,6 +5,7 @@ import type { AIRequest, AIResponse, AIError } from './types'
 import { classifyError } from './types'
 import { anthropicProvider } from './providers/anthropicProvider'
 import { moonshotProvider } from './providers/moonshotProvider'
+import { deepseekApiProvider } from './providers/deepseekApiProvider'
 import { metaProvider } from './providers/metaProvider'
 import { localInferenceProvider, DEFAULT_LOCAL_MODEL } from './providers/localInferenceProvider'
 import { corpusProvider } from './providers/corpusProvider'
@@ -22,7 +23,7 @@ export function isDeepSeekProvider(providerId: string): boolean {
   return providerId === 'corpus' || providerId === 'deepseek';
 }
 
-export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, deepseek: corpusProvider, anthropic: anthropicProvider, muse: metaProvider, local: localInferenceProvider, nexus: corpusProvider } as const
+export const providers = { moonshot: moonshotProvider, deepseekapi: deepseekApiProvider, corpus: corpusProvider, deepseek: corpusProvider, anthropic: anthropicProvider, muse: metaProvider, local: localInferenceProvider, nexus: corpusProvider } as const
 export type ProviderId = keyof typeof providers
 export interface ProviderChoice { providerId: ProviderId; model: string; level: 1 | 2 | 3 | 4 }
 export const LOCAL_PROVIDER_TIMEOUT_MS = 4_000
@@ -280,4 +281,4 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
 export async function isProviderConfigured(apiKey = '', providerId: ProviderId = DEFAULT_PROVIDER): Promise<boolean> { return await providers[providerId].isConfigured(apiKey) }
 export function providerSupportsTools(modelId: string, providerId: ProviderId = DEFAULT_PROVIDER): boolean { return providers[providerId]?.supportsTools(modelId) ?? false }
 export async function testProviderKey(apiKey = '', providerId: ProviderId = DEFAULT_PROVIDER, workspaceId?: string): Promise<void> { await providers[providerId].test(apiKey, workspaceId) }
-export { moonshotProvider, corpusProvider, anthropicProvider, metaProvider, localInferenceProvider }
+export { moonshotProvider, deepseekApiProvider, corpusProvider, anthropicProvider, metaProvider, localInferenceProvider }
