@@ -125,7 +125,7 @@ context with no guidance stored still drops), its full-suite count is 2015 passe
 above describes the pre-fix layout; the fix moved the guidance to the top of the
 assembled context.
 
-Still open, both awaiting the owner's word: (1) `deepseek-16b.yml` middle-trims over-long
+Authorized by the owner 2026-10-25 23:30 CDT — both gap fixes proceed, built by the app lane on the split branch (coordination record on #235): (1) `deepseek-16b.yml` middle-trims over-long
 prompts and can cut the guidance; `prompt_trimmed` is recorded in run metadata but never
 surfaced in chat — fixing needs a protected workflow edit. (2) Hand-typed
 `deepseek_reason` calls carry only the typed context — attaching guidance inside
