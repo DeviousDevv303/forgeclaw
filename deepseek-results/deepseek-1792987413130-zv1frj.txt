@@ -1,0 +1,18 @@
+Given the context, you're looking to multiply your $42 on Kalshi. Based on the information provided, the best bet appears to be on the Cowboys winning the game against the Eagles, with the ticker **KXNFLGAME-26OCT26DALPHI-DAL** (Dallas wins). 
+
+Here's the breakdown:
+
+- **Price (YES ask):** $0.68
+- **Contracts:** 60
+- **Contract cost:** $40.80
+- **Taker fee:** $0.92
+- **Total cost:** $41.72
+- **Payout if Dallas wins:** $60.00
+- **Net profit:** +$18.28 (43.8% return)
+- **If Dallas loses:** −$41.72
+
+If you want to spend exactly $41.00, you could consider buying **58 contracts**, which would cost $39.44 plus a $0.89 fee, totaling $40.33.
+
+Since the market is at a fair price and there's no clear mispricing, the decision to bet depends on your confidence in the Cowboys' chances, which are estimated at ~67%. If you're confident in this estimate, the bet offers a reasonable return. 
+
+If you'd like to proceed with this bet, you can say "rerun: extractor over-split generic references — retry with minimal packet" to initiate the simulation and confirm the market conditions.
