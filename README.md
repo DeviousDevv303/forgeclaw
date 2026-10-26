@@ -5,7 +5,7 @@
 > ForgeClaw combines structured agent workflows, a provider-backed AI runtime, GitHub operations, browser-automation runners, safety checks, and failure visibility in one browser-based workspace.
 
 **Status:** Active development
-**License:** Proprietary source-available (see LICENSE)
+**License:** Proprietary source-available (see LICENSE). All rights reserved — no commercial use or monetization without the owner's prior written permission.
 
 ## What ForgeClaw does
 
@@ -246,7 +246,7 @@ ForgeClaw’s foundational governance distinguishes evolving capability from imm
 
 ## License
 
-ForgeClaw is source-available, not open source. It is released under the **ForgeClaw Proprietary Source-Available License**: you may view and study the code, self-host one private non-commercial instance, keep a private fork for experimentation, and submit pull requests. Commercial use, hosted deployment for others, redistribution, and rebranding are not permitted without a separate written agreement. [LICENSE](LICENSE) is the authoritative text.
+ForgeClaw is source-available, not open source. It is released under the **ForgeClaw Proprietary Source-Available License**: you may view and study the code, self-host one private non-commercial instance, keep a private fork for experimentation, and submit pull requests. Commercial use, monetization of this software or of any derivative of it, hosted deployment for others, redistribution, and rebranding are not permitted without a separate written agreement from the owner. [LICENSE](LICENSE) is the authoritative text.
 
 ## Disclaimer
 
