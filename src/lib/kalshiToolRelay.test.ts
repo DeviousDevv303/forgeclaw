@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { executeTool } from './forgeTools'
 import { KALSHI_RELAY_URL_STORAGE } from './kalshiAuth'
+import { KALSHI_GAME_SERIES } from './kalshiMarkets'
 
 afterEach(() => { vi.unstubAllGlobals() })
 beforeEach(() => { localStorage.clear() })
@@ -28,7 +29,9 @@ describe('kalshi_markets tool — relay fallback (Settings relay URL)', () => {
     const out = await executeTool({ id: '1', name: 'kalshi_markets', input: { query: 'a happen', limit: '5' } }, ctx)
     expect(out).toContain('KX-A — Will A happen?')
     expect(out).toContain('implied 92%')
-    expect(seen.filter(u => u === 'https://relay.example/v1/kalshi')).toHaveLength(1)
+    // One relay call per read in the scan: the universe listing plus one full read per
+    // game/fight series — a board scan never answers from the universe listing alone.
+    expect(seen.filter(u => u === 'https://relay.example/v1/kalshi')).toHaveLength(1 + KALSHI_GAME_SERIES.length)
   })
 
   it('the order book rides the same fallback transport', async () => {
