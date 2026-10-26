@@ -70,7 +70,7 @@ Claude and Kimi receive the attached picture directly. With DeepSeek, the pictur
 
 ### Self-sculpt
 
-`sculpt_self` (whole file) and `shell_patch` (diff) open a pull request on their own branch, never a direct change. Both are locked behind a **self-sculpt key** only the owner knows. The key is stored as a PBKDF2 hash in the owner's browser, and each unlock lasts 2 hours. `/sculpt <file> <change>` and `/patch` work with any provider, or with none.
+`sculpt_self` (whole file) and `shell_patch` (diff) open a pull request on their own branch, never a direct change. Both are locked behind a **self-sculpt key** only the owner knows. The key is stored as a PBKDF2 hash in the owner's browser, and an unlock stays on in that browser until the owner locks it again (no timed expiry: the owner's choice, 2026-10-20). `/sculpt <file> <change>` and `/patch` work with any provider, or with none.
 
 ### NEXUS recursive learning
 
