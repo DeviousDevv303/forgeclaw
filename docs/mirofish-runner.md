@@ -75,13 +75,30 @@ account balance (`/v1/users/me/balance`, through the meter) before the run and a
 records the delta as `usage.billed_cost_usd` next to the upper bound — an account-level figure (any other spend on the same
 key inside the window is included), so the bound stays the number the ceiling enforces.
 
+**The per-run billed figure is not reliable yet.** Moonshot's balance updates late. On 2026-10-26, seven runs recorded
+`billed_cost_usd: 0.0`, including a completed one with 56 calls and $0.25 metered, while a later run recorded $0.389 against
+$0.408 metered, most likely charges from earlier runs landing in its window. Across those eight runs the balance fell by
+about $0.53 against $1.11 metered, roughly half: cache hits are billed far below the meter's rate. Read it across many runs,
+not per run.
+
+**What the chat's runs on 2026-10-26 taught** (`SPIKE3-UFC333` attempts 3–7, `SPIKE3-NFL1026`, `NFLWK8-DALPHI`,
+`NFL-WK7-DALPHI`):
+- Packets written in the chat named too many actors. Six runs were refused for 10 to 22 agents against caps of 8 and 14.
+  The early count made each refusal cost about $0.01 instead of $0.13.
+- Two `small` runs with 9 and 10 agents hit the $0.40 ceiling before their poll and lost what they had spent. The chat now
+  defaults to $1.00 for `small` and `mid` (`SIM_DEFAULT_CEILING_BY_PRESET`).
+- The one run that completed (`tiny`, 5 agents) had two "corner" entities, one per fighter, beside the fighters and one
+  neutral analyst. Four of five agents voted with their own side, so the poll mostly measured who the packet named. Name
+  neutral observers; never corners or camps.
+
 ## Discipline, and where each rule is enforced
 
 - **No pin, no record.** The workflow pins the MiroFish commit, its `uv.lock` hash and the CPU torch wheel hash; the runner
   refuses a run whose pins are missing. Every package installs with `--require-hashes`.
 - **One completed sim per `(card_id, market_ticker)`.** Checked against the `sim-results` branch before anything is spent.
   An aborted or failed attempt does not take the slot, up to 2 attempts per key. A further run needs `rerun_reason`
-  (an owner override), recorded as `rerun_of`.
+  (an owner override), recorded as `rerun_of`. An over-cap refusal does not count toward the 2: it simulated nothing and has
+  no result to rerun for a better one.
 - **A dollar ceiling.** `LLM_BASE_URL` points at a local meter that tallies every call and cuts off with HTTP 429 at the
   ceiling (record status `aborted_budget`). Calls already in flight finish, so overshoot is bounded by concurrency.
 - **One engine per run.** The meter refuses any other model, and sets one thinking mode for every call. MiroFish never holds
@@ -186,7 +203,7 @@ Statuses: `completed`, `aborted_budget`, `aborted_agents_over_cap`, `aborted_zep
 
 ## What is verified, and what is not
 
-Verified offline (184 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
+Verified offline (186 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
 and its SVG, the requirement filter, the runner's orchestration and refusals against a **scripted fake MiroFish**, the workflow's
 safety properties, and the intake line against the real TypeScript validator and grader. The hash-pinned CPU install was also
 run for real (1.35 GB, about 2 minutes, `pip check` clean, `import oasis` works).
