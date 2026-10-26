@@ -126,6 +126,15 @@ key inside the window is included), so the bound stays the number the ceiling en
   where an acting agent is possible (`agents_per_hour_max × multiplier > 1`, recorded as `activity: possible`). The plan is
   recorded in `config.clock`. `config.active_rounds_run`, the active rounds actually run, is what the intake line calls
   `engine.rounds`.
+- **Agents are counted before their profiles are written.** Prepare makes about one model call per agent, so the runner first
+  reads the same entity filter from Zep (`GET /api/simulation/entities/<graph>?enrich=false`, no model call) and refuses an
+  over-cap packet there. Seen live (2026-10-26, `SPIKE3-UFC333` attempt 1): checked only after prepare, an 18-agent packet spent
+  $0.13 on profiles before the 14-agent cap refused it. If the count cannot be read, the check after prepare still decides.
+- **An intake line only for a market still open.** A line is a pre-fight forecast, so the runner reads the market from Kalshi's
+  public API before anything is spent (only when a line could be filed: a counted preset with a YES side). It files the line
+  only if the market's status is open and its close time is still ahead. The record's `market_at_start` says what Kalshi
+  showed; an unreadable market (one retry on a rate limit) files no line. On 2026-10-26 the chat ran a counted preset with a
+  YES side on a fight already decided; had it completed, its line would have entered the 10-sim bar.
 - **No swarm, no world.** A run in which no agent acted after the seeded posts (`config.simulated_actions: 0`) ends `failed`
   instead of building a world from the seed alone.
 - **Seed posts are not counted twice.** MiroFish's script logs its seed posts as round 0, then reads its action table from row 0
@@ -177,7 +186,7 @@ Statuses: `completed`, `aborted_budget`, `aborted_agents_over_cap`, `aborted_zep
 
 ## What is verified, and what is not
 
-Verified offline (175 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
+Verified offline (184 Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder
 and its SVG, the requirement filter, the runner's orchestration and refusals against a **scripted fake MiroFish**, the workflow's
 safety properties, and the intake line against the real TypeScript validator and grader. The hash-pinned CPU install was also
 run for real (1.35 GB, about 2 minutes, `pip check` clean, `import oasis` works).
