@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 720" width="1200" height="720" role="img" aria-labelledby="t d">
+<title id="t">MiroFish swarm: Petr Yan vs Merab Dvalishvili</title>
+<desc id="d">5 agents, 5 rounds with events; final poll n=5, picks Petr Yan 3 / Merab Dvalishvili 2, median P(Petr Yan) 58.0</desc>
+<rect width="1200" height="720" fill="#0b0d10"/>
+<text x="600" y="38" text-anchor="middle" font-family="monospace" font-size="20" fill="#e5e7eb">Petr Yan vs Merab Dvalishvili</text>
+<text x="600" y="62" text-anchor="middle" font-family="monospace" font-size="13" fill="#9ca3af">5 agents, 5 rounds with events; final poll n=5, picks Petr Yan 3 / Merab Dvalishvili 2, median P(Petr Yan) 58.0</text>
+<text x="600" y="84" text-anchor="middle" font-family="monospace" font-size="11" fill="#6b7280">simulated personas; the poll is a measurement we add, not independent evidence</text>
+<text x="300" y="124" text-anchor="middle" font-family="monospace" font-size="15" fill="#f97316">Petr Yan (3)</text>
+<circle cx="318.4" cy="330.0" r="11.7" fill="#f97316" fill-opacity="0.85"><title>Petr Yan: 8 actions</title></circle>
+<circle cx="276.5" cy="351.5" r="10.5" fill="#f97316" fill-opacity="0.85"><title>Yan_Corner: 5 actions</title></circle>
+<circle cx="303.6" cy="289.0" r="11.3" fill="#f97316" fill-opacity="0.85"><title>Neutral_Analyst: 7 actions</title></circle>
+<text x="600" y="124" text-anchor="middle" font-family="monospace" font-size="15" fill="#94a3b8">undecided (0)</text>
+<text x="900" y="124" text-anchor="middle" font-family="monospace" font-size="15" fill="#38bdf8">Merab Dvalishvili (2)</text>
+<circle cx="918.4" cy="330.0" r="9.5" fill="#38bdf8" fill-opacity="0.85"><title>Merab_Corner: 3 actions</title></circle>
+<circle cx="876.5" cy="351.5" r="8.8" fill="#38bdf8" fill-opacity="0.85"><title>Merab Dvalishvili: 2 actions</title></circle>
+<text x="60" y="556" font-family="monospace" font-size="12" fill="#6b7280">what they said (longest excerpts)</text>
+<text x="60" y="580" font-family="monospace" font-size="13" fill="#d1d5db">R0 Merab Dvalishvili: Knee stability and hip mobility were priorities this camp. Merab wants to exhaust me against the fen</text>
+<text x="60" y="604" font-family="monospace" font-size="13" fill="#d1d5db">R0 Merab Dvalishvili: Knee stability and hip mobility were priorities this camp. Merab wants to exhaust me against the fen</text>
+<text x="60" y="628" font-family="monospace" font-size="13" fill="#d1d5db">R0 Merab_Corner: We've drilled mixing strikes into every clinch entry. Merab's chain wrestling is elite but telegraph</text>
+<text x="60" y="652" font-family="monospace" font-size="13" fill="#d1d5db">R0 Merab_Corner: We've drilled mixing strikes into every clinch entry. Merab's chain wrestling is elite but telegraph</text>
+<text x="60" y="676" font-family="monospace" font-size="13" fill="#d1d5db">R0 Neutral_Analyst: The numbers don't lie from fight three: 53 of 58 takedowns defended, 56% accuracy on significant str</text>
+</svg>
