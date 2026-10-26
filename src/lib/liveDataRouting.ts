@@ -65,6 +65,5 @@ export function routeLiveDataQuestion(text: string, now: Date = new Date()): Exp
   return {
     name: 'web_search',
     input: { query, count: '5' },
-    notes: ['live-data question answered directly by web search; the 16B DeepSeek workflow takes 9-23 minutes per step and has no live data'],
   }
 }

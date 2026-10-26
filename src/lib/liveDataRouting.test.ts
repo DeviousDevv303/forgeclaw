@@ -40,12 +40,12 @@ describe('buildLiveSearchQuery', () => {
 })
 
 describe('routeLiveDataQuestion', () => {
-  it('returns a web_search call with a note', () => {
+  it('returns a web_search call with no parser-note preamble', () => {
     const call = routeLiveDataQuestion('Is there any UFC fights tonight', sat)!
     expect(call.name).toBe('web_search')
     expect(call.input.count).toBe('5')
     expect(call.input.query).toContain('UFC')
-    expect(call.notes?.[0]).toContain('web search')
+    expect(call.notes).toBeUndefined()
     expect(call.error).toBeUndefined()
   })
   it('returns null otherwise', () => expect(routeLiveDataQuestion('what is the forgeclaw repo state today', sat)).toBeNull())
