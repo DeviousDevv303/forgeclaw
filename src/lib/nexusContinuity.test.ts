@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildDeepSeekTaskPayload } from './ai/deepseekContext'
 import { sendViaRouter } from './ai/providerRouter'
 import type { AIRequest } from './ai/types'
+import { readDeepSeekMirror } from './deepseekArtifact'
 import { executeTool, loadToolContext } from './forgeTools'
 import { joinNexusGuidance, nexusGuidanceForDeepSeek, NEXUS_GUIDANCE_END, splitNexusGuidance } from './nexusGuidance'
 
@@ -107,5 +108,68 @@ describe('the size budget', () => {
     const payload = buildDeepSeekTaskPayload(`explain the build pipeline\n\n${envelope}`, 'github_repo_state result:\n' + 'y'.repeat(20000))
     expect(payload.context).toContain(RULE)
     expect(payload.context!.length).toBeLessThanOrEqual(22_000)
+  })
+})
+
+describe('a call that did not come through the router', () => {
+  async function dispatched(input: Record<string, unknown>): Promise<Record<string, string> | undefined> {
+    let sent: Record<string, string> | undefined
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (/dispatches$/.test(String(url))) { sent = JSON.parse(String(init?.body)).inputs; throw new Error('stop after dispatch') }
+      return new Response('{}', { status: 404 })
+    }))
+    await executeTool({ id: 'h', name: 'deepseek_reason', input }, { ...loadToolContext(), ghToken: 't', guardianPosture: 'operator-shell', actor: 'operator', requestGuardianApproval: async () => true }).catch(() => {})
+    return sent
+  }
+
+  it('gets the owner\'s guidance attached at dispatch (hand-typed call, no context)', async () => {
+    const sent = await dispatched({ task: 'write a poem about cats' })
+    expect(sent?.context).toContain(RULE)
+    expect(sent?.context).toContain(NEXUS_GUIDANCE_END)
+  })
+  it('does not double-attach when the call already carries a block', async () => {
+    const block = nexusGuidanceForDeepSeek('write a poem about cats').text
+    const sent = await dispatched({ task: 'write a poem about cats', context: block })
+    expect(sent?.context?.split(RULE).length).toBe(2)
+  })
+  it('keeps the attached block small for the long-output profiles', async () => {
+    localStorage.setItem('nexus_heuristics_v1', JSON.stringify({ approved: Array.from({ length: 12 }, (_, i) => `rule ${i} ${'x'.repeat(150)}`), rejected: [] }))
+    const sent = await dispatched({ task: 'rewrite the file', profile: 'code' })
+    expect((sent?.context ?? '').length).toBeLessThanOrEqual(600)
+  })
+  it('attaches nothing when NEXUS has taught nothing', async () => {
+    localStorage.clear()
+    expect((await dispatched({ task: 'write a poem about cats' }))?.context).toBe('')
+  })
+})
+
+describe('a trim in the workflow is never silent', () => {
+  const meta = (extra: string) => `model=Qwen/Qwen3-8B\nrole=primary\nelapsed_seconds=40\n${extra}`
+  async function deliver(metaText: string) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(String(url).includes('.meta') ? metaText : 'the answer', { status: 200 })))
+    return readDeepSeekMirror({ ...loadToolContext(), ghToken: 't' }, 'o', 'r', 'deepseek-1')
+  }
+  it('reads prompt_trimmed and nexus_guidance from the result metadata', async () => {
+    expect(await deliver(meta('prompt_trimmed=true\nnexus_guidance=kept\n'))).toMatchObject({ promptTrimmed: true, nexusGuidance: 'kept' })
+    expect(await deliver(meta('prompt_trimmed=false\nnexus_guidance=none\n'))).not.toHaveProperty('promptTrimmed')
+  })
+  const turn = (stages: string): AIRequest => ({
+    model: 'deepseek-16b', systemPrompt: '',
+    tools: [{ name: 'deepseek_reason', description: 'd', parameters: {} }],
+    messages: [
+      { role: 'user', content: 'Explain how a hash table handles collisions in detail' },
+      { role: 'assistant', content: '', tool_calls: [{ id: 'c0', name: 'deepseek_reason', input: {} }] },
+      { role: 'tool', tool_call_id: 'c0', content: `✓ DeepSeek-16B completed as deepseek-1 on o/r@main.\n${stages}\nRun: https://run\n\nBuckets chain or probe.` },
+    ],
+  })
+  const say = async (stages: string) => { const r = await sendViaRouter(turn(stages), '', 'deepseek'); if (!r.success) throw new Error(r.error.message); return r.response.text }
+
+  it('tells the chat when the prompt was cut, and what happened to the guidance', async () => {
+    expect(await say('Stages: checkpoint=Qwen/Qwen3-8B (primary); prompt-trimmed=true; nexus-guidance=kept; learning-persistence=not requested.')).toContain('Your NEXUS guidance was kept.')
+    expect(await say('Stages: checkpoint=Qwen/Qwen3-8B; prompt-trimmed=true; nexus-guidance=cut.')).toContain('Your NEXUS guidance was also cut.')
+    expect(await say('Stages: checkpoint=Qwen/Qwen3-8B; prompt-trimmed=true; nexus-guidance=none.')).toMatch(/part of the context was cut\.$/)
+  })
+  it('adds nothing when no trim fired', async () => {
+    expect(await say('Stages: checkpoint=Qwen/Qwen3-8B; learning-persistence=not requested.')).toBe('Buckets chain or probe.')
   })
 })

@@ -66,6 +66,14 @@ function failedDeepSeekToolResult(request: AIRequest): { content: string } | und
   return result?.role === 'tool' ? { content: result.content } : undefined
 }
 function isGuardianBlockedResult(content: string) { return /^\s*\[GUARDIAN (?:BLOCKED?|REJECTED)\]/i.test(content) }
+/** When the workflow cut the prompt to fit the model window, the chat says so (the Stages line carries the facts). */
+function promptTrimNote(content: string): string {
+  const header = content.split('\n\n')[0] ?? ''
+  if (!/\bprompt-trimmed=true\b/.test(header)) return ''
+  const guidance = /\bnexus-guidance=(\w+)/.exec(header)?.[1]
+  const tail = guidance === 'kept' ? ' Your NEXUS guidance was kept.' : guidance === 'cut' ? ' Your NEXUS guidance was also cut.' : ''
+  return `Note: the model's window could not hold everything supplied, so part of the context was cut.${tail}`
+}
 function isSuccessfulDeepSeekToolResult(content: string) { return content.startsWith('✓ DeepSeek-16B completed as ') }
 function deepSeekCheckpointLabel(content: string) { return content.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable' }
 function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: ProviderId): boolean {
@@ -282,7 +290,8 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
       if (!answer) {
         return { success: false, error: classifyError(new Error('DeepSeek generated an empty or garbled response. Please try rephrasing your question.'), selected) }
       }
-      if (answer) return success({ text: answer, provider: 'deepseek', model: `DeepSeek 16B Actions (${deepSeekCheckpointLabel(latest.content)})`, stopReason: 'deepseek-synthesis-complete' })
+      const trimNote = promptTrimNote(latest.content)
+      if (answer) return success({ text: trimNote ? `${answer}\n\n${trimNote}` : answer, provider: 'deepseek', model: `DeepSeek 16B Actions (${deepSeekCheckpointLabel(latest.content)})`, stopReason: 'deepseek-synthesis-complete' })
     }
     if (isDeepSeekProvider(selected)) return { success: false, error: classifyError(new Error('deepseek-not-dispatched: the request reached the DeepSeek provider without the deepseek_reason tool, so no workflow was dispatched and GitHub Actions was never contacted.'), selected) }
     return success(selected === 'local' ? await sendLocalWithTimeout(request, apiKey) : await provider.send(request, apiKey))
