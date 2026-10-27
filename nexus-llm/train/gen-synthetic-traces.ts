@@ -35,22 +35,32 @@ const notEvidence = new Set(snapshot.notEvidenceTools)
 const evalPrompts = frozenPrompts()
 const NOW = Date.parse('2026-10-27T12:00:00Z')
 
-const files = ['README.md', 'package.json', 'src/main.tsx', 'src/lib/storage.ts', 'docs/notes.md', 'src/lib/github.ts', 'tsconfig.json', 'scripts/build.sh', 'src/App.css', 'LICENSE']
-const dirs = ['src', 'docs', 'src/lib', 'scripts', 'src/components', 'public']
-const topics = ['solar panel efficiency', 'the history of the bicycle', 'how bread rises', 'wind turbine blade maintenance', 'the tallest mountain in Europe', 'tide tables for Galveston', 'how vaccines work', 'the rules of cricket', 'grain prices this week', 'the speed of sound']
-const subjects = ['a lighthouse in a storm', 'a red bicycle on a hill', 'a quiet harbor at dawn', 'a robot reading a book', 'a field of sunflowers', 'a snowy cabin', 'a desert road at night',
-  'a welder at work', 'a forklift in a warehouse', 'a bridge under construction', 'a tugboat in fog', 'a mechanic shop sign', 'an electrician on a ladder']
+// HIGH-ENTROPY argument values (2026-10-27, run 4): run 2's model memorized a 13-subject image list instead of copying the user's
+// words into the call, so every value a call carries is now combinatorial; the only way to fit the data is to copy from the prompt.
+const ADJ = ['red', 'rusty', 'giant', 'tiny', 'quiet', 'neon', 'golden', 'frozen', 'muddy', 'striped', 'ancient', 'shiny', 'broken', 'wooden', 'purple', 'foggy', 'electric', 'paper', 'glass', 'copper', 'burning', 'hidden', 'floating', 'sleepy']
+// Nouns and events used by eval/loop/scenarios.json (pickup truck, beaver, lighthouse, wrench, refinery; fed, bitcoin) are deliberately
+// ABSENT, so a loop pass on them is copying unseen words, not recall.
+const NOUN = ['tugboat', 'crane', 'forklift', 'owl', 'cactus', 'tractor', 'bridge', 'windmill', 'welder', 'drone', 'barn', 'fox', 'robot', 'pipeline', 'bulldozer', 'ladder', 'kettle', 'bison', 'train', 'castle', 'tent', 'scaffold', 'canoe', 'mailbox', 'hammer', 'kiln', 'silo', 'trawler', 'excavator', 'beehive']
+const PLACE = ['in the snow', 'at dawn', 'at night', 'in a storm', 'on a hill', 'by the sea', 'in the desert', 'under neon lights', 'in a forest', 'on Mars', 'in the rain', 'at sunset', 'in a city street', 'on a frozen lake', 'inside a workshop']
+const WORD = ['alpha', 'beta', 'gamma', 'delta', 'omega', 'sigma', 'lambda', 'kappa', 'river', 'stone', 'cedar', 'ember', 'harbor', 'falcon', 'quartz', 'meadow', 'signal', 'anchor', 'copper', 'thistle', 'orbit', 'lantern', 'basalt', 'willow']
+const TOPIC = ['solar panel efficiency', 'how bread rises', 'tide tables', 'the rules of cricket', 'grain prices', 'the speed of sound', 'rebar sizes', 'concrete curing time', 'welding rod types', 'OSHA ladder rules', 'diesel prices', 'heat pump sizing', 'roof pitch math', 'torque specs']
+const DIRS = ['src', 'docs', 'scripts', 'public', 'tests', 'lib', 'config', 'tools', 'assets', 'examples']
+const EXT = ['.ts', '.md', '.json', '.py', '.sh', '.css', '.yml', '.txt']
+const word = () => pick(WORD)
+const subject = () => `${rnd() < 0.7 ? `a ${pick(ADJ)} ` : 'a '}${pick(NOUN)}${rnd() < 0.7 ? ` ${pick(PLACE)}` : ''}`
+const topic = () => rnd() < 0.5 ? pick(TOPIC) : `${pick(TOPIC)} ${pick(['in', 'for', 'near'])} ${pick(['Houston', 'Galveston', 'Denver', 'winter', '2026', 'Texas', 'small shops'])}`
+const dirName = () => rnd() < 0.4 ? pick(DIRS) : `${pick(DIRS)}/${word()}`
+const fileName = () => rnd() < 0.15 ? pick(['README.md', 'package.json', 'LICENSE', 'tsconfig.json']) : `${dirName()}/${word()}${rnd() < 0.4 ? `_${word()}` : ''}${pick(EXT)}`
+const memPair = (): [string, string] => [`${word()}_${pick(['note', 'code', 'task', 'size', 'time', 'list'])}`, `${pick(ADJ)} ${pick(NOUN)} ${pick(['at nine', 'on tuesday', '13 mm', 'by friday', 'twice', 'later'])}`]
 const styles = ['realistic', 'artistic', 'cartoon', 'anime', 'watercolor', 'oil painting', 'pixel art', 'cinematic']
-const keys = ['blade_note', 'shopping', 'gate_code_hint', 'next_task', 'tool_size', 'meeting_time']
-const vals = ['check root bolts', 'milk and eggs', 'ask Sam', 'oil the hinge', '13 mm', 'tuesday at nine']
-const words = ['alpha', 'beta', 'gamma', 'delta', 'omega', 'sigma', 'lambda', 'kappa']
+const words = WORD
 const snippet = () => Array.from({ length: 3 + Math.floor(rnd() * 5) }, () => pick(words)).join(' ')
 /** Fictional markets: real-looking ticker shapes, invented strikes and dates. */
 const cities = [['NY', 'NYC'], ['MIA', 'Miami'], ['LAX', 'Los Angeles'], ['CHI', 'Chicago'], ['AUS', 'Austin'], ['DEN', 'Denver']] as const
-const fakeMarket = (): { m: KalshiMarket; name: string } => {
+const fakeMarket = (): { m: KalshiMarket; name: string; query: string } => {
   const [code, city] = pick(cities), strike = int(40, 95), day = int(1, 28), ask = int(12, 88) / 100
   const ticker = `KXHIGH${code}-26NOV${String(day).padStart(2, '0')}-T${strike}`
-  return { name: `${city} above ${strike}F on Nov ${day}`, m: { ticker, event_ticker: ticker.split('-T')[0], title: `Will the high temp in ${city} be above ${strike}F on Nov ${day}, 2026?`, status: 'active',
+  return { name: `${city} above ${strike}F on Nov ${day}`, query: `${city} ${strike}F`, m: { ticker, event_ticker: ticker.split('-T')[0], title: `Will the high temp in ${city} be above ${strike}F on Nov ${day}, 2026?`, status: 'active',
     close_time: `2026-11-${String(day).padStart(2, '0')}T04:59:00Z`, yes_bid_dollars: (ask - 0.02).toFixed(4), yes_ask_dollars: ask.toFixed(4), no_ask_dollars: (1 - ask + 0.02).toFixed(4),
     last_price_dollars: (ask - 0.01).toFixed(4), volume_fp: String(int(500, 50000)), volume_24h_fp: String(int(100, 9000)), open_interest_fp: String(int(100, 20000)), exchange_index: 0 } }
 }
@@ -135,9 +145,9 @@ function routed(kind: string, p: string): void {
 
 const makers: Array<[string, () => void]> = [
   ['explicit', () => {
-    const f = pick(files), d = pick(dirs), q = pick(topics), i = int(0, keys.length - 1)
-    routed('explicit', pick([`github_read_file path="${f}"`, `github_list_files path="${d}"`, `web_search query="${q}"`, `memory_write key="${keys[i]}" value="${vals[i]}"`, `memory_read key="${keys[i]}"`,
-      'memory_list', 'github_repo_state', `github_get_run_status run_id="${runId()}"`, `github_get_run_logs run_id="${runId()}"`, `github_search_code query="${pick(words)}"`, `github_verify_commit sha="${sha()}"`]))
+    const f = fileName(), d = dirName(), q = topic(), [k, v] = memPair()
+    routed('explicit', pick([`github_read_file path="${f}"`, `github_list_files path="${d}"`, `web_search query="${q}"`, `memory_write key="${k}" value="${v}"`, `memory_read key="${k}"`,
+      'memory_list', 'github_repo_state', `github_get_run_status run_id="${runId()}"`, `github_get_run_logs run_id="${runId()}"`, `github_search_code query="${word()}"`, `github_verify_commit sha="${sha()}"`]))
   }],
   ['live', () => {
     const t = pick(teams), pl = pick(places), c = pick(coins)
@@ -150,7 +160,7 @@ const makers: Array<[string, () => void]> = [
     emit('head', p, traced([S('github_repo_state', {}, 'ok', `main at ${sha()}`)], 'The repository state is listed above.'))
   }],
   ['url', () => {
-    const n = int(2, 400), rid = runId(), f = pick(files), d = pick(dirs)
+    const n = int(2, 400), rid = runId(), f = fileName(), d = dirName()
     const [p, call] = pick([
       [`Check https://github.com/DeviousDevv303/forgeclaw/pull/${n}`, { name: 'github_pr_info', input: { pull_number: String(n) } }],
       [`What happened in https://github.com/DeviousDevv303/forgeclaw/pull/${n}?`, { name: 'github_pr_info', input: { pull_number: String(n) } }],
@@ -164,26 +174,26 @@ const makers: Array<[string, () => void]> = [
     emit('url', p, traced([S(call.name, { ...call.input }, ok ? 'ok' : 'error', ok ? snippet() : errText())], ok ? 'Here is what that link shows, from the tool result above.' : 'I could not read that link: the tool failed.'))
   }],
   // ── repository / web / memory (as before; labels now canonical) ──
-  ['read', () => { const f = pick(files); const p = pick([`show me ${f}`, `open ${f}`, `what is in ${f}?`, `read the file ${f}`, `can you print ${f}`])
+  ['read', () => { const f = fileName(); const p = pick([`show me ${f}`, `open ${f}`, `what is in ${f}?`, `read the file ${f}`, `can you print ${f}`])
     const s = rnd() < 0.8 ? S('github_read_file', { path: f }, 'ok', snippet()) : S('github_read_file', { path: f }, 'error', errText())
     emit('read', p, traced([s], s.status === 'ok' ? `Here is what ${f} contains: ${s.text.slice(0, 30)}.` : `I could not read ${f}: the tool failed.`)) }],
-  ['list', () => { const d = pick(dirs); const p = pick([`list the files in ${d}`, `what is inside ${d}?`, `show the ${d} folder`])
-    const s = rnd() < 0.8 ? S('github_list_files', { path: d }, 'ok', `${pick(files)}\n${pick(files)}`) : S('github_list_files', { path: d }, 'error', errText())
+  ['list', () => { const d = dirName(); const p = pick([`list the files in ${d}`, `what is inside ${d}?`, `show the ${d} folder`])
+    const s = rnd() < 0.8 ? S('github_list_files', { path: d }, 'ok', `${fileName()}\n${fileName()}`) : S('github_list_files', { path: d }, 'error', errText())
     emit('list', p, traced([s], s.status === 'ok' ? `The folder ${d} contains the files listed above.` : `I could not list ${d}: the tool failed.`)) }],
-  ['search', () => { const q = pick(topics); const p = pick([`look up ${q}`, `search the web for ${q}`, `find information about ${q}`, `google ${q}`])
+  ['search', () => { const q = topic(); const p = pick([`look up ${q}`, `search the web for ${q}`, `find information about ${q}`, `google ${q}`])
     emit('search', p, traced([S('web_search', { query: q }, 'ok', snippet())], `I searched for ${q} and found the results above.`)) }],
-  ['memory_write', () => { const i = int(0, keys.length - 1); const p = pick([`remember that ${keys[i]} is ${vals[i]}`, `save ${vals[i]} as ${keys[i]}`])
-    emit('memory_write', p, traced([S('memory_write', { key: keys[i], value: vals[i] }, 'ok', 'Saved')], `Saved ${keys[i]}. That is a note, not a checked fact.`)) }],
-  ['memory_read', () => { const i = int(0, keys.length - 1); const p = pick([`what did I save as ${keys[i]}?`, `recall ${keys[i]}`])
-    emit('memory_read', p, traced([S('memory_read', { key: keys[i] }, 'ok', vals[i])], `You saved: ${vals[i]}. That is your own note.`)) }],
+  ['memory_write', () => { const [k, v] = memPair(); const p = pick([`remember that ${k} is ${v}`, `save ${v} as ${k}`])
+    emit('memory_write', p, traced([S('memory_write', { key: k, value: v }, 'ok', 'Saved')], `Saved ${k}. That is a note, not a checked fact.`)) }],
+  ['memory_read', () => { const [k, v] = memPair(); const p = pick([`what did I save as ${k}?`, `recall ${k}`])
+    emit('memory_read', p, traced([S('memory_read', { key: k }, 'ok', v)], `You saved: ${v}. That is your own note.`)) }],
   ['repo_state', () => { const p = pick(['what is the latest commit on main?', 'give me the head sha of main', 'which commit is main on right now?'])
     emit('repo_state', p, traced([S('github_repo_state', {}, 'ok', `main at ${Math.floor(rnd() * 16 ** 7).toString(16).padStart(7, '0')}`)], 'The repository state is listed above.')) }],
   ['direct', () => { const p = pick(['hi there', 'hey', 'thank you so much', 'good evening', 'how are you today?', 'that is all for now', 'nice work'])
     emit('direct', p, direct(pick(['Hello! How can I help?', 'You are welcome.', 'Glad to help.']))) }],
-  ['no_evidence', () => { const f = pick(files); const p = pick([`what does ${f} say about licensing?`, `tell me the version in ${f}`])
+  ['no_evidence', () => { const f = fileName(); const p = pick([`what does ${f} say about licensing?`, `tell me the version in ${f}`])
     emit('no_evidence', p, direct(`I have not read ${f}, so I cannot say. I can read it for you.`)) }],
   // ── images ──
-  ['image', () => { const s = pick(subjects), st = pick(styles)
+  ['image', () => { const s = subject(), st = pick(styles)
     const p = pick([`generate an image of ${s}`, `make a ${st} picture of ${s}`, `create an illustration of ${s}`, `draw ${s} in ${st} style`, `design a ${st} logo of ${s}`, `render ${s} as a ${st} wallpaper`])
     if (!isImageGenerationRequest(p)) return
     const a: Record<string, unknown> = { prompt: extractImagePrompt(p), style: inferImageStyle(p) }
@@ -202,14 +212,28 @@ const makers: Array<[string, () => void]> = [
     if (isImageGenerationRequest(p)) return
     emit('image_talk', p, direct(pick(['I can explain in general terms, but I have not checked a source here.', 'In general terms only: I did not look this up.']))) }],
   // ── trading: propose-only ──
-  ['kalshi_read', () => { const { m, name } = fakeMarket()
-    const p = pick([`what is the Kalshi price for ${name}?`, `kalshi odds on ${name}`, `how likely does Kalshi think ${name} is?`, `check Kalshi for ${m.ticker}`])
+  ['kalshi_read', () => { const { m, name, query } = fakeMarket()
+    // The call carries what the prompt carries: the ticker when one is given, otherwise the words that name the market.
+    const byTicker = rnd() < 0.4
+    const p = byTicker ? pick([`check Kalshi for ${m.ticker}`, `kalshi price of ${m.ticker}`, `what does ${m.ticker} trade at on Kalshi?`])
+      : pick([`what is the Kalshi price for ${name}?`, `kalshi odds on ${name}`, `how likely does Kalshi think ${name} is?`])
+    const q = byTicker ? { ticker: m.ticker } : { query }
     const ok = rnd() < 0.75
-    const s = ok ? S('kalshi_markets', { ticker: m.ticker }, 'ok', formatMarkets([m], { ticker: m.ticker }, NOW, 1))
-      : S('kalshi_markets', { ticker: m.ticker }, 'error', pick(['[TOOL ERROR] Kalshi could not be reached (Failed to fetch). No snapshot within 15 min to fall back to; ask again in a minute, or ask the owner for the prices they see and pass them to kalshi_owner_prices.', '[TOOL ERROR] Kalshi answered HTTP 429 (rate limited).']))
+    const s = ok ? S('kalshi_markets', q, 'ok', formatMarkets([m], q, NOW, 1))
+      : S('kalshi_markets', q, 'error', pick(['[TOOL ERROR] Kalshi could not be reached (Failed to fetch). No snapshot within 15 min to fall back to; ask again in a minute, or ask the owner for the prices they see and pass them to kalshi_owner_prices.', '[TOOL ERROR] Kalshi answered HTTP 429 (rate limited).']))
     const ask = Number(m.yes_ask_dollars)
     emit('kalshi_read', p, traced([s], ok ? `Kalshi's YES ask for ${m.ticker} is ${cents(ask)}, an implied ${Math.round(ask * 100)}%. That is a price, not a guarantee.`
       : 'I could not read Kalshi, so I have no price. If you tell me the price you see, I can use it as your number.')) }],
+  ['kalshi_search', () => {
+    const ev = pick(['recession', 'unemployment', 'gas prices', 'rain in Seattle', 'snow in Denver', 'inflation', 'ethereum above 5k', 'a government shutdown', 'the S&P 500 record', 'gold above 3000', 'a hurricane landfall', 'egg prices'])
+    const when = pick(['', ' this month', ' in December', ' by Friday', ' this year'])
+    const p = pick([`What are the Kalshi odds on ${ev}${when}?`, `What does Kalshi charge for ${ev}${when}?`, `Show me Kalshi markets about ${ev}`, `How likely does Kalshi think ${ev} is${when}?`])
+    const query = ev.replace(/^(a |the )/, '')
+    const ask = int(5, 95) / 100, ticker = `KX${query.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 8)}-26${pick(['NOV', 'DEC'])}`
+    const m: KalshiMarket = { ticker, title: `Will ${query} happen${when || ' this year'}?`, status: 'active', close_time: '2026-12-31T23:00:00Z', yes_bid_dollars: (ask - 0.02).toFixed(4), yes_ask_dollars: ask.toFixed(4), no_ask_dollars: (1.02 - ask).toFixed(4), last_price_dollars: (ask - 0.01).toFixed(4), volume_fp: String(int(500, 90000)), volume_24h_fp: String(int(100, 9000)), open_interest_fp: String(int(100, 20000)), exchange_index: 0 }
+    const found = rnd() < 0.8
+    const res = formatMarkets(found ? [m] : [], { query }, NOW, found ? 1 : int(200, 900))
+    emit('kalshi_search', p, traced([S('kalshi_markets', { query }, 'ok', res)], found ? `Kalshi's YES ask on ${ticker} is ${cents(ask)}, an implied ${Math.round(ask * 100)}%. That is a price, not a guarantee.` : `Kalshi lists no open market matching "${query}". I will not guess a price.`)) }],
   ['owner_prices', () => { const { m } = fakeMarket(); const c = int(5, 95)
     const prices = `${m.ticker} ${pick(['yes', 'no'])} ${c}c`
     const p = pick([`kalshi is down, I see ${prices}`, `use my price: ${prices}`, `the app shows ${prices}, go with that`])

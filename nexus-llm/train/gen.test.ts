@@ -27,8 +27,12 @@ describe('synthetic trace generator', () => {
   })
   it('covers every behaviour, capped per kind', () => {
     const kinds = new Set(rows.map(r => r.kind))
-    expect(kinds.size).toBe(22)
-    for (const k of kinds) expect(rows.filter(r => r.kind === k).length).toBeLessThanOrEqual(Math.ceil(400 / 22))
+    expect(kinds.size).toBe(23)
+    for (const k of kinds) expect(rows.filter(r => r.kind === k).length).toBeLessThanOrEqual(Math.ceil(400 / 23))
+  })
+  it('never uses the closed-loop scenarios\' nouns or events in an argument, so a loop pass means copying, not recall', () => {
+    for (const r of rows) for (const w of ['pickup truck', 'beaver', 'lighthouse', 'wrench', 'refinery']) expect(r.text.toLowerCase().includes(w), `${r.id} ${w}`).toBe(false)
+    for (const r of rows.filter(x => x.kind === 'kalshi_search')) expect(r.text.toLowerCase()).not.toMatch(/"query":"[^"]*(fed|bitcoin)/)
   })
   it('every evidence label is the canonical label for its steps (never hand-written)', () => {
     for (const r of rows) {

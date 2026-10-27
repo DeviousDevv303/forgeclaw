@@ -15,5 +15,7 @@ export function frozenSuites(): string[] {
 export function frozenPrompts(): Set<string> {
   const out = new Set<string>()
   for (const s of frozenSuites()) for (const l of readFileSync(join(here, s, 'cases.jsonl'), 'utf8').split('\n').filter(Boolean)) out.add(normalizePrompt((JSON.parse(l) as { prompt: string }).prompt))
+  // closed-loop scenarios are eval too (loop/scenarios.json), though not a gated suite
+  for (const sc of (JSON.parse(readFileSync(join(here, 'loop/scenarios.json'), 'utf8')) as { scenarios: Array<{ prompt: string }> }).scenarios) out.add(normalizePrompt(sc.prompt))
   return out
 }
