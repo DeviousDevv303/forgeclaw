@@ -43,6 +43,19 @@ class SpecialTokens(unittest.TestCase):
             self.assertEqual(got, expected)
 
 
+class ToolNames(unittest.TestCase):
+    """v1: choosing a tool is one token. Fails when the snapshot gains a tool the tokenizer was not retrained for."""
+    def test_every_snapshot_tool_name_is_one_piece(self):
+        tools = json.loads((HERE.parent / "spec" / "tools.snapshot.json").read_text())["tools"]
+        self.assertEqual(sorted(t["name"] for t in tools), sorted(CUSTODY["atomicToolNames"]))
+        for t in tools:
+            self.assertEqual(SP.encode(t["name"], out_type=str), [t["name"]], t["name"])
+
+    def test_a_tool_name_inside_a_longer_word_still_round_trips(self):
+        for s in ["web_searching", "my_github_read_file_note", "kalshi_marketsx"]:
+            self.assertEqual(SP.decode(SP.encode(s)), s)
+
+
 class RoundTrip(unittest.TestCase):
     def test_every_corpus_line_decodes_to_itself(self):
         for line in LINES:
@@ -66,6 +79,8 @@ class Custody(unittest.TestCase):
         self.assertTrue(CUSTODY["synthetic"])
         self.assertEqual(hashlib.sha256((HERE / "corpus.synthetic.txt").read_bytes()).hexdigest(), CUSTODY["corpusSha256"])
         self.assertIn("admitted corpus candidates", CUSTODY["excludes"])
+        self.assertIn("operator data", CUSTODY["excludes"])
+        self.assertEqual(CUSTODY["version"], "v1")
 
 
 def _tokens_in(line):
