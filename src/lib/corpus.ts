@@ -51,10 +51,8 @@ export interface CorpusInteractionInput {
 }
 
 export interface CorpusSyncResult {
-  /** Candidates sent in the POST. */
   attempted: number
-  /** Remote candidates the reply returned that were stored locally as UNADMITTED candidates. Sending or receiving never admits anything. */
-  received: number
+  admitted: number
   status: 'skipped' | 'synced' | 'pending' | 'rejected'
   reason?: string
 }
@@ -956,8 +954,8 @@ export class CorpusRepository {
 
   async syncPending(webhookUrl: string, fetchImpl: typeof fetch = fetch): Promise<CorpusSyncResult> {
     const ids = readIndex(CANDIDATE_INDEX_KEY)
-    if (!webhookUrl.trim()) return { attempted: 0, received: 0, status: 'skipped', reason: 'No webhook configured.' }
-    if (!ids.length) return { attempted: 0, received: 0, status: 'synced', reason: 'No pending candidates.' }
+    if (!webhookUrl.trim()) return { attempted: 0, admitted: 0, status: 'skipped', reason: 'No webhook configured.' }
+    if (!ids.length) return { attempted: 0, admitted: 0, status: 'synced', reason: 'No pending candidates.' }
     const records = ids.flatMap(id => {
       const raw = safeGetItem(`${CANDIDATE_PREFIX}${id}`)
       if (!raw) return []
@@ -970,7 +968,7 @@ export class CorpusRepository {
     })
     try {
       const response = await fetchImpl(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ corpusId: 'nexus-local', version: this.getVersion(), records }) })
-      if (!response.ok) return { attempted: records.length, received: 0, status: 'pending', reason: `Webhook HTTP ${response.status}` }
+      if (!response.ok) return { attempted: records.length, admitted: 0, status: 'pending', reason: `Webhook HTTP ${response.status}` }
       const rawBody = await response.text().catch(() => null)
       // F-022: 'synced' is verified against the SHAPE of the reply — a parseable
       // body containing the expected `updates` list — never against HTTP 200 and
@@ -984,19 +982,19 @@ export class CorpusRepository {
       // list stays 'synced' below: whether it can be a legitimate success is an
       // open contract question, flagged in PR #273.)
       if (rawBody === null || rawBody.trim() === '') {
-        return { attempted: records.length, received: 0, status: 'pending', reason: 'Webhook answered with an empty reply; candidates were sent but the update list was not reconciled.' }
+        return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook answered with an empty reply; candidates were sent but the update list was not reconciled.' }
       }
       let body: unknown
       try {
         body = JSON.parse(rawBody) as unknown
       } catch {
-        return { attempted: records.length, received: 0, status: 'pending', reason: 'Webhook answered but its reply could not be read; candidates were sent but the update list was not reconciled.' }
+        return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook answered but its reply could not be read; candidates were sent but the update list was not reconciled.' }
       }
       if (!body || typeof body !== 'object' || !Array.isArray((body as { updates?: unknown }).updates)) {
-        return { attempted: records.length, received: 0, status: 'pending', reason: 'Webhook reply did not contain the expected updates list; candidates were sent but the update list was not reconciled.' }
+        return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook reply did not contain the expected updates list; candidates were sent but the update list was not reconciled.' }
       }
       const updates = (body as { updates: unknown[] }).updates
-      let received = 0
+      const admitted = 0
       for (const update of updates) {
         if (!update || typeof update !== 'object') continue
         const value = update as Partial<LearningCandidate>
@@ -1004,14 +1002,13 @@ export class CorpusRepository {
         if (value.recordType === 'learning_candidate' && value.admissionStatus === 'candidate' && typeof value.integrity === 'string' && typeof value.corpusId === 'string' && typeof value.source === 'string' && typeof value.content === 'string' && typeof value.timestamp === 'string' && typeof value.version === 'number' && typeof value.sourceInteractionId === 'string' && typeof value.runtime === 'string' && typeof value.model === 'string' && typeof value.input === 'string' && typeof value.context === 'string' && typeof value.generatedResult === 'string' && value.metadata && typeof value.metadata === 'object') {
           const remoteCandidate = value as LearningCandidate
           safeSetItem(`${CANDIDATE_PREFIX}${remoteCandidate.id}`, JSON.stringify(remoteCandidate))
-          received += 1
           const candidateIds = readIndex(CANDIDATE_INDEX_KEY)
           if (!candidateIds.includes(remoteCandidate.id)) writeIndex(CANDIDATE_INDEX_KEY, [...candidateIds, remoteCandidate.id])
         }
       }
-      return { attempted: records.length, received, status: 'synced' }
+      return { attempted: records.length, admitted, status: 'synced' }
     } catch {
-      return { attempted: records.length, received: 0, status: 'pending', reason: 'Webhook unavailable.' }
+      return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook unavailable.' }
     }
   }
 }

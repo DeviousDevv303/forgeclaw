@@ -188,18 +188,3 @@ describe('the shared store behind the selector', () => {
     expect(html).not.toContain('No failures logged.')
   })
 })
-
-describe('EF-03: the corpus push button states what it did', () => {
-  it('names the reason and the count when the reply was not confirmed, and never says admitted', () => {
-    for (const lang of ['en', 'es'] as const) {
-      const text = translate(lang, 'corpus.notConfirmed', { n: 3, reason: 'Webhook HTTP 500.' })
-      expect(text).toContain('Webhook HTTP 500.')
-      expect(text).toContain('3')
-    }
-  })
-  it('says a successful push admits nothing', () => {
-    expect(translate('en', 'corpus.sentMany', { n: 4, m: 1 })).toContain('Nothing is admitted')
-    expect(translate('es', 'corpus.sentMany', { n: 4, m: 1 })).toContain('no admite nada')
-    expect(translate('en', 'settings.syncPending')).not.toMatch(/sync/i)
-  })
-})

@@ -147,9 +147,10 @@ export const EN = {
   // pre-#212 rule. Since #212 the live route is convergence without authorization
   // (corpus.ts convergencePhase; README "NEXUS recursive learning"); the signed path
   // has no trusted key and no UI offers it, so the old wording promised the impossible.
-  'corpus.sentOne': 'Sent {n} candidate; the webhook replied with an update list ({m} candidate(s) merged locally, unadmitted). Nothing is admitted by this button: admit in the NEXUS panel.',
-  'corpus.sentMany': 'Sent {n} candidates; the webhook replied with an update list ({m} candidate(s) merged locally, unadmitted). Nothing is admitted by this button: admit in the NEXUS panel.',
-  'corpus.notConfirmed': 'Not confirmed: {reason} {n} candidate(s) stay local; they may or may not have reached the webhook.',
+  'corpus.syncedOne': 'Synced {n} candidate update; evidence-backed records converge on their own (nexus-convergence).',
+  'corpus.syncedMany': 'Synced {n} candidate updates; evidence-backed records converge on their own (nexus-convergence).',
+  'corpus.unavailableOne': 'Webhook unavailable; {n} candidate remains local.',
+  'corpus.unavailableMany': 'Webhook unavailable; {n} candidates remain local.',
 
   'settings.runtimeProvider': 'Runtime Provider',
   'settings.moonshotDesc': 'OpenAI-compatible Moonshot API with native tool calling.',
@@ -198,7 +199,7 @@ export const EN = {
   'settings.localHelp': 'Start llama-server locally with a GGUF model and its configured OpenAI-compatible /v1 endpoint.',
   'settings.corpusRecords': 'Local CORPUS records: {records} · approved: {approved} · candidates: {candidates} · version: {version}.',
   'settings.corpusWebhook': 'Optional Corpus Webhook',
-  'settings.syncPending': 'SEND CANDIDATES TO WEBHOOK',
+  'settings.syncPending': 'SYNC PENDING CANDIDATES',
   'settings.operatorDiagnostics': 'Operator Diagnostics',
   'settings.corpusMemory': 'Corpus Memory',
   'settings.exportCount': 'EXPORT ({n})',
@@ -604,9 +605,10 @@ const ES: Record<Key, string> = {
   'test.testing': 'Probando...',
   'corpus.noWebhook': 'No hay webhook configurado; sigue activo el modo solo local.',
   'corpus.syncing': 'Sincronizando candidatos pendientes…',
-  'corpus.sentOne': 'Se envió {n} candidato; el webhook respondió con una lista de actualizaciones ({m} candidato(s) fusionados en local, sin admitir). Este botón no admite nada: admite en el panel NEXUS.',
-  'corpus.sentMany': 'Se enviaron {n} candidatos; el webhook respondió con una lista de actualizaciones ({m} candidato(s) fusionados en local, sin admitir). Este botón no admite nada: admite en el panel NEXUS.',
-  'corpus.notConfirmed': 'Sin confirmar: {reason} {n} candidato(s) siguen en local; pueden haber llegado o no al webhook.',
+  'corpus.syncedOne': 'Se sincronizó {n} actualización de candidato; los registros con evidencia convergen por sí solos (nexus-convergence).',
+  'corpus.syncedMany': 'Se sincronizaron {n} actualizaciones de candidatos; los registros con evidencia convergen por sí solos (nexus-convergence).',
+  'corpus.unavailableOne': 'Webhook no disponible; {n} candidato sigue en local.',
+  'corpus.unavailableMany': 'Webhook no disponible; {n} candidatos siguen en local.',
 
   'settings.runtimeProvider': 'Proveedor de ejecución',
   'settings.moonshotDesc': 'API de Moonshot compatible con OpenAI y con llamadas nativas a herramientas.',
@@ -655,7 +657,7 @@ const ES: Record<Key, string> = {
   'settings.localHelp': 'Inicia llama-server en local con un modelo GGUF y su endpoint /v1 compatible con OpenAI.',
   'settings.corpusRecords': 'Registros locales de CORPUS: {records} · aprobados: {approved} · candidatos: {candidates} · versión: {version}.',
   'settings.corpusWebhook': 'Webhook opcional del corpus',
-  'settings.syncPending': 'ENVIAR CANDIDATOS AL WEBHOOK',
+  'settings.syncPending': 'SINCRONIZAR CANDIDATOS PENDIENTES',
   'settings.operatorDiagnostics': 'Diagnóstico del operador',
   'settings.corpusMemory': 'Memoria del corpus',
   'settings.exportCount': 'EXPORTAR ({n})',
