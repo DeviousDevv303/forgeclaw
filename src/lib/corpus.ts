@@ -1061,6 +1061,66 @@ export function suggestImprovedPrompt(prompt: string, style = ''): { prompt: str
   return { prompt: enhanced, patterns }
 }
 
+/** Minimal read surface of Web Storage the Nexus store export needs (localStorage in the app, a fake in tests). */
+export interface NexusStoreStorage {
+  readonly length: number
+  key(index: number): string | null
+  getItem(key: string): string | null
+}
+
+export interface NexusStoreExportEnvelope {
+  format: 'nexus-store-export'
+  version: 1
+  exportedAt: string
+  origin: string
+  keys: Record<string, string>
+}
+
+export type NexusStoreExportResult =
+  | { ok: true; envelope: NexusStoreExportEnvelope; json: string; approvedCount: number; keyCount: number }
+  | { ok: false; reason: 'credential'; keyPrefix: string }
+  | { ok: false; reason: 'storage-unreadable' }
+
+// Why this pattern: the export feeds Nexus training data, so a credential that ever landed in a
+// record must abort the export instead of being written into a file that leaves the device —
+// the same fail-closed contract as the console exporter (nexus-llm/exporter/dump-nexus-store.js).
+const NEXUS_EXPORT_SECRET_PATTERN = /(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|AKIA[0-9A-Z]{16})/
+
+/**
+ * Build the `nexus-store-export.json` payload from a storage snapshot, byte-compatible with the
+ * console exporter (dump-nexus-store.js): only approved knowledge records, each paired with its
+ * candidate entry (`candidate-<integrity>`) when one is stored. No unadmitted candidates, no chat
+ * history, no other key families. Aborts without output if any selected value looks like a
+ * credential, or if storage cannot be read.
+ */
+export function buildNexusStoreExport(storage: NexusStoreStorage, origin: string, exportedAt: string = new Date().toISOString()): NexusStoreExportResult {
+  const keys: Record<string, string> = {}
+  let approvedCount = 0
+  try {
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i)
+      if (!key || !key.startsWith(RECORD_PREFIX)) continue
+      const raw = storage.getItem(key)
+      if (raw === null) continue
+      let record: CorpusRecord | null
+      try { record = JSON.parse(raw) as CorpusRecord | null } catch { continue }
+      if (!record || record.recordType !== 'knowledge' || record.admissionStatus !== 'approved') continue
+      approvedCount += 1
+      keys[key] = raw
+      const candidateKey = `${CANDIDATE_PREFIX}candidate-${record.integrity}`
+      const candidateRaw = storage.getItem(candidateKey)
+      if (candidateRaw !== null) keys[candidateKey] = candidateRaw
+    }
+  } catch {
+    return { ok: false, reason: 'storage-unreadable' }
+  }
+  for (const key of Object.keys(keys)) {
+    if (NEXUS_EXPORT_SECRET_PATTERN.test(keys[key])) return { ok: false, reason: 'credential', keyPrefix: key.slice(0, 60) }
+  }
+  const envelope: NexusStoreExportEnvelope = { format: 'nexus-store-export', version: 1, exportedAt, origin, keys }
+  return { ok: true, envelope, json: JSON.stringify(envelope), approvedCount, keyCount: Object.keys(keys).length }
+}
+
 export function formatCorpusContext(records: CorpusRecord[]): string {
   if (!records.length) return ''
   return records.map((record, index) => `[Corpus ${index + 1} | ${record.source} | ${record.timestamp}]\n${record.content}`).join('\n\n')

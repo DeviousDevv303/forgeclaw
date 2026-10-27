@@ -140,7 +140,7 @@ import { routeLiveDataQuestion } from './lib/liveDataRouting'
 import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
 import { resolveMetaModel } from './lib/ai/providers/metaProvider'
 import { fetchOpenRouterModels, isOpenRouterModelId, resolveOpenRouterModel } from './lib/ai/providers/openrouterProvider'
-import { corpusRepository } from './lib/corpus'
+import { buildNexusStoreExport, corpusRepository } from './lib/corpus'
 import { parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { applyAttributionContract, FORGECLAW_AGENT_ID } from './lib/githubAttribution'
@@ -807,6 +807,7 @@ function App() {
   const [localEndpoint, setLocalEndpoint] = useState<string>(() => safeGetItem('fm_local_endpoint') || 'http://127.0.0.1:8080/v1')
   const [corpusWebhookUrl, setCorpusWebhookUrl] = useState<string>(() => safeGetItem('fm_corpus_webhook') || '')
   const [corpusSyncStatus, setCorpusSyncStatus] = useState('')
+  const [corpusExportStatus, setCorpusExportStatus] = useState('')
   const normalizedActiveModel = activeProvider === 'local' ? localModel : isDeepSeekProvider(activeProvider) ? 'deepseek-16b' : activeProvider === 'moonshot' ? moonshotModel : activeProvider === 'muse' ? metaModel : activeProvider === 'openrouter' ? openrouterModel.trim() : anthropicModel
   const activeModelLabel = isDeepSeekProvider(activeProvider)
     ? corpusProvider.models[0]?.label ?? 'DeepSeek 16B · GitHub Actions'
@@ -2630,6 +2631,18 @@ function App() {
       : t(Math.max(0, result.attempted - result.admitted) === 1 ? 'corpus.unavailableOne' : 'corpus.unavailableMany', { n: Math.max(0, result.attempted - result.admitted) }))
   }
 
+  const exportNexusStore = () => {
+    const result = buildNexusStoreExport(localStorage, location.origin)
+    if (!result.ok) {
+      setCorpusExportStatus(result.reason === 'credential' ? t('corpus.exportBlocked', { key: result.keyPrefix }) : t('corpus.exportFailed'))
+      return
+    }
+    const blob = new Blob([result.json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob); const a = document.createElement('a')
+    a.href = url; a.download = 'nexus-store-export.json'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url)
+    setCorpusExportStatus(t('corpus.exported', { records: result.approvedCount, keys: result.keyCount }))
+  }
+
   const handleExportCorpus = () => {
     if (!corpus.length) { emitFailure({ source: 'forgemind', severity: 'info', message: 'No corpus entries to export.' }); return }
     const blob = new Blob([corpus.map(e => JSON.stringify(e)).join('\n')], { type: 'application/jsonl' })
@@ -3067,6 +3080,8 @@ function App() {
                     <input type="url" placeholder="https://example.invalid/deepseek-sync" value={corpusWebhookUrl} onChange={e => setCorpusWebhookUrl(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
                     <button onClick={syncCorpus} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{t('settings.syncPending')}</button>
                     {corpusSyncStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusSyncStatus}</div>}
+                    <button onClick={exportNexusStore} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{t('settings.exportNexusStore')}</button>
+                    {corpusExportStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusExportStatus}</div>}
                   </div>
                 </div>
               )}
