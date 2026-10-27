@@ -1,0 +1,21 @@
+{
+  "synthetic": true,
+  "derivedFrom": {
+    "snapshotSourceSha": "1ee0026b68dbb4f292f36e5c06873db593d3b664",
+    "files": [
+      "spec/tools.snapshot.json",
+      "src/grammar.ts"
+    ]
+  },
+  "contents": "tool names, tool and parameter descriptions, canonical grammar transcripts with placeholder argument values",
+  "excludes": [
+    "admitted corpus candidates",
+    "chat or user text",
+    "operator data",
+    "repository prose"
+  ],
+  "corpusSha256": "d2a922f68ba05ad093c5a24be9d4ab1fcf04bd1f434a55bf9b7b279d8ac22e8c",
+  "lines": 707,
+  "bytes": 107791,
+  "rule": "Derived artifacts (tokenizer model, vocab) inherit synthetic:true. Never enters a Guardian training set."
+}

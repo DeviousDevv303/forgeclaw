@@ -88,6 +88,7 @@ describe('every FORGE_TOOLS tool is expressible', () => {
 
 describe('special tokens', () => {
   it('are unique, token-shaped, and none is a substring of another', () => {
+    expect(SPECIAL_TOKENS.length).toBe(18)
     expect(new Set(SPECIAL_TOKENS).size).toBe(SPECIAL_TOKENS.length)
     for (const a of SPECIAL_TOKENS) {
       expect(containsSpecialToken(a)).toBe(true)

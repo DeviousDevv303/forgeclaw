@@ -1,0 +1,20 @@
+[
+  "<|route:direct|>",
+  "<|route:tool|>",
+  "<|route:defer|>",
+  "<|call|>",
+  "<|/call|>",
+  "<|result:ok|>",
+  "<|result:error|>",
+  "<|/result|>",
+  "<|ev:attempted|>",
+  "<|ev:completed|>",
+  "<|ev:verified|>",
+  "<|ev:blocked|>",
+  "<|ev:failed|>",
+  "<|ev:partial|>",
+  "<|ev:not_verified|>",
+  "<|answer|>",
+  "<|/answer|>",
+  "<|end|>"
+]

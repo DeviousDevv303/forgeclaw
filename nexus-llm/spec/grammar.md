@@ -23,7 +23,7 @@ treats it as structure, so a tool result or an answer cannot forge `<|ev:verifie
 
 ## Special tokens (all must be single atomic tokens — step 2)
 
-20 tokens, listed in `SPECIAL_TOKENS`: 3 routes, `<|call|>` `<|/call|>`, 2 result openers, `<|/result|>`, 7 evidence
+18 tokens, listed in `SPECIAL_TOKENS`: 3 routes, `<|call|>` `<|/call|>`, 2 result openers, `<|/result|>`, 7 evidence
 statuses, `<|answer|>` `<|/answer|>`, `<|end|>`. `partial` and `not_verified` are the new evidence tokens;
 `attempted/completed/verified/blocked/failed` mirror `LearningOutcome` (`src/lib/learningEvents.ts`). The mirror is by
 hand, not by test.
