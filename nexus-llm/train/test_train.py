@@ -46,6 +46,17 @@ class Guards(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("synthetic", r.stdout + r.stderr)
 
+    def test_warm_start_refuses_a_checkpoint_from_another_preset(self):
+        row = {"synthetic": True, "prompt": "x", "text": "<|route:direct|><|ev:not_verified|><|answer|>a<|/answer|><|end|>"}
+        with tempfile.TemporaryDirectory() as out:
+            self.assertEqual(self.run_train([row], out).returncode, 0)  # smoke checkpoint
+            with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+                f.write(json.dumps(row) + "\n")
+            r = subprocess.run([sys.executable, str(HERE / "train.py"), "--data", f.name, "--out", out + "/b", "--steps", "1", "--preset", "small-copy",
+                                "--init", out + "/model.pt"], capture_output=True, text=True)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("refusing --init", r.stdout + r.stderr)
+
     def test_refuses_to_write_checkpoints_inside_the_repo(self):
         row = {"synthetic": True, "prompt": "x", "text": "<|route:direct|><|ev:not_verified|><|answer|>a<|/answer|><|end|>"}
         r = self.run_train([row], str(HERE / "should-not-exist"))

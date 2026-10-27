@@ -22,6 +22,7 @@ ap.add_argument("--batch", type=int, default=32)
 ap.add_argument("--lr", type=float, default=3e-4)
 ap.add_argument("--seed", type=int, default=1)
 ap.add_argument("--allow-real", action="store_true")
+ap.add_argument("--init", help="warm start from this checkpoint (same preset); recorded in train-log.json")
 a = ap.parse_args()
 
 rows = read_jsonl(a.data)
@@ -40,6 +41,12 @@ enc = [encode_row(r["prompt"], r["text"]) for r in rows]
 enc = [(i, m) for i, m in enc if len(i) <= cfg.ctx]
 print(f"preset {a.preset}: {len(enc)} rows (of {len(rows)}), max len {max(len(i) for i, _ in enc)}, vocab {cfg.vocab_size}")
 model = NexusLM(cfg)
+if a.init:
+    ck = torch.load(a.init, map_location="cpu")
+    if ck["cfg"] != cfg.__dict__:
+        raise SystemExit(f"refusing --init: checkpoint config {ck['cfg']} differs from preset {a.preset} {cfg.__dict__}")
+    model.load_state_dict(ck["state"])
+    print(f"warm start from {a.init}")
 print(f"parameters: {model.n_params():,}")
 opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=0.01, betas=(0.9, 0.95))
 sched = lambda s: a.lr * min(1.0, (s + 1) / 30) * (0.5 * (1 + math.cos(math.pi * s / a.steps)) * 0.9 + 0.1)
@@ -69,5 +76,5 @@ for step in range(a.steps):
     if step % 50 == 0 or step == a.steps - 1:
         log.append({"step": step, "loss": round(float(loss.detach()), 4), "sec": round(time.time() - t0, 1)}); print(log[-1], flush=True)
 torch.save({"cfg": cfg.__dict__, "state": model.state_dict()}, out / "model.pt")
-(out / "train-log.json").write_text(json.dumps({"preset": a.preset, "params": model.n_params(), "steps": a.steps, "synthetic_only": not a.allow_real, "data": str(a.data), "log": log}, indent=2))
+(out / "train-log.json").write_text(json.dumps({"preset": a.preset, "params": model.n_params(), "steps": a.steps, "synthetic_only": not a.allow_real, "data": str(a.data), "init": a.init, "log": log}, indent=2))
 print("saved", out / "model.pt")
