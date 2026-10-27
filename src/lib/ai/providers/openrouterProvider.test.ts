@@ -133,6 +133,36 @@ describe('OpenRouter provider: key and models', () => {
     expect(openrouterProvider.isConfigured('sk-or-')).toBe(false)
   })
 
+  it('a key mangled by copying still works: zero-width characters, quotes, Bearer, a line break, a no-break space', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ data: { limit_remaining: 5 } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const mangled = [
+      `\u200B${VALID_KEY}`, `${VALID_KEY}\uFEFF`, `"${VALID_KEY}"`, `'${VALID_KEY}'`, `\u201C${VALID_KEY}\u201D`, `\`${VALID_KEY}\``,
+      `Bearer ${VALID_KEY}`, `Authorization: Bearer ${VALID_KEY}`, `${VALID_KEY.slice(0, 20)}\n${VALID_KEY.slice(20)}`, `\u00A0${VALID_KEY}\u00A0`, `  ${VALID_KEY}\r\n`,
+    ]
+    for (const raw of mangled) {
+      expect(openrouterProvider.isConfigured(raw), JSON.stringify(raw)).toBe(true)
+      await openrouterProvider.test(raw)
+    }
+    // The Authorization header carries exactly the clean key, never the debris.
+    for (const call of fetchMock.mock.calls as unknown as Array<[string, { headers: { Authorization: string } }]>) {
+      expect(call[1].headers.Authorization).toBe(`Bearer ${VALID_KEY}`)
+    }
+  })
+
+  it('a key that is genuinely wrong is still refused, and the message says what was pasted', async () => {
+    vi.stubGlobal('fetch', vi.fn())
+    const say = async (key: string): Promise<string> => openrouterProvider.test(key).then(() => 'accepted', (e: Error) => e.message)
+    expect(await say('sk-ant-api03-abcdefghijklmnopqrstuvwxyz')).toMatch(/sk-ant-: that is an Anthropic key/)
+    expect(await say('sk-proj-abcdefghijklmnopqrstuvwxyz0123')).toMatch(/starts with "sk-proj-": that is another provider's key/)
+    expect(await say(VALID_KEY.toUpperCase())).toMatch(/lowercase sk-or- exactly/)
+    expect(await say('sk-or-v1-abc')).toMatch(/only 12 characters/)
+    expect(await say('hello world this is not a key')).toMatch(/Expected a key starting with sk-or-.*starts with "he" and is 23 characters long/)
+    // Only the prefix is ever echoed, never the secret part of a key.
+    expect(await say('sk-proj-SECRETPART0123456789abcdef')).not.toContain('SECRETPART')
+    expect(await say('zzSECRETPART0123456789abcdefghijk')).not.toContain('SECRETPART')
+  })
+
   it('tests the key with GET /key, which spends nothing, and says when its credit limit is used up', async () => {
     const fetchMock = vi.fn(async () => Response.json({ data: { label: 'forgeclaw', limit: 5, limit_remaining: 4.2, is_free_tier: false } }))
     vi.stubGlobal('fetch', fetchMock)

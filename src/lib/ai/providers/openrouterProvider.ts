@@ -14,7 +14,7 @@
 
 import { isSendableImage } from '../../imageInput'
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
-import { keyFormatProblem, type KeyFormatRule } from '../keyFormat'
+import { describeKeyShape, keyFormatProblem, normalizePastedKey, type KeyFormatRule } from '../keyFormat'
 
 export const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
 export const OPENROUTER_CHAT_URL = `${OPENROUTER_BASE_URL}/chat/completions`
@@ -64,8 +64,9 @@ function parseToolArguments(raw: string, truncated: boolean): { input: Record<st
   }
 }
 
-function cleanApiKey(apiKey: string): string {
-  return apiKey.trim()
+/** Exported so the Diagnostics panel judges the same cleaned key the request path sends (normalizePastedKey in keyFormat.ts). */
+export function cleanApiKey(apiKey: string): string {
+  return normalizePastedKey(apiKey)
 }
 
 /** The key format send() enforces; the Diagnostics panel words its reason from the same rule (keyFormat.ts). OpenRouter keys start sk-or-. */
@@ -79,8 +80,8 @@ function missingKeyError(): Error {
   return new Error('OpenRouter API key missing — create one at openrouter.ai/keys and paste it in Settings (sk-or-...).')
 }
 
-function badKeyFormatError(): Error {
-  return new Error('Invalid OpenRouter API key format. Expected a key starting with sk-or- (openrouter.ai/keys).')
+function badKeyFormatError(key: string): Error {
+  return new Error(`Invalid OpenRouter API key format. Expected a key starting with sk-or- (openrouter.ai/keys). ${describeKeyShape(key, OPENROUTER_KEY_FORMAT)}`)
 }
 
 type ReasoningDetail = Record<string, unknown>
@@ -294,7 +295,7 @@ export const openrouterProvider: AIProvider = {
   async send(request: AIRequest, apiKey: string): Promise<AIResponse> {
     const key = cleanApiKey(apiKey)
     if (!key) throw missingKeyError()
-    if (!isConfigured(key)) throw badKeyFormatError()
+    if (!isConfigured(key)) throw badKeyFormatError(key)
     // A typo in the model field is named, never swapped for the default behind the owner's back.
     const model = (request.model || DEFAULT_OPENROUTER_MODEL).trim()
     if (!isOpenRouterModelId(model)) throw new Error(`"${model.slice(0, 80)}" is not an OpenRouter model ID (vendor/model, e.g. ${DEFAULT_OPENROUTER_MODEL}): fix it in Settings.`)
@@ -359,7 +360,7 @@ export const openrouterProvider: AIProvider = {
   async test(apiKey: string): Promise<void> {
     const key = cleanApiKey(apiKey)
     if (!key) throw missingKeyError()
-    if (!isConfigured(key)) throw badKeyFormatError()
+    if (!isConfigured(key)) throw badKeyFormatError(key)
     // GET /key checks the key and reads its limits without spending a token.
     const response = await fetch(`${OPENROUTER_BASE_URL}/key`, { headers: { Authorization: `Bearer ${key}` } })
     if (!response.ok) throw new Error(await openRouterError(response))

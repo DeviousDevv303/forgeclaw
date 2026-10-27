@@ -7,7 +7,7 @@
 import { ANTHROPIC_KEY_FORMAT, anthropicProvider } from './ai/providers/anthropicProvider'
 import { MOONSHOT_KEY_FORMAT, moonshotProvider } from './ai/providers/moonshotProvider'
 import { META_KEY_FORMAT, metaProvider } from './ai/providers/metaProvider'
-import { OPENROUTER_KEY_FORMAT, openrouterProvider } from './ai/providers/openrouterProvider'
+import { cleanApiKey as cleanOpenRouterKey, OPENROUTER_KEY_FORMAT, openrouterProvider } from './ai/providers/openrouterProvider'
 import { keyFormatProblem, type KeyFormatProblem } from './ai/keyFormat'
 
 export function diagKeyFormatValid(provider: string, anthropicKey: string, moonshotKey: string, keyPresent: boolean, metaKey = '', openrouterKey = ''): boolean {
@@ -32,7 +32,7 @@ export function diagKeyFormat(provider: string, anthropicKey: string, moonshotKe
   const problem = provider === 'anthropic' ? keyFormatProblem(anthropicKey, ANTHROPIC_KEY_FORMAT)
     : provider === 'moonshot' ? keyFormatProblem(moonshotKey, MOONSHOT_KEY_FORMAT)
     : provider === 'muse' ? keyFormatProblem(metaKey, META_KEY_FORMAT)
-    : provider === 'openrouter' ? keyFormatProblem(openrouterKey, OPENROUTER_KEY_FORMAT)
+    : provider === 'openrouter' ? keyFormatProblem(cleanOpenRouterKey(openrouterKey), OPENROUTER_KEY_FORMAT)
     : null
   return { valid, problem }
 }
