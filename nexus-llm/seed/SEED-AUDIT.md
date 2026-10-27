@@ -24,7 +24,7 @@ Checked read-only against git. Nothing from either file was used for training, e
 | Claim | Verdict at `1ee0026` | Evidence |
 |---|---|---|
 | FC-002 `ProviderId` is exactly `corpus|anthropic|local|nexus` | **Stale** (true at `cb33bbc`) | `providerDefaults.ts:4`: 8 ids incl. `moonshot`, `deepseek`, `muse`, `openrouter`; default is `deepseek` |
-| GD-001 `executeTool` has no gate; `requiresCoSign` only at the App loop | **Stale, and dangerous to ingest** | `forgeTools.ts:1033` calls `requiresCoSign(normalizedCall, posture)` inside `executeToolCore`; J-01 (`a2bd0e1`) also enforces offered tools in `runSubAgent` |
+| GD-001 `executeTool` has no gate; `requiresCoSign` only at the App loop | **Stale, and dangerous to ingest** | `forgeTools.ts:1033` calls `requiresCoSign(normalizedCall, posture)` inside `executeToolCore`; J-01 (draft PR #327) enforces offered tools in `runSubAgent` |
 | GD-002 `tier1Active` is `useState(false)` | **Stale** | `App.tsx:938` `guardianPosture` state, `DEFAULT_GUARDIAN_POSTURE` = `autonomous` |
 | GD-003 `runSubAgent` is 63 lines | **Stale** | `managedAgent.ts` is 263 lines |
 | ST-001 coding state key is global, no agentId | **Stale** | `codingAgentState.ts:10,15` `STATE_KEY` is now wrapped by `stateKey(agentId)` |
