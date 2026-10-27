@@ -43,6 +43,14 @@ the model never answered "type /funds …"). The 2 remaining domain format failu
 exhausts the 160-token budget, a model-quality failure, not a grammar gap. Getting here took three decoder fixes found by this run
 (top-k dead-ends, an unfinishable \u escape in option strings, a key in a property-less object).
 
+### Run 5: `small-copy` (pointer-generator copy head, 4.48M params), same 20,000 rows, steps and lr as run 4, 50 min
+Constrained: v1 **64.3%** (run 4: 60.7%; no_tool 40 → 80%), domains v1.1 **68.1%** (run 4: 76.6%: a regression, tool choice 65.4 → 53.8%).
+Gate with `--incumbent` run 4: **REJECTED** (domains below the incumbent). Run 4 stays the incumbent.
+Closed loop: **7/18** (run 4: 6/18). Copying works for the first time: **3/5 image prompts carry the requested words the model never saw
+in training** (e.g. "Create a watercolor picture of a lighthouse at dawn" -> `"make a watercolor picture of a lighthouse at dawn"`, style
+watercolor); copies are still noisy ("a beaver a damver a dam", "wrenchn") and the Kalshi queries are garbled ("Sed cutting", "C 100k").
+That faithful call was dispatched UNEDITED to the repository's own `generate-image.yml` (invocation `nexus-run5-loop-img3`): see below.
+
 ### Run 4: `small`, 20,000 SYNTHETIC rows (router-labelled families, high-entropy arguments, seed 13), 5,000 steps, 47 min
 Constrained: v1 **60.7%** (run 2: 48.8%), domains v1.1 **76.6%** (66.0%); format/schema 100%, overclaim 0%, fabrication 0%. Tool choice v1
 24.2 → 57.6%; owner-only commands 0 → 66.7%; **regression: v1 no_tool 60 → 40%**. Gate with `--incumbent` run 2: ELIGIBLE.
