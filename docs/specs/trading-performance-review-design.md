@@ -85,7 +85,10 @@ SIZED (`sizePosition`), against positions already approved or placed; a merely-p
 - several proposals sized one after another and then approved together can exceed `exposure`, up to the whole available bankroll;
 - on the autoapprove path, two `funds_propose` calls in the same model turn run concurrently (tool calls in one turn are dispatched with
   `Promise.all`), and the second can be sized while the first's approval is still in flight, so it too can exceed `exposure`.
-The hard bound today is therefore the bankroll the cap allows, not `cap × exposure`. Read, not executed: no test reproduces this yet.
+The hard bound today is therefore the bankroll the cap allows, not `cap × exposure`.
+Evidence: the first case is REPRODUCED with the ledger's own functions (`proposePosition` ×6, then `applyFundsCommand` approve ×6, at
+`1ee0026`): bankroll $1,000, `exposure=10` (limit $100), open stake after the approvals $148.80; it grows with each extra proposal. The
+concurrent autoapprove case is read, not executed.
 A small fix exists (re-check `exposure` at approval, counting in-flight approvals); it is new trading code and is not built without the
 operator's go. Until then, setting `exposure=10` lowers the typical case but does not make "worst day = 10% of cap" true.
 `N` (autoapprove) is a per-order stake limit; it does not bound a day by itself.
