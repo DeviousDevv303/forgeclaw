@@ -8,7 +8,8 @@ Standalone. Nothing in `src/` imports this directory. The only read of `src/` is
 | 1 Grammar spec | staged: `spec/`, `src/grammar.ts`, `src/grammar.test.ts` |
 | 2 Tokenizer | staged: `tokenizer/` (v0, 4000-piece BPE on schema-derived SYNTHETIC text; 18 special tokens atomic) |
 | 3 Exporter + frozen eval | staged: `exporter/` (format, dump script, exporter, token budget) and `eval/` (84-case frozen set v1, scorer, baselines). Waiting on the operator's app-store export file |
-| 4–6 | gated |
+| 4 prep | staged: `train/` (model, loss-masked training loop, predictor, synthetic-trace generator; smoke-tested on SYNTHETIC data only) |
+| 4–6 proper | gated: needs admitted data, the fine-tune comparator, a GPU, and the operator |
 
 ```
 # tokenizer (needs sentencepiece in a venv outside the repo):
