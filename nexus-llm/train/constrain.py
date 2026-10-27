@@ -71,6 +71,8 @@ class _P:
                     raise Invalid("not an allowed value")
                 return val
             if c == "\\":
+                if options is not None and not any("\\" in o or '"' in o or any(ord(ch) < 0x20 for ch in o) for o in options):
+                    raise Invalid("no allowed value needs an escape")  # else an unfinished \u would be accepted and dead-end
                 self.i += 1
                 e = self.peek()
                 simple = {'"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t"}
@@ -271,8 +273,10 @@ class ConstrainedDecoder:
                 nxt = self.id["<|end|>"]
             elif state == "call":
                 nxt = None
-                order = sorted(range(len(lg)), key=lambda i: -float(lg[i]))[: self.max_scan]
-                for cand in order:
+                ranked = sorted(range(len(lg)), key=lambda i: -float(lg[i]))
+                # The top max_scan first (cheap); then the rest of the vocabulary, so a valid continuation is never missed. Byte
+                # fallback pieces can spell any character, so an incomplete call always has one somewhere in the vocabulary.
+                for cand in ranked[: self.max_scan] + ranked[self.max_scan:]:
                     if cand == self.id["<|/call|>"]:
                         if check_call(self.sp.decode(seg)) == "complete":
                             nxt = cand; break

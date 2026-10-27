@@ -37,6 +37,8 @@ class CallChecker(unittest.TestCase):
             '{"name":"funds_propose","arguments":{"venue":"k","market":"m","side":"maybe"', # enum prefix dead
             '{ "name":"github_list_files","arguments":{}}',                              # non-canonical whitespace
             '{"arguments":{},"name":"github_list_files"}',                               # wrong key order
+            '{"name":"kalshi_owner_prices\\ueac',                                       # an escape no tool name can contain
+            '{"name":"generate_image","arguments":{"prompt":"x","model":"sd\\u',       # nor any enum value
         ]
         for b in bad:
             self.assertEqual(check_call(b), "invalid", b)
@@ -79,6 +81,21 @@ class Decoder(unittest.TestCase):
                 self.assertIn(ev, allowed_evidence(route or re.match(r"<\|route:([a-z]+)", out).group(1), steps), c["id"])
             if out.endswith("<|/call|>"):
                 self.assertEqual(check_call(out.rsplit("<|call|>", 1)[1][: -len("<|/call|>")]), "complete", (c["id"], out))
+
+
+class NoDeadEnds(unittest.TestCase):
+    def test_a_call_never_stops_early_when_the_top_tokens_are_all_invalid(self):
+        """Regression: with a narrow scan, an untrained model's call stopped at '{"name":"github_repo_state","arguments":{"s'."""
+        torch.manual_seed(1)
+        cfg = PRESETS["smoke"]; cfg.vocab_size = SP.get_piece_size()
+        model = NexusLM(cfg).eval()
+        dec = ConstrainedDecoder(SP, max_scan=1)  # force the fallback on almost every step
+        step = lambda ids: model(torch.tensor([ids[-cfg.ctx:]]))[0, -1].detach()
+        for c in [x for x in CASES["domains-v1"] if x["prefix"] == ""][:6]:
+            ids = dec.generate(step, [BOS] + SP.encode(frame(c["prompt"])), "", max_new=400)
+            out = SP.decode(ids)
+            if out.startswith("<|route:tool|>"):
+                self.assertTrue(out.endswith("<|/call|>") or len(ids) == 400, (c["id"], out[-80:]))
 
 
 if __name__ == "__main__":
