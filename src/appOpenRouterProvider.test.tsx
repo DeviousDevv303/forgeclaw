@@ -66,6 +66,19 @@ describe('OpenRouter in Settings', () => {
     expect(localStorage.getItem('fm_openrouter_model')).toBe('z-ai/glm-5.3-flash')
   }, 20_000)
 
+  it('a saved key survives a reload even when it is not in the expected shape: it is never silently erased', async () => {
+    // Not a valid OpenRouter key even after cleaning (another provider's shape). It must stay in the field and in storage, so the
+    // owner can see and fix it; the format is judged at use, never by discarding what was saved.
+    const saved = 'sk-proj-abcdefghijklmnopqrstuvwxyz0123'
+    localStorage.setItem('fm_openrouter_key', saved)
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^SETTINGS$/i }))
+    await screen.findByRole('option', { name: 'OpenRouter' })
+    expect((screen.getByPlaceholderText('sk-or-...') as HTMLInputElement).value).toBe(saved)
+    expect(localStorage.getItem('fm_openrouter_key')).toBe(saved) // still saved after the app has mounted and its persistence effect has run
+  }, 20_000)
+
   it('the model field loads the live catalogue once, keeping only models that can call tools', async () => {
     const { default: App } = await import('./App')
     render(<App />)

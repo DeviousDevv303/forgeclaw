@@ -517,8 +517,10 @@ function readMetaModel(): string {
   return resolveMetaModel(safeGetItem('fm_meta_model'))
 }
 function readOpenRouterKey(): string {
-  const key = safeGetItem('fm_openrouter_key') || ''
-  return openrouterProvider.isConfigured(key) ? key : ''
+  // Whatever was saved stays saved. A format check here would drop a key that has stray characters in it and the persistence effect
+  // would then overwrite storage with '': the owner's key silently erased on reload. The format is judged where the key is USED
+  // (send/test refuse a bad one and say what it looks like) and in the Diagnostics panel, never by discarding it.
+  return safeGetItem('fm_openrouter_key') || ''
 }
 function readOpenRouterModel(): string {
   return resolveOpenRouterModel(safeGetItem('fm_openrouter_model'))
