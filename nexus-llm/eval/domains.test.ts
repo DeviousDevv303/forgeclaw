@@ -22,7 +22,7 @@ describe('the frozen domain suite', () => {
     expect(manifest.frozen).toBe(true)
     expect(createHash('sha256').update(raw).digest('hex')).toBe(manifest.sha256)
     expect(cases.length).toBe(manifest.cases)
-    expect(execFileSync('npx', ['vite-node', 'nexus-llm/eval/build-domains.ts', '--check'], { encoding: 'utf8' })).toContain('domain suite current')
+    expect(execFileSync('npx', ['vite-node', 'nexus-llm/eval/rebuild-pinned.ts', 'build-domains.ts', '--check'], { encoding: 'utf8' })).toContain('domain suite current')
   }, 60_000)
   it('has unique ids, provenance pinned to the SHA, and shares no prompt with v1', () => {
     expect(new Set(cases.map(c => c.id)).size).toBe(cases.length)

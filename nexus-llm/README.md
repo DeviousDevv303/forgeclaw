@@ -20,6 +20,7 @@ Standalone. Nothing in `src/` imports this directory. The only read of `src/` is
 #   python -m unittest nexus-llm/tokenizer/test_tokenizer.py
 # exporter:  npx vite-node nexus-llm/exporter/export-cli.ts <store-export.json> --out <dir outside the repo>
 # eval sets:  npx vite-node nexus-llm/eval/build-eval.ts [--check]    (v1; frozen: never train on it)
+#             npx vite-node nexus-llm/eval/rebuild-pinned.ts build-eval.ts|build-domains.ts [--check]  (rebuild against the PINNED app once src/ has moved)
 #             npx vite-node nexus-llm/eval/build-domains.ts [--check] (domains-v1: trading + images, results from the app's own code)
 # score:      npx vite-node nexus-llm/eval/score-cli.ts <preds.jsonl> --suite v1|domains-v1
 # gate:       npx vite-node nexus-llm/eval/gate-cli.ts --candidate <dir with v1.jsonl, domains-v1.jsonl> [--incumbent <dir>]
