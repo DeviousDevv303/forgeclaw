@@ -57,6 +57,23 @@ class Guards(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("refusing --init", r.stdout + r.stderr)
 
+    def test_a_run_cut_short_resumes_to_the_same_weights_as_an_uninterrupted_run(self):
+        import torch
+        rows = [{"synthetic": True, "prompt": f"say {i}", "text": f"<|route:direct|><|ev:not_verified|><|answer|>{i} {i}<|/answer|><|end|>"} for i in range(40)]
+        with tempfile.TemporaryDirectory() as d:
+            data = pathlib.Path(d) / "d.jsonl"; data.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+            run = lambda out, *extra: subprocess.run([sys.executable, str(HERE / "train.py"), "--data", str(data), "--out", out, "--steps", "8", "--batch", "4", "--save-every", "2", *extra], capture_output=True, text=True)
+            self.assertEqual(run(d + "/full").returncode, 0)
+            self.assertEqual(run(d + "/cut", "--stop-after", "5").returncode, 3)  # "crash" after step 5: last save was at step 4
+            self.assertFalse((pathlib.Path(d) / "cut" / "model.pt").exists())
+            r = run(d + "/cut", "--resume")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("resumed at step 4", r.stdout)
+            a, b = torch.load(d + "/full/model.pt")["state"], torch.load(d + "/cut/model.pt")["state"]
+            for k in a:
+                self.assertTrue(torch.allclose(a[k], b[k], atol=1e-5), k)
+            self.assertFalse((pathlib.Path(d) / "cut" / "resume.pt").exists())
+
     def test_refuses_to_write_checkpoints_inside_the_repo(self):
         row = {"synthetic": True, "prompt": "x", "text": "<|route:direct|><|ev:not_verified|><|answer|>a<|/answer|><|end|>"}
         r = self.run_train([row], str(HERE / "should-not-exist"))

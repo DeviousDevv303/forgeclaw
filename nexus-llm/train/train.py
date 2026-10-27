@@ -23,6 +23,9 @@ ap.add_argument("--lr", type=float, default=3e-4)
 ap.add_argument("--seed", type=int, default=1)
 ap.add_argument("--allow-real", action="store_true")
 ap.add_argument("--init", help="warm start from this checkpoint (same preset); recorded in train-log.json")
+ap.add_argument("--save-every", type=int, default=500, help="write <out>/resume.pt (model, optimizer, step) every N steps")
+ap.add_argument("--resume", action="store_true", help="continue from <out>/resume.pt (a run cut short, e.g. by a container restart)")
+ap.add_argument("--stop-after", type=int, help=argparse.SUPPRESS)  # tests only: exit after this many steps, as a crash would
 a = ap.parse_args()
 
 rows = read_jsonl(a.data)
@@ -67,14 +70,33 @@ def batch():
         y[k, :len(ids) - 1] = tgt[1:]
     return x, y
 
-t0 = time.time(); log = []
-for step in range(a.steps):
+t0 = time.time(); log = []; start = 0
+resume_path = out / "resume.pt"
+if a.resume:
+    if not resume_path.exists():
+        raise SystemExit(f"--resume: no {resume_path}")
+    r = torch.load(resume_path, map_location="cpu")
+    if r["cfg"] != cfg.__dict__ or r["steps"] != a.steps:
+        raise SystemExit("--resume: the saved run used a different preset or step count")
+    model.load_state_dict(r["state"]); opt.load_state_dict(r["opt"]); start, log = r["step"] + 1, r["log"]
+    random.setstate(r["py_rng"]); torch.set_rng_state(r["torch_rng"])
+    print(f"resumed at step {start}")
+for step in range(start, a.steps):
     for g in opt.param_groups: g["lr"] = sched(step)
     model.train(); x, y = batch()
     loss = model.loss(x, y)
     opt.zero_grad(); loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step()
     if step % 50 == 0 or step == a.steps - 1:
         log.append({"step": step, "loss": round(float(loss.detach()), 4), "sec": round(time.time() - t0, 1)}); print(log[-1], flush=True)
+    if a.save_every and (step + 1) % a.save_every == 0 and step + 1 < a.steps:
+        tmp = out / "resume.pt.tmp"
+        torch.save({"cfg": cfg.__dict__, "steps": a.steps, "step": step, "state": model.state_dict(), "opt": opt.state_dict(), "log": log,
+                    "py_rng": random.getstate(), "torch_rng": torch.get_rng_state()}, tmp)
+        tmp.replace(resume_path)  # atomic: a restart mid-write never leaves a broken resume file
+    if a.stop_after is not None and step + 1 >= a.stop_after:
+        raise SystemExit(3)
 torch.save({"cfg": cfg.__dict__, "state": model.state_dict()}, out / "model.pt")
 (out / "train-log.json").write_text(json.dumps({"preset": a.preset, "params": model.n_params(), "steps": a.steps, "synthetic_only": not a.allow_real, "data": str(a.data), "init": a.init, "log": log}, indent=2))
+if resume_path.exists():
+    resume_path.unlink()
 print("saved", out / "model.pt")
