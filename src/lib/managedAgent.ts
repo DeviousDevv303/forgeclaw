@@ -11,7 +11,6 @@ import {
   toToolCalls,
 } from './ai/manualToolMode'
 import { boundPrefixByBudget, conservativeTokenCount } from './ai/nexusContext'
-import { toolCallRefusal } from './toolExposure'
 
 // ─── Agent capability profiles ───────────────────────────────────────────────
 // The runtime — not an agent's system prompt — decides which tools an agent may
@@ -192,8 +191,6 @@ export async function runSubAgent(
     catalogTools = tools.map(tool => tool.name)
   }
 
-  const offeredToolNames: ReadonlySet<string> = new Set(catalogTools)
-
   options.onBudget?.({
     nativeTools: supportsNativeTools,
     catalogTools,
@@ -231,12 +228,10 @@ export async function runSubAgent(
       return budgeted ? stripToolSyntax(text) || '(no response)' : text || '(no response)'
     }
 
-    // A model may only call tools this run offered it. Text it read can name any tool, so the offered
-    // list is enforced here, before the dispatcher, exactly as the main loop does (toolCallRefusal).
     const iterResults = await Promise.all(
       calls.map(async (tc: ToolCall) => ({
         toolCallId: tc.id,
-        output: toolCallRefusal(tc.name, offeredToolNames, false, 0) ?? await executeTool(tc, toolCtx),
+        output: await executeTool(tc, toolCtx),
       })),
     )
 
