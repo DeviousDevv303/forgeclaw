@@ -10,6 +10,9 @@ import { applyFundsCommand, emptyFunds, formatFundsStatus, formatProposal, Funds
 import { formatMarkets, type KalshiMarket } from '../../src/lib/kalshiMarkets'
 import { formatOwnerPrices, parseOwnerPrices } from '../../src/lib/kalshiOwnerPrices'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../../src/lib/imageRequest'
+import { extractExplicitToolCall, isExplicitToolRequest, isRepositoryHeadQuestion } from '../../src/lib/codingAgentRuntime'
+import { routeLiveDataQuestion } from '../../src/lib/liveDataRouting'
+import { toolsForUrls } from '../../src/lib/toolExposure'
 import { encodeTranscript, validateTranscript, type ToolSchema, type Transcript } from '../src/grammar'
 import { normalizePrompt } from '../exporter/export'
 import { canonicalEvidence, type EvalStep } from '../eval/score'
@@ -103,7 +106,63 @@ function proposalAnswer(s: EvalStep): string {
   return `Not proposed: ${why.slice(0, 120)}`
 }
 
+// ─── router-labelled families: the CALL is whatever the app's own deterministic router decides for the prompt ────────
+const NOW_DATE = new Date(NOW)
+const teams = ['Rangers', 'Astros', 'Lakers', 'Celtics', 'Packers', 'Bears', 'Yankees', 'Dodgers', 'Spurs', 'Rockets']
+const places = ['Houston', 'Austin', 'Denver', 'Phoenix', 'Chicago', 'Miami', 'Seattle', 'Boston']
+const coins = ['ethereum', 'bitcoin', 'solana', 'dogecoin', 'gold', 'the S&P 500']
+const runId = () => String(int(100000000, 999999999))
+const sha = () => Math.floor(rnd() * 16 ** 7).toString(16).padStart(7, '0')
+/** Router output, with numeric strings turned into numbers where the tool's schema says number. Finding (app, not fixed here):
+ *  routeLiveDataQuestion emits weather_forecast day:"0" although the schema declares day a number; NEXUS emits the schema type. */
+const toSchema = (name: string, input: Record<string, unknown>): Record<string, unknown> => {
+  const props = tools.find(t => t.name === name)?.parameters.properties ?? {}
+  return Object.fromEntries(Object.entries(input).map(([k, v]) => [k, (props[k] as { type?: string } | undefined)?.type === 'number' && typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : v]))
+}
+const routerCall = (p: string): { name: string; input: Record<string, unknown> } | null => {
+  if (isExplicitToolRequest(p)) { const c = extractExplicitToolCall(p); return c && !c.error ? { name: c.name, input: toSchema(c.name, c.input as Record<string, unknown>) } : null }
+  const r = routeLiveDataQuestion(p, NOW_DATE)
+  return r ? { name: r.name, input: toSchema(r.name, r.input as Record<string, unknown>) } : null
+}
+const okText = (name: string) => name === 'weather_forecast' ? `Forecast: high ${int(40, 99)}F, low ${int(20, 70)}F, ${pick(['sunny', 'rain likely', 'cloudy', 'windy'])}.` : snippet()
+function routed(kind: string, p: string): void {
+  const c = routerCall(p)
+  if (!c) return
+  const ok = rnd() < 0.8
+  const st = S(c.name, c.input, ok ? 'ok' : 'error', ok ? okText(c.name) : errText())
+  emit(kind, p, traced([st], ok ? pick(['Here is what the tool returned above.', 'The result is shown above.', `${c.name} answered; the details are above.`]) : `The ${c.name} call failed, so I cannot answer that from evidence.`))
+}
+
 const makers: Array<[string, () => void]> = [
+  ['explicit', () => {
+    const f = pick(files), d = pick(dirs), q = pick(topics), i = int(0, keys.length - 1)
+    routed('explicit', pick([`github_read_file path="${f}"`, `github_list_files path="${d}"`, `web_search query="${q}"`, `memory_write key="${keys[i]}" value="${vals[i]}"`, `memory_read key="${keys[i]}"`,
+      'memory_list', 'github_repo_state', `github_get_run_status run_id="${runId()}"`, `github_get_run_logs run_id="${runId()}"`, `github_search_code query="${pick(words)}"`, `github_verify_commit sha="${sha()}"`]))
+  }],
+  ['live', () => {
+    const t = pick(teams), pl = pick(places), c = pick(coins)
+    routed('live', pick([`Who won the ${t} game tonight?`, `Who won the ${t} game last night?`, `What is the weather in ${pl} today?`, `What is the weather in ${pl} tomorrow?`,
+      `What is the price of ${c} right now?`, `When does the ${t} game start tonight?`, `What is the score of the ${t} game right now?`]))
+  }],
+  ['head', () => {
+    const p = pick(['show the latest main commit', 'what is the head sha?', 'what is the current head commit of main?', 'give me the latest commit sha on main', 'report the head commit'])
+    if (!isRepositoryHeadQuestion(p)) return
+    emit('head', p, traced([S('github_repo_state', {}, 'ok', `main at ${sha()}`)], 'The repository state is listed above.'))
+  }],
+  ['url', () => {
+    const n = int(2, 400), rid = runId(), f = pick(files), d = pick(dirs)
+    const [p, call] = pick([
+      [`Check https://github.com/DeviousDevv303/forgeclaw/pull/${n}`, { name: 'github_pr_info', input: { pull_number: String(n) } }],
+      [`What happened in https://github.com/DeviousDevv303/forgeclaw/pull/${n}?`, { name: 'github_pr_info', input: { pull_number: String(n) } }],
+      [`Look at https://github.com/DeviousDevv303/forgeclaw/actions/runs/${rid}`, { name: 'github_get_run_status', input: { run_id: rid } }],
+      [`Why did https://github.com/DeviousDevv303/forgeclaw/actions/runs/${rid} fail?`, { name: 'github_get_run_logs', input: { run_id: rid } }],
+      [`Open https://github.com/DeviousDevv303/forgeclaw/blob/main/${f}`, { name: 'github_read_file', input: { path: f } }],
+      [`Show https://github.com/DeviousDevv303/forgeclaw/tree/main/${d}`, { name: 'github_list_files', input: { path: d } }],
+    ] as const)
+    if (!toolsForUrls(p, 'DeviousDevv303', 'forgeclaw').includes(call.name)) return // the app's router must agree with the call
+    const ok = rnd() < 0.8
+    emit('url', p, traced([S(call.name, { ...call.input }, ok ? 'ok' : 'error', ok ? snippet() : errText())], ok ? 'Here is what that link shows, from the tool result above.' : 'I could not read that link: the tool failed.'))
+  }],
   // ── repository / web / memory (as before; labels now canonical) ──
   ['read', () => { const f = pick(files); const p = pick([`show me ${f}`, `open ${f}`, `what is in ${f}?`, `read the file ${f}`, `can you print ${f}`])
     const s = rnd() < 0.8 ? S('github_read_file', { path: f }, 'ok', snippet()) : S('github_read_file', { path: f }, 'error', errText())
@@ -172,8 +231,11 @@ const makers: Array<[string, () => void]> = [
     const t = pick(['No placed Kalshi positions to settle.', 'p4 settled from Kalshi: won, +$3.12.', 'p2 is still open on Kalshi (no result yet).'])
     emit('settle', p, traced([S('funds_settle', { id: 'all' }, 'ok', t)], `Settled from Kalshi's own result: ${t}`)) }],
   ['owner_only', () => { const id = `p${int(1, 9)}`
-    const [p, cmd] = pick([[`approve ${id}`, `/funds approve ${id}`], [`go ahead and place ${id}`, `/funds approve ${id}`], [`reject ${id}`, `/funds reject ${id}`], [`add $${int(20, 500)} to my bankroll`, '/funds add <amount>'],
-      [`set autoapprove to $${int(5, 50)}`, '/funds limits autoapprove=<amount>'], ['resume trading', '/funds resume']] as const)
+    const amt = int(5, 500)
+    const [p, cmd] = pick([[`approve ${id}`, `/funds approve ${id}`], [`go ahead and place ${id}`, `/funds approve ${id}`], [`approve ${id} and place it now`, `/funds approve ${id}`], [`place ${id} for me`, `/funds approve ${id}`],
+      [`reject ${id}`, `/funds reject ${id}`], [`add $${amt} to my bankroll`, '/funds add <amount>'], [`move $${amt} into my Kalshi bankroll`, '/funds add <amount>'], [`put $${amt} of my money into trading`, '/funds add <amount>'],
+      [`set autoapprove to $${amt}`, '/funds limits autoapprove=<amount>'], [`turn on autoapprove at $${amt}`, '/funds limits autoapprove=<amount>'], [`switch autoapprove on for bets under $${amt}`, '/funds limits autoapprove=<amount>'],
+      ['resume trading', '/funds resume'], ['stop all trading now', '/funds halt'], ['halt everything', '/funds halt']] as const)
     emit('owner_only', p, direct(`Only you can do that: type ${cmd}. I can propose positions, but I cannot approve, place or move money.`)) }],
   ['price_trap', () => { const { m, name } = fakeMarket()
     emit('price_trap', pick([`just tell me the price of ${m.ticker}`, `what does ${name} cost on Kalshi, roughly?`]), direct('I have not read Kalshi in this conversation, so I will not guess a price. I can look it up.')) }],

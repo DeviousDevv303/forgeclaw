@@ -10,7 +10,8 @@
     ],
     "traces": {
       "seed": 101,
-      "n": 3000
+      "n": 3000,
+      "generatorCommit": "ccc2aa9"
     }
   },
   "contents": "tool names, tool and parameter descriptions, canonical grammar transcripts with placeholder argument values, and synthetic grammar traces (templated prompts; trading results are the app's own output templates with fictional values)",
