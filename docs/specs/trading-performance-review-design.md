@@ -59,3 +59,23 @@ Golden-file tests on hand-built ledgers with known answers (perfectly calibrated
 
 ## 9. Unverified
 Whether any settled real or paper bets exist in the owner's browser; the real bet rate; whether `pnl` for owner-settled positions includes fees.
+
+## 7. Operator decision, 2026-10-27 (supersedes the §5 rule on when `autoapprove` may rise above 0)
+Cristian: "Wagers: approval line is a PHASE, not a wall. Set my autoapprove threshold once I give the number; below it the machine runs
+hands-free, no tap. Evidence (619 settled bets minimum) widens the mandate until the tap is gone for good. Autonomous wagering runs on
+regulated API venues only (Kalshi-class) — never sportsbook bots. Kill switch armed, daily stop on, bankroll ring-fenced. The number is
+coming — everything else proceeds."
+
+What the code at `1ee0026` already does for each clause (read, not run):
+| Clause | Exists? | Where / how |
+|---|---|---|
+| Threshold, hands-free below it | yes | `/funds limits autoapprove=<N>`; `autoApprovePreconditions` (kalshiExecution.ts): real mode, status proposed, Kalshi venue, stake ≤ N in cents; one order per market; approval re-reads the live price and refuses past `tolerance`. Owner command only: no tool, model or lane can set it. |
+| Regulated API venues only | yes, Kalshi only | `isKalshi(position.venue)` in the same precondition; no sportsbook path exists. |
+| Daily stop on | yes, by default | `dailyLossPct` 10 (DEFAULT_LIMITS); halts real proposals and approvals until `/funds resume`. It counts SETTLED losses, so it stops new risk; it does not cancel open positions. |
+| Bankroll ring-fenced | yes, owner-set | `/funds limits cap=<dollars>`; `/funds add` requires a cap first. |
+| Kill switch | **partial** | There is no one-command manual halt. Today: `/funds limits autoapprove=0` stops new automatic orders; the loss-stop halts on its own. A `/funds halt` command is NOT built (new trading code: needs the operator's go). |
+| 619 settled bets widens the mandate | **not built** | 619 is §4's count to detect a +10% ROI edge; a smaller true edge needs more (2,475 at +5%). Widening is a mandate change; no code does it. |
+
+Stated plainly, so the record holds it: with `autoapprove` above 0 before any evidence, orders under N are placed on an unproven edge.
+The bound on a bad day is the limits, not the daily stop: up to `exposure` (default 30%) of the capped bankroll can be open at once, and
+all of it can settle against you before the stop counts a single loss.
