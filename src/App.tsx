@@ -2623,11 +2623,11 @@ function App() {
       setCorpusSyncStatus(t('corpus.noWebhook'))
       return
     }
-    setCorpusSyncStatus(t('corpus.syncing'))
-    const result = await corpusRepository.syncPending(corpusWebhookUrl.trim())
-    setCorpusSyncStatus(result.status === 'synced'
-      ? t(result.attempted === 1 ? 'corpus.syncedOne' : 'corpus.syncedMany', { n: result.attempted })
-      : t(Math.max(0, result.attempted - result.admitted) === 1 ? 'corpus.unavailableOne' : 'corpus.unavailableMany', { n: Math.max(0, result.attempted - result.admitted) }))
+    setCorpusSyncStatus(t('corpus.sending'))
+    const result = await corpusRepository.sendCandidates(corpusWebhookUrl.trim())
+    setCorpusSyncStatus(result.status === 'sent'
+      ? t(result.delivered === 1 ? 'corpus.sentOne' : 'corpus.sentMany', { n: result.delivered })
+      : t(result.attempted === 1 ? 'corpus.failedOne' : 'corpus.failedMany', { n: result.attempted }))
   }
 
   const handleExportCorpus = () => {
@@ -3065,7 +3065,7 @@ function App() {
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #222' }}>
                     <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.corpusWebhook')}</label>
                     <input type="url" placeholder="https://example.invalid/deepseek-sync" value={corpusWebhookUrl} onChange={e => setCorpusWebhookUrl(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
-                    <button onClick={syncCorpus} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{t('settings.syncPending')}</button>
+                    <button onClick={syncCorpus} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{t('settings.sendCandidates')}</button>
                     {corpusSyncStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusSyncStatus}</div>}
                   </div>
                 </div>
