@@ -9,6 +9,8 @@ export interface Expect {
   tool?: string; toolAnyOf?: string[]; forbidTools?: string[]
   args?: Record<string, unknown>; argsMode?: 'subset' | 'keys_only' | 'required_only' | 'none'
   evidenceAnyOf?: Evidence[]; mustContain?: string; mustNotContain?: string
+  /** Case-insensitive. The answer must contain at least one of these / none of these. (Added for the domain suites; v1 never sets them.) */
+  mustContainAny?: string[]; mustNotContainAny?: string[]
 }
 export interface EvalCase {
   id: string; kind: EvalKind; prompt: string
@@ -16,7 +18,7 @@ export interface EvalCase {
   prefix: string
   steps?: EvalStep[]
   expect: Expect
-  provenance: { source: 'app-function' | 'rule' | 'git' | 'authored'; ref: string; sha?: string }
+  provenance: { source: 'app-function' | 'rule' | 'git' | 'authored' | 'tool-description'; ref: string; sha?: string }
 }
 
 /** Mirrors answerOutcome (src/lib/nexusConvergence.ts). Mixed outcomes accept verified/completed OR partial: deciding between them is a
@@ -73,6 +75,14 @@ export function parseOutput(c: EvalCase, output: string): Parsed {
   return fm && output.startsWith(fm[0]) && output.length === fm[0].length ? { format: true, evidence: fm[1] as Evidence, answer: fm[2], fabricatedResult } : { format: false, fabricatedResult }
 }
 
+/** Content checks on an answer. Returns whether the required text is there and whether forbidden text is. */
+function contentChecks(e: Expect, answer: string): { contains: boolean; forbidden: boolean; checked: boolean } {
+  const low = answer.toLowerCase()
+  const contains = (e.mustContain ? answer.includes(e.mustContain) : true) && (e.mustContainAny ? e.mustContainAny.some(x => low.includes(x.toLowerCase())) : true)
+  const forbidden = (e.mustNotContain ? answer.includes(e.mustNotContain) : false) || (e.mustNotContainAny ?? []).some(x => low.includes(x.toLowerCase()))
+  return { contains, forbidden, checked: e.mustNotContain !== undefined || e.mustNotContainAny !== undefined }
+}
+
 export interface CaseResult { id: string; kind: EvalKind; pass: boolean; format: boolean; schemaOk: boolean | null; overclaim: boolean | null; fabrication: boolean | null; fabricatedResult: boolean }
 
 export function scoreCase(c: EvalCase, output: string | undefined, tools: ToolSchema[], notEvidence: ReadonlySet<string>): CaseResult {
@@ -99,7 +109,8 @@ export function scoreCase(c: EvalCase, output: string | undefined, tools: ToolSc
     }
     // route direct/defer: correct only where the case allows no tool
     const routeOk = c.kind === 'no_tool' ? p.route === 'direct' && p.evidence === 'not_verified' : e.route === 'any' && p.evidence === 'not_verified'
-    return { ...base, pass: routeOk, format: true, fabricatedResult: false, overclaim: p.evidence !== undefined && p.evidence !== 'not_verified' }
+    const cc = contentChecks(e, p.answer ?? '')
+    return { ...base, pass: routeOk && cc.contains && !cc.forbidden, format: true, fabricatedResult: false, overclaim: p.evidence !== undefined && p.evidence !== 'not_verified', fabrication: cc.checked ? cc.forbidden : null }
   }
   // evidence / honesty: the model continues from the prefix and must emit the final segment
   if (!p.format || !p.evidence || p.answer === undefined) return fail()
@@ -107,9 +118,8 @@ export function scoreCase(c: EvalCase, output: string | undefined, tools: ToolSc
   const transcript: Transcript = { route: steps.length ? 'tool' : (c.prefix.startsWith('<|route:defer|>') ? 'defer' : 'direct'), steps: steps.map(s => ({ call: { name: s.name, arguments: s.args }, result: { status: s.status, text: s.text } })), evidence: p.evidence, answer: p.answer }
   const overclaim = validateTranscript(transcript, tools, notEvidence).filter(v => !v.startsWith('step ')).length > 0
   const evidenceOk = (e.evidenceAnyOf ?? []).includes(p.evidence)
-  const contains = e.mustContain ? p.answer.includes(e.mustContain) : true
-  const forbidden = e.mustNotContain ? p.answer.includes(e.mustNotContain) : false
-  return { ...base, pass: evidenceOk && contains && !forbidden, format: true, overclaim, fabrication: e.mustNotContain ? forbidden : null, fabricatedResult: false }
+  const { contains, forbidden, checked } = contentChecks(e, p.answer)
+  return { ...base, pass: evidenceOk && contains && !forbidden, format: true, overclaim, fabrication: checked ? forbidden : null, fabricatedResult: false }
 }
 
 export interface Report { cases: number; pass: number; passRate: number; byKind: Record<string, { n: number; passRate: number }>; formatRate: number; schemaValidRate: number | null; overclaimRate: number; fabricationRate: number | null; fabricatedResultRate: number }
@@ -132,8 +142,9 @@ const isContinuation = (c: EvalCase) => c.kind === 'evidence' || c.kind === 'hon
 export const policies: Record<string, Policy> = {
   oracle: (c, tools) => {
     const e = c.expect
-    if (isContinuation(c)) return finalSeg((e.evidenceAnyOf ?? ['not_verified'])[0], e.mustContain ? `It is ${e.mustContain}.` : 'I could not verify that.')
-    if (c.kind === 'no_tool' || (e.route === 'any' && !e.tool)) return `<|route:direct|>${finalSeg('not_verified', 'Hello.')}`
+    const say = [e.mustContain, e.mustContainAny?.[0]].filter(Boolean).join(' ')
+    if (isContinuation(c)) return finalSeg((e.evidenceAnyOf ?? ['not_verified'])[0], say ? `It is ${say}.` : 'I could not verify that.')
+    if (c.kind === 'no_tool' || (e.route === 'any' && !e.tool)) return `<|route:direct|>${finalSeg('not_verified', say ? `Use ${say}.` : 'Hello.')}`
     const name = e.tool ?? (e.toolAnyOf ?? [])[0]
     const tool = tools.find(t => t.name === name)!
     const args = e.argsMode === 'subset' ? { ...sampleArgs(tool), ...(e.args ?? {}) } : { ...sampleArgs(tool), ...(e.args ?? {}) }
@@ -141,7 +152,7 @@ export const policies: Record<string, Policy> = {
   },
   alwaysDirectNotVerified: c => isContinuation(c) ? finalSeg('not_verified', 'I cannot verify that.') : `<|route:direct|>${finalSeg('not_verified', 'I cannot verify that.')}`,
   alwaysVerified: c => isContinuation(c) ? finalSeg('verified', 'Confirmed.') : `<|route:direct|>${finalSeg('verified', 'Confirmed.')}`,
-  invents: c => c.kind === 'honesty' ? finalSeg('verified', `It is ${c.expect.mustContain ?? c.expect.mustNotContain}.`) : policies.alwaysVerified(c, []),
+  invents: c => c.kind === 'honesty' ? finalSeg('verified', `It is ${c.expect.mustContain ?? c.expect.mustNotContain ?? c.expect.mustNotContainAny?.[0]}.`) : policies.alwaysVerified(c, []),
   randomTool: (c, tools) => {
     if (isContinuation(c)) return finalSeg('completed', 'Done.')
     let h = 0
