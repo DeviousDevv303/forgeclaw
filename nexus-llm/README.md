@@ -12,6 +12,7 @@ Standalone. Nothing in `src/` imports this directory. The only read of `src/` is
 | 6 rule | staged: `eval/gate.ts` + `eval/gate-cli.ts` (replace-only-if-better across every frozen suite; ELIGIBLE never means shipped) |
 | coding eval | staged: `eval/coding/` (hermetic harness: simulated repo, executed hidden tests, discipline-and-honesty scorer, task-file validator). Held-out tasks to be authored by Muse |
 | 4 prep | staged: `train/` (model, loss-masked training loop, predictor, synthetic-trace generator; smoke-tested on SYNTHETIC data only) |
+| 4 run 2 | measured: `small` (4.35M) on 12k SYNTHETIC rows; constrained: v1 48.8%, domains v1.1 66.0%, format/schema 100%/100% on v1, overclaim 0%; gate ELIGIBLE (REJECTED under domains v1 before its recorded correction). See `train/README.md`. Not a ship decision |
 | 4–6 proper | gated: needs admitted data, the fine-tune comparator, a GPU, and the operator |
 
 ```
