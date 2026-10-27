@@ -493,8 +493,9 @@ function cleanStoredMessage(message: Message): Message {
 }
 
 function readAnthropicKey(): string {
-  const key = safeGetItem('fm_anthropic_key') || ''
-  return anthropicProvider.isConfigured(key) ? key : ''
+  // Saved as is: a format check here would return '' and the persistence effect would overwrite storage with it (the key erased on reload).
+  // The format is judged where the key is used and in Diagnostics, never by discarding what the owner saved.
+  return safeGetItem('fm_anthropic_key') || ''
 }
 function readAnthropicModel(): string {
   return resolveAnthropicModel(safeGetItem('fm_anthropic_model'))
@@ -503,15 +504,17 @@ function readAnthropicWorkspaceId(): string {
   return safeGetItem('fm_anthropic_workspace_id') || ''
 }
 function readMoonshotKey(): string {
-  const key = safeGetItem('fm_moonshot_key') || ''
-  return moonshotProvider.isConfigured(key) ? key : ''
+  // Saved as is: a format check here would return '' and the persistence effect would overwrite storage with it (the key erased on reload).
+  // The format is judged where the key is used and in Diagnostics, never by discarding what the owner saved.
+  return safeGetItem('fm_moonshot_key') || ''
 }
 function readMoonshotModel(): string {
   return resolveMoonshotModel(safeGetItem('fm_moonshot_model'))
 }
 function readMetaKey(): string {
-  const key = safeGetItem('fm_meta_key') || ''
-  return metaProvider.isConfigured(key) ? key : ''
+  // Saved as is: a format check here would return '' and the persistence effect would overwrite storage with it (the key erased on reload).
+  // The format is judged where the key is used and in Diagnostics, never by discarding what the owner saved.
+  return safeGetItem('fm_meta_key') || ''
 }
 function readMetaModel(): string {
   return resolveMetaModel(safeGetItem('fm_meta_model'))
