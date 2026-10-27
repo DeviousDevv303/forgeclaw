@@ -720,3 +720,49 @@ describe('the crowd, scored (item B)', () => {
     })
   })
 })
+
+describe('/funds halt (kill switch, stop-only)', () => {
+  it('parses with and without a reason, and nothing else is a halt', () => {
+    expect(parseFundsCommand('/funds halt')).toEqual({ kind: 'halt' })
+    expect(parseFundsCommand('/funds halt  bad night ')).toEqual({ kind: 'halt', note: 'bad night' })
+    expect(parseFundsCommand('/funds halting')?.kind).toBe('usage')
+  })
+  it('halts real proposals and approvals at once; paper tracking continues', () => {
+    let s = funded()
+    const open = proposePosition(s, proposal(), NOW)
+    s = open.state
+    const h = applyFundsCommand(s, { kind: 'halt', note: 'test' }, NOW)
+    expect(h.message).toMatch(/^HALTED: Stopped by the owner with \/funds halt \(test\)\./)
+    expect(h.state.halted?.reason).toContain('/funds halt')
+    expect(() => proposePosition(h.state, proposal({ market: 'KX-OTHER' }), NOW)).toThrow(/HALTED/)
+    expect(() => applyFundsCommand(h.state, { kind: 'approve', id: open.position.id }, NOW)).toThrow(/HALTED/)
+    expect(proposePosition(h.state, proposal({ mode: 'paper', market: 'KX-PAPER' }), NOW).position.status).toBe('placed')
+  })
+  it('never touches open positions: they stay as they were and still settle', () => {
+    let s = funded()
+    const r = proposePosition(s, proposal(), NOW)
+    s = applyFundsCommand(r.state, { kind: 'approve', id: r.position.id }, NOW).state
+    s = applyFundsCommand(s, { kind: 'placed', id: r.position.id }, NOW).state
+    const before = s.positions
+    const h = applyFundsCommand(s, { kind: 'halt' }, NOW).state
+    expect(h.positions).toEqual(before)
+    expect(applyFundsCommand(h, { kind: 'settle', id: r.position.id, outcome: 'won' }, NOW).state.positions[0].status).toBe('settled')
+  })
+  it('a second halt changes nothing and keeps the first reason, including the loss stop\'s', () => {
+    const lossStop = { ...funded(), halted: { at: NOW, reason: 'Daily loss limit hit.' } }
+    const again = applyFundsCommand(lossStop, { kind: 'halt' }, NOW + 1)
+    expect(again.state).toBe(lossStop)
+    expect(again.message).toContain('Already halted: Daily loss limit hit.')
+  })
+  it('only /funds resume lifts it', () => {
+    const h = applyFundsCommand(funded(), { kind: 'halt' }, NOW).state
+    const r = applyFundsCommand(h, { kind: 'resume' }, NOW)
+    expect(r.state.halted).toBeUndefined()
+    expect(r.message).toContain('Resumed. The halt was: Stopped by the owner')
+  })
+  it('the usage text names it, and says the model cannot run it', () => {
+    const u = runFundsCommand('/funds help', NOW) ?? ''
+    expect(u).toContain('/funds halt')
+    expect(u).toContain('a model cannot run them')
+  })
+})

@@ -294,6 +294,14 @@ async function executeApproveInner(id: string, deps: KalshiExecutionDeps): Promi
     livePrice = quotedPrice
     return null
   }
+  // A halt (the owner's /funds halt or the loss stop) refuses a fresh send before any Kalshi read, so the reply names the
+  // halt rather than whatever a price or balance check would have said. The ledger approval below refuses again on the
+  // re-read, which also covers a halt typed while those reads were in flight. A resume only reconciles an order that may
+  // already have landed and never sends, so a halt does not stand in front of it.
+  if (!resumingEarly && state.halted) {
+    note('approve', `Kalshi placement refused for ${id}: ${state.halted.reason}`)
+    return `Not placed: ${haltedMessage(state.halted)} Nothing was sent; the proposal is unchanged.`
+  }
   if (!resumingEarly) {
     const refusal = await preSendGates()
     if (refusal) return refusal

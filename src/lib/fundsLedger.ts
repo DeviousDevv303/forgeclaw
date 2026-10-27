@@ -468,6 +468,7 @@ export type FundsCommand =
   | { kind: 'placed'; id: string; fillPrice?: number }
   | { kind: 'settle'; id: string; outcome: PositionOutcome }
   | { kind: 'limits'; changes: Partial<FundsLimits> }
+  | { kind: 'halt'; note?: string }
   | { kind: 'resume' }
   | { kind: 'rule'; text: string }
   | { kind: 'unrule'; index: number }
@@ -485,7 +486,8 @@ export const FUNDS_USAGE = [
   '/funds placed <id> [fill price] — confirm you placed the order on the venue yourself',
   '/funds settle <id> won|lost|void — record the result (Kalshi positions can also settle from Kalshi)',
   '/funds limits [cap=1000] [paper=1000] [stake=5] [exposure=30] [daily=10] [kelly=0.25] [tolerance=2] [autoapprove=25] — cap, paper bankroll and autoapprove in dollars; others % of bankroll; kelly a fraction; tolerance in cents; autoapprove 0 = off',
-  '/funds resume — lift a loss-stop halt (only you can)',
+  '/funds halt [why] — kill switch: stop every new real proposal, approval and automatic order now (open positions are left to settle)',
+  '/funds resume — lift a halt, yours or the loss stop\'s (only you can)',
   '/funds rule <your rule> · /funds rules · /funds unrule <n> — your own rules, given to every plan',
 ].join('\n')
 
@@ -520,6 +522,10 @@ export function parseFundsCommand(text: string): FundsCommand | null {
     const outcome = (rest[1] ?? '').toLowerCase()
     if (outcome !== 'won' && outcome !== 'lost' && outcome !== 'void') return usage(`Say won, lost or void, e.g. /funds settle ${id} won`)
     return { kind: 'settle', id, outcome }
+  }
+  if (verb === 'halt') {
+    const note = rest.join(' ').trim().slice(0, 200)
+    return note ? { kind: 'halt', note } : { kind: 'halt' }
   }
   if (verb === 'resume') return { kind: 'resume' }
   if (verb === 'rules') return { kind: 'rules' }
@@ -629,6 +635,15 @@ export function applyFundsCommand(state: FundsState, cmd: FundsCommand, nowMs: n
     case 'limits': {
       const limits = { ...state.limits, ...cmd.changes }
       return { state: { ...state, limits }, message: `Limits: ${formatLimits(limits)}.` }
+    }
+    case 'halt': {
+      // The kill switch (operator amendment 2026-10-27: stop-only). It sets the same halt the loss stop sets, so every
+      // path that already refuses while halted (real proposals, ledger approvals, the Kalshi approve path, autoapprove,
+      // approve-all) stops at once. It never cancels, sells or settles anything: open positions stay open and settle
+      // normally, and paper tracking (no money) continues. Only /funds resume lifts it.
+      if (state.halted) return { state, message: `Already halted: ${state.halted.reason} Nothing changed. /funds resume lifts it.` }
+      const reason = `Stopped by the owner with /funds halt${cmd.note ? ` (${cmd.note})` : ''}.`
+      return { state: { ...state, halted: { at: nowMs, reason } }, message: `${haltedMessage({ reason })}\nOpen positions are not touched: they stay open and settle normally. Nothing is cancelled or sold. Paper tracking continues; it moves no money.` }
     }
     case 'resume': {
       if (!state.halted) return { state, message: 'Not halted.' }
