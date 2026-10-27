@@ -1,6 +1,7 @@
 // NEXUS Intelligence step 3 CLI.
 //   npx vite-node nexus-llm/exporter/export-cli.ts <store-export.json> --out <dir> [--allow-direct] [--include-converged]
-//                                                  [--eval nexus-llm/eval/v1/cases.jsonl] [--bytes-per-token 4]
+//                                                  [--eval extra-cases.jsonl] [--bytes-per-token 4]
+// Rows whose prompt is in ANY frozen eval suite (eval/*/MANIFEST.json, frozen) are always dropped; --eval adds another case file.
 // Writes sft.jsonl, rejected.jsonl and manifest.json to <dir>. <dir> must be OUTSIDE the repo (the rows are operator data)
 // unless --allow-in-repo is given.
 import { execFileSync } from 'node:child_process'
@@ -10,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import { budget, scenarioTable, tokensFromBytes } from './budget'
 import { buildRows, collectAdmitted, normalizePrompt, parseStoreExport, sha256 } from './export'
 import type { ToolSchema } from '../src/grammar'
+import { frozenPrompts } from '../eval/frozen-prompts'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: here }).toString().trim()
@@ -25,7 +27,8 @@ const raw = readFileSync(input, 'utf8')
 const store = parseStoreExport(JSON.parse(raw))
 const snapshot = JSON.parse(readFileSync(join(here, '../spec/tools.snapshot.json'), 'utf8')) as { tools: ToolSchema[]; notEvidenceTools: string[] }
 const evalFile = opt('--eval')
-const evalPrompts = evalFile ? new Set(readFileSync(evalFile, 'utf8').split('\n').filter(Boolean).map(l => normalizePrompt((JSON.parse(l) as { prompt?: string }).prompt ?? ''))) : undefined
+const evalPrompts = frozenPrompts()
+if (evalFile) for (const l of readFileSync(evalFile, 'utf8').split('\n').filter(Boolean)) evalPrompts.add(normalizePrompt((JSON.parse(l) as { prompt?: string }).prompt ?? ''))
 
 const items = collectAdmitted(store)
 const { rows, rejected } = buildRows(store, items, { tools: snapshot.tools, notEvidenceTools: new Set(snapshot.notEvidenceTools), storeSha256: sha256(raw), includeConverged: flag('--include-converged'), allowDirect: flag('--allow-direct'), evalPrompts })
