@@ -60,6 +60,8 @@ class _P:
 
     def string(self, options=None):
         """A JSON string. With options, its decoded content must be (a prefix of) one of them."""
+        if options is not None and not options:
+            raise Invalid("no value is allowed here")  # e.g. a key in an object whose schema has no properties left
         self.lit('"')
         out = []
         while True:

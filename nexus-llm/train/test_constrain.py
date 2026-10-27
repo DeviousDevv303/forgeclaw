@@ -39,10 +39,12 @@ class CallChecker(unittest.TestCase):
             '{"arguments":{},"name":"github_list_files"}',                               # wrong key order
             '{"name":"kalshi_owner_prices\\ueac',                                       # an escape no tool name can contain
             '{"name":"generate_image","arguments":{"prompt":"x","model":"sd\\u',       # nor any enum value
+            '{"name":"funds_status","arguments":{"',                                     # a key where the schema has none
         ]
         for b in bad:
             self.assertEqual(check_call(b), "invalid", b)
         self.assertEqual(check_call('{"name":"github_list_files","arguments":{}}'), "complete")
+        self.assertEqual(check_call('{"name":"funds_status","arguments":{}}'), "complete")
         self.assertEqual(check_call('{"name":"generate_image","arguments":{"prompt":"x","width":51'), "incomplete")
 
 
