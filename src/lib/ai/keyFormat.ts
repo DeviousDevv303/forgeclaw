@@ -44,8 +44,10 @@ export function normalizePastedKey(raw: string): string {
 export function describeKeyShape(apiKey: string, rule: KeyFormatRule): string {
   const key = apiKey
   if (key.length === 0) return 'The field is empty.'
-  // Eight characters of an sk- key is the provider prefix and version (sk-or-v1, sk-proj-), never secret; anything else shows two.
-  const head = key.slice(0, key.toLowerCase().startsWith('sk-') ? 8 : 2)
+  // Only a KNOWN provider prefix is ever echoed (sk-or-v1-, sk-ant-, sk-proj-: the label, not the secret). A legacy sk- key has random
+  // characters right after "sk-", so for anything else the message shows "sk-" at most, or two characters of a non-sk string.
+  const known = /^(sk-or-v1-|sk-ant-|sk-proj-)/i.exec(key)
+  const head = known ? known[0] : key.toLowerCase().startsWith('sk-') ? key.slice(0, 3) : key.slice(0, 2)
   if (key.toLowerCase().startsWith(rule.prefix) && !key.startsWith(rule.prefix)) {
     return `It starts with "${head}": the prefix must be lowercase ${rule.prefix} exactly. Copy the key again without changing its case.`
   }

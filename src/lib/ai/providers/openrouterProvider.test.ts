@@ -160,6 +160,10 @@ describe('OpenRouter provider: key and models', () => {
     expect(await say('hello world this is not a key')).toMatch(/Expected a key starting with sk-or-.*starts with "he" and is 23 characters long/)
     // Only the prefix is ever echoed, never the secret part of a key.
     expect(await say('sk-proj-SECRETPART0123456789abcdef')).not.toContain('SECRETPART')
+    // A legacy OpenAI-style key (sk- then random characters) must not leak even its first characters after "sk-".
+    const legacy = await say('sk-uFfPqRsTuVwXyZ0123456789abcdefghijklmnopqrstuvw')
+    expect(legacy).toMatch(/starts with "sk-": that is another provider's key/)
+    expect(legacy).not.toContain('uFfP')
     expect(await say('zzSECRETPART0123456789abcdefghijk')).not.toContain('SECRETPART')
   })
 
