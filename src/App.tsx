@@ -2625,9 +2625,12 @@ function App() {
     }
     setCorpusSyncStatus(t('corpus.syncing'))
     const result = await corpusRepository.syncPending(corpusWebhookUrl.trim())
+    // This button only PUSHES candidates and merges back what the webhook returns as unadmitted candidates. It admits nothing
+    // (admission happens only in the NEXUS panel), and 'not confirmed' covers every reason the reply could not be read,
+    // so it names the reason instead of claiming the webhook was unavailable.
     setCorpusSyncStatus(result.status === 'synced'
-      ? t(result.attempted === 1 ? 'corpus.syncedOne' : 'corpus.syncedMany', { n: result.attempted })
-      : t(Math.max(0, result.attempted - result.admitted) === 1 ? 'corpus.unavailableOne' : 'corpus.unavailableMany', { n: Math.max(0, result.attempted - result.admitted) }))
+      ? t(result.attempted === 1 ? 'corpus.sentOne' : 'corpus.sentMany', { n: result.attempted, m: result.received })
+      : t('corpus.notConfirmed', { n: result.attempted, reason: result.reason ?? 'no reason given' }))
   }
 
   const handleExportCorpus = () => {

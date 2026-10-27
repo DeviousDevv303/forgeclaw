@@ -148,7 +148,7 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(repository.getApprovedCount()).toBe(0)
     const synced = await repository.syncPending('https://example.invalid/webhook', vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [{ id: candidate.id }, { id: 'missing' }, 'malformed'] }), { status: 200 })))
     expect(synced.status).toBe('synced')
-    expect(synced.admitted).toBe(0)
+    expect(synced.received).toBe(0)
     expect(repository.getApprovedCount()).toBe(0)
     expect((await repository.admitCandidate(candidate.id, await testAuthorization(candidate))).status).toBe('admitted')
     expect(repository.getApprovedCount()).toBe(1)
@@ -162,7 +162,7 @@ describe('NEXUS / Corpus Local Mode', () => {
       vi.fn().mockResolvedValue(new Response('<html>not json</html>', { status: 200 })),
     )
     expect(res.status).toBe('pending')
-    expect(res.admitted).toBe(0)
+    expect(res.received).toBe(0)
     expect(res.reason).toMatch(/could not be read/)
   })
 
@@ -174,7 +174,7 @@ describe('NEXUS / Corpus Local Mode', () => {
       vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.reject(new Error('body stream failed')) }),
     )
     expect(res.status).toBe('pending')
-    expect(res.admitted).toBe(0)
+    expect(res.received).toBe(0)
     expect(res.reason).toMatch(/empty reply/)
   })
 
@@ -186,14 +186,14 @@ describe('NEXUS / Corpus Local Mode', () => {
       vi.fn().mockResolvedValue(new Response('', { status: 200 })),
     )
     expect(empty.status).toBe('pending')
-    expect(empty.admitted).toBe(0)
+    expect(empty.received).toBe(0)
     expect(empty.reason).toMatch(/empty reply/)
     const whitespace = await repository.syncPending(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response('  \n ', { status: 200 })),
     )
     expect(whitespace.status).toBe('pending')
-    expect(whitespace.admitted).toBe(0)
+    expect(whitespace.received).toBe(0)
     expect(whitespace.reason).toMatch(/empty reply/)
   })
 
@@ -205,7 +205,7 @@ describe('NEXUS / Corpus Local Mode', () => {
       vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 })),
     )
     expect(res.status).toBe('pending')
-    expect(res.admitted).toBe(0)
+    expect(res.received).toBe(0)
     expect(res.reason).toMatch(/updates list/)
   })
 
@@ -217,7 +217,7 @@ describe('NEXUS / Corpus Local Mode', () => {
       vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [] }), { status: 200 })),
     )
     expect(res.status).toBe('synced')
-    expect(res.admitted).toBe(0)
+    expect(res.received).toBe(0)
   })
 
   it('H-A: rejects an unauthorized webhook candidate instead of admitting it', async () => {
@@ -254,9 +254,25 @@ describe('NEXUS / Corpus Local Mode', () => {
     )
 
     expect(synced.status).toBe('synced')
-    expect(synced.admitted).toBe(0)
+    // The webhook's candidate is merged locally as an UNADMITTED candidate; receiving it admits nothing.
+    expect(synced.received).toBe(1)
     expect(repository.getApprovedCount()).toBe(0)
     expect(repository.retrieve('remote result')).toHaveLength(0)
+  })
+
+  it('EF-03: the result has no admitted counter, and received counts only candidates actually stored', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    await repository.appendInteraction({ input: 'ef03 in', context: '', result: 'ef03 out', runtime: 'corpus', model: 'local-model' })
+    const res = await repository.syncPending(
+      'https://example.invalid/webhook',
+      vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [{ id: 'x', recordType: 'learning_candidate', admissionStatus: 'approved' }, 'junk', null] }), { status: 200 })),
+    )
+    expect(res.status).toBe('synced')
+    expect('admitted' in res).toBe(false)
+    expect(res.attempted).toBe(1)
+    // An update that claims 'approved' is not a candidate and is not stored: the old filter's behaviour, now stated by the counter.
+    expect(res.received).toBe(0)
+    expect(repository.getApprovedCount()).toBe(0)
   })
 
   it('makes approved corpus context available to the DeepSeek workflow without local fallback', async () => {
