@@ -43,6 +43,13 @@ the model never answered "type /funds …"). The 2 remaining domain format failu
 exhausts the 160-token budget, a model-quality failure, not a grammar gap. Getting here took three decoder fixes found by this run
 (top-k dead-ends, an unfinishable \u escape in option strings, a key in a property-less object).
 
+### Run 4: `small`, 20,000 SYNTHETIC rows (router-labelled families, high-entropy arguments, seed 13), 5,000 steps, 47 min
+Constrained: v1 **60.7%** (run 2: 48.8%), domains v1.1 **76.6%** (66.0%); format/schema 100%, overclaim 0%, fabrication 0%. Tool choice v1
+24.2 → 57.6%; owner-only commands 0 → 66.7%; **regression: v1 no_tool 60 → 40%**. Gate with `--incumbent` run 2: ELIGIBLE.
+Closed loop (18 scenarios, argument fidelity): **6/18** (run 2: 3/18 under the same scorer). Copying still fails: 0/5 image prompts and
+0/2 Kalshi queries carried the requested (unseen) words. That is the blocking capability; no real image dispatch was made.
+Run 3 (16k low-entropy rows) was stopped at step 1,000, superseded.
+
 ### Run 1 (historical, tokenizer v0)
 - `smoke` model, 400 steps, 3,000 synthetic rows, 46 s: loss 8.31 → 0.99. Frozen-eval pass **22.6%** (format 65.5%, tool_choice 3.0%, evidence 43.8%, honesty 33.3%, overclaim 36.2%, fabrication 0%).
   The trivial "never call a tool, always not_verified" policy scores 21.4%, so this model does **not** meaningfully beat the baseline: under the step-6 rule it would be rejected. That is the expected, honest result of a 46-second smoke run.

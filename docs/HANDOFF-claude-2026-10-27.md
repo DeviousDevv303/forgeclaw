@@ -13,7 +13,7 @@ branch `claude/tradesheet-v1` @ `392029c`. **Nothing is in a PR or merged** (NEV
 | Gate (replace-only-if-better) | done | `eval/gate.ts`, `eval/gate-cli.ts` |
 | Closed loop (model drives tool flows; propose-only sidecar; argument fidelity) | done | `eval/loop/`, `train/loop.py`, `2e53e97` |
 | Run 2 (`small`, 12k synthetic, low-entropy args) | v1 48.8%, domains 66.0% (constrained); loop **3/18** honest (8/18 before fidelity checks) | `train/README.md` |
-| **Run 4** (`small` 4.35M, 20k synthetic, router-labelled + high-entropy args, 5000 steps, 47 min CPU) | **v1 60.7%, domains v1.1 76.6%** (constrained; format/schema 100%, overclaim 0%, fabrication 0%); tool choice v1 24.2→57.6%; owner-only 0→66.7%; **regression: v1 no_tool 60→40%**. Gate vs incumbent run 2: **ELIGIBLE** (not a ship decision: synthetic-only) | measured this session; **loop score for run 4 was still running at handoff** |
+| **Run 4** (`small` 4.35M, 20k synthetic, router-labelled + high-entropy args, 5000 steps, 47 min CPU) | **v1 60.7%, domains v1.1 76.6%** (constrained; format/schema 100%, overclaim 0%, fabrication 0%); tool choice v1 24.2→57.6%; owner-only 0→66.7%; **regression: v1 no_tool 60→40%**. Gate vs incumbent run 2: **ELIGIBLE** (not a ship decision: synthetic-only). **Loop 6/18 (33.3%)** vs run 2's 3/18: funds flows and owner-only commands now pass; **argument copying still fails: 0/5 image prompts and 0/2 Kalshi queries carried the requested words** ("fed" -> "hurric curricane landfall") | measured this session |
 | Run 3 | stopped at step 1000 (superseded: low-entropy data) | `2e53e97` message |
 
 **Not yet committed (lives only in this container's scratchpad, which is reclaimed):** the run 4 checkpoint and its prediction files. To
@@ -25,10 +25,11 @@ Then: `predict.py --constrained` on both suites, `eval/gate-cli.ts --candidate <
 `train/loop.py --ckpt … --out loop.jsonl --dispatch-log dispatch.jsonl`, `eval/loop/score-loop-cli.ts loop.jsonl`.
 
 **Next NEXUS steps, in order:**
-1. Score run 4's loop; record it in `train/README.md` next to run 2's (3/18), as it falls.
-2. If an image call in `dispatch.jsonl` carries the requested words (the loop's fidelity check passes), dispatch it once to the repo's own
-   `generate-image.yml` (inputs `prompt, style, width, height, model, invocation_id`) to show a NEXUS-produced call rendering a real image.
-   Not done yet: run 2's image calls were template recall, so dispatching them would prove nothing.
+1. **Copying unseen words is the blocking capability.** Run 4 cannot yet put the user's words into a call. Options, best first: a copy
+   mechanism (pointer/copy head over the prompt span), a larger model (`nexus-30m`, needs a GPU), or many more high-entropy rows.
+2. Only when the loop's fidelity check passes for an image scenario: dispatch that call once to the repo's own `generate-image.yml`
+   (inputs `prompt, style, width, height, model, invocation_id`). Not done: no run-4 image call carried the requested words, so a real
+   render would prove nothing.
 3. Investigate the no_tool regression (v1 60→40%).
 4. Real next step per the operator: **admitted data** (exporter waits on the operator's JSON); the fine-tune comparator (read the actual
    licence text first); a GPU for `nexus-30m`.
