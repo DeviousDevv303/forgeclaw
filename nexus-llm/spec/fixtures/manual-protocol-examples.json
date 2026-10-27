@@ -1,0 +1,130 @@
+{
+  "sourceSha": "1ee0026b68dbb4f292f36e5c06873db593d3b664",
+  "scannedFiles": 153,
+  "fencedBlocksSeen": 14,
+  "skippedUnparsable": 0,
+  "examples": [
+    {
+      "format": "A fenced tool_call",
+      "source": "src/lib/ai/manualToolMode.test.ts:6",
+      "name": "github_read_file",
+      "arguments": {
+        "path": "package.json"
+      }
+    },
+    {
+      "format": "A fenced tool_call",
+      "source": "src/lib/ai/manualToolMode.test.ts:10",
+      "name": "github_read_file",
+      "arguments": {
+        "path": "package.json"
+      }
+    },
+    {
+      "format": "A fenced tool_call",
+      "source": "src/lib/ai/manualToolMode.test.ts:16",
+      "name": "github_read_file",
+      "arguments": {
+        "path": "README.md"
+      }
+    },
+    {
+      "format": "A2 fenced json",
+      "source": "src/lib/ai/manualToolMode.test.ts:25",
+      "name": "github_read_file",
+      "arguments": {
+        "path": "/README.md"
+      }
+    },
+    {
+      "format": "B TOOL_CALL line",
+      "source": "src/lib/ai/manualToolMode.test.ts:37",
+      "name": "github_repo_state",
+      "arguments": {
+        "owner": "DeviousDevv303",
+        "repo": "forgeclaw"
+      }
+    },
+    {
+      "format": "B TOOL_CALL line",
+      "source": "src/lib/ai/manualToolMode.test.ts:41",
+      "name": "github_repo_state",
+      "arguments": {
+        "owner": "DeviousDevv303",
+        "repo": "forgeclaw"
+      }
+    },
+    {
+      "format": "C xml tag",
+      "source": "src/lib/ai/manualToolMode.test.ts:47",
+      "name": "github_read_file",
+      "arguments": {
+        "path": "package.json"
+      }
+    },
+    {
+      "format": "C xml tag",
+      "source": "src/lib/ai/manualToolMode.test.ts:51",
+      "name": "github_read_file",
+      "arguments": {
+        "path": "package.json"
+      }
+    },
+    {
+      "format": "A fenced tool_call",
+      "source": "src/lib/managedAgent.test.ts:256",
+      "name": "github_write_file",
+      "arguments": {
+        "path": "x.md",
+        "content": "x",
+        "message": "docs: x"
+      }
+    },
+    {
+      "format": "A fenced tool_call",
+      "source": "src/lib/managedAgent.test.ts:273",
+      "name": "github_repo_state",
+      "arguments": {}
+    },
+    {
+      "format": "A fenced tool_call",
+      "source": "src/lib/managedAgent.test.ts:321",
+      "name": "github_write_file",
+      "arguments": {
+        "path": "x.md",
+        "content": "x",
+        "message": "y"
+      }
+    },
+    {
+      "format": "A fenced tool_call",
+      "source": "src/lib/managedAgent.test.ts:339",
+      "name": "github_write_file",
+      "arguments": {
+        "path": "x.md",
+        "content": "x",
+        "message": "docs: x"
+      }
+    },
+    {
+      "format": "A fenced tool_call",
+      "source": "src/lib/managedAgent.test.ts:356",
+      "name": "github_write_file",
+      "arguments": {
+        "path": "x.md",
+        "content": "x",
+        "message": "docs: x"
+      }
+    },
+    {
+      "format": "A fenced tool_call",
+      "source": "src/lib/managedAgent.test.ts:476",
+      "name": "github_write_file",
+      "arguments": {
+        "path": "x.md",
+        "content": "x",
+        "message": "y"
+      }
+    }
+  ]
+}
