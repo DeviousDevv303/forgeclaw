@@ -7,10 +7,11 @@ No admitted data exists in this repo, no real row was used, and nothing here cla
 |---|---|
 | `gen-synthetic-traces.ts` | Template traces, every row `synthetic:true`, dropped if the prompt matches a frozen-eval prompt. Writes only to `--out`. |
 | `common.py` | Text frame (`User: <prompt>`, ordinary text, no new token) and the **loss mask**: the model is trained on route, call, evidence and answer; the frame and every runtime-injected `<|result:…|>…<|/result|>` span are masked. |
-| `model.py` | Decoder-only transformer. `smoke` = 0.96M params; `nexus-30m` = 8 layers, d_model 512, **27.5M params** (low end of the directive's 30-60M target). |
-| `train.py` | AdamW + cosine schedule. **Refuses** rows not marked synthetic (unless `--allow-real`), and refuses to write checkpoints inside the repo. |
-| `predict.py` | Greedy decode over the eval cases (stops at `<|/call|>` or `<|end|>`); writes predictions for `eval/score-cli.ts`. |
-| `test_train.py`, `gen.test.ts` | Guards: mask correctness, refusal guards, generator never emits an eval prompt or an invalid transcript. |
+| `model.py` | Decoder-only transformer. `smoke` = 0.96M params; `small` = 4 layers, d_model 256, ctx 640, 4.35M params; `nexus-30m` = 8 layers, d_model 512, ctx 640 (low end of the directive's 30-60M target). |
+| `train.py` | AdamW + cosine schedule, length-bucketed batches (5.6x faster on CPU than padding random batches to their longest row). **Refuses** rows not marked synthetic (unless `--allow-real`), and refuses to write checkpoints inside the repo. |
+| `predict.py` | Greedy decode over the eval cases (stops at `<|/call|>` or `<|end|>`); writes predictions for `eval/score-cli.ts`. `--constrained` decodes through `constrain.py`. |
+| `constrain.py` | Grammar-constrained decoding: route token first, canonical schema-valid call JSON, evidence limited to what the grammar's rules allow, then answer/end. Guarantees well-formed output (tested on an untrained model); does not pick the tool. |
+| `test_train.py`, `test_constrain.py`, `gen.test.ts` | Guards: mask correctness, refusal guards, constrained-decoding guarantees, generator never emits a frozen-eval prompt, an invalid transcript, a hand-written evidence label or a placement claim. |
 
 ```
 npx vite-node nexus-llm/train/gen-synthetic-traces.ts --out /tmp/syn.jsonl --n 3000

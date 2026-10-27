@@ -6,8 +6,10 @@ Standalone. Nothing in `src/` imports this directory. The only read of `src/` is
 | Step | State |
 |---|---|
 | 1 Grammar spec | staged: `spec/`, `src/grammar.ts`, `src/grammar.test.ts` |
-| 2 Tokenizer | staged: `tokenizer/` (v0, 4000-piece BPE on schema-derived SYNTHETIC text; 18 special tokens atomic) |
-| 3 Exporter + frozen eval | staged: `exporter/` (format, dump script, exporter, token budget) and `eval/` (84-case frozen set v1, scorer, baselines). Waiting on the operator's app-store export file |
+| 2 Tokenizer | staged: `tokenizer/` (v1, 4000-piece BPE on SYNTHETIC text: schemas + synthetic traces; 18 special tokens and all 50 tool names atomic) |
+| 3 Exporter + frozen eval | staged: `exporter/` (format, dump script, exporter, token budget) and `eval/` (frozen v1, 84 cases; frozen domains-v1, 47 cases: trading propose-only + images; scorer, baselines). Waiting on the operator's app-store export file |
+| decoding | staged: `train/constrain.py` (grammar-constrained decoding: well-formed output by construction; tool choice stays learned) |
+| 6 rule | staged: `eval/gate.ts` + `eval/gate-cli.ts` (replace-only-if-better across every frozen suite; ELIGIBLE never means shipped) |
 | coding eval | staged: `eval/coding/` (hermetic harness: simulated repo, executed hidden tests, discipline-and-honesty scorer, task-file validator). Held-out tasks to be authored by Muse |
 | 4 prep | staged: `train/` (model, loss-masked training loop, predictor, synthetic-trace generator; smoke-tested on SYNTHETIC data only) |
 | 4–6 proper | gated: needs admitted data, the fine-tune comparator, a GPU, and the operator |
@@ -17,7 +19,10 @@ Standalone. Nothing in `src/` imports this directory. The only read of `src/` is
 #   npx vite-node nexus-llm/scripts/gen-synthetic-corpus.ts && python nexus-llm/tokenizer/train.py
 #   python -m unittest nexus-llm/tokenizer/test_tokenizer.py
 # exporter:  npx vite-node nexus-llm/exporter/export-cli.ts <store-export.json> --out <dir outside the repo>
-# eval set:   npx vite-node nexus-llm/eval/build-eval.ts [--check]    (frozen: never train on it)
+# eval sets:  npx vite-node nexus-llm/eval/build-eval.ts [--check]    (v1; frozen: never train on it)
+#             npx vite-node nexus-llm/eval/build-domains.ts [--check] (domains-v1: trading + images, results from the app's own code)
+# score:      npx vite-node nexus-llm/eval/score-cli.ts <preds.jsonl> --suite v1|domains-v1
+# gate:       npx vite-node nexus-llm/eval/gate-cli.ts --candidate <dir with v1.jsonl, domains-v1.jsonl> [--incumbent <dir>]
 npx vitest run nexus-llm                                   # contract tests (also picked up by the repo-wide run)
 npx vite-node nexus-llm/scripts/snapshot-tools.ts          # regenerate spec/tools.snapshot.json + tool-call.schema.json
 npx vite-node nexus-llm/scripts/snapshot-tools.ts --check  # exit 1 if stale
@@ -25,4 +30,10 @@ npx vite-node nexus-llm/scripts/extract-manual-fixtures.ts # re-collect spec/fix
 ```
 
 Training data custody: nothing here reads the browser corpus or any admitted candidate. Synthetic examples, when they
-exist, live in a separate file with an explicit `synthetic: true` field and never enter a Guardian set.
+exist, live in a separate file with an explicit `synthetic: true` field and never enter a Guardian set. Every frozen suite's
+prompts (`eval/frozen-prompts.ts`) are dropped from synthetic and exported training data by default.
+
+Scope, stated plainly: image generation and trading are TOOL behaviours here. NEXUS learns to route to `generate_image` /
+`analyze_image` (the repository's own Stable Diffusion and vision workflows) and to the funds/Kalshi tools; it does not generate
+pixels itself. Trading is PROPOSE-ONLY: the model proposes, the owner approves and places (`/funds`). The domain suite fails any
+answer that claims a placement or states a price it did not read.

@@ -34,7 +34,7 @@ if repo in out.parents or out == repo:
     raise SystemExit("refusing to write checkpoints inside the repo; pass --out outside it")
 out.mkdir(parents=True, exist_ok=True)
 
-random.seed(a.seed); torch.manual_seed(a.seed)
+random.seed(a.seed); torch.manual_seed(a.seed); torch.set_num_threads(max(1, torch.get_num_threads()))
 cfg = PRESETS[a.preset]
 cfg.vocab_size = SP.get_piece_size()
 enc = [encode_row(r["prompt"], r["text"]) for r in rows]
@@ -45,8 +45,14 @@ print(f"parameters: {model.n_params():,}")
 opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=0.01, betas=(0.9, 0.95))
 sched = lambda s: a.lr * min(1.0, (s + 1) / 30) * (0.5 * (1 + math.cos(math.pi * s / a.steps)) * 0.9 + 0.1)
 
+# Length buckets: a batch is drawn from rows of similar length, so it is not padded to the one long row it happens to hold
+# (mean row ~100 tokens, max ~600: random batches were ~5x padding on CPU). Every row is still sampled uniformly at random.
+by_len = sorted(range(len(enc)), key=lambda k: len(enc[k][0]))
+buckets = [by_len[k:k + a.batch * 4] for k in range(0, len(by_len), a.batch * 4)]
+
 def batch():
-    b = random.sample(enc, min(a.batch, len(enc)))
+    pool = random.choices(buckets, weights=[len(x) for x in buckets])[0]
+    b = [enc[k] for k in random.sample(pool, min(a.batch, len(pool)))]
     t = max(len(i) for i, _ in b)
     x = torch.zeros(len(b), t, dtype=torch.long); y = torch.full((len(b), t), -100, dtype=torch.long)
     for k, (ids, mask) in enumerate(b):

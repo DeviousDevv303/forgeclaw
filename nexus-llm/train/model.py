@@ -1,6 +1,6 @@
 """NEXUS Intelligence step 4 prep: a small decoder-only transformer. PROPOSED architecture, not evidence of anything.
 
-Presets: `smoke` (pipeline test), `nexus-30m` (the directive's 8-12 layer / d_model ~512 / 30-60M target, here at the low end).
+Presets: `smoke` (pipeline test), `small` (CPU-trainable), `nexus-30m` (the directive's 8-12 layer / d_model ~512 / 30-60M target, here at the low end).
 Learned positions, pre-LayerNorm, GELU, tied input/output embeddings. No KV cache (sequences are short)."""
 import math
 from dataclasses import dataclass
@@ -23,7 +23,9 @@ class Config:
 
 PRESETS = {
     "smoke": Config(n_layer=2, n_head=4, d_model=128, d_ff=512, ctx=384),
-    "nexus-30m": Config(n_layer=8, n_head=8, d_model=512, d_ff=2048, ctx=512),
+    # small: a CPU-trainable step between smoke and the target; 640 positions fit the longest domain-suite context (573 tokens, tokenizer v1)
+    "small": Config(n_layer=4, n_head=4, d_model=256, d_ff=1024, ctx=640),
+    "nexus-30m": Config(n_layer=8, n_head=8, d_model=512, d_ff=2048, ctx=640),
 }
 
 
