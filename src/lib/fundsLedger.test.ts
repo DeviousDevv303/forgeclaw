@@ -766,3 +766,25 @@ describe('/funds halt (kill switch, stop-only)', () => {
     expect(u).toContain('a model cannot run them')
   })
 })
+
+// KNOWN GAP, recorded for verification (operator 2026-10-27: the approval-time exposure check was WITHDRAWN; do not build it).
+// This test pins today's behaviour so the gap is visible and diffable: `exposure` caps a proposal when it is SIZED, against
+// approved/placed positions only, and approval checks only `available`. If someone changes that, this test fails on purpose
+// and the operator decides; it is not a test to "fix" by editing the expectation.
+describe('KNOWN GAP: exposure is not re-checked at approval (fix withdrawn by the operator)', () => {
+  it('six proposals sized one after another and then approved exceed a 10% exposure limit ($148.80 open vs $100)', () => {
+    let s = applyFundsCommand(capped(1000), { kind: 'limits', changes: { maxExposurePct: 10, maxStakePct: 5 } }, NOW).state
+    s = applyFundsCommand(s, { kind: 'deposit', amount: 1000 }, NOW).state
+    const ids: string[] = []
+    for (let k = 0; k < 6; k++) {
+      const r = proposePosition(s, proposal({ venue: 'polymarket', market: `MKT${k}-X`, probability: 0.6, rationale: 'Independent forecasts put this near sixty percent, well above the price.', sources: ['x'] }), NOW)
+      s = r.state; ids.push(r.position.id)
+    }
+    for (const id of ids) s = applyFundsCommand(s, { kind: 'approve', id }, NOW).state
+    const sum = summarize(s, NOW)
+    const limit = sum.bankroll * 0.10
+    expect(limit).toBe(100)
+    expect(sum.openStake).toBe(148.8)
+    expect(sum.openStake).toBeGreaterThan(limit)
+  })
+})
