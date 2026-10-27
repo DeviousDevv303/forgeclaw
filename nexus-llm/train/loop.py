@@ -29,7 +29,7 @@ side = subprocess.Popen(cmd, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.
 
 @torch.no_grad()
 def step(ids):
-    return model(torch.tensor([ids[-model.c.ctx:]]))[0, -1]
+    return model.next_logprobs(ids)
 
 
 def tool(session, name, args):

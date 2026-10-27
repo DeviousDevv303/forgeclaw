@@ -1,7 +1,10 @@
 """NEXUS Intelligence step 4 prep: a small decoder-only transformer. PROPOSED architecture, not evidence of anything.
 
 Presets: `smoke` (pipeline test), `small` (CPU-trainable), `nexus-30m` (the directive's 8-12 layer / d_model ~512 / 30-60M target, here at the low end).
-Learned positions, pre-LayerNorm, GELU, tied input/output embeddings. No KV cache (sequences are short)."""
+Learned positions, pre-LayerNorm, GELU, tied input/output embeddings. No KV cache (sequences are short).
+`copy=True` adds a pointer-generator copy head: the next-token distribution is g * softmax(vocab logits) + (1 - g) * attention over the
+tokens already in context, so a call can carry the user's own words (run 4 could not copy unseen words). Trained on the exact mixture
+likelihood (`loss`); decoded through `next_logprobs`. With copy=False both reduce to the plain model."""
 import math
 from dataclasses import dataclass
 
@@ -19,12 +22,14 @@ class Config:
     d_ff: int = 2048
     ctx: int = 512
     dropout: float = 0.0
+    copy: bool = False
 
 
 PRESETS = {
     "smoke": Config(n_layer=2, n_head=4, d_model=128, d_ff=512, ctx=384),
     # small: a CPU-trainable step between smoke and the target; 640 positions fit the longest domain-suite context (573 tokens, tokenizer v1)
     "small": Config(n_layer=4, n_head=4, d_model=256, d_ff=1024, ctx=640),
+    "small-copy": Config(n_layer=4, n_head=4, d_model=256, d_ff=1024, ctx=640, copy=True),
     "nexus-30m": Config(n_layer=8, n_head=8, d_model=512, d_ff=2048, ctx=640),
 }
 
@@ -55,6 +60,9 @@ class NexusLM(nn.Module):
         self.pos = nn.Embedding(c.ctx, c.d_model)
         self.blocks = nn.ModuleList(Block(c) for _ in range(c.n_layer))
         self.ln = nn.LayerNorm(c.d_model)
+        if c.copy:
+            self.copy_q, self.copy_k = nn.Linear(c.d_model, c.d_model), nn.Linear(c.d_model, c.d_model)
+            self.copy_gate = nn.Linear(c.d_model, 1)
         self.apply(self._init)
 
     @staticmethod
@@ -64,13 +72,49 @@ class NexusLM(nn.Module):
         if isinstance(m, nn.Linear) and m.bias is not None:
             nn.init.zeros_(m.bias)
 
-    def forward(self, idx):
+    def hidden(self, idx):
         t = idx.shape[1]
         assert t <= self.c.ctx, f"sequence {t} longer than context {self.c.ctx}"
         x = self.tok(idx) + self.pos(torch.arange(t, device=idx.device))
         for blk in self.blocks:
             x = blk(x)
-        return self.ln(x) @ self.tok.weight.T  # tied output embedding
+        return self.ln(x)
+
+    def forward(self, idx):
+        return self.hidden(idx) @ self.tok.weight.T  # tied output embedding (the generation side only)
+
+    def _copy_parts(self, h):
+        """Attention of every position over itself and earlier positions (causal), and the generate gate g."""
+        t = h.shape[1]
+        scores = (self.copy_q(h) @ self.copy_k(h).transpose(1, 2)) / math.sqrt(h.shape[-1])
+        scores = scores.masked_fill(torch.ones(t, t, dtype=torch.bool, device=h.device).triu(1), float("-inf"))
+        return scores.softmax(-1), torch.sigmoid(self.copy_gate(h)).squeeze(-1)
+
+    def loss(self, idx, y):
+        """Mean NLL of the targets y (-100 = ignored). Plain cross-entropy without copy; the exact mixture likelihood with it."""
+        h = self.hidden(idx)
+        logits = h @ self.tok.weight.T
+        if not self.c.copy:
+            return F.cross_entropy(logits.view(-1, logits.shape[-1]), y.view(-1), ignore_index=-100)
+        valid = y != -100
+        yc = y.clamp(min=0)
+        p_gen = logits.log_softmax(-1).gather(-1, yc.unsqueeze(-1)).squeeze(-1).exp()
+        attn, g = self._copy_parts(h)
+        p_copy = (attn * (idx.unsqueeze(1) == yc.unsqueeze(2))).sum(-1)  # mass on earlier tokens equal to the target
+        p = g * p_gen + (1 - g) * p_copy
+        return -(torch.log(p.clamp_min(1e-9)) * valid).sum() / valid.sum().clamp_min(1)
+
+    @torch.no_grad()
+    def next_logprobs(self, ids):
+        """Log-probabilities of the next token after `ids` (a list), including the copy distribution when copy=True."""
+        x = torch.tensor([ids[-self.c.ctx:]])
+        h = self.hidden(x)
+        lp = (h[0, -1] @ self.tok.weight.T).log_softmax(-1)
+        if not self.c.copy:
+            return lp
+        attn, g = self._copy_parts(h)
+        p_copy = torch.zeros_like(lp).scatter_add_(0, x[0], attn[0, -1])
+        return torch.log((g[0, -1] * lp.exp() + (1 - g[0, -1]) * p_copy).clamp_min(1e-12))
 
     def n_params(self) -> int:
         return sum(p.numel() for p in self.parameters())
@@ -80,8 +124,7 @@ class NexusLM(nn.Module):
         self.eval()
         out = list(ids)
         for _ in range(max_new):
-            x = torch.tensor([out[-self.c.ctx:]])
-            nxt = int(self(x)[0, -1].argmax())
+            nxt = int(self.next_logprobs(out).argmax())
             out.append(nxt)
             if nxt in stop_ids:
                 break

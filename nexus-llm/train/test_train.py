@@ -53,5 +53,58 @@ class Guards(unittest.TestCase):
         self.assertFalse((HERE / "should-not-exist").exists())
 
 
+class CopyHead(unittest.TestCase):
+    """The pointer-generator head (model.py, copy=True). The toy task is the property the loop needs: put tokens from the context into
+    the output, including tokens never seen in training."""
+
+    def setUp(self):
+        import torch
+        self.torch = torch
+        from model import Config, NexusLM
+        self.Config, self.NexusLM = Config, NexusLM
+
+    def test_without_copy_loss_and_decoding_equal_the_plain_model(self):
+        torch = self.torch
+        torch.manual_seed(0)
+        m = self.NexusLM(self.Config(vocab_size=50, n_layer=1, n_head=2, d_model=16, d_ff=32, ctx=16)).eval()
+        x = torch.randint(4, 50, (2, 10)); y = torch.randint(4, 50, (2, 10)); y[:, :3] = -100
+        ce = torch.nn.functional.cross_entropy(m(x).view(-1, 50), y.view(-1), ignore_index=-100)
+        self.assertAlmostEqual(float(m.loss(x, y)), float(ce), places=5)
+        self.assertTrue(torch.allclose(m.next_logprobs(x[0].tolist()), m(x[:1])[0, -1].log_softmax(-1), atol=1e-6))
+
+    def test_with_copy_the_next_token_distribution_sums_to_one(self):
+        torch = self.torch
+        torch.manual_seed(0)
+        m = self.NexusLM(self.Config(vocab_size=50, n_layer=1, n_head=2, d_model=16, d_ff=32, ctx=16, copy=True)).eval()
+        self.assertAlmostEqual(float(m.next_logprobs([5, 9, 9, 12, 30]).exp().sum()), 1.0, places=5)
+
+    def test_copy_head_copies_unseen_tokens_and_the_plain_model_cannot(self):
+        torch = self.torch
+        V, SEP, n = 400, 3, 5
+        def batch(lo, hi, b=64):
+            w = torch.randint(lo, hi, (b, n))
+            x = torch.cat([torch.full((b, 1), 2), w, torch.full((b, 1), SEP), w], 1)
+            y = torch.full_like(x, -100); y[:, n + 1:-1] = x[:, n + 2:]
+            return x, y
+        acc = {}
+        for copy in (False, True):
+            torch.manual_seed(1)
+            m = self.NexusLM(self.Config(vocab_size=V, n_layer=2, n_head=2, d_model=64, d_ff=128, ctx=16, copy=copy))
+            opt = torch.optim.AdamW(m.parameters(), lr=3e-3)
+            for _ in range(300):
+                x, y = batch(4, 300)  # training tokens: ids 4..299
+                loss = m.loss(x, y); opt.zero_grad(); loss.backward(); opt.step()
+            m.eval(); x, _ = batch(300, 400, 32)  # held-out tokens 300..399, never seen in training
+            hit = tot = 0
+            for row in x.tolist():
+                ids = row[: n + 2]
+                for k in range(n):
+                    hit += int(int(m.next_logprobs(ids).argmax()) == row[n + 2 + k]); tot += 1
+                    ids = ids + [row[n + 2 + k]]
+            acc[copy] = hit / tot
+        self.assertGreater(acc[True], 0.8, acc)
+        self.assertLess(acc[False], 0.2, acc)
+
+
 if __name__ == "__main__":
     unittest.main()

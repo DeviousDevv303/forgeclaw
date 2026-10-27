@@ -9,7 +9,6 @@ import random
 import time
 
 import torch
-import torch.nn.functional as F
 
 from common import SP, encode_row, read_jsonl
 from model import PRESETS, NexusLM
@@ -65,7 +64,7 @@ t0 = time.time(); log = []
 for step in range(a.steps):
     for g in opt.param_groups: g["lr"] = sched(step)
     model.train(); x, y = batch()
-    loss = F.cross_entropy(model(x).view(-1, cfg.vocab_size), y.view(-1), ignore_index=-100)
+    loss = model.loss(x, y)
     opt.zero_grad(); loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step()
     if step % 50 == 0 or step == a.steps - 1:
         log.append({"step": step, "loss": round(float(loss.detach()), 4), "sec": round(time.time() - t0, 1)}); print(log[-1], flush=True)

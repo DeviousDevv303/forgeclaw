@@ -22,7 +22,7 @@ dec = ConstrainedDecoder(SP)
 
 @torch.no_grad()
 def step_logits(ids):
-    return model(torch.tensor([ids[-model.c.ctx:]]))[0, -1]
+    return model.next_logprobs(ids)
 
 
 with open(a.out, "w") as f:
