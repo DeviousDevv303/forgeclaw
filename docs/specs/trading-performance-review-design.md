@@ -77,5 +77,15 @@ What the code at `1ee0026` already does for each clause (read, not run):
 | 619 settled bets widens the mandate | **not built** | 619 is §4's count to detect a +10% ROI edge; a smaller true edge needs more (2,475 at +5%). Widening is a mandate change; no code does it. |
 
 Stated plainly, so the record holds it: with `autoapprove` above 0 before any evidence, orders under N are placed on an unproven edge.
-The bound on a bad day is the limits, not the daily stop: up to `exposure` (default 30%) of the capped bankroll can be open at once, and
-all of it can settle against you before the stop counts a single loss.
+The daily stop is not the bound on a bad day: it counts SETTLED losses only, so everything open can settle against you before it acts.
+
+**Correction (same day, after reading the approve path):** `exposure` is NOT a hard ceiling either. It is applied when a proposal is
+SIZED (`sizePosition`), against positions already approved or placed; a merely-proposed position does not count. The approve step
+(`applyFundsCommand` case `approve`) checks only `available` (bankroll minus open stake), not `exposure`. So:
+- several proposals sized one after another and then approved together can exceed `exposure`, up to the whole available bankroll;
+- on the autoapprove path, two `funds_propose` calls in the same model turn run concurrently (tool calls in one turn are dispatched with
+  `Promise.all`), and the second can be sized while the first's approval is still in flight, so it too can exceed `exposure`.
+The hard bound today is therefore the bankroll the cap allows, not `cap × exposure`. Read, not executed: no test reproduces this yet.
+A small fix exists (re-check `exposure` at approval, counting in-flight approvals); it is new trading code and is not built without the
+operator's go. Until then, setting `exposure=10` lowers the typical case but does not make "worst day = 10% of cap" true.
+`N` (autoapprove) is a per-order stake limit; it does not bound a day by itself.
