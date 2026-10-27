@@ -43,3 +43,11 @@ the six stale rows above `superseded`/`historical`, as the seed's own ingestion 
 - Admit the `stated` principle/governance rows after review; hold or supersede the stale `repo_verified` rows.
 - If you want these in the app as *unadmitted candidates*, a converter can emit app-shaped candidate records (with the correct integrity hash)
   for you to paste; admission would still be yours. Not built.
+
+## Operator decision (2026-10-27)
+Cristian: "Stale seed rows: HOLD all six; supersede via the 29f2acb audit; re-verify at current main before any admission."
+
+- FC-002, GD-001, GD-002, GD-003, ST-001, NX-004 are **held**. None is admitted, trained on, or injected as guidance.
+- This audit (first recorded in `29f2acb`) is the superseding record for those six rows.
+- Re-verification gate: before any of them is admitted, each claim is re-checked against the then-current `origin/main` and the commit is
+  written into `applies_to_commit`. At the time of this decision, `origin/main` is still `1ee0026`, the commit this audit was taken at.
