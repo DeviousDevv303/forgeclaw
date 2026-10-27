@@ -49,7 +49,11 @@ Gate with `--incumbent` run 4: **REJECTED** (domains below the incumbent). Run 4
 Closed loop: **7/18** (run 4: 6/18). Copying works for the first time: **3/5 image prompts carry the requested words the model never saw
 in training** (e.g. "Create a watercolor picture of a lighthouse at dawn" -> `"make a watercolor picture of a lighthouse at dawn"`, style
 watercolor); copies are still noisy ("a beaver a damver a dam", "wrenchn") and the Kalshi queries are garbled ("Sed cutting", "C 100k").
-That faithful call was dispatched UNEDITED to the repository's own `generate-image.yml` (invocation `nexus-run5-loop-img3`): see below.
+That faithful call was dispatched UNEDITED to the repository's own `generate-image.yml` (invocation `nexus-run5-loop-img3`): workflow run
+[40601203465](https://github.com/DeviousDevv303/forgeclaw/actions/runs/40601203465) **succeeded** (10 min, sd15, 512x512) and published
+`generated-images/nexus-run5-loop-img3.png` (branch `generated-images` @ `2c4b697`): a watercolor lighthouse at dawn. That is the first image
+rendered from a call NEXUS itself produced, end to end: user prompt -> model -> constrained call -> the app's own image workflow. Scope, stated:
+1 of 5 image scenarios was faithful enough to send, and the model that produced it is gate-REJECTED as a runtime replacement.
 
 ### Run 4: `small`, 20,000 SYNTHETIC rows (router-labelled families, high-entropy arguments, seed 13), 5,000 steps, 47 min
 Constrained: v1 **60.7%** (run 2: 48.8%), domains v1.1 **76.6%** (66.0%); format/schema 100%, overclaim 0%, fabrication 0%. Tool choice v1

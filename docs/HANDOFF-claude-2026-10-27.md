@@ -57,3 +57,11 @@ directive), `.github/workflows/ci.yml` is a new workflow file (rule-18 flag), an
 ## 6. Waiting on the operator
 N and cap; Guardian review of the halt; EF-03 (staged, pre-PR, Guardian first); license directive; Kimi's docs; the exporter JSON;
 the TradeSheet re-run.
+
+## Addendum (23:30 UTC): run 5 and the first NEXUS-driven image
+- Copy head (`21842ac`, preset `small-copy`). Run 5 (same data/steps as run 4): v1 64.3%, domains v1.1 68.1%; gate vs run 4 **REJECTED**
+  (domains below the incumbent), so run 4 stays the incumbent. Loop 7/18; **3/5 image calls now carry the requested unseen words**; Kalshi
+  queries still garbled.
+- One faithful call ("make a watercolor picture of a lighthouse at dawn", watercolor) was dispatched unedited to `generate-image.yml`:
+  run 40601203465 succeeded; image at `generated-images/nexus-run5-loop-img3.png` (`2c4b697`).
+- Next: combine run 4's routing with run 5's copying (copy head + more rows/steps, or nexus-30m on a GPU); fix the Kalshi query copy.
