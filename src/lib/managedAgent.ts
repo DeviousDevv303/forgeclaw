@@ -11,6 +11,7 @@ import {
   toToolCalls,
 } from './ai/manualToolMode'
 import { boundPrefixByBudget, conservativeTokenCount } from './ai/nexusContext'
+import { toolCallRefusal } from './toolExposure'
 
 // ─── Agent capability profiles ───────────────────────────────────────────────
 // The runtime — not an agent's system prompt — decides which tools an agent may
@@ -166,6 +167,12 @@ export async function runSubAgent(
       ? allTools.filter(t => allowedTools.includes(t.name))
       : allTools
 
+  // The offered set is the allowlist, enforced at execution: a model-emitted
+  // call naming a tool outside it is refused before dispatch (the same
+  // toolCallRefusal admission the main chat loop applies), so a capability
+  // profile binds what runs, not only what the prompt describes.
+  const offeredToolNames: ReadonlySet<string> = new Set(tools.map(t => t.name))
+
   const supportsNativeTools = modelSupportsTools(provider, model)
 
   // Budgeted path applies to the browser-local runtimes that lack native tools.
@@ -229,10 +236,13 @@ export async function runSubAgent(
     }
 
     const iterResults = await Promise.all(
-      calls.map(async (tc: ToolCall) => ({
-        toolCallId: tc.id,
-        output: await executeTool(tc, toolCtx),
-      })),
+      calls.map(async (tc: ToolCall) => {
+        const refusal = toolCallRefusal(tc.name, offeredToolNames, false, 0)
+        return {
+          toolCallId: tc.id,
+          output: refusal ?? (await executeTool(tc, toolCtx)),
+        }
+      }),
     )
 
     messages.push({

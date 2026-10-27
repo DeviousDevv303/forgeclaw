@@ -329,7 +329,11 @@ describe('saved-agent run reaches real tools without native function calling', (
 
     expect(seen[0].systemPrompt).not.toContain('github_write_file')
     const toolTurn = seen[1].messages.find(message => message.role === 'tool')
-    expect(toolTurn?.content).toContain('[TOOL ERROR]')
+    // J-01: the allowlist is enforced before execution, so the emitted write is
+    // refused as not offered — its handler never runs (previously this surfaced
+    // only as an incidental [TOOL ERROR] from inside the handler).
+    expect(toolTurn?.content).toContain('[GUARDIAN BLOCKED]')
+    expect(toolTurn?.content).toContain('was not offered for this request')
   })
 
   it('keeps Guardian authoritative on the saved-agent path', async () => {
@@ -372,8 +376,11 @@ describe('saved-agent run reaches real tools without native function calling', (
       { text: 'The result is 4.' },
     ])
 
+    // No capability profile: run_js is not in the 'coding' profile's tool
+    // order, so under J-01 enforcement it would be refused as not offered.
+    // This test's subject is the native tool-calling path itself, so it runs
+    // on the caller-supplied tool list where run_js is legitimately offered.
     const result = await runSubAgent('specialist', 'compute', undefined, 'local', 'local-model', 'http://127.0.0.1:8080/v1', FORGE_TOOLS, ctx(), {
-      capability: 'coding',
       callProviderFn,
     })
 
@@ -457,5 +464,43 @@ describe('coding capability tool lists', () => {
     expect(readonly).toContain('web_search')
     expect(readonly).not.toContain('shell_exec')
     expect(readonly).not.toContain('github_write_file')
+  })
+})
+
+describe('sub-agent offered-tool allowlist enforcement (J-01)', () => {
+  it('refuses an out-of-profile call before dispatch: the handler never runs', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { seen, callProviderFn } = makeTransport([
+      { text: '```tool_call\n{"name":"shell_exec","arguments":{"command":"echo hi"}}\n```' },
+      { text: 'done' },
+    ])
+
+    await runSubAgent('specialist', 'inspect only', undefined, 'nexus', 'qwen', '', FORGE_TOOLS, ctx(), {
+      capability: 'coding-readonly',
+      callProviderFn,
+    })
+
+    const toolTurn = seen[1].messages.find(message => message.role === 'tool')
+    expect(toolTurn?.content).toContain('[GUARDIAN BLOCKED] shell_exec was not offered for this request, so it was not executed.')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('still executes a call that is inside the profile', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ message: 'Not Found' }), { status: 404, headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { seen, callProviderFn } = makeTransport([
+      { text: '```tool_call\n{"name":"github_repo_state","arguments":{}}\n```' },
+      { text: 'done' },
+    ])
+
+    await runSubAgent('specialist', 'inspect only', undefined, 'nexus', 'qwen', '', FORGE_TOOLS, ctx(), {
+      capability: 'coding-readonly',
+      callProviderFn,
+    })
+
+    const toolTurn = seen[1].messages.find(message => message.role === 'tool')
+    expect(toolTurn?.content).not.toContain('was not offered')
+    expect(fetchMock).toHaveBeenCalled()
   })
 })
