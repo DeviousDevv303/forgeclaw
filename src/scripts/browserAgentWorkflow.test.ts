@@ -97,19 +97,36 @@ const CHROMIUM = '/opt/pw-browsers/chromium'
 const PW_PATH = '/opt/node-tools/node_modules'
 const haveBrowser = existsSync(CHROMIUM) && existsSync(PW_PATH)
 
-interface RunnerOut { ok: boolean; url: string; title: string; text: string; screenshot?: boolean; actionsOk: number; error?: string; elements: Array<{ role: string; name: string; note?: string }>; steps: Array<{ n: number; type: string; ok: boolean; note?: string }> }
+interface RunnerOut { ok: boolean; url: string; title: string; text: string; screenshot?: boolean; actionsOk: number; error?: string; draftMode?: boolean; writesBlocked?: number; elements: Array<{ role: string; name: string; note?: string }>; steps: Array<{ n: number; type: string; ok: boolean; note?: string }> }
 
 describe.skipIf(!haveBrowser)('browser-agent.cjs in a real Chromium', () => {
   const PAGE1 = (port: number) => `<!doctype html><title>Home</title><h1>Welcome</h1>
     <a href="/next">Go to next page</a> <button onclick="document.getElementById('o').textContent='clicked!'">Press me</button><p id="o">idle</p>
     <label>Search <input name="q" placeholder="query"></label> <label>Secret <input type="password" name="pw"></label>
     <script>fetch('http://127.0.0.1:${port}/secret').then(r => r.text()).then(t => { document.title = 'leak:' + t }).catch(() => { document.title = 'blocked' })</script>`
-  async function withSite<T>(fn: (port: number, go: (actions: unknown[]) => Promise<RunnerOut>) => Promise<T>): Promise<T> {
+  // Draft-mode pages: each one tries to write in a different way. The server counts every write that reaches it.
+  const FORM = `<label>Name <input name="who"></label>`
+  const WRITE_PAGES: Record<string, (port: number) => string> = {
+    '/post-form': () => `<title>Apply</title><form method="post" action="/apply">${FORM}<button>Send application</button></form>`,
+    '/js-submit': () => `<title>Apply</title><form method="post" action="/apply">${FORM}</form><button onclick="document.forms[0].submit()">Send</button>`,
+    // A page that dodges the in-page guard with a fresh frame's untouched prototype: only the network block stops it.
+    '/frame-submit': () => `<title>Apply</title><form method="post" action="/apply">${FORM}</form>
+      <button onclick="const f = document.createElement('iframe'); document.body.appendChild(f); f.contentWindow.HTMLFormElement.prototype.submit.call(document.forms[0])">Send</button>`,
+    '/fetch-post': () => `<title>Apply</title><button onclick="fetch('/apply', { method: 'POST', body: 'x' }).then(() => { document.title = 'sent' }, () => { document.title = 'refused' })">Send</button>`,
+    '/get-form': () => `<title>Find</title><form action="/search"><label>Query <input name="q"></label><button>Search</button></form>`,
+    '/beacon': port => `<title>Article</title><h1>Story</h1><script>fetch('http://tracker.test:${port}/collect', { method: 'POST', mode: 'no-cors', body: 'v' }).catch(() => {})</script>`,
+  }
+  async function withSite<T>(fn: (port: number, go: (actions: unknown[]) => Promise<RunnerOut>, writes: () => number) => Promise<T>): Promise<T> {
+    let writes = 0
     const server = createServer((req, res) => {
       res.setHeader('content-type', 'text/html')
+      const path = (req.url || '/').split('?')[0]
+      if (req.method !== 'GET' && req.method !== 'HEAD') { writes++; res.end('<title>Thanks</title><h1>Application received</h1>'); return }
       // CORS is open on purpose: without the runner's own blocking, the page WOULD read this.
       if (req.url === '/secret') { res.setHeader('access-control-allow-origin', '*'); res.end('TOP-SECRET') }
       else if (req.url === '/next') res.end('<title>Next</title><h1>Second page</h1>')
+      else if (path === '/search') res.end(`<title>Results</title><h1>Results for ${new URL(req.url || '/', 'http://x').searchParams.get('q')}</h1>`)
+      else if (WRITE_PAGES[path]) res.end(WRITE_PAGES[path]((server.address() as AddressInfo).port))
       else res.end(PAGE1((server.address() as AddressInfo).port))
     })
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -120,14 +137,16 @@ describe.skipIf(!haveBrowser)('browser-agent.cjs in a real Chromium', () => {
         await run('node', [join(process.cwd(), 'scripts/browser-agent.cjs')], {
           cwd, timeout: 90_000,
           env: { ...process.env, NODE_PATH: PW_PATH, PLAYWRIGHT_CHROMIUM_EXECUTABLE: CHROMIUM, ACTIONS_JSON: JSON.stringify(actions),
-            BROWSER_AGENT_TEST_LOOKUP: '1', BROWSER_AGENT_TEST_ARGS: JSON.stringify(['--host-resolver-rules=MAP site.test 127.0.0.1']) },
+            BROWSER_AGENT_TEST_LOOKUP: '1', BROWSER_AGENT_TEST_ARGS: JSON.stringify(['--host-resolver-rules=MAP site.test 127.0.0.1, MAP tracker.test 127.0.0.1']) },
         }).catch(() => undefined) // a failed round exits 1 on purpose; the result file is what matters
         return JSON.parse(readFileSync(join(cwd, 'agent-out/result.json'), 'utf8')) as RunnerOut
       } finally { rmSync(cwd, { recursive: true, force: true }) }
     }
-    try { return await fn(port, go) } finally { server.close() }
+    try { return await fn(port, go, () => writes) } finally { server.close() }
   }
   const home = (port: number) => ({ type: 'goto', url: `http://site.test:${port}/` })
+  const at = (port: number, path: string) => ({ type: 'goto', url: `http://site.test:${port}${path}` })
+  const fill = { type: 'type', label: 'Name', text: 'Alex' }
 
   it('browses, clicks, follows a link and types, and reports the page', async () => {
     await withSite(async (port, go) => {
@@ -170,4 +189,61 @@ describe.skipIf(!haveBrowser)('browser-agent.cjs in a real Chromium', () => {
       expect(r.error).toMatch(/only http and https/)
     })
   }, 60_000)
+
+  describe('draft mode: nothing is ever submitted', () => {
+    const blockedSubmit = (r: RunnerOut, n: number) => {
+      expect(r.ok).toBe(false)
+      expect(r.draftMode).toBe(true)
+      expect(r.actionsOk).toBe(n - 1)
+      expect(r.steps[n - 1]).toMatchObject({ n, ok: false })
+      expect(r.steps[n - 1].note).toMatch(/write blocked \(draft mode\)/)
+      expect(r.steps).toHaveLength(n) // the round stops at the blocked step
+      expect(r.text).not.toContain('Application received')
+    }
+    it('blocks a POST form submitted by clicking its button or pressing Enter, and the filled form stays on screen', async () => {
+      await withSite(async (port, go, writes) => {
+        const click = await go([at(port, '/post-form'), fill, { type: 'click', role: 'button', name: 'Send application' }, { type: 'wait', ms: 200 }])
+        blockedSubmit(click, 3)
+        expect(click.title).toBe('Apply')
+        const enter = await go([at(port, '/post-form'), { ...fill, submit: true }])
+        blockedSubmit(enter, 2)
+        const key = await go([at(port, '/post-form'), fill, { type: 'press', key: 'Enter' }])
+        blockedSubmit(key, 3)
+        expect(writes()).toBe(0)
+      })
+    }, 180_000)
+    it('blocks form.submit() from script, also through a fresh frame that bypasses the in-page guard', async () => {
+      await withSite(async (port, go, writes) => {
+        blockedSubmit(await go([at(port, '/js-submit'), fill, { type: 'click', role: 'button', name: 'Send' }]), 3)
+        blockedSubmit(await go([at(port, '/frame-submit'), fill, { type: 'click', role: 'button', name: 'Send' }]), 3)
+        expect(writes()).toBe(0)
+      })
+    }, 120_000)
+    it('fails the step when a click makes the page send a same-site write', async () => {
+      await withSite(async (port, go, writes) => {
+        const r = await go([at(port, '/fetch-post'), { type: 'click', role: 'button', name: 'Send' }])
+        blockedSubmit(r, 2)
+        expect(r.title).toBe('refused')
+        expect(writes()).toBe(0)
+      })
+    }, 120_000)
+    it('still runs GET forms (site search), which are not writes', async () => {
+      await withSite(async (port, go) => {
+        const r = await go([at(port, '/get-form'), { type: 'type', label: 'Query', text: 'cubes', submit: true }, { type: 'wait', ms: 300 }])
+        expect(r.ok, JSON.stringify(r.steps)).toBe(true)
+        expect(r.title).toBe('Results')
+        expect(r.text).toContain('Results for cubes')
+        expect(r.writesBlocked).toBe(0)
+      })
+    }, 120_000)
+    it('refuses a third-party write during page load without failing the page, and counts it', async () => {
+      await withSite(async (port, go, writes) => {
+        const r = await go([at(port, '/beacon'), { type: 'wait', ms: 800 }])
+        expect(r.ok, JSON.stringify(r.steps)).toBe(true)
+        expect(r.text).toContain('Story')
+        expect(r.writesBlocked).toBeGreaterThanOrEqual(1)
+        expect(writes()).toBe(0)
+      })
+    }, 120_000)
+  })
 })

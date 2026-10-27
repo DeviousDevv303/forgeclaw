@@ -4,6 +4,14 @@
 // private/internal addresses (also for redirects and sub-requests), never types into a password field, never
 // downloads, and is bounded in actions, time and output. The model that decides the next step lives in the app.
 //
+// DRAFT MODE, ALWAYS ON (operator authorization 2026-10-27: "default-on write block ONLY; submit stays blocked"). There is no
+// switch to turn it off. Every request whose method is not GET/HEAD/OPTIONS is refused at the network layer, and a form that
+// would submit with a non-GET method is cancelled in the page. An action that tries to submit (a POST form submit, a POST
+// navigation, or a same-site write right after a click, key press or typing) FAILS its step with a note, so the app reports it
+// and drops it from the session; nothing is ever sent. Background writes to other sites during page load (usually analytics)
+// are refused too but do not fail the step; they are counted in `writesBlocked`. GET forms (site search) still work: they are
+// not writes. Residual risk, stated: a GET request with side effects, and WebSockets (not covered by request routing).
+//
 //   env: ACTIONS_JSON  JSON array of actions to replay from a blank page (the app sends the accepted ones plus the new batch)
 //   out: agent-out/result.json, agent-out/screen.jpg
 'use strict'
@@ -17,6 +25,9 @@ const MAX_ELEMENTS = 60
 const ACTION_TIMEOUT_MS = 8000
 const TOTAL_TIMEOUT_MS = 4 * 60 * 1000
 const ACTION_TYPES = new Set(['goto', 'click', 'type', 'press', 'scroll', 'wait', 'back'])
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+/** Rough same-site test (last two labels); good enough to tell a site's own write from a third-party tracker. */
+const siteOf = host => host.split('.').slice(-2).join('.')
 const KEYS = new Set(['Enter', 'Tab', 'Escape', 'ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'PageDown', 'PageUp', 'Home', 'End', 'Backspace', 'Space'])
 
 function privateIPv4(ip) {
@@ -156,9 +167,28 @@ async function main() {
     browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', ...(process.env.BROWSER_AGENT_TEST_ARGS ? JSON.parse(process.env.BROWSER_AGENT_TEST_ARGS) : [])] })
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: false, serviceWorkers: 'block', permissions: [] })
     const seen = new Map()
+    // Draft mode: the page can never send a write (see the header). Writes are recorded so a submit attempt fails its step.
+    const blocked = []
+    let submitsBlocked = 0
+    await context.exposeFunction('__forgeclawSubmitBlocked', () => { submitsBlocked++ })
+    await context.addInitScript(() => {
+      const writes = f => (f && f.getAttribute && (f.getAttribute('method') || 'get').toLowerCase() !== 'get') || (f && f.method && f.method.toLowerCase() !== 'get')
+      const report = () => { try { window.__forgeclawSubmitBlocked() } catch (_) { /* best effort; the network block still holds */ } }
+      document.addEventListener('submit', e => { if (writes(e.target)) { e.preventDefault(); e.stopImmediatePropagation(); report() } }, true)
+      const P = HTMLFormElement.prototype, submit = P.submit, requestSubmit = P.requestSubmit
+      Object.defineProperty(P, 'submit', { configurable: false, writable: false, value: function () { if (writes(this)) report(); else return submit.call(this) } })
+      if (requestSubmit) Object.defineProperty(P, 'requestSubmit', { configurable: false, writable: false, value: function (b) { if (writes(this)) report(); else return requestSubmit.call(this, b) } })
+    })
     // Every request the page makes (redirects, images, scripts) is checked, not only the address we typed.
     await context.route('**/*', async route => {
-      const url = route.request().url()
+      const req = route.request()
+      if (!SAFE_METHODS.has(req.method())) {
+        let host = ''
+        try { host = new URL(req.url()).hostname } catch { /* unparseable: still blocked */ }
+        blocked.push({ method: req.method(), host, navigation: req.isNavigationRequest() })
+        return route.abort('blockedbyclient')
+      }
+      const url = req.url()
       if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('about:')) return route.continue()
       try {
         if (!seen.has(url)) seen.set(url, checkUrlResolved(url, testLookup))
@@ -172,9 +202,23 @@ async function main() {
     const deadline = Date.now() + TOTAL_TIMEOUT_MS
     for (const [i, a] of actions.entries()) {
       if (Date.now() > deadline) { out.steps.push({ n: i + 1, type: a.type, ok: false, note: 'time limit reached' }); break }
-      try { await runAction(page, a); out.steps.push({ n: i + 1, type: a.type, ok: true }); out.actionsOk = i + 1 }
+      const before = { writes: blocked.length, submits: submitsBlocked }
+      try { await runAction(page, a) }
       catch (e) { out.steps.push({ n: i + 1, type: a.type, ok: false, note: String(e.message || e).split('\n')[0].slice(0, 160) }); break }
+      const fresh = blocked.slice(before.writes)
+      let pageHost = ''
+      try { pageHost = new URL(page.url()).hostname } catch { /* about:blank */ }
+      const interactive = a.type === 'click' || a.type === 'press' || a.type === 'type'
+      const attempt = submitsBlocked > before.submits ? { method: 'POST', host: pageHost }
+        : fresh.find(w => w.navigation) || (interactive ? fresh.find(w => pageHost && siteOf(w.host) === siteOf(pageHost)) : undefined)
+      if (attempt) {
+        out.steps.push({ n: i + 1, type: a.type, ok: false, note: `write blocked (draft mode): a ${attempt.method} to ${attempt.host || 'the page'} was not sent. Submitting is turned off; stop and tell the owner the form is filled in.` })
+        break
+      }
+      out.steps.push({ n: i + 1, type: a.type, ok: true }); out.actionsOk = i + 1
     }
+    out.draftMode = true
+    out.writesBlocked = blocked.length + submitsBlocked
     out.url = page.url()
     const snap = await snapshot(page).catch(() => ({ title: '', text: '', elements: [] }))
     Object.assign(out, snap)
