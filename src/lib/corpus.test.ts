@@ -143,81 +143,81 @@ describe('NEXUS / Corpus Local Mode', () => {
   it('keeps webhook failure optional and stores returned updates as candidates', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     const { candidate } = await repository.appendInteraction({ input: 'webhook test', context: '', result: 'local result', runtime: 'corpus', model: 'local-model' })
-    const unavailable = await repository.syncPending('https://example.invalid/webhook', vi.fn().mockRejectedValue(new Error('offline')))
-    expect(unavailable.status).toBe('pending')
+    const unavailable = await repository.sendCandidates('https://example.invalid/webhook', vi.fn().mockRejectedValue(new Error('offline')))
+    expect(unavailable.status).toBe('failed')
     expect(repository.getApprovedCount()).toBe(0)
-    const synced = await repository.syncPending('https://example.invalid/webhook', vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [{ id: candidate.id }, { id: 'missing' }, 'malformed'] }), { status: 200 })))
-    expect(synced.status).toBe('synced')
-    expect(synced.admitted).toBe(0)
+    const synced = await repository.sendCandidates('https://example.invalid/webhook', vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [{ id: candidate.id }, { id: 'missing' }, 'malformed'] }), { status: 200 })))
+    expect(synced.status).toBe('sent')
+    expect(synced.delivered).toBe(1)
     expect(repository.getApprovedCount()).toBe(0)
     expect((await repository.admitCandidate(candidate.id, await testAuthorization(candidate))).status).toBe('admitted')
     expect(repository.getApprovedCount()).toBe(1)
   })
 
-  it('F-022: an unreadable webhook reply is still pending, never synced', async () => {
+  it('F-022: an unreadable webhook reply is still pending, never sent', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'f22 in', context: '', result: 'f22 out', runtime: 'corpus', model: 'local-model' })
-    const res = await repository.syncPending(
+    const res = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response('<html>not json</html>', { status: 200 })),
     )
-    expect(res.status).toBe('pending')
-    expect(res.admitted).toBe(0)
+    expect(res.status).toBe('failed')
+    expect(res.delivered).toBe(0)
     expect(res.reason).toMatch(/could not be read/)
   })
 
-  it('F-022: a null webhook reply body is still pending, never synced', async () => {
+  it('F-022: a null webhook reply body is still pending, never sent', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'f22 null in', context: '', result: 'f22 null out', runtime: 'corpus', model: 'local-model' })
-    const res = await repository.syncPending(
+    const res = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.reject(new Error('body stream failed')) }),
     )
-    expect(res.status).toBe('pending')
-    expect(res.admitted).toBe(0)
+    expect(res.status).toBe('failed')
+    expect(res.delivered).toBe(0)
     expect(res.reason).toMatch(/empty reply/)
   })
 
-  it('F-022: an empty webhook reply body is still pending, never synced', async () => {
+  it('F-022: an empty webhook reply body is still pending, never sent', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'f22 empty in', context: '', result: 'f22 empty out', runtime: 'corpus', model: 'local-model' })
-    const empty = await repository.syncPending(
+    const empty = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response('', { status: 200 })),
     )
-    expect(empty.status).toBe('pending')
-    expect(empty.admitted).toBe(0)
+    expect(empty.status).toBe('failed')
+    expect(empty.delivered).toBe(0)
     expect(empty.reason).toMatch(/empty reply/)
-    const whitespace = await repository.syncPending(
+    const whitespace = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response('  \n ', { status: 200 })),
     )
-    expect(whitespace.status).toBe('pending')
-    expect(whitespace.admitted).toBe(0)
+    expect(whitespace.status).toBe('failed')
+    expect(whitespace.delivered).toBe(0)
     expect(whitespace.reason).toMatch(/empty reply/)
   })
 
-  it('F-022: a webhook reply without the updates list is still pending, never synced', async () => {
+  it('F-022: a webhook reply without the updates list is still pending, never sent', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'f22 shape in', context: '', result: 'f22 shape out', runtime: 'corpus', model: 'local-model' })
-    const res = await repository.syncPending(
+    const res = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 })),
     )
-    expect(res.status).toBe('pending')
-    expect(res.admitted).toBe(0)
+    expect(res.status).toBe('failed')
+    expect(res.delivered).toBe(0)
     expect(res.reason).toMatch(/updates list/)
   })
 
-  it('F-022: a present-but-empty updates list stays synced (flagged open contract question, PR #273)', async () => {
+  it('F-022: a present-but-empty updates list stays sent (flagged open contract question, PR #273)', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'f22 empty updates in', context: '', result: 'f22 empty updates out', runtime: 'corpus', model: 'local-model' })
-    const res = await repository.syncPending(
+    const res = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [] }), { status: 200 })),
     )
-    expect(res.status).toBe('synced')
-    expect(res.admitted).toBe(0)
+    expect(res.status).toBe('sent')
+    expect(res.delivered).toBe(1)
   })
 
   it('H-A: rejects an unauthorized webhook candidate instead of admitting it', async () => {
@@ -248,15 +248,31 @@ describe('NEXUS / Corpus Local Mode', () => {
       generatedResult,
     }
 
-    const synced = await repository.syncPending(
+    const synced = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response(JSON.stringify({ updates: [remoteCandidate] }), { status: 200 })),
     )
 
-    expect(synced.status).toBe('synced')
-    expect(synced.admitted).toBe(0)
+    expect(synced.status).toBe('sent')
+    expect(synced.delivered).toBe(1)
     expect(repository.getApprovedCount()).toBe(0)
     expect(repository.retrieve('remote result')).toHaveLength(0)
+  })
+
+  it('EF-03 (b): a verified send claims delivery only — it admits nothing and keeps no reconciliation state', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    await repository.appendInteraction({ input: 'push semantics in', context: '', result: 'push semantics out', runtime: 'corpus', model: 'local-model' })
+    const ok = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ updates: [] }), { status: 200 })))
+    const first = await repository.sendCandidates('https://example.invalid/webhook', ok)
+    expect(first.status).toBe('sent')
+    expect(first.delivered).toBe(1)
+    expect(repository.getApprovedCount()).toBe(0)
+    // A push keeps no pending/reconciled state: the same candidate set is sent
+    // again on the next send, and admission still happens only in the panel.
+    const second = await repository.sendCandidates('https://example.invalid/webhook', ok)
+    expect(second.status).toBe('sent')
+    expect(second.attempted).toBe(1)
+    expect(repository.getApprovedCount()).toBe(0)
   })
 
   it('makes approved corpus context available to the DeepSeek workflow without local fallback', async () => {

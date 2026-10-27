@@ -50,10 +50,11 @@ export interface CorpusInteractionInput {
   metadata?: Record<string, string>
 }
 
-export interface CorpusSyncResult {
+export interface CorpusSendResult {
   attempted: number
-  admitted: number
-  status: 'skipped' | 'synced' | 'pending' | 'rejected'
+  /** Records in a send whose delivery was confirmed by a shape-verified reply. A send claims delivery only — never admission (EF-03 option b). */
+  delivered: number
+  status: 'skipped' | 'sent' | 'failed'
   reason?: string
 }
 
@@ -952,10 +953,10 @@ export class CorpusRepository {
     return rejected
   }
 
-  async syncPending(webhookUrl: string, fetchImpl: typeof fetch = fetch): Promise<CorpusSyncResult> {
+  async sendCandidates(webhookUrl: string, fetchImpl: typeof fetch = fetch): Promise<CorpusSendResult> {
     const ids = readIndex(CANDIDATE_INDEX_KEY)
-    if (!webhookUrl.trim()) return { attempted: 0, admitted: 0, status: 'skipped', reason: 'No webhook configured.' }
-    if (!ids.length) return { attempted: 0, admitted: 0, status: 'synced', reason: 'No pending candidates.' }
+    if (!webhookUrl.trim()) return { attempted: 0, delivered: 0, status: 'skipped', reason: 'No webhook configured.' }
+    if (!ids.length) return { attempted: 0, delivered: 0, status: 'sent', reason: 'No candidates to send.' }
     const records = ids.flatMap(id => {
       const raw = safeGetItem(`${CANDIDATE_PREFIX}${id}`)
       if (!raw) return []
@@ -968,33 +969,38 @@ export class CorpusRepository {
     })
     try {
       const response = await fetchImpl(webhookUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ corpusId: 'nexus-local', version: this.getVersion(), records }) })
-      if (!response.ok) return { attempted: records.length, admitted: 0, status: 'pending', reason: `Webhook HTTP ${response.status}` }
+      if (!response.ok) return { attempted: records.length, delivered: 0, status: 'failed', reason: `Webhook HTTP ${response.status}` }
       const rawBody = await response.text().catch(() => null)
-      // F-022: 'synced' is verified against the SHAPE of the reply — a parseable
-      // body containing the expected `updates` list — never against HTTP 200 and
-      // never against parseability alone. An empty body, an unparseable body, or
-      // a body with no `updates` list never read the artifact this status word
-      // rests on, so each reports 'pending' instead of asserting a reconciliation
-      // that never happened. The webhook receiver is not in this repo (its URL is
-      // an owner-configured endpoint), so its reply contract is unverified — and
-      // absence of evidence about a contract is not evidence of a permissive
-      // contract: unverifiable shapes fail closed. (A present-but-empty `updates`
-      // list stays 'synced' below: whether it can be a legitimate success is an
-      // open contract question, flagged in PR #273.)
+      // F-022 + EF-03 (option b, owner default 2026-10-27): this surface is a
+      // SEND, and 'sent' asserts delivery only. It is verified against the
+      // SHAPE of the reply — a parseable body containing the expected
+      // `updates` list — never against HTTP 200 and never against
+      // parseability alone. An empty body, an unparseable body, or a body
+      // with no `updates` list never read the artifact this status word rests
+      // on, so each reports 'failed' instead of asserting a delivery that was
+      // never confirmed. The send claims nothing about admission or
+      // reconciliation: admission is decided in the corpus panel, and no count
+      // of admissions is reported here (the previous `admitted` field was
+      // structurally always 0 — a gauge nothing incremented). The webhook
+      // receiver is not in this repo (its URL is an owner-configured
+      // endpoint), so its reply contract is unverified — and absence of
+      // evidence about a contract is not evidence of a permissive contract:
+      // unverifiable shapes fail closed. (A present-but-empty `updates` list
+      // stays 'sent' below: whether it can be a legitimate success is an open
+      // contract question, flagged in PR #273.)
       if (rawBody === null || rawBody.trim() === '') {
-        return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook answered with an empty reply; candidates were sent but the update list was not reconciled.' }
+        return { attempted: records.length, delivered: 0, status: 'failed', reason: 'Webhook answered with an empty reply; candidates were sent but delivery is not confirmed.' }
       }
       let body: unknown
       try {
         body = JSON.parse(rawBody) as unknown
       } catch {
-        return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook answered but its reply could not be read; candidates were sent but the update list was not reconciled.' }
+        return { attempted: records.length, delivered: 0, status: 'failed', reason: 'Webhook answered but its reply could not be read; candidates were sent but delivery is not confirmed.' }
       }
       if (!body || typeof body !== 'object' || !Array.isArray((body as { updates?: unknown }).updates)) {
-        return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook reply did not contain the expected updates list; candidates were sent but the update list was not reconciled.' }
+        return { attempted: records.length, delivered: 0, status: 'failed', reason: 'Webhook reply did not contain the expected updates list; candidates were sent but delivery is not confirmed.' }
       }
       const updates = (body as { updates: unknown[] }).updates
-      const admitted = 0
       for (const update of updates) {
         if (!update || typeof update !== 'object') continue
         const value = update as Partial<LearningCandidate>
@@ -1006,9 +1012,9 @@ export class CorpusRepository {
           if (!candidateIds.includes(remoteCandidate.id)) writeIndex(CANDIDATE_INDEX_KEY, [...candidateIds, remoteCandidate.id])
         }
       }
-      return { attempted: records.length, admitted, status: 'synced' }
+      return { attempted: records.length, delivered: records.length, status: 'sent' }
     } catch {
-      return { attempted: records.length, admitted: 0, status: 'pending', reason: 'Webhook unavailable.' }
+      return { attempted: records.length, delivered: 0, status: 'failed', reason: 'Webhook unavailable.' }
     }
   }
 }
