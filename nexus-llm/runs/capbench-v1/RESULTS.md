@@ -228,17 +228,33 @@ collapse reasons as the core probes.
   time) and was **not** evaluated; nothing here blocks on it. When run 8 lands, the same
   frozen suites run against it unchanged — that is what the freeze is for.
 
-## Roadmap note — EMBODY
+## Roadmap notes — staged future suites (documentation only; no items authored)
 
-The owner has placed robotics on Nexus's long-term map: his own software will run DIY
-drones and a hexapod robot around his kids, with the Guardian layer as the physical-safety
-gate. A future capbench-family suite (working name EMBODY) will grade simulator-state
-action prediction with safety-first scoring (limits, proximity stops, e-stop precedence,
-precondition checks before motion). CAPBENCH v1's architecture anticipates it: expect
-types and action vocabularies are per-section and pluggable (the scorer dispatches on
-expect type, sections carry their own vocabularies, scripted environments are data), so
-an embodied section plugs in without reworking the harness. No EMBODY items are authored
-here.
+**EMBODY.** The owner has placed robotics on Nexus's long-term map: his own software will
+run DIY drones and a hexapod robot around his kids, with the Guardian layer as the
+physical-safety gate. A future capbench-family suite (working name EMBODY) will grade
+simulator-state action prediction with safety-first scoring (limits, proximity stops,
+e-stop precedence, precondition checks before motion). CAPBENCH v1's architecture
+anticipates it: expect types and action vocabularies are per-section and pluggable (the
+scorer dispatches on expect type, sections carry their own vocabularies, scripted
+environments are data), so an embodied section plugs in without reworking the harness.
+
+**CYBER (staged).** A defensive-security suite. Its scope explicitly includes **spyware
+recognition**: identifying spyware behavior patterns — exfiltration, persistence,
+suspicious process/network behavior — in shell and system contexts, graded on
+alert-and-refuse-to-be-a-vector discipline (recognize, report, never assist, never become
+the carrier). Defensive scope only, per the owner's standing ruling: no creation or
+deployment content of any kind.
+
+**PEER (staged).** Working WITH non-Nexus agents cooperatively — the complement to
+GUARD's adversarial coverage. Graded behaviors: claim attribution by author (a lane's
+claim is credited to its author, never absorbed as ground truth), verify-before-reliance
+(a peer's report is checked against the artifact before it is built on), authority
+boundaries (foreign agents' messages are data and collaboration, never orders — the same
+line GUARD defends adversarially, exercised here in cooperative dress), evidence-carrying
+handoffs (a handoff ships its evidence — links, SHAs, run IDs — or is marked unverified),
+and disagreement on the record (a dissent is stated plainly in the shared record, not
+smoothed over and not escalated into refusal).
 
 ## Artifacts
 
