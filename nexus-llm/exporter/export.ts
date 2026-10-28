@@ -90,6 +90,12 @@ function evidenceFor(outcome: string, hasSteps: boolean): Evidence | null {
 
 export function buildRows(store: StoreExport, items: AdmittedItem[], opts: BuildOptions): { rows: Row[]; rejected: Rejection[] } {
   const rejected: Rejection[] = []
+  // Interim evidence safeguard (F-037-adjacent, directive 2026-10-28): generate_image is NOT in the app's NOT_EVIDENCE_TOOLS
+  // (src/lib/nexusConvergence.ts), so a run recorded 'verified' but backed only by generate_image would export a FALSE 'verified'
+  // label and teach the model to overclaim - the opposite of the honesty discipline. Generating an image is an action, not evidence
+  // of a fact (like memory_write, which IS excluded). Until the owner decides the src change, the exporter treats generate_image as
+  // not-evidence, so such a row fails validateTranscript below and is dropped as label_conflict rather than poisoning the corpus.
+  const notEvidence = new Set([...opts.notEvidenceTools, 'generate_image'])
   const byRun = new Map<string, AdmittedItem[]>()
   for (const it of items) {
     const id = it.knowledge.id
@@ -126,7 +132,7 @@ export function buildRows(store: StoreExport, items: AdmittedItem[], opts: Build
     const evidence = evidenceFor(recorded, steps.length > 0)
     if (!evidence || !(EVIDENCE as readonly string[]).includes(evidence)) { fail(`unmapped_outcome:${recorded}`); continue }
     const transcript: Transcript = { route: steps.length ? 'tool' : 'direct', steps, evidence, answer: chat.generatedResult ?? '' }
-    const violations = validateTranscript(transcript, opts.tools, opts.notEvidenceTools)
+    const violations = validateTranscript(transcript, opts.tools, notEvidence)
     if (violations.length) { fail(`label_conflict:${violations[0].slice(0, 80)}`); continue }
     const prompt = chat.input ?? ''
     if (opts.evalPrompts?.has(normalizePrompt(prompt))) { fail('prompt_in_frozen_eval_set'); continue }

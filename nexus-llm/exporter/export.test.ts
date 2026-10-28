@@ -166,3 +166,23 @@ describe('token budget', () => {
   it('renders a markdown table', () => { expect(scenarioTable(300, [1000], [30e6])).toContain('| 1,000 |') })
   it('hashes stably', () => { expect(sha256('a')).toBe('ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb') })
 })
+
+describe('image-only verified runs do not poison the corpus (interim safeguard, directive 2026-10-28)', () => {
+  const imgRun: Ev[] = [
+    { channel: 'chat', input: 'make a picture of a cat', result: 'Here is the image.', outcome: 'verified', run: 'r-img', at: '2026-10-27T00:00:00.000Z' },
+    { channel: 'tool', input: 'generate_image {"prompt":"a cat"}', result: 'image ready', outcome: 'verified', tool: 'generate_image', run: 'r-img', at: '2026-10-27T00:00:01.000Z' },
+  ]
+  it('a run backed only by generate_image cannot export a verified label (dropped as label_conflict)', () => {
+    const { rows, rejected } = run(imgRun)
+    expect(rows).toHaveLength(0)
+    expect(rejected.some(r => r.reason.startsWith('label_conflict'))).toBe(true)
+  })
+  it('a real read backing the same verified answer still exports', () => {
+    const { rows } = run([
+      { channel: 'chat', input: 'what is in README', result: 'It says ForgeClaw.', outcome: 'verified', run: 'r-ok', at: '2026-10-27T00:00:00.000Z' },
+      { channel: 'tool', input: 'github_read_file {"path":"README.md"}', result: '# ForgeClaw', outcome: 'verified', tool: 'github_read_file', run: 'r-ok', at: '2026-10-27T00:00:01.000Z' },
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text).toContain('<|ev:verified|>')
+  })
+})
