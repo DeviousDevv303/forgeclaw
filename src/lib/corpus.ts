@@ -2,7 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── NEXUS / Corpus Local Store ──────────────────────────────────────────────
 // Small, deterministic, localStorage-backed corpus ledger. No network is needed
-// to initialize or use this module; synchronization is an explicit optional path.
+// to initialize or use this module; sending is an explicit optional path.
 
 import { safeGetItem, safeRemoveItem, safeSetItem, strictGetItem, strictRemoveItem, strictSetItem, type StorageResult } from './storage'
 import { DEEPSEEK_PRIMARY_CHECKPOINT } from './deepseekCheckpoints'
@@ -54,7 +54,7 @@ export interface CorpusSendResult {
   attempted: number
   /** Records in a send whose delivery was confirmed by a shape-verified reply. A send claims delivery only — never admission (EF-03 option b). */
   delivered: number
-  status: 'skipped' | 'sent' | 'failed'
+  status: 'skipped' | 'sent' | 'unconfirmed' | 'failed'
   reason?: string
 }
 
@@ -977,7 +977,7 @@ export class CorpusRepository {
       // `updates` list — never against HTTP 200 and never against
       // parseability alone. An empty body, an unparseable body, or a body
       // with no `updates` list never read the artifact this status word rests
-      // on, so each reports 'failed' instead of asserting a delivery that was
+      // on, so each reports 'unconfirmed' instead of asserting a delivery that was
       // never confirmed. The send claims nothing about admission or
       // reconciliation: admission is decided in the corpus panel, and no count
       // of admissions is reported here (the previous `admitted` field was
@@ -989,16 +989,16 @@ export class CorpusRepository {
       // stays 'sent' below: whether it can be a legitimate success is an open
       // contract question, flagged in PR #273.)
       if (rawBody === null || rawBody.trim() === '') {
-        return { attempted: records.length, delivered: 0, status: 'failed', reason: 'Webhook answered with an empty reply; candidates were sent but delivery is not confirmed.' }
+        return { attempted: records.length, delivered: 0, status: 'unconfirmed', reason: 'Webhook answered with an empty reply; candidates were sent but delivery is not confirmed.' }
       }
       let body: unknown
       try {
         body = JSON.parse(rawBody) as unknown
       } catch {
-        return { attempted: records.length, delivered: 0, status: 'failed', reason: 'Webhook answered but its reply could not be read; candidates were sent but delivery is not confirmed.' }
+        return { attempted: records.length, delivered: 0, status: 'unconfirmed', reason: 'Webhook answered but its reply could not be read; candidates were sent but delivery is not confirmed.' }
       }
       if (!body || typeof body !== 'object' || !Array.isArray((body as { updates?: unknown }).updates)) {
-        return { attempted: records.length, delivered: 0, status: 'failed', reason: 'Webhook reply did not contain the expected updates list; candidates were sent but delivery is not confirmed.' }
+        return { attempted: records.length, delivered: 0, status: 'unconfirmed', reason: 'Webhook reply did not contain the expected updates list; candidates were sent but delivery is not confirmed.' }
       }
       const updates = (body as { updates: unknown[] }).updates
       for (const update of updates) {

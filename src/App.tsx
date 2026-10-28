@@ -2627,7 +2627,9 @@ function App() {
     const result = await corpusRepository.sendCandidates(corpusWebhookUrl.trim())
     setCorpusSyncStatus(result.status === 'sent'
       ? t(result.delivered === 1 ? 'corpus.sentOne' : 'corpus.sentMany', { n: result.delivered })
-      : t(result.attempted === 1 ? 'corpus.failedOne' : 'corpus.failedMany', { n: result.attempted }))
+      : result.status === 'unconfirmed'
+        ? t(result.attempted === 1 ? 'corpus.unconfirmedOne' : 'corpus.unconfirmedMany', { n: result.attempted })
+        : t(result.attempted === 1 ? 'corpus.failedOne' : 'corpus.failedMany', { n: result.attempted }))
   }
 
   const handleExportCorpus = () => {

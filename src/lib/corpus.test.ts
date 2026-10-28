@@ -154,57 +154,57 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(repository.getApprovedCount()).toBe(1)
   })
 
-  it('F-022: an unreadable webhook reply is still pending, never sent', async () => {
+  it('F-022: an unreadable webhook reply is unconfirmed, never counted as sent', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'f22 in', context: '', result: 'f22 out', runtime: 'corpus', model: 'local-model' })
     const res = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response('<html>not json</html>', { status: 200 })),
     )
-    expect(res.status).toBe('failed')
+    expect(res.status).toBe('unconfirmed')
     expect(res.delivered).toBe(0)
     expect(res.reason).toMatch(/could not be read/)
   })
 
-  it('F-022: a null webhook reply body is still pending, never sent', async () => {
+  it('F-022: a null webhook reply body is unconfirmed, never counted as sent', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'f22 null in', context: '', result: 'f22 null out', runtime: 'corpus', model: 'local-model' })
     const res = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue({ ok: true, status: 200, text: () => Promise.reject(new Error('body stream failed')) }),
     )
-    expect(res.status).toBe('failed')
+    expect(res.status).toBe('unconfirmed')
     expect(res.delivered).toBe(0)
     expect(res.reason).toMatch(/empty reply/)
   })
 
-  it('F-022: an empty webhook reply body is still pending, never sent', async () => {
+  it('F-022: an empty webhook reply body is unconfirmed, never counted as sent', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'f22 empty in', context: '', result: 'f22 empty out', runtime: 'corpus', model: 'local-model' })
     const empty = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response('', { status: 200 })),
     )
-    expect(empty.status).toBe('failed')
+    expect(empty.status).toBe('unconfirmed')
     expect(empty.delivered).toBe(0)
     expect(empty.reason).toMatch(/empty reply/)
     const whitespace = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response('  \n ', { status: 200 })),
     )
-    expect(whitespace.status).toBe('failed')
+    expect(whitespace.status).toBe('unconfirmed')
     expect(whitespace.delivered).toBe(0)
     expect(whitespace.reason).toMatch(/empty reply/)
   })
 
-  it('F-022: a webhook reply without the updates list is still pending, never sent', async () => {
+  it('F-022: a webhook reply without the updates list is unconfirmed, never counted as sent', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     await repository.appendInteraction({ input: 'f22 shape in', context: '', result: 'f22 shape out', runtime: 'corpus', model: 'local-model' })
     const res = await repository.sendCandidates(
       'https://example.invalid/webhook',
       vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 })),
     )
-    expect(res.status).toBe('failed')
+    expect(res.status).toBe('unconfirmed')
     expect(res.delivered).toBe(0)
     expect(res.reason).toMatch(/updates list/)
   })

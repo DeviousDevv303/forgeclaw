@@ -151,6 +151,8 @@ export const EN = {
   'corpus.sentMany': 'Sent {n} candidates to the webhook. Sending does not admit them; admission is decided in the corpus panel.',
   'corpus.failedOne': 'Send failed; {n} candidate was not delivered.',
   'corpus.failedMany': 'Send failed; {n} candidates were not delivered.',
+  'corpus.unconfirmedOne': 'Sent {n} candidate, but delivery is not confirmed.',
+  'corpus.unconfirmedMany': 'Sent {n} candidates, but delivery is not confirmed.',
 
   'settings.runtimeProvider': 'Runtime Provider',
   'settings.moonshotDesc': 'OpenAI-compatible Moonshot API with native tool calling.',
@@ -609,6 +611,8 @@ const ES: Record<Key, string> = {
   'corpus.sentMany': 'Se enviaron {n} candidatos al webhook. Enviar no los admite; la admisión se decide en el panel del corpus.',
   'corpus.failedOne': 'El envío falló; {n} candidato no fue entregado.',
   'corpus.failedMany': 'El envío falló; {n} candidatos no fueron entregados.',
+  'corpus.unconfirmedOne': 'Se envió {n} candidato, pero la entrega no está confirmada.',
+  'corpus.unconfirmedMany': 'Se enviaron {n} candidatos, pero la entrega no está confirmada.',
 
   'settings.runtimeProvider': 'Proveedor de ejecución',
   'settings.moonshotDesc': 'API de Moonshot compatible con OpenAI y con llamadas nativas a herramientas.',
