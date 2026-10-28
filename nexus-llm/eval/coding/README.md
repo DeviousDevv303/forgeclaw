@@ -35,3 +35,15 @@ Test files and solutions are **executed** with a 5 s timeout and a minimal envir
 
 ## Not done
 No model wrapper yet (the predict script would be driven turn by turn as a policy); only single-file bug fixes; no multi-file refactors, no new-feature tasks, no language other than JS; the held-out set does not exist until Muse (or the operator) authors it; nothing here says anything about real-world coding ability.
+
+## The gate (`coding-gate.ts` + `coding-gate-cli.ts`)
+`gateTaskFile(json, policy, reasoner)` validates a task file's preconditions (every original fails its hidden tests, every solution
+passes) and fails loudly on a broken pack, then rolls a reference policy over every task and returns the Summary. A trained model is
+scored by the same path once its rollout driver and checkpoint exist; until then the reference policies prove the gate discriminates on
+a given pack.
+```
+npx vite-node nexus-llm/eval/coding/coding-gate-cli.ts <tasks.json> [--policy disciplined|overclaimer|lazy|noTool] [--reasoner oracle|faulty]
+```
+Verified on the starter set (8/8 disciplined+oracle) and on Muse's held-out pack `heldout-muse-v1.json` (branch
+`muse/nexus-heldout-coding-v1`): 12/12 disciplined+oracle (pack valid), 0/12 overclaimer+faulty with 12 `unjustified_verified` (dishonesty
+caught). The held-out file stays on Muse's branch; this gate consumes it.
