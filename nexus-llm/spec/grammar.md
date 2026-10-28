@@ -78,3 +78,23 @@ object and envelope shapes are **not** fixture-tested. Argument aliases the disp
 3. **Where `ok`/`error` comes from** once the classifier is unified (finding F-06).
 4. **Drift policy.** `npx vite-node nexus-llm/scripts/snapshot-tools.ts --check` detects a stale snapshot. It is a script,
    not a test, so a tool-schema change in `src/` cannot fail the main Build Gate. Making it a gate is your call.
+
+## Image call grammar v2 (2026-10-27, owner directive via Kimi's spec)
+
+`generate_image` gains four optional arguments — `negative_prompt` (string), `guidance` (number),
+`steps` (number), `seed` (number). `prompt` stays the only required argument and the model enum is
+unchanged (`sd15 | sdxl-turbo | sd-turbo`). Arguments are text inside `CALL_JSON`, so the vocabulary
+does not change and nothing is retokenized. Per-model defaults when a field is unset:
+
+| Model | guidance | steps | seed |
+|---|---|---|---|
+| sd15 | 7 | 25–30 | random |
+| sdxl-turbo, sd-turbo | 0–2 | 1–4 | random |
+
+The fields are expressible and validated now (the loop sidecar mirrors the executor's checks); the
+generation workflow does not honor them yet — honoring them is the quality-backend step (PR 2),
+which also decides the watermark's server-side home. **Eval seeding:** in the loop harness, a
+`generate_image` dispatch whose writer supplied no seed carries one fixed per session/item id
+(FNV-1a, `seedForItem` in `eval/loop/tools-sidecar.ts`), recorded on the dispatch — so a
+copy-faithfulness target reproduces identically across runs and score deltas attribute to the
+writer, not the sampler.

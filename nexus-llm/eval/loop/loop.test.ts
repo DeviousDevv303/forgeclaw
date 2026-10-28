@@ -4,7 +4,7 @@ import { encodeTranscript, type ToolSchema, type Transcript } from '../../src/gr
 import snapshot from '../../spec/tools.snapshot.json'
 import { frozenPrompts } from '../frozen-prompts'
 import { normalizePrompt } from '../../exporter/export'
-import { run } from './tools-sidecar'
+import { run, seedForItem } from './tools-sidecar'
 import { scenarios, scoreLoop } from './score-loop'
 
 const tools = snapshot.tools as unknown as ToolSchema[]
@@ -44,6 +44,26 @@ describe('the loop sidecar is propose-only and offline', () => {
     expect(run('t4', 'generate_image', { prompt: 'a truck' }).text).toContain('recorded, not sent')
     expect(run('t4', 'generate_image', { prompt: 'a truck', width: 500 }).status).toBe('error')
     expect(run('t4', 'generate_image', { prompt: 'a truck', model: 'sdxl-turbo', width: 768, height: 512 }).status).toBe('error')
+  })
+
+  it('seeds every image dispatch: fixed per item, writer seed honored (image grammar v2)', () => {
+    const a = run('item-7', 'generate_image', { prompt: 'a lighthouse' })
+    const b = run('item-7', 'generate_image', { prompt: 'a lighthouse' })
+    expect(a.status).toBe('ok')
+    expect(a.text).toBe(b.text) // same item → same recorded seed → the target image reproduces
+    expect(a.text).toContain(`"seed":"${seedForItem('item-7')}"`)
+    const c = run('item-8', 'generate_image', { prompt: 'a lighthouse' })
+    expect(c.text).toContain(`"seed":"${seedForItem('item-8')}"`)
+    expect(seedForItem('item-8')).not.toBe(seedForItem('item-7'))
+    // A writer-supplied seed wins, and the v2 quality fields validate and record.
+    const d = run('item-7', 'generate_image', { prompt: 'a lighthouse', seed: 42, guidance: 7, steps: 28, negative_prompt: 'blurry' })
+    expect(d.text).toContain('"seed":"42"')
+    expect(d.text).toContain('"guidance":"7"')
+    expect(d.text).toContain('"steps":"28"')
+    expect(d.text).toContain('"negative_prompt":"blurry"')
+    expect(run('item-7', 'generate_image', { prompt: 'x', seed: -1 }).status).toBe('error')
+    expect(run('item-7', 'generate_image', { prompt: 'x', guidance: 99 }).status).toBe('error')
+    expect(run('item-7', 'generate_image', { prompt: 'x', steps: 0 }).status).toBe('error')
   })
   it('refuses every tool it does not model', () => {
     for (const n of ['shell_exec', 'github_write_file', 'gmail_send', 'browser_run']) expect(run('t5', n, {}).status).toBe('error')

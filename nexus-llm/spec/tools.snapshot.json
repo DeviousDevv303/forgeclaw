@@ -1,6 +1,6 @@
 {
   "generatedFrom": "src/lib/forgeTools.ts FORGE_TOOLS + src/lib/nexusConvergence.ts NOT_EVIDENCE_TOOLS",
-  "sourceSha": "1ee0026b68dbb4f292f36e5c06873db593d3b664",
+  "sourceSha": "bb09eee18a6899b2aa785b0af6238feb8b18d77d",
   "notEvidenceTools": [
     "analyze_image",
     "ask_deepseek",
@@ -781,6 +781,22 @@
               "sd-turbo"
             ],
             "description": "Optional model key; defaults to sd15. Turbo models are limited to 512x512."
+          },
+          "negative_prompt": {
+            "type": "string",
+            "description": "What to keep out of the image, up to 1000 characters (optional; honored by backends that support it)"
+          },
+          "guidance": {
+            "type": "number",
+            "description": "Guidance scale (CFG), 0-30. Defaults per model: sd15 7, turbo models 0-2 (optional)"
+          },
+          "steps": {
+            "type": "number",
+            "description": "Sampling steps, 1-150. Defaults per model: sd15 25-30, turbo models 1-4 (optional)"
+          },
+          "seed": {
+            "type": "number",
+            "description": "Sampling seed for a reproducible render; unset = random (optional)"
           }
         },
         "required": [
