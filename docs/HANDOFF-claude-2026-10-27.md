@@ -71,3 +71,13 @@ the TradeSheet re-run.
   Build Gate went green on the verified head 5c49ba7 -> main bb09eee (squash). Halt, write block and other work stay on this branch.
 - Run 6 (run 5 warm-started, 30k fresh rows): copying 1/5 (regressed from 3/5), domains 68.1%, v1 66.7%, loop 4/18; gate REJECTED. Run 4
   remains the incumbent. Diagnosis: memorized templates; next lever is capacity + diversity, not steps.
+
+## Addendum (2026-10-28 ~01:40 UTC): run 7 + plateau
+- Run 7 (`small-copy-ind`: induction bias + case diversity): domains 74.5% (best copy-head run), v1 63.1% (> run 4), image copies 2/5,
+  Kalshi 0/2, loop 3/18. Gate vs run 4: REJECTED. Run 4 stays incumbent.
+- Diagnosis: induction bias fixed structure/capitalization; rare multi-piece entity tokens (pickup, wrench, Fed, bitcoin) still mangle.
+  Tokenization/capacity limit, not routing.
+- Conclusion: runs 4-7 plateaued the 4M CPU model. Next levers are operator-gated, not more CPU: GPU for nexus-30m, admitted real data,
+  or a tokenizer v2 (entity words as single pieces). No run 8 on CPU.
+- New: nexus-llm/corpus/ (verified-troubleshooting seed + validator + attach.ts), committed on the branch. Web tools (web_search,
+  http_fetch, deep_research, browser_run) already in NEXUS's grammar + eval; "web access" is routing fidelity, same copy problem.

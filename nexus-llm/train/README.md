@@ -43,6 +43,22 @@ the model never answered "type /funds …"). The 2 remaining domain format failu
 exhausts the 160-token budget, a model-quality failure, not a grammar gap. Getting here took three decoder fixes found by this run
 (top-k dead-ends, an unfinishable \u escape in option strings, a key in a property-less object).
 
+### Run 7: `small-copy-ind` (induction bias in the copy head) + case-diverse prompts, 30k rows, 5000 steps, from scratch
+Per component vs incumbent run 4: domains v1.1 **74.5%** (run 4 76.6%; the BEST copy-head run, no_tool 100%, evidence 100%); v1 **63.1%**
+(run 4 60.7%, above it); image calls carrying the requested words **2/5** (lighthouse, refinery; run 4 0/5, run 5 3/5); Kalshi query
+fidelity **0/2**; loop 3/18 (noisy). Gate vs run 4: **REJECTED** (domains 2.1 pts below run 4). Run 4 stays incumbent.
+Sharp diagnosis (confirms Kimi's prediction): the induction bias fixed STRUCTURE — capitalization and sentence shape now copy
+("Generate an image of a red ... truck in the snow", "Render a cinematic wallpaper of a refinery at night") — but **rare/multi-piece
+entity tokens still mangle**: pickup->"pic", wrench->"wren", beaver dropped, Fed->"Eed", bitcoin->"tidecoin". The copy head copies the
+clean pieces and loses alignment on a word that splits into several BPE pieces. That is a tokenization/capacity limit, not a routing one.
+
+**Plateau, stated plainly.** Four model iterations (runs 4-7) on the 4M CPU model have converged: routing ~75% on domains, copying
+partial (2-3/5), rare-entity copy broken. None beats run 4 on the gate. The remaining levers are both operator-gated and not more CPU
+runs: (a) capacity - `nexus-30m` needs a GPU; (b) admitted real data instead of synthetic templates; (c) a tokenization change so entity
+words are single pieces (a tokenizer v2 = new ids = every checkpoint retrained). I am not launching run 8 on CPU; it would not move these.
+
+### Run 6: run 5 warm-started
+
 ### Run 6: run 5 warm-started (`--init`), 30,000 fresh SYNTHETIC rows (seed 17), 6,000 steps, lr 4e-4, 53 min (resumed once after a restart)
 Per component vs run 4 / run 5: image calls carrying the requested words **1/5** (0/5 / 3/5: a regression); domains v1.1 **68.1%** (76.6 / 68.1);
 Kalshi query fidelity **0/2** (still garbled: "ro above itcoin above 1000k"); v1 **66.7%** (60.7 / 64.3: best so far); loop **4/18** (6 / 7;
