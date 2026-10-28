@@ -75,6 +75,13 @@ describe('FundsPanel', () => {
     }), { status: 200 })))
     render(<FundsPanel onCommand={() => {}} refreshKey={0} />)
     expect(await screen.findByText(/Total across shards/)).toBeTruthy()
+    // Flush the fresh-read effect before clicking: it calls setVisible(true) unconditionally when the
+    // balance block lands, and if that passive effect is still queued it runs after the click and
+    // re-shows the pop-up this assertion expects to be gone. That race is the proven flake mechanism
+    // (deferred-fetch repro, 2026-10-27; CI failures on PR #319 and PR #329) — the component behavior
+    // itself is the spec ("hides it until the next fresh read"), so the fix belongs to the test's
+    // synchronization, not to the component. Registered in docs/flakes.md.
+    await act(async () => {})
     fireEvent.click(screen.getByLabelText('Close balance'))
     expect(screen.queryByText(/Total across shards/)).toBeNull()
   })
