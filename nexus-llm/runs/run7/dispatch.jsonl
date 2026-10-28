@@ -1,0 +1,5 @@
+{"session":"img-1","inputs":{"prompt":"Generate an image of a red pic truck in the snow","style":"realistic","width":"512","height":"512","model":"sd15"}}
+{"session":"img-2","inputs":{"prompt":"Dw a cartoon illustration of a damver building","style":"cartoon","width":"512","height":"512","model":"sd15"}}
+{"session":"img-3","inputs":{"prompt":"Create a watercolor picture of a lighthouse at dawn","style":"watercolor","width":"512","height":"512","model":"sd15"}}
+{"session":"img-4","inputs":{"prompt":"Make a pixel art logo of a wrench wren","style":"pixel art","width":"512","height":"512","model":"sd15"}}
+{"session":"img-5","inputs":{"prompt":"Render a cinematic wallpaper of a refinery at night","style":"cinematic","width":"512","height":"512","model":"sd15"}}
