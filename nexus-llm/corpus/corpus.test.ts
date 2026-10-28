@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { checkRows, loadRows, type CorpusRow } from './check-corpus'
+import { attachToPrompt, CONTEXT_BUDGET_CHARS, formatContext, rowToContextLine } from './attach'
 
 describe('verified-troubleshooting corpus', () => {
   const rows = loadRows()
@@ -21,5 +22,33 @@ describe('verified-troubleshooting corpus', () => {
       const errs = checkRows([{ ...base, ...patch, id: 'probe' } as CorpusRow])
       expect(errs.join('\n'), JSON.stringify(patch)).toMatch(re)
     }
+  })
+
+  describe('admitted corpus attaches as bounded, masked context (not weights)', () => {
+    const admit = (r: CorpusRow): CorpusRow => ({ ...r, admitted: true })
+    it('formats only ADMITTED rows, each with its evidence tag', () => {
+      const ctx = formatContext(rows.map(admit))
+      expect(ctx).toContain('[')
+      expect(ctx).toMatch(/PR #\d+|code:|commit:/)
+      // an un-admitted row (as in the seed) must never appear, even if selection passes it in
+      expect(formatContext(rows)).toBe('')
+    })
+    it('never exceeds the budget; drops rows that do not fit', () => {
+      const many = Array.from({ length: 200 }, (_, i) => admit({ ...rows[0], id: `r${i}`, symptom: 'S'.repeat(40), fix: 'F'.repeat(40) }))
+      const ctx = formatContext(many)
+      expect(ctx.length).toBeLessThanOrEqual(CONTEXT_BUDGET_CHARS)
+      expect(ctx.split('\n').length).toBeLessThan(many.length)
+    })
+    it('attaches ahead of the User: frame, leaving the task intact', () => {
+      const ctx = formatContext([admit(rows[0])])
+      const full = attachToPrompt(ctx, 'fix the waiter')
+      expect(full).toContain('Context (verified')
+      expect(full.endsWith('User: fix the waiter\n')).toBe(true)
+      expect(attachToPrompt('', 'hi')).toBe('User: hi\n')
+    })
+    it('a context line carries symptom, fix and evidence', () => {
+      const line = rowToContextLine(admit(rows[0]))
+      expect(line).toMatch(/->/); expect(line).toMatch(/\[.+\]$/)
+    })
   })
 })
