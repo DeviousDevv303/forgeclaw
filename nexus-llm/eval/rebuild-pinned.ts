@@ -20,6 +20,10 @@ const tmp = mkdtempSync(join(tmpdir(), 'nexus-pinned-'))
 const wt = join(tmp, 'wt')
 let code = 0
 try {
+  // A shallow clone (CI's actions/checkout uses depth 1) lacks the pinned commit: fetch exactly that commit. If it cannot be
+  // fetched, the worktree step below fails and the check fails, loudly; it never falls back to the working tree's src/.
+  try { execFileSync('git', ['cat-file', '-e', `${PINNED}^{commit}`], { cwd: repo, stdio: 'pipe' }) }
+  catch { execFileSync('git', ['fetch', '--quiet', '--depth=1', 'origin', PINNED], { cwd: repo, stdio: 'pipe' }) }
   execFileSync('git', ['worktree', 'add', '--detach', '--quiet', wt, PINNED], { cwd: repo, stdio: 'pipe' })
   cpSync(join(repo, 'nexus-llm'), join(wt, 'nexus-llm'), { recursive: true })
   symlinkSync(join(repo, 'node_modules'), join(wt, 'node_modules'), 'dir')
