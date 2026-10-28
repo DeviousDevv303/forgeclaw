@@ -106,6 +106,33 @@ class CopyHead(unittest.TestCase):
         m = self.NexusLM(self.Config(vocab_size=50, n_layer=1, n_head=2, d_model=16, d_ff=32, ctx=16, copy=True)).eval()
         self.assertAlmostEqual(float(m.next_logprobs([5, 9, 9, 12, 30]).exp().sum()), 1.0, places=5)
 
+    def test_induction_bias_copies_unseen_spans_at_least_as_well(self):
+        acc = self._toy_copy({"copy": True, "induction": True}, steps=150)
+        self.assertGreater(acc, 0.8, acc)
+
+    def _toy_copy(self, extra, steps=300):
+        torch = self.torch
+        V, SEP, n = 400, 3, 5
+        def batch(lo, hi, b=64):
+            w = torch.randint(lo, hi, (b, n))
+            x = torch.cat([torch.full((b, 1), 2), w, torch.full((b, 1), SEP), w], 1)
+            y = torch.full_like(x, -100); y[:, n + 1:-1] = x[:, n + 2:]
+            return x, y
+        torch.manual_seed(1)
+        m = self.NexusLM(self.Config(vocab_size=V, n_layer=2, n_head=2, d_model=64, d_ff=128, ctx=16, **extra))
+        opt = torch.optim.AdamW(m.parameters(), lr=3e-3)
+        for _ in range(steps):
+            x, y = batch(4, 300)
+            loss = m.loss(x, y); opt.zero_grad(); loss.backward(); opt.step()
+        m.eval(); x, _ = batch(300, 400, 32)
+        hit = tot = 0
+        for row in x.tolist():
+            ids = row[: n + 2]
+            for k in range(n):
+                hit += int(int(m.next_logprobs(ids).argmax()) == row[n + 2 + k]); tot += 1
+                ids = ids + [row[n + 2 + k]]
+        return hit / tot
+
     def test_copy_head_copies_unseen_tokens_and_the_plain_model_cannot(self):
         torch = self.torch
         V, SEP, n = 400, 3, 5

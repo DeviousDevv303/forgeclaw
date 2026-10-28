@@ -23,6 +23,7 @@ class Config:
     ctx: int = 512
     dropout: float = 0.0
     copy: bool = False
+    induction: bool = False  # with copy: boost copying position j when the token before j equals the current token (span copy)
 
 
 PRESETS = {
@@ -30,6 +31,7 @@ PRESETS = {
     # small: a CPU-trainable step between smoke and the target; 640 positions fit the longest domain-suite context (573 tokens, tokenizer v1)
     "small": Config(n_layer=4, n_head=4, d_model=256, d_ff=1024, ctx=640),
     "small-copy": Config(n_layer=4, n_head=4, d_model=256, d_ff=1024, ctx=640, copy=True),
+    "small-copy-ind": Config(n_layer=4, n_head=4, d_model=256, d_ff=1024, ctx=640, copy=True, induction=True),
     "nexus-30m": Config(n_layer=8, n_head=8, d_model=512, d_ff=2048, ctx=640),
 }
 
@@ -63,6 +65,8 @@ class NexusLM(nn.Module):
         if c.copy:
             self.copy_q, self.copy_k = nn.Linear(c.d_model, c.d_model), nn.Linear(c.d_model, c.d_model)
             self.copy_gate = nn.Linear(c.d_model, 1)
+            if c.induction:
+                self.ind_w = nn.Parameter(torch.tensor(2.0))
         self.apply(self._init)
 
     @staticmethod
@@ -83,10 +87,14 @@ class NexusLM(nn.Module):
     def forward(self, idx):
         return self.hidden(idx) @ self.tok.weight.T  # tied output embedding (the generation side only)
 
-    def _copy_parts(self, h):
-        """Attention of every position over itself and earlier positions (causal), and the generate gate g."""
+    def _copy_parts(self, h, idx):
+        """Attention of every position over itself and earlier positions (causal), and the generate gate g. With induction, position j
+        gets a learned bonus when the token just before it equals the current token: having copied token j-1, continue with token j."""
         t = h.shape[1]
         scores = (self.copy_q(h) @ self.copy_k(h).transpose(1, 2)) / math.sqrt(h.shape[-1])
+        if self.c.induction:
+            prev = torch.cat([torch.full_like(idx[:, :1], -1), idx[:, :-1]], 1)  # prev[j] = idx[j-1]
+            scores = scores + self.ind_w * (prev.unsqueeze(1) == idx.unsqueeze(2)).to(scores.dtype)
         scores = scores.masked_fill(torch.ones(t, t, dtype=torch.bool, device=h.device).triu(1), float("-inf"))
         return scores.softmax(-1), torch.sigmoid(self.copy_gate(h)).squeeze(-1)
 
@@ -99,7 +107,7 @@ class NexusLM(nn.Module):
         valid = y != -100
         yc = y.clamp(min=0)
         p_gen = logits.log_softmax(-1).gather(-1, yc.unsqueeze(-1)).squeeze(-1).exp()
-        attn, g = self._copy_parts(h)
+        attn, g = self._copy_parts(h, idx)
         p_copy = (attn * (idx.unsqueeze(1) == yc.unsqueeze(2))).sum(-1)  # mass on earlier tokens equal to the target
         p = g * p_gen + (1 - g) * p_copy
         return -(torch.log(p.clamp_min(1e-9)) * valid).sum() / valid.sum().clamp_min(1)
@@ -112,7 +120,7 @@ class NexusLM(nn.Module):
         lp = (h[0, -1] @ self.tok.weight.T).log_softmax(-1)
         if not self.c.copy:
             return lp
-        attn, g = self._copy_parts(h)
+        attn, g = self._copy_parts(h, x)
         p_copy = torch.zeros_like(lp).scatter_add_(0, x[0], attn[0, -1])
         return torch.log((g[0, -1] * lp.exp() + (1 - g[0, -1]) * p_copy).clamp_min(1e-12))
 

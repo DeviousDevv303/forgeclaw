@@ -47,6 +47,8 @@ const TOPIC = ['solar panel efficiency', 'how bread rises', 'tide tables', 'the 
 const DIRS = ['src', 'docs', 'scripts', 'public', 'tests', 'lib', 'config', 'tools', 'assets', 'examples']
 const EXT = ['.ts', '.md', '.json', '.py', '.sh', '.css', '.yml', '.txt']
 const word = () => pick(WORD)
+/** Half the prompts start with a capital, as people type them; a call copies the text as written (run 6 never saw a capital to copy). */
+const cap = (p: string) => rnd() < 0.5 ? p.charAt(0).toUpperCase() + p.slice(1) : p
 const subject = () => `${rnd() < 0.7 ? `a ${pick(ADJ)} ` : 'a '}${pick(NOUN)}${rnd() < 0.7 ? ` ${pick(PLACE)}` : ''}`
 const topic = () => rnd() < 0.5 ? pick(TOPIC) : `${pick(TOPIC)} ${pick(['in', 'for', 'near'])} ${pick(['Houston', 'Galveston', 'Denver', 'winter', '2026', 'Texas', 'small shops'])}`
 const dirName = () => rnd() < 0.4 ? pick(DIRS) : `${pick(DIRS)}/${word()}`
@@ -194,7 +196,7 @@ const makers: Array<[string, () => void]> = [
     emit('no_evidence', p, direct(`I have not read ${f}, so I cannot say. I can read it for you.`)) }],
   // ── images ──
   ['image', () => { const s = subject(), st = pick(styles)
-    const p = pick([`generate an image of ${s}`, `make a ${st} picture of ${s}`, `create an illustration of ${s}`, `draw ${s} in ${st} style`, `design a ${st} logo of ${s}`, `render ${s} as a ${st} wallpaper`])
+    const p = cap(pick([`generate an image of ${s}`, `make a ${st} picture of ${s}`, `create an illustration of ${s}`, `draw ${s} in ${st} style`, `design a ${st} logo of ${s}`, `render ${s} as a ${st} wallpaper`]))
     if (!isImageGenerationRequest(p)) return
     const a: Record<string, unknown> = { prompt: extractImagePrompt(p), style: inferImageStyle(p) }
     const size = rnd() < 0.3 ? pick([[512, 512], [768, 512], [512, 768], [1024, 1024]] as const) : null
@@ -225,7 +227,7 @@ const makers: Array<[string, () => void]> = [
     emit('kalshi_read', p, traced([s], ok ? `Kalshi's YES ask for ${m.ticker} is ${cents(ask)}, an implied ${Math.round(ask * 100)}%. That is a price, not a guarantee.`
       : 'I could not read Kalshi, so I have no price. If you tell me the price you see, I can use it as your number.')) }],
   ['kalshi_search', () => {
-    const ev = pick(['recession', 'unemployment', 'gas prices', 'rain in Seattle', 'snow in Denver', 'inflation', 'ethereum above 5k', 'a government shutdown', 'the S&P 500 record', 'gold above 3000', 'a hurricane landfall', 'egg prices'])
+    const ev = pick(['Tesla above 300', 'Nvidia beating earnings', 'the ECB cutting rates', 'Apple above 250', 'Ohio State winning', 'the Lakers winning', 'Toyota recalls', 'OPEC cutting output', 'recession', 'unemployment', 'gas prices', 'rain in Seattle', 'snow in Denver', 'inflation', 'ethereum above 5k', 'a government shutdown', 'the S&P 500 record', 'gold above 3000', 'a hurricane landfall', 'egg prices'])
     const when = pick(['', ' this month', ' in December', ' by Friday', ' this year'])
     const p = pick([`What are the Kalshi odds on ${ev}${when}?`, `What does Kalshi charge for ${ev}${when}?`, `Show me Kalshi markets about ${ev}`, `How likely does Kalshi think ${ev} is${when}?`])
     const query = ev.replace(/^(a |the )/, '')
