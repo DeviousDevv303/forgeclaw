@@ -141,6 +141,7 @@ import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
 import { resolveMetaModel } from './lib/ai/providers/metaProvider'
 import { fetchOpenRouterModels, isOpenRouterModelId, resolveOpenRouterModel } from './lib/ai/providers/openrouterProvider'
 import { buildNexusStoreExport, corpusRepository } from './lib/corpus'
+import { DEFAULT_NEXUS_SEND_REPO, sendNexusStoreExport } from './lib/nexusStoreSend'
 import { parseManualToolCalls, toToolCalls, stripToolSyntax } from './lib/ai/manualToolMode'
 import { FORGE_TOOLS, executeTool, loadToolContext } from './lib/forgeTools'
 import { applyAttributionContract, FORGECLAW_AGENT_ID } from './lib/githubAttribution'
@@ -808,6 +809,10 @@ function App() {
   const [corpusWebhookUrl, setCorpusWebhookUrl] = useState<string>(() => safeGetItem('fm_corpus_webhook') || '')
   const [corpusSyncStatus, setCorpusSyncStatus] = useState('')
   const [corpusExportStatus, setCorpusExportStatus] = useState('')
+  const [nexusSendEnabled, setNexusSendEnabled] = useState(() => safeGetItem('fm_nexus_send_enabled') === '1')
+  const [nexusSendRepo, setNexusSendRepo] = useState<string>(() => safeGetItem('fm_nexus_send_repo') || DEFAULT_NEXUS_SEND_REPO)
+  const [corpusSendStatus, setCorpusSendStatus] = useState('')
+  const [sendingNexusStore, setSendingNexusStore] = useState(false)
   const normalizedActiveModel = activeProvider === 'local' ? localModel : isDeepSeekProvider(activeProvider) ? 'deepseek-16b' : activeProvider === 'moonshot' ? moonshotModel : activeProvider === 'muse' ? metaModel : activeProvider === 'openrouter' ? openrouterModel.trim() : anthropicModel
   const activeModelLabel = isDeepSeekProvider(activeProvider)
     ? corpusProvider.models[0]?.label ?? 'DeepSeek 16B · GitHub Actions'
@@ -1096,6 +1101,8 @@ function App() {
   useEffect(() => { safeSetItem('fm_openrouter_key', openrouterApiKey) }, [openrouterApiKey])
   useEffect(() => { safeSetItem('fm_openrouter_model', openrouterModel.trim()) }, [openrouterModel])
   useEffect(() => { safeSetItem('fm_corpus_webhook', corpusWebhookUrl) }, [corpusWebhookUrl])
+  useEffect(() => { safeSetItem('fm_nexus_send_enabled', nexusSendEnabled ? '1' : '0') }, [nexusSendEnabled])
+  useEffect(() => { safeSetItem('fm_nexus_send_repo', nexusSendRepo) }, [nexusSendRepo])
   useEffect(() => {
     safeSetItem('fm_provider', activeProvider)
     setDiagnostics(prev => ({ ...prev, provider: activeProvider }))
@@ -2643,6 +2650,34 @@ function App() {
     setCorpusExportStatus(t('corpus.exported', { records: result.approvedCount, keys: result.keyCount }))
   }
 
+  const sendNexusStore = async () => {
+    // SEND is an operator-enabled extra, never a silent default: the settings toggle is the activation.
+    if (!nexusSendEnabled || sendingNexusStore) return
+    setSendingNexusStore(true)
+    setCorpusSendStatus(t('corpus.sendingNexusStore'))
+    try {
+      const result = await sendNexusStoreExport({ storage: localStorage, origin: location.origin, token: ghToken, repoName: nexusSendRepo, deps: { request: fetch } })
+      if (result.ok) {
+        const params = { repo: result.repoFullName, sha: result.commitSha.slice(0, 7), records: result.approvedCount }
+        setCorpusSendStatus(result.createdRepo ? t('corpus.sentNexusStoreCreated', params) : t('corpus.sentNexusStore', params))
+      } else if (result.reason === 'credential') {
+        setCorpusSendStatus(t('corpus.sendBlocked', { key: result.keyPrefix }))
+      } else if (result.reason === 'no-token') {
+        setCorpusSendStatus(t('corpus.sendNoToken'))
+      } else if (result.reason === 'repo-not-private') {
+        setCorpusSendStatus(t('corpus.sendNotPrivate', { repo: result.repoFullName }))
+      } else if (result.reason === 'too-large') {
+        setCorpusSendStatus(t('corpus.sendTooLarge'))
+      } else if (result.reason === 'storage-unreadable') {
+        setCorpusSendStatus(t('corpus.exportFailed'))
+      } else {
+        setCorpusSendStatus(t('corpus.sendFailed', { detail: result.detail }))
+      }
+    } finally {
+      setSendingNexusStore(false)
+    }
+  }
+
   const handleExportCorpus = () => {
     if (!corpus.length) { emitFailure({ source: 'forgemind', severity: 'info', message: 'No corpus entries to export.' }); return }
     const blob = new Blob([corpus.map(e => JSON.stringify(e)).join('\n')], { type: 'application/jsonl' })
@@ -3082,6 +3117,25 @@ function App() {
                     {corpusSyncStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusSyncStatus}</div>}
                     <button onClick={exportNexusStore} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{t('settings.exportNexusStore')}</button>
                     {corpusExportStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusExportStatus}</div>}
+                    <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #222' }}>
+                      <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.nexusSend')}</label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ccc', fontSize: '12px', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={nexusSendEnabled} onChange={e => setNexusSendEnabled(e.target.checked)} />
+                        {t('settings.nexusSendEnable')}
+                      </label>
+                      {nexusSendEnabled && (
+                        <>
+                          <label style={{ display: 'block', color: '#888', fontSize: '10px', margin: '10px 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.nexusSendRepo')}</label>
+                          <input type="text" value={nexusSendRepo} onChange={e => setNexusSendRepo(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                          {ghToken ? (
+                            <button onClick={sendNexusStore} disabled={sendingNexusStore} style={{ width: '100%', marginTop: '8px', background: sendingNexusStore ? '#333' : '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: sendingNexusStore ? 'wait' : 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{sendingNexusStore ? t('corpus.sendingNexusStore') : t('settings.sendNexusStore')}</button>
+                          ) : (
+                            <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{t('corpus.sendNoToken')}</div>
+                          )}
+                          {corpusSendStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusSendStatus}</div>}
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
