@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { checkRows, loadRows, type CorpusRow } from './check-corpus'
-import { attachToPrompt, CONTEXT_BUDGET_CHARS, formatContext, rowToContextLine } from './attach'
+import { attachToPrompt, CONTEXT_BUDGET_CHARS, contextForPrompt, formatContext, rowToContextLine, scoreRow, selectForPrompt, terms } from './attach'
 
 describe('verified-troubleshooting corpus', () => {
   const rows = loadRows()
@@ -50,5 +50,32 @@ describe('verified-troubleshooting corpus', () => {
       const line = rowToContextLine(admit(rows[0]))
       expect(line).toMatch(/->/); expect(line).toMatch(/\[.+\]$/)
     })
+  })
+
+  describe('retrieval: select the admitted rows relevant to a prompt', () => {
+    const admit = (r: CorpusRow): CorpusRow => ({ ...r, admitted: true })
+    const admitted = rows.map(admit)
+    it('terms drops stopwords and short tokens', () => {
+      expect(terms('How do I fix the waiter deadline?')).toEqual(new Set(['fix', 'waiter', 'deadline']))
+    })
+    it('selects only positive-overlap admitted rows, best first, and never an un-admitted row', () => {
+      const waiter = admitted.find(r => r.id === 'ct-waiter-deadline')!
+      const sel = selectForPrompt('the run waiter reported not found at the deadline', admitted)
+      expect(sel[0].id).toBe('ct-waiter-deadline')
+      expect(scoreRow(terms('waiter deadline'), waiter)).toBeGreaterThan(0)
+      // an un-admitted copy of a matching row is filtered out
+      expect(selectForPrompt('waiter deadline', rows)).toEqual([])
+    })
+    it('attaches nothing for an unrelated prompt (no irrelevant fact injected to fill the budget)', () => {
+      expect(selectForPrompt('what is the capital of France', admitted)).toEqual([])
+      expect(contextForPrompt('what is the capital of France', admitted)).toBe('User: what is the capital of France\n')
+    })
+    it('contextForPrompt attaches the matched fact ahead of the task', () => {
+      const full = contextForPrompt('fix the kalshi fee estimate', admitted)
+      expect(full).toContain('Context (verified')
+      expect(full).toMatch(/fee/i)
+      expect(full.endsWith('User: fix the kalshi fee estimate\n')).toBe(true)
+    })
+    it('honors k', () => { expect(selectForPrompt('waiter deadline guardian block fee kalshi', admitted, 1).length).toBeLessThanOrEqual(1) })
   })
 })

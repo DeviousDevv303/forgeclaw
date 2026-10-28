@@ -31,7 +31,7 @@ These rows are a **seed** the operator admits and grows; admission, and any deci
 
 ## Where admitted corpus attaches (`attach.ts`)
 Facts attach as **retrieved context**, not weights. At inference the runtime (1) selects the few admitted rows relevant to the prompt
-[ranking = TODO, a separate step], then (2) `formatContext` renders them into a **bounded** `Context:` block (1800 chars, mirroring the
+(ranking via selectForPrompt), then (2) `formatContext` renders them into a **bounded** `Context:` block (1800 chars, mirroring the
 app's `nexusGuidance` budget), and `attachToPrompt` prepends it before the `User:` frame. In training that block is part of the frame, so
 it is **loss-masked** — the model learns to *use* retrieved facts, not to memorize them (the fix for the run-6 failure). `formatContext`
 skips any row with `admitted !== true`, so an un-admitted candidate can never reach the model even if selection mis-picks it.
