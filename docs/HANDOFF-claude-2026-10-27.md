@@ -65,3 +65,9 @@ the TradeSheet re-run.
 - One faithful call ("make a watercolor picture of a lighthouse at dawn", watercolor) was dispatched unedited to `generate-image.yml`:
   run 40601203465 succeeded; image at `generated-images/nexus-run5-loop-img3.png` (`2c4b697`).
 - Next: combine run 4's routing with run 5's copying (copy head + more rows/steps, or nexus-30m on a GPU); fix the Kalshi query copy.
+
+## Addendum (2026-10-28 ~01:00 UTC): merge of nexus-llm/ and run 6
+- Owner amendment ("anything Nexus Intelligence LLM is approved. Owner approved."), scoped to nexus-llm/: PR #331 merged by Claude after the
+  Build Gate went green on the verified head 5c49ba7 -> main bb09eee (squash). Halt, write block and other work stay on this branch.
+- Run 6 (run 5 warm-started, 30k fresh rows): copying 1/5 (regressed from 3/5), domains 68.1%, v1 66.7%, loop 4/18; gate REJECTED. Run 4
+  remains the incumbent. Diagnosis: memorized templates; next lever is capacity + diversity, not steps.

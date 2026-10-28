@@ -43,6 +43,13 @@ the model never answered "type /funds …"). The 2 remaining domain format failu
 exhausts the 160-token budget, a model-quality failure, not a grammar gap. Getting here took three decoder fixes found by this run
 (top-k dead-ends, an unfinishable \u escape in option strings, a key in a property-less object).
 
+### Run 6: run 5 warm-started (`--init`), 30,000 fresh SYNTHETIC rows (seed 17), 6,000 steps, lr 4e-4, 53 min (resumed once after a restart)
+Per component vs run 4 / run 5: image calls carrying the requested words **1/5** (0/5 / 3/5: a regression); domains v1.1 **68.1%** (76.6 / 68.1);
+Kalshi query fidelity **0/2** (still garbled: "ro above itcoin above 1000k"); v1 **66.7%** (60.7 / 64.3: best so far); loop **4/18** (6 / 7;
+n=18 is noisy). Gate vs run 4: **REJECTED**. Diagnosis: training loss ~1e-4, i.e. the templates are memorized; more steps on the same
+distribution degrade copying (outputs degenerate into repetition, "refin at night at night"). Run 4 stays the incumbent. Next lever is
+capacity and data diversity (nexus-30m on a GPU; admitted data), not more synthetic steps on 4M parameters.
+
 ### Run 5: `small-copy` (pointer-generator copy head, 4.48M params), same 20,000 rows, steps and lr as run 4, 50 min
 Constrained: v1 **64.3%** (run 4: 60.7%; no_tool 40 → 80%), domains v1.1 **68.1%** (run 4: 76.6%: a regression, tool choice 65.4 → 53.8%).
 Gate with `--incumbent` run 4: **REJECTED** (domains below the incumbent). Run 4 stays the incumbent.
