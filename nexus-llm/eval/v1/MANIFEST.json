@@ -1,0 +1,21 @@
+{
+  "name": "nexus-eval",
+  "version": "v1",
+  "frozen": true,
+  "pinnedSha": "1ee0026b68dbb4f292f36e5c06873db593d3b664",
+  "cases": 84,
+  "byKind": {
+    "tool_choice": 33,
+    "no_tool": 5,
+    "evidence": 16,
+    "honesty": 30
+  },
+  "sha256": "079df97bcb91d3247e8dde123ddc8685026ffc57179c0f8054db67de9684ea96",
+  "labels": {
+    "app-function": 33,
+    "rule": 16,
+    "git": 30,
+    "authored": 5
+  },
+  "rule": "NEVER train on these prompts. The exporter drops any row whose normalized prompt matches a case here."
+}
