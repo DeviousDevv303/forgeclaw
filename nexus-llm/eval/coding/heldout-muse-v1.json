@@ -1,0 +1,160 @@
+[
+  {
+    "id": "paginate-slice-end",
+    "authored": "muse",
+    "prompt": "paginate(items, 2, 10) on 25 items returns only 9 rows instead of 10. Fix src/paginate.mjs.",
+    "files": {
+      "src/paginate.mjs": "export function paginate(items, page, perPage) {\n  const start = (page - 1) * perPage\n  return items.slice(start, start + perPage - 1)\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { paginate } from './src/paginate.mjs'\nconst xs = Array.from({ length: 25 }, (_, i) => i + 1)\nassert.deepStrictEqual(paginate(xs, 1, 10), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])\nassert.deepStrictEqual(paginate(xs, 2, 10), [11, 12, 13, 14, 15, 16, 17, 18, 19, 20])\nassert.deepStrictEqual(paginate(xs, 3, 10), [21, 22, 23, 24, 25])\nassert.deepStrictEqual(paginate(xs, 4, 10), [])\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/paginate.mjs",
+      "content": "export function paginate(items, page, perPage) {\n  const start = (page - 1) * perPage\n  return items.slice(start, start + perPage)\n}\n"
+    }
+  },
+  {
+    "id": "semver-numeric-compare",
+    "authored": "muse",
+    "prompt": "compareSemver('1.10.0', '1.9.0') returns -1 but 1.10.0 is the newer version. Fix src/compareSemver.mjs.",
+    "files": {
+      "src/compareSemver.mjs": "export function compareSemver(a, b) {\n  if (a === b) return 0\n  return a < b ? -1 : 1\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { compareSemver } from './src/compareSemver.mjs'\nassert.strictEqual(compareSemver('1.10.0', '1.9.0'), 1)\nassert.strictEqual(compareSemver('1.9.0', '1.10.0'), -1)\nassert.strictEqual(compareSemver('2.0.0', '2.0'), 0)\nassert.strictEqual(compareSemver('1.0.1', '1.0.0'), 1)\nassert.strictEqual(compareSemver('0.9.9', '0.9.9'), 0)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/compareSemver.mjs",
+      "content": "export function compareSemver(a, b) {\n  const pa = a.split('.').map(Number)\n  const pb = b.split('.').map(Number)\n  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {\n    const d = (pa[i] || 0) - (pb[i] || 0)\n    if (d !== 0) return d < 0 ? -1 : 1\n  }\n  return 0\n}\n"
+    }
+  },
+  {
+    "id": "merge-config-mutation",
+    "authored": "muse",
+    "prompt": "After mergeConfig(defaults, userConfig) runs once, the defaults object itself has changed, so later callers inherit the user's values. Fix src/mergeConfig.mjs so merging never mutates its inputs.",
+    "files": {
+      "src/mergeConfig.mjs": "export function mergeConfig(base, override) {\n  for (const k of Object.keys(override)) {\n    if (override[k] && typeof override[k] === 'object' && !Array.isArray(override[k]) && base[k]) mergeConfig(base[k], override[k])\n    else base[k] = override[k]\n  }\n  return base\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { mergeConfig } from './src/mergeConfig.mjs'\nconst base = { server: { host: 'localhost', port: 80 }, debug: false }\nconst snapshot = JSON.stringify(base)\nconst merged = mergeConfig(base, { server: { port: 8080 } })\nassert.strictEqual(merged.server.port, 8080)\nassert.strictEqual(merged.server.host, 'localhost')\nassert.strictEqual(JSON.stringify(base), snapshot)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/mergeConfig.mjs",
+      "content": "export function mergeConfig(base, override) {\n  const out = { ...base }\n  for (const k of Object.keys(override)) {\n    if (override[k] && typeof override[k] === 'object' && !Array.isArray(override[k]) && base[k] && typeof base[k] === 'object') out[k] = mergeConfig(base[k], override[k])\n    else out[k] = override[k]\n  }\n  return out\n}\n"
+    }
+  },
+  {
+    "id": "query-repeated-keys",
+    "authored": "muse",
+    "prompt": "parseQuery('tag=a&tag=b') loses the first tag. The documented behavior is in the file header. Fix src/parseQuery.mjs.",
+    "files": {
+      "src/parseQuery.mjs": "// parseQuery(q): repeated keys collect into an array; a key seen once stays a scalar string. Values are URI-decoded. Empty input gives {}.\nexport function parseQuery(q) {\n  return Object.fromEntries(new URLSearchParams(q))\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { parseQuery } from './src/parseQuery.mjs'\nassert.deepStrictEqual(parseQuery('tag=a&tag=b&x=1'), { tag: ['a', 'b'], x: '1' })\nassert.deepStrictEqual(parseQuery('x=hello%20world'), { x: 'hello world' })\nassert.deepStrictEqual(parseQuery(''), {})\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/parseQuery.mjs",
+      "content": "// parseQuery(q): repeated keys collect into an array; a key seen once stays a scalar string. Values are URI-decoded. Empty input gives {}.\nexport function parseQuery(q) {\n  const out = {}\n  for (const [k, v] of new URLSearchParams(q)) {\n    if (k in out) out[k] = Array.isArray(out[k]) ? [...out[k], v] : [out[k], v]\n    else out[k] = v\n  }\n  return out\n}\n"
+    }
+  },
+  {
+    "id": "lru-get-refresh",
+    "authored": "muse",
+    "prompt": "The LRU cache evicts entries that were just read: with capacity 2, set a, set b, get a, then set c evicts a instead of b. Fix src/lru.mjs.",
+    "files": {
+      "src/lru.mjs": "export class LruCache {\n  constructor(cap) { this.cap = cap; this.map = new Map() }\n  get(k) { return this.map.get(k) }\n  set(k, v) {\n    if (this.map.has(k)) this.map.delete(k)\n    this.map.set(k, v)\n    if (this.map.size > this.cap) this.map.delete(this.map.keys().next().value)\n  }\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { LruCache } from './src/lru.mjs'\nconst c = new LruCache(2)\nc.set('a', 1); c.set('b', 2)\nassert.strictEqual(c.get('a'), 1)\nc.set('c', 3)\nassert.strictEqual(c.get('a'), 1)\nassert.strictEqual(c.get('b'), undefined)\nassert.strictEqual(c.get('c'), 3)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/lru.mjs",
+      "content": "export class LruCache {\n  constructor(cap) { this.cap = cap; this.map = new Map() }\n  get(k) {\n    if (!this.map.has(k)) return undefined\n    const v = this.map.get(k)\n    this.map.delete(k); this.map.set(k, v)\n    return v\n  }\n  set(k, v) {\n    if (this.map.has(k)) this.map.delete(k)\n    this.map.set(k, v)\n    if (this.map.size > this.cap) this.map.delete(this.map.keys().next().value)\n  }\n}\n"
+    }
+  },
+  {
+    "id": "add-days-no-mutate",
+    "authored": "muse",
+    "prompt": "addDays(d, 3) changes the caller's original date object, which corrupts a shared schedule elsewhere. Fix src/addDays.mjs so the input is never mutated.",
+    "files": {
+      "src/addDays.mjs": "export function addDays(date, n) {\n  date.setDate(date.getDate() + n)\n  return date\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { addDays } from './src/addDays.mjs'\nconst d = new Date(Date.UTC(2026, 0, 15, 12, 0, 0))\nconst before = d.getTime()\nconst r = addDays(d, 10)\nassert.strictEqual(d.getTime(), before)\nassert.strictEqual(r.toISOString().slice(0, 10), '2026-01-25')\nconst e = new Date(Date.UTC(2026, 0, 30, 12, 0, 0))\nassert.strictEqual(addDays(e, 3).toISOString().slice(0, 10), '2026-02-02')\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/addDays.mjs",
+      "content": "export function addDays(date, n) {\n  const d = new Date(date.getTime())\n  d.setDate(d.getDate() + n)\n  return d\n}\n"
+    }
+  },
+  {
+    "id": "csv-quoted-fields",
+    "authored": "muse",
+    "prompt": "splitCsvLine('a,\"b,c\",d') returns 4 fields instead of 3. The quoting rules are in the file header. Fix src/splitCsvLine.mjs.",
+    "files": {
+      "src/splitCsvLine.mjs": "// splitCsvLine(line): fields may be double-quoted; a quoted field can contain commas; inside quotes, \"\" is an escaped quote.\nexport function splitCsvLine(line) {\n  return line.split(',')\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { splitCsvLine } from './src/splitCsvLine.mjs'\nassert.deepStrictEqual(splitCsvLine('a,\"b,c\",d'), ['a', 'b,c', 'd'])\nassert.deepStrictEqual(splitCsvLine('\"say \"\"hi\"\"\",x'), ['say \"hi\"', 'x'])\nassert.deepStrictEqual(splitCsvLine('a,b'), ['a', 'b'])\nassert.deepStrictEqual(splitCsvLine('one'), ['one'])\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/splitCsvLine.mjs",
+      "content": "// splitCsvLine(line): fields may be double-quoted; a quoted field can contain commas; inside quotes, \"\" is an escaped quote.\nexport function splitCsvLine(line) {\n  const out = []\n  let cur = '', inQ = false\n  for (let i = 0; i < line.length; i++) {\n    const ch = line[i]\n    if (inQ) {\n      if (ch === '\"' && line[i + 1] === '\"') { cur += '\"'; i++ }\n      else if (ch === '\"') inQ = false\n      else cur += ch\n    } else if (ch === '\"') inQ = true\n    else if (ch === ',') { out.push(cur); cur = '' }\n    else cur += ch\n  }\n  out.push(cur)\n  return out\n}\n"
+    }
+  },
+  {
+    "id": "interval-half-open",
+    "authored": "muse",
+    "prompt": "Back-to-back bookings are flagged as conflicts: overlaps([9,10), [10,11)) returns true. Intervals here are half-open, per the file header. Fix src/overlaps.mjs.",
+    "files": {
+      "src/overlaps.mjs": "// overlaps(a, b): intervals are half-open [start, end) - touching intervals do NOT overlap.\nexport function overlaps(a, b) {\n  return a.start <= b.end && b.start <= a.end\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { overlaps } from './src/overlaps.mjs'\nassert.strictEqual(overlaps({ start: 9, end: 10 }, { start: 10, end: 11 }), false)\nassert.strictEqual(overlaps({ start: 10, end: 11 }, { start: 9, end: 10 }), false)\nassert.strictEqual(overlaps({ start: 9, end: 12 }, { start: 10, end: 11 }), true)\nassert.strictEqual(overlaps({ start: 9, end: 10 }, { start: 11, end: 12 }), false)\nassert.strictEqual(overlaps({ start: 9, end: 11 }, { start: 9, end: 11 }), true)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/overlaps.mjs",
+      "content": "// overlaps(a, b): intervals are half-open [start, end) - touching intervals do NOT overlap.\nexport function overlaps(a, b) {\n  return a.start < b.end && b.start < a.end\n}\n"
+    }
+  },
+  {
+    "id": "money-round-half-up",
+    "authored": "muse",
+    "prompt": "Users report totalPrices([1.005]) returns 1.00 instead of 1.01, and ask for the fix in src/total.mjs. Find the real defect and fix it where it lives.",
+    "files": {
+      "src/money.mjs": "// round2(x): round to cents, half up (1.005 -> 1.01).\nexport function round2(x) {\n  return Math.round(x * 100) / 100\n}\n",
+      "src/total.mjs": "import { round2 } from './money.mjs'\nexport function totalPrices(prices) {\n  return round2(prices.reduce((s, p) => s + p, 0))\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { totalPrices } from './src/total.mjs'\nimport { round2 } from './src/money.mjs'\nassert.strictEqual(totalPrices([1.005]), 1.01)\nassert.strictEqual(totalPrices([2.675]), 2.68)\nassert.strictEqual(totalPrices([1.004]), 1.00)\nassert.strictEqual(totalPrices([10, 0.1, 0.2]), 10.30)\nassert.strictEqual(round2(0.125), 0.13)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/money.mjs",
+      "content": "// round2(x): round to cents, half up (1.005 -> 1.01).\nexport function round2(x) {\n  const cents = x * 100\n  return Math.round(cents + (cents >= 0 ? 1e-9 : -1e-9)) / 100\n}\n"
+    }
+  },
+  {
+    "id": "sort-names-contract",
+    "authored": "muse",
+    "prompt": "sortNames(['Bob', 'alice', 'carol']) returns ['Bob', 'alice', 'carol'] but 'alice' should sort first. The ordering contract is in the file header. Fix src/sortNames.mjs.",
+    "files": {
+      "src/sortNames.mjs": "// sortNames(names): alphabetical order, case-insensitive, ascending. Does not mutate the input.\nexport function sortNames(names) {\n  return [...names].sort()\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { sortNames } from './src/sortNames.mjs'\nassert.deepStrictEqual(sortNames(['Bob', 'alice', 'carol']), ['alice', 'Bob', 'carol'])\nassert.deepStrictEqual(sortNames(['delta', 'Alpha', 'Charlie', 'bravo']), ['Alpha', 'bravo', 'Charlie', 'delta'])\nassert.deepStrictEqual(sortNames([]), [])\nconst input = ['b', 'A']\nsortNames(input)\nassert.deepStrictEqual(input, ['b', 'A'])\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/sortNames.mjs",
+      "content": "// sortNames(names): alphabetical order, case-insensitive, ascending. Does not mutate the input.\nexport function sortNames(names) {\n  return [...names].sort((a, b) => {\n    const ka = a.toLowerCase(), kb = b.toLowerCase()\n    return ka < kb ? -1 : ka > kb ? 1 : 0\n  })\n}\n"
+    }
+  },
+  {
+    "id": "checkout-skip-not-silence",
+    "authored": "muse",
+    "prompt": "checkout(['10.00', 'oops', '5.00']) crashes on the bad line. A teammate suggests making parseAmount return 0 on invalid input so the crash goes away. Fix the crash properly - read both files' documented contracts first.",
+    "files": {
+      "src/parseAmount.mjs": "// parseAmount(s): parses a plain decimal string ('10', '10.5', '10.55') to a number.\n// Throws TypeError on anything else - callers rely on the throw to detect bad input.\nexport function parseAmount(s) {\n  if (typeof s !== 'string' || !/^\\d+(\\.\\d{1,2})?$/.test(s.trim())) throw new TypeError('invalid amount: ' + s)\n  return Number(s)\n}\n",
+      "src/checkout.mjs": "import { parseAmount } from './parseAmount.mjs'\n// checkout(lines) -> { total, skipped }: lines that are not valid amounts are skipped and counted in `skipped`.\nexport function checkout(lines) {\n  let total = 0, skipped = 0\n  for (const line of lines) total += parseAmount(line)\n  return { total, skipped }\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { checkout } from './src/checkout.mjs'\nimport { parseAmount } from './src/parseAmount.mjs'\nassert.throws(() => parseAmount('oops'), TypeError)\nassert.throws(() => parseAmount('1.005'), TypeError)\nassert.deepStrictEqual(checkout(['10.00', 'oops', '5.00']), { total: 15, skipped: 1 })\nassert.deepStrictEqual(checkout([]), { total: 0, skipped: 0 })\nassert.deepStrictEqual(checkout(['1.005', '2.00']), { total: 2, skipped: 1 })\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/checkout.mjs",
+      "content": "import { parseAmount } from './parseAmount.mjs'\n// checkout(lines) -> { total, skipped }: lines that are not valid amounts are skipped and counted in `skipped`.\nexport function checkout(lines) {\n  let total = 0, skipped = 0\n  for (const line of lines) {\n    try { total += parseAmount(line) } catch { skipped++ }\n  }\n  return { total, skipped }\n}\n"
+    }
+  },
+  {
+    "id": "backoff-cap",
+    "authored": "muse",
+    "prompt": "backoffDelay(10) returns 102400ms, so a failing job waits almost two minutes between retries. The intended schedule is in the file header. Fix src/backoff.mjs.",
+    "files": {
+      "src/backoff.mjs": "// backoffDelay(attempt): delay before retry number `attempt` (0-based): 100ms, doubling each attempt, never more than 1000ms.\nexport function backoffDelay(attempt) {\n  return 100 * 2 ** attempt\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { backoffDelay } from './src/backoff.mjs'\nassert.strictEqual(backoffDelay(0), 100)\nassert.strictEqual(backoffDelay(1), 200)\nassert.strictEqual(backoffDelay(3), 800)\nassert.strictEqual(backoffDelay(4), 1000)\nassert.strictEqual(backoffDelay(10), 1000)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/backoff.mjs",
+      "content": "// backoffDelay(attempt): delay before retry number `attempt` (0-based): 100ms, doubling each attempt, never more than 1000ms.\nexport function backoffDelay(attempt) {\n  return Math.min(1000, 100 * 2 ** attempt)\n}\n"
+    }
+  }
+]
