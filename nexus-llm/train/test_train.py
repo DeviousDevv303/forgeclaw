@@ -8,7 +8,7 @@ import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from common import RESULT_CLOSE, RESULT_OPEN, SP, encode_row  # noqa: E402
+from common import COPY_LOSS_WEIGHT, RESULT_CLOSE, RESULT_OPEN, SP, encode_row, encode_row_w  # noqa: E402
 
 
 class LossMask(unittest.TestCase):
@@ -32,6 +32,42 @@ class LossMask(unittest.TestCase):
         ids, mask = encode_row("read a", self.TEXT)
         trained = SP.decode([t for t, m in zip(ids, mask) if m])
         self.assertNotIn("secret result text", trained)
+
+
+class ModeAndCopyWeights(unittest.TestCase):
+    """Run 8: the mode token is frame (masked, one piece), and copied-span tokens carry the extra loss weight."""
+
+    TEXT = '<|route:tool|><|call|>{"name":"generate_image","arguments":{"prompt":"a shiny zorvane in the snow"}}<|/call|><|ev:not_verified|><|answer|>done<|/answer|><|end|>'
+
+    def test_mode_token_is_one_masked_frame_piece_and_legacy_frame_is_unchanged(self):
+        ids, mask, w = encode_row_w("draw a shiny zorvane in the snow", self.TEXT, mode="copy")
+        pieces = [SP.id_to_piece(i) for i in ids]
+        self.assertEqual(pieces.count("<|mode:copy|>"), 1)
+        self.assertEqual(mask[pieces.index("<|mode:copy|>")], 0)
+        legacy_ids, legacy_mask = encode_row("draw a shiny zorvane in the snow", self.TEXT)
+        ids2, mask2, w2 = encode_row_w("draw a shiny zorvane in the snow", self.TEXT)
+        self.assertEqual((ids2, mask2), (legacy_ids, legacy_mask))
+        self.assertTrue(all(x == float(m) for x, m in zip(w2, mask2)))
+
+    def test_copied_span_tokens_carry_the_weight_and_nothing_else_does(self):
+        ids, mask, w = encode_row_w("draw a shiny zorvane in the snow", self.TEXT, mode="copy", copy_spans=["a shiny zorvane in the snow"])
+        pieces = [SP.id_to_piece(i) for i in ids]
+        heavy = [p for p, m, x in zip(pieces, mask, w) if m and x == COPY_LOSS_WEIGHT]
+        self.assertIn("zorvane", "".join(heavy).replace("▁", " "), pieces)  # the span's subword pieces, all weighted
+        light = [p for p, m, x in zip(pieces, mask, w) if m and x == 1.0]
+        self.assertIn("<|end|>", light)  # outside the span: ordinary weight
+        self.assertTrue(all(x == 0.0 for x, m in zip(w, mask) if not m))
+
+    def test_weighted_loss_with_unit_weights_equals_the_unweighted_loss(self):
+        import torch
+        from model import Config, NexusLM
+        torch.manual_seed(0)
+        m = NexusLM(Config(vocab_size=SP.get_piece_size(), n_layer=1, n_head=2, d_model=32, d_ff=64, ctx=64, copy=True, induction=True)).eval()
+        ids, mask, _ = encode_row_w("draw a shiny zorvane in the snow", self.TEXT, mode="copy", copy_spans=["a shiny zorvane in the snow"])
+        x = torch.tensor([ids]); y = torch.full_like(x, -100)
+        y[0, :-1] = torch.tensor([t if mm else -100 for t, mm in zip(ids, mask)])[1:]
+        ones = (y != -100).float()
+        self.assertAlmostEqual(float(m.loss(x, y, ones)), float(m.loss(x, y)), places=5)
 
 
 class Guards(unittest.TestCase):

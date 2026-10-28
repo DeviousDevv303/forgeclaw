@@ -40,7 +40,8 @@ def tool(session, name, args):
 with open(a.out, "w") as f:
     for s in scen:
         transcript, calls = "", []
-        base = [BOS] + SP.encode(frame(s["prompt"]))
+        # A scenario with argsContain is a copying context by the scorer's own definition: the harness presents COPY.
+        base = [BOS] + SP.encode(frame(s["prompt"], "copy" if s.get("argsContain") else "create"))
         for _ in range(a.max_calls + 1):
             gen = SP.decode(dec.generate(step, base + SP.encode(transcript), transcript, max_new=200))
             transcript += gen

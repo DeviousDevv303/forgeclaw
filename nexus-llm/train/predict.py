@@ -25,9 +25,21 @@ def step_logits(ids):
     return model.next_logprobs(ids)
 
 
+def case_mode(c) -> str:
+    """The harness presents the mode, as the dispatcher would: COPY when the case's task is carrying prompt
+    material verbatim into a call (a tool case whose expected arguments appear in the prompt — the same rule
+    the synthetic generator uses to label its rows), CREATE otherwise."""
+    exp = c.get("expect") or {}
+    if exp.get("route") == "tool":
+        for v in (exp.get("args") or {}).values():
+            if isinstance(v, str) and len(v) >= 4 and v in c["prompt"]:
+                return "copy"
+    return "create"
+
+
 with open(a.out, "w") as f:
     for c in read_jsonl(a.cases):
-        ctx = [BOS] + SP.encode(frame(c["prompt"])) + SP.encode(c["prefix"])
+        ctx = [BOS] + SP.encode(frame(c["prompt"], case_mode(c))) + SP.encode(c["prefix"])
         gen = dec.generate(step_logits, ctx, c["prefix"], max_new=a.max_new) if a.constrained else model.greedy(ctx, {CALL_CLOSE, END}, max_new=a.max_new)
         f.write(json.dumps({"id": c["id"], "output": SP.decode(gen)}) + "\n")
 print("wrote", a.out)

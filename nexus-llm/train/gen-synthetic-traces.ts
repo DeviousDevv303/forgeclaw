@@ -46,14 +46,28 @@ const WORD = ['alpha', 'beta', 'gamma', 'delta', 'omega', 'sigma', 'lambda', 'ka
 const TOPIC = ['solar panel efficiency', 'how bread rises', 'tide tables', 'the rules of cricket', 'grain prices', 'the speed of sound', 'rebar sizes', 'concrete curing time', 'welding rod types', 'OSHA ladder rules', 'diesel prices', 'heat pump sizing', 'roof pitch math', 'torque specs']
 const DIRS = ['src', 'docs', 'scripts', 'public', 'tests', 'lib', 'config', 'tools', 'assets', 'examples']
 const EXT = ['.ts', '.md', '.json', '.py', '.sh', '.css', '.yml', '.txt']
-const word = () => pick(WORD)
+const word = () => rnd() < 0.25 ? pick(NONCE) : pick(WORD)
 /** Half the prompts start with a capital, as people type them; a call copies the text as written (run 6 never saw a capital to copy). */
 const cap = (p: string) => rnd() < 0.5 ? p.charAt(0).toUpperCase() + p.slice(1) : p
-const subject = () => `${rnd() < 0.7 ? `a ${pick(ADJ)} ` : 'a '}${pick(NOUN)}${rnd() < 0.7 ? ` ${pick(PLACE)}` : ''}`
+const subject = () => `${rnd() < 0.7 ? `a ${pick(ADJ)} ` : 'a '}${rnd() < 0.3 ? pick(NONCE) : pick(NOUN)}${rnd() < 0.7 ? ` ${pick(PLACE)}` : ''}`
 const topic = () => rnd() < 0.5 ? pick(TOPIC) : `${pick(TOPIC)} ${pick(['in', 'for', 'near'])} ${pick(['Houston', 'Galveston', 'Denver', 'winter', '2026', 'Texas', 'small shops'])}`
 const dirName = () => rnd() < 0.4 ? pick(DIRS) : `${pick(DIRS)}/${word()}`
 const fileName = () => rnd() < 0.15 ? pick(['README.md', 'package.json', 'LICENSE', 'tsconfig.json']) : `${dirName()}/${word()}${rnd() < 0.4 ? `_${word()}` : ''}${pick(EXT)}`
 const memPair = (): [string, string] => [`${word()}_${pick(['note', 'code', 'task', 'size', 'time', 'list'])}`, `${pick(ADJ)} ${pick(NOUN)} ${pick(['at nine', 'on tuesday', '13 mm', 'by friday', 'twice', 'later'])}`]
+// NONCE augmentation (run 8): invented words that exist nowhere else, injected into copied material (image subjects,
+// file/memory/search words, Kalshi event phrases) so the copy head practises carrying ARBITRARY tokens, not just the
+// pools above. Hard constraint: this vocabulary is disjoint from every frozen eval/benchmark text — asserted below
+// against the raw files (exact word, substring either direction), so a future edit that collides fails generation.
+const NONCE = ['zorvane', 'quindle', 'braskit', 'tomvera', 'snarpel', 'dulvane', 'kremish', 'ostelio', 'pravunda', 'jelvick', 'morvane', 'veskari', 'ondruel', 'palindra', 'skovena', 'turvello', 'azmira', 'belkora', 'drunavel', 'eskovia', 'falindra', 'gorvessa', 'halvorn', 'jorvane', 'kelvora', 'lumistra', 'norvega', 'omvessa', 'pelvane', 'quorvane', 'ristova', 'solvane', 'trevisko', 'umvella', 'vorvane', 'welskova', 'xarvane', 'yondruel', 'zelvora', 'askovar', 'brundel', 'corvessa', 'dolmere', 'ervane', 'falkora', 'gundrel', 'haskova', 'istvane']
+{
+  const frozenText = ['../eval/v1/cases.jsonl', '../eval/domains-v1/cases.jsonl', '../eval/loop/scenarios.json']
+    .map(p => readFileSync(join(here, p), 'utf8')).join('\n').toLowerCase()
+  const frozenWords = new Set(frozenText.match(/[a-z]+/g) ?? [])
+  for (const w of NONCE) {
+    if (frozenWords.has(w) || frozenText.includes(w)) throw new Error(`nonce word "${w}" appears in a frozen eval text`)
+    for (const fw of frozenWords) if (fw.length >= 4 && w.includes(fw)) throw new Error(`nonce word "${w}" contains frozen eval word "${fw}"`)
+  }
+}
 const styles = ['realistic', 'artistic', 'cartoon', 'anime', 'watercolor', 'oil painting', 'pixel art', 'cinematic']
 const words = WORD
 const snippet = () => Array.from({ length: 3 + Math.floor(rnd() * 5) }, () => pick(words)).join(' ')
@@ -68,7 +82,7 @@ const fakeMarket = (): { m: KalshiMarket; name: string; query: string } => {
 }
 const cents = (x: number) => `$${x.toFixed(2)}`
 
-interface Row { id: string; synthetic: true; prompt: string; text: string; kind: string }
+interface Row { id: string; synthetic: true; prompt: string; text: string; kind: string; mode: 'copy' | 'create'; copySpans: string[] }
 const rows: Row[] = []
 const perKind = new Map<string, number>()
 let dropped = 0
@@ -85,7 +99,13 @@ function emit(kind: string, prompt: string, t: Transcript): void {
   if (errs.length) throw new Error(`synthetic transcript invalid (${kind}): ${errs[0]}`)
   if ((perKind.get(kind) ?? 0) >= CAP) return
   perKind.set(kind, (perKind.get(kind) ?? 0) + 1)
-  rows.push({ id: `syn-${String(rows.length + 1).padStart(5, '0')}`, synthetic: true, prompt, text: encodeTranscript(t, tools), kind })
+  // Run 8 mode + copy spans, one mechanical rule (mirrored by the harness in predict.py): a row is COPY when one of
+  // its calls carries an argument value that appears verbatim in the prompt; those values are its copied spans and
+  // their tokens earn extra loss weight. Everything else — composed answers, bare calls — is CREATE.
+  const copySpans: string[] = []
+  for (const s of t.steps) for (const v of Object.values(s.call.arguments).flatMap(x => Array.isArray(x) ? x : [x]))
+    if (typeof v === 'string' && v.length >= 4 && prompt.includes(v) && !copySpans.includes(v)) copySpans.push(v)
+  rows.push({ id: `syn-${String(rows.length + 1).padStart(5, '0')}`, synthetic: true, prompt, text: encodeTranscript(t, tools), kind, mode: copySpans.length ? 'copy' : 'create', copySpans })
 }
 const errText = () => pick(['[TOOL ERROR] GitHub 404: Not Found', '[TOOL ERROR] request timed out', '[TOOL ERROR] GitHub 403: Forbidden'])
 
@@ -227,7 +247,8 @@ const makers: Array<[string, () => void]> = [
     emit('kalshi_read', p, traced([s], ok ? `Kalshi's YES ask for ${m.ticker} is ${cents(ask)}, an implied ${Math.round(ask * 100)}%. That is a price, not a guarantee.`
       : 'I could not read Kalshi, so I have no price. If you tell me the price you see, I can use it as your number.')) }],
   ['kalshi_search', () => {
-    const ev = pick(['Tesla above 300', 'Nvidia beating earnings', 'the ECB cutting rates', 'Apple above 250', 'Ohio State winning', 'the Lakers winning', 'Toyota recalls', 'OPEC cutting output', 'recession', 'unemployment', 'gas prices', 'rain in Seattle', 'snow in Denver', 'inflation', 'ethereum above 5k', 'a government shutdown', 'the S&P 500 record', 'gold above 3000', 'a hurricane landfall', 'egg prices'])
+    const ev = rnd() < 0.3 ? pick([`${pick(NONCE)} futures above ${int(20, 900)}`, `the ${pick(NONCE)} index at a record high`, `${pick(NONCE)} coin above ${int(2, 90)} dollars`, `a ${pick(NONCE)} shortage in Texas`])
+      : pick(['Tesla above 300', 'Nvidia beating earnings', 'the ECB cutting rates', 'Apple above 250', 'Ohio State winning', 'the Lakers winning', 'Toyota recalls', 'OPEC cutting output', 'recession', 'unemployment', 'gas prices', 'rain in Seattle', 'snow in Denver', 'inflation', 'ethereum above 5k', 'a government shutdown', 'the S&P 500 record', 'gold above 3000', 'a hurricane landfall', 'egg prices'])
     const when = pick(['', ' this month', ' in December', ' by Friday', ' this year'])
     const p = pick([`What are the Kalshi odds on ${ev}${when}?`, `What does Kalshi charge for ${ev}${when}?`, `Show me Kalshi markets about ${ev}`, `How likely does Kalshi think ${ev} is${when}?`])
     const query = ev.replace(/^(a |the )/, '')

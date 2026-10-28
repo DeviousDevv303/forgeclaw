@@ -10,7 +10,7 @@ import time
 
 import torch
 
-from common import SP, encode_row, read_jsonl
+from common import COPY_LOSS_WEIGHT, SP, encode_row_w, read_jsonl
 from model import PRESETS, NexusLM
 
 ap = argparse.ArgumentParser()
@@ -40,9 +40,11 @@ out.mkdir(parents=True, exist_ok=True)
 random.seed(a.seed); torch.manual_seed(a.seed); torch.set_num_threads(max(1, torch.get_num_threads()))
 cfg = PRESETS[a.preset]
 cfg.vocab_size = SP.get_piece_size()
-enc = [encode_row(r["prompt"], r["text"]) for r in rows]
-enc = [(i, m) for i, m in enc if len(i) <= cfg.ctx]
-print(f"preset {a.preset}: {len(enc)} rows (of {len(rows)}), max len {max(len(i) for i, _ in enc)}, vocab {cfg.vocab_size}")
+# Rows may carry run-8 fields (mode, copySpans); legacy rows encode exactly as before (no mode token, weights = mask).
+enc = [encode_row_w(r["prompt"], r["text"], r.get("mode"), r.get("copySpans") or ()) for r in rows]
+enc = [(i, m, w) for i, m, w in enc if len(i) <= cfg.ctx]
+n_copy_rows = sum(1 for r in rows if r.get("mode") == "copy")
+print(f"preset {a.preset}: {len(enc)} rows (of {len(rows)}), max len {max(len(i) for i, _, _ in enc)}, vocab {cfg.vocab_size}, copy rows {n_copy_rows}, copy loss weight {COPY_LOSS_WEIGHT}")
 model = NexusLM(cfg)
 if a.init:
     ck = torch.load(a.init, map_location="cpu")
@@ -62,13 +64,15 @@ buckets = [by_len[k:k + a.batch * 4] for k in range(0, len(by_len), a.batch * 4)
 def batch():
     pool = random.choices(buckets, weights=[len(x) for x in buckets])[0]
     b = [enc[k] for k in random.sample(pool, min(a.batch, len(pool)))]
-    t = max(len(i) for i, _ in b)
+    t = max(len(i) for i, _, _ in b)
     x = torch.zeros(len(b), t, dtype=torch.long); y = torch.full((len(b), t), -100, dtype=torch.long)
-    for k, (ids, mask) in enumerate(b):
+    w = torch.zeros(len(b), t, dtype=torch.float)
+    for k, (ids, mask, wts) in enumerate(b):
         x[k, :len(ids)] = torch.tensor(ids)
         tgt = torch.tensor([tok if m else -100 for tok, m in zip(ids, mask)])
         y[k, :len(ids) - 1] = tgt[1:]
-    return x, y
+        w[k, :len(ids) - 1] = torch.tensor(wts[1:], dtype=torch.float)
+    return x, y, w
 
 t0 = time.time(); log = []; start = 0
 resume_path = out / "resume.pt"
@@ -83,8 +87,8 @@ if a.resume:
     print(f"resumed at step {start}")
 for step in range(start, a.steps):
     for g in opt.param_groups: g["lr"] = sched(step)
-    model.train(); x, y = batch()
-    loss = model.loss(x, y)
+    model.train(); x, y, w = batch()
+    loss = model.loss(x, y, w)
     opt.zero_grad(); loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step()
     if step % 50 == 0 or step == a.steps - 1:
         log.append({"step": step, "loss": round(float(loss.detach()), 4), "sec": round(time.time() - t0, 1)}); print(log[-1], flush=True)
@@ -96,7 +100,7 @@ for step in range(start, a.steps):
     if a.stop_after is not None and step + 1 >= a.stop_after:
         raise SystemExit(3)
 torch.save({"cfg": cfg.__dict__, "state": model.state_dict()}, out / "model.pt")
-(out / "train-log.json").write_text(json.dumps({"preset": a.preset, "params": model.n_params(), "steps": a.steps, "synthetic_only": not a.allow_real, "data": str(a.data), "init": a.init, "log": log}, indent=2))
+(out / "train-log.json").write_text(json.dumps({"preset": a.preset, "params": model.n_params(), "steps": a.steps, "synthetic_only": not a.allow_real, "data": str(a.data), "init": a.init, "copy_loss_weight": COPY_LOSS_WEIGHT, "copy_rows": n_copy_rows, "log": log}, indent=2))
 if resume_path.exists():
     resume_path.unlink()
 print("saved", out / "model.pt")
