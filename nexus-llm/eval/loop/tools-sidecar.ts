@@ -21,6 +21,14 @@ const ledgers = new Map<string, FundsState>()
 const ledger = (s: string) => ledgers.get(s) ?? (() => { const st = applyFundsCommand(applyFundsCommand(emptyFunds(), { kind: 'limits', changes: { capAmount: 1000 } }, NOW).state, { kind: 'deposit', amount: 500 }, NOW).state; ledgers.set(s, st); return st })()
 const ok = (text: string) => ({ status: 'ok', text })
 const err = (m: string) => ({ status: 'error', text: `[TOOL ERROR] ${m}` })
+// Eval seeding (image grammar v2): the seed a copy-faithfulness dispatch carries when the writer
+// did not supply one — a stable FNV-1a hash of the session/item id, so the same item reproduces
+// the same target image on every run and score deltas attribute to the writer, not the sampler.
+export function seedForItem(id: string): number {
+  let h = 2166136261
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619) }
+  return h >>> 0
+}
 
 export function run(session: string, name: string, a: Record<string, unknown>): { status: string; text: string } {
   switch (name) {
@@ -52,7 +60,24 @@ export function run(session: string, name: string, a: Record<string, unknown>): 
       if (!Number.isInteger(width) || !Number.isInteger(height) || width < 256 || width > 1024 || height < 256 || height > 1024 || width % 8 !== 0 || height % 8 !== 0) return err('Image width and height must be integers from 256 to 1024 and divisible by 8.')
       if (!IMAGE_MODELS.includes(model)) return err(`Unknown image model '${model}'. Allowed: ${IMAGE_MODELS.join(', ')}.`)
       if (model !== 'sd15' && (width > 512 || height > 512)) return err(`Image model '${model}' is only verified up to 512x512.`)
-      const inputs = { prompt, style, width: String(width), height: String(height), model }
+      // Image grammar v2 fields: expressible in the call, validated here, recorded on the dispatch.
+      // The workflow does not honor them yet — that is the quality-backend step, not this one.
+      const negativePrompt = typeof a.negative_prompt === 'string' ? a.negative_prompt.trim() : ''
+      if (negativePrompt.length > 1000) return err('Image negative prompt must be at most 1000 characters.')
+      const guidance = a.guidance === undefined ? undefined : Number(a.guidance)
+      if (guidance !== undefined && (!Number.isFinite(guidance) || guidance < 0 || guidance > 30)) return err('Image guidance must be a number from 0 to 30.')
+      const steps = a.steps === undefined ? undefined : Number(a.steps)
+      if (steps !== undefined && (!Number.isInteger(steps) || steps < 1 || steps > 150)) return err('Image steps must be an integer from 1 to 150.')
+      let seed: number
+      if (a.seed === undefined) seed = seedForItem(session)
+      else {
+        seed = Number(a.seed)
+        if (!Number.isInteger(seed) || seed < 0 || seed > 4294967295) return err('Image seed must be an integer from 0 to 4294967295.')
+      }
+      const inputs = { prompt, style, width: String(width), height: String(height), model, seed: String(seed),
+        ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+        ...(guidance !== undefined ? { guidance: String(guidance) } : {}),
+        ...(steps !== undefined ? { steps: String(steps) } : {}) }
       if (dispatchLog) appendFileSync(dispatchLog, JSON.stringify({ session, inputs }) + '\n')
       return ok(`image ready (offline harness: the dispatch was recorded, not sent: ${JSON.stringify(inputs)})`)
     }

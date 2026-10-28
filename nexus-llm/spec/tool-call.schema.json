@@ -986,6 +986,18 @@
                 "sdxl-turbo",
                 "sd-turbo"
               ]
+            },
+            "negative_prompt": {
+              "type": "string"
+            },
+            "guidance": {
+              "type": "number"
+            },
+            "steps": {
+              "type": "number"
+            },
+            "seed": {
+              "type": "number"
             }
           },
           "required": [
