@@ -1633,6 +1633,10 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           } catch (error) {
             workflowNote = `[DuckDuckGo workflow search failed: ${error instanceof Error ? error.message : String(error)}. Falling back to Instant Answers, which are not full web search.]\n`
           }
+        } else {
+          // No Brave key and no GitHub token: live search cannot run at all in this browser.
+          // The Instant Answers below are static reference data and must never pose as live results.
+          workflowNote = `[Live web search did not run: no Brave Search key and no GitHub token for the workflow search. What follows is DuckDuckGo Instant Answers — static reference data, NOT live search results.]\n`
         }
 
         // Fallback: DuckDuckGo Instant Answers (no key, CORS-enabled)
@@ -1648,8 +1652,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           .map(t => `• ${t.Text}${t.FirstURL ? `\n  ${t.FirstURL}` : ''}`)
         if (topics.length) parts.push(topics.join('\n'))
         return workflowNote + (parts.length
-          ? `DuckDuckGo — "${query}":\n${parts.join('\n\n')}`
-          : `No results for "${query}". Add a Brave Search API key in Settings for full web results.`)
+          ? `DuckDuckGo Instant Answers — "${query}" (static reference data, not live search results):\n${parts.join('\n\n')}`
+          : `No results for "${query}": live search did not produce any and Instant Answers has no entry for it. Add a Brave Search API key in Settings for full web results.`)
       }
 
       // ── Gmail: read ───────────────────────────────────────────────────────────

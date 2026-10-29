@@ -67,3 +67,38 @@ describe('stripReasoningArtifacts', () => {
     expect(stripReasoningArtifacts(text)).toBe(text)
   })
 });
+
+describe('repetition loop truncation', () => {
+  it('cuts a repeated sentence at its second occurrence and marks the cut', () => {
+    const sentence = 'The price keeps rising toward the close.'
+    const input = `Bitcoin is active today. ${sentence} ${sentence} ${sentence} ${sentence}`
+    const out = stripReasoningArtifacts(input)
+    expect(out).toBe(`Bitcoin is active today. ${sentence}\n\n[ForgeClaw cut the rest of this answer: the model fell into a repetition loop.]`)
+  })
+
+  it('cuts a punctuation-free phrase loop', () => {
+    const phrase = 'the price of bitcoin is going up'
+    const input = `${phrase} ${phrase} ${phrase} ${phrase}`
+    const out = stripReasoningArtifacts(input)
+    expect(out.startsWith(phrase)).toBe(true)
+    expect(out).toContain('repetition loop')
+    expect(out.split(phrase).length - 1).toBe(1)
+  })
+
+  it('leaves text that repeats a phrase only twice untouched', () => {
+    const sentence = 'The price keeps rising toward the close.'
+    const input = `Bitcoin is active today. ${sentence} ${sentence} That is all.`
+    expect(stripReasoningArtifacts(input)).toBe(input)
+  })
+
+  it('leaves repeated lines inside a fenced code block untouched', () => {
+    const line = 'const value = computeTheSameThingAgain(input);'
+    const input = 'Here is the code:\n```ts\n' + `${line}\n`.repeat(4) + '```'
+    expect(stripReasoningArtifacts(input)).toBe(input)
+  })
+
+  it('leaves ordinary varied prose untouched', () => {
+    const input = 'The market opened higher. Volume rose through the morning session. By the close, most contracts had settled near their opening prices.'
+    expect(stripReasoningArtifacts(input)).toBe(input)
+  })
+});

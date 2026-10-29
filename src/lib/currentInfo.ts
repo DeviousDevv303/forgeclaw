@@ -8,7 +8,9 @@
 
 // Words that ask what is new. Not "today"/"right now": "a workout for today" is not a news question
 // (live sports/weather "tonight/now" questions have their own web_search fast path, liveDataRouting.ts).
-const RECENCY = /\b(latest|newest|recent(?:ly)?|this year|so far this year|state of the art|cutting[- ]edge|what'?s new|what is new|new in|news|trending|current state|20(?:2[5-9]|3\d))\b/i
+// Just-past phrasings (yesterday, last night, this morning, overnight) DO belong here: they ask about
+// completed events after the model's training cutoff, which it otherwise answers from memory as if current.
+const RECENCY = /\b(latest|newest|recent(?:ly)?|yesterday|last night|this morning|overnight|this year|so far this year|state of the art|cutting[- ]edge|what'?s new|what is new|new in|news|trending|current state|20(?:2[5-9]|3\d))\b/i
 // Work on ForgeClaw itself or on code is answered from the repository, not the web.
 const SELF_OR_CODE = /\b(forgeclaw|repo|repository|branch|commit|pull request|workflow|codebase|source code|this file|my code|your code|nexus|guardian)\b/i
 

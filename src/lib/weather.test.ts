@@ -47,7 +47,7 @@ describe('weather', () => {
   })
 
   it('DeepSeek quick path: weather with a place gets the forecast tool, without one it still searches', () => {
-    expect(routeLiveDataQuestion("What's the weather like tomorrow in okc")).toMatchObject({ name: 'weather_forecast', input: { place: 'okc', day: '1' } })
+    expect(routeLiveDataQuestion("What's the weather like tomorrow in okc")).toMatchObject({ name: 'weather_forecast', input: { place: 'okc', day: 1 } })
     expect(routeLiveDataQuestion("what's the weather forecast?")).toMatchObject({ name: 'web_search' })
   })
 })

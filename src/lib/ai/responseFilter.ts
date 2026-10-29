@@ -44,8 +44,55 @@ export function stripReasoningArtifacts(response: string): string {
   cleaned = cleaned.replace(APP_IDENTITY_FRAGMENT_RE, '');
   cleaned = cleaned.replace(ENVELOPE_TAG_RE, '');
 
+  // 5. Cut a verbatim repetition loop (below) — the answer up to the loop is real; the loop is not.
+  cleaned = truncateRepetitionLoop(cleaned);
+
   // Collapse excessive blank lines left behind, trim
   cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
 
   return cleaned;
+}
+
+const LOOP_MARKER = '\n\n[ForgeClaw cut the rest of this answer: the model fell into a repetition loop.]';
+
+/**
+ * A small model on a slow runner can fall into a verbatim loop (the 2026-10-20 site run repeated
+ * one CSS selector until its token budget ran out; chat generation carries no repetition penalty).
+ * Detect a phrase of 3–12 words repeated 3+ times back-to-back, spanning at least 15 words, and
+ * cut the text at the second occurrence. Fenced code is exempt: repeated lines there are data,
+ * not a loop. The marker keeps the cut visible instead of silently shortening the answer.
+ */
+export function truncateRepetitionLoop(response: string): string {
+  const parts = response.split(/(```[\s\S]*?(?:```|$))/g);
+  for (let i = 0; i < parts.length; i += 2) {
+    const cut = cutLoopInProse(parts[i]);
+    if (cut !== null) {
+      const kept = parts.slice(0, i).join('') + cut;
+      return kept.replace(/\s+$/, '') + LOOP_MARKER;
+    }
+  }
+  return response;
+}
+
+function cutLoopInProse(prose: string): string | null {
+  const words: Array<{ start: number; text: string }> = [];
+  const wordRe = /\S+/g;
+  let m: RegExpExecArray | null;
+  while ((m = wordRe.exec(prose)) !== null) words.push({ start: m.index, text: m[0].toLowerCase() });
+  if (words.length < 15) return null;
+  for (let s = 0; s + 15 <= words.length; s++) {
+    for (let len = 12; len >= 3; len--) {
+      if (s + len * 3 > words.length) continue;
+      const phrase = words.slice(s, s + len).map(w => w.text).join(' ');
+      let occurrences = 1;
+      while (s + len * (occurrences + 1) <= words.length
+        && words.slice(s + len * occurrences, s + len * (occurrences + 1)).map(w => w.text).join(' ') === phrase) {
+        occurrences++;
+      }
+      if (occurrences >= 3 && len * occurrences >= 15) {
+        return prose.slice(0, words[s + len].start);
+      }
+    }
+  }
+  return null;
 }

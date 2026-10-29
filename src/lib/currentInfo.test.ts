@@ -9,6 +9,10 @@ describe('questions about what is current', () => {
     'recent breakthroughs in batteries',
     'best phones of 2026',
     "what's trending in fashion",
+    'what happened at the city council meeting last night',
+    'any announcements from yesterday',
+    'what changed overnight in the markets',
+    'did anything break this morning',
   ])('needs current info: %s', text => expect(needsCurrentInfo(text)).toBe(true))
 
   it.each([
