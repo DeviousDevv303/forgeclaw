@@ -17,8 +17,12 @@
  * (appendIntakeExperience), carrying full provenance and its class's marker:
  * INTAKE_ADMITTED_BY for an audit-adjudicated record whose loop closed, and
  * OWNER_ADMITTED_BY for the owner's own filed decision record (the second
- * class, directed by the owner the same day). The criteria are the owner's
- * ruling, implemented literally — this module widens nothing beyond them:
+ * class, directed by the owner the same day). A third class followed on
+ * 2026-10-29: Nexus Bank live-trading records, admitted under the OWNER
+ * marker by the owner's ruling that live-trading records are verified by
+ * construction — live results, receipts, grades (see intakeBankAutoAdmit).
+ * The criteria are the owner's rulings, implemented literally — this module
+ * widens nothing beyond them:
  * canary records (raw sensor output) NEVER auto-admit, and neither does any
  * record missing a field the criteria name.
  *
@@ -136,10 +140,45 @@ export function intakeOwnerAutoAdmit(record: NexusIntakeRecord): boolean {
     && record.ref !== ''
 }
 
+/**
+ * The owner's THIRD auto-admission class (Cristian's ruling, 2026-10-29): Nexus
+ * Bank live-trading records. The kinds are the Bank producers' kinds — the
+ * counterfactual watch's graded rejected-entry outcomes ('decision-outcome',
+ * filed under source 'owner-preapproved', which the owner-decision class above
+ * misses on the source name alone), the molding walk's per-window records
+ * ('live-molding-record') and events ('molding-event'), and the first-hundred
+ * campaign's unit records ('campaign-mandate'). The owner's stated basis, in
+ * his words: everything filed for live trading is based off of live results,
+ * so it is verified — the records are verified by construction (live fills,
+ * receipts, settlement grades), and no approval stop applies to them. Same
+ * discipline as the other classes (ALL named fields required, no partial
+ * credit): run_id AND a subject — a ref, or a check (the normalized subject
+ * IS the record's check-or-ref) — must be present. A Bank record missing
+ * either stays a pending candidate at the gate, and a shapeless one still
+ * drops at validation. The class is matched on kind, not source: the Bank's
+ * producers file under several source names, and the four kinds are theirs —
+ * no canary kind is among them, so canary output still never auto-admits.
+ * Admitted under the OWNER marker: the class exists by the owner's direct
+ * ruling, the same attestation as the owner-decision class.
+ */
+export const INTAKE_AUTO_ADMIT_BANK_KINDS: ReadonlySet<string> = new Set([
+  'decision-outcome',
+  'live-molding-record',
+  'molding-event',
+  'campaign-mandate',
+])
+
+export function intakeBankAutoAdmit(record: NexusIntakeRecord): boolean {
+  return INTAKE_AUTO_ADMIT_BANK_KINDS.has(record.kind)
+    && record.runId !== ''
+    && (record.ref !== '' || record.subject !== '')
+}
+
 /** The admission marker a record qualifies for, or null when it stays a pending candidate. */
 export function intakeAutoAdmitMarker(record: NexusIntakeRecord): string | null {
   if (intakeAutoAdmit(record)) return INTAKE_ADMITTED_BY
   if (intakeOwnerAutoAdmit(record)) return OWNER_ADMITTED_BY
+  if (intakeBankAutoAdmit(record)) return OWNER_ADMITTED_BY
   return null
 }
 

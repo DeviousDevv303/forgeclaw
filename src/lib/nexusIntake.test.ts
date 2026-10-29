@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { CorpusRepository } from './corpus'
 import {
   intakeAutoAdmit,
+  intakeAutoAdmitMarker,
+  intakeBankAutoAdmit,
   intakeCandidateInput,
   intakeDedupeKey,
   intakeOwnerAutoAdmit,
@@ -62,6 +64,49 @@ const OWNER_LINE = JSON.stringify({
   ref: 'UFC333-YAN-20261024',
   summary: 'Owner betting case study — the framework leaned Merab; the owner overrode on his own read and won.',
   provenance: 'Owner-attested in chat 2026-10-24',
+})
+
+const COUNTERFACTUAL_LINE = JSON.stringify({
+  ts: '2026-10-29T18:18:46.000Z',
+  source: 'owner-preapproved',
+  run_id: 'owner-preapproval-nb-counterfactual-20261029-1415',
+  kind: 'decision-outcome',
+  ref: 'KXBTC15M-26OCT291415-15',
+  summary: 'Rejected entry graded against settlement: the 1415 NO entry, rejected PRICE_BOUND at a 90.0c bound, would have WON +65c net at 7 contracts.',
+  provenance: 'nb-counterfactual-watch — owner standing pre-approval 2026-10-28',
+})
+
+const MOLDING_LINE = JSON.stringify({
+  ts: '2026-10-29T18:09:00.000Z',
+  source: 'molding-walk',
+  run_id: 'molding-walk-20261029-1309',
+  kind: 'live-molding-record',
+  check: 'per-window molding track record under the seated canary variant',
+  ref: 'KXBTC15M-26OCT291400-00',
+  summary: 'Window 1400 under the $12 mandate, seat cg-1-band-floor-tighten: evaluations stamped with the seated variant, tuning ramp+1.6 consistent, 0 fills, 2 PRICE_BOUND rejections.',
+  provenance: 'owner-ordered molding walk, 2026-10-29',
+})
+
+const MOLDING_EVENT_LINE = JSON.stringify({
+  ts: '2026-10-29T17:55:58.000Z',
+  source: 'crew-lead-derivation',
+  run_id: 'crew-lead-derivation-ceiling95-20261029',
+  kind: 'molding-event',
+  check: 'crew-lead derivation (owner doctrine, 2026-10-29: Muse is the loop until the loop earns it)',
+  ref: 'cg-1-band-ceiling-loosen-x-floor-tighten',
+  summary: 'STALL-BY-PRICE on mandate m-1793294098053-1ddd3534: derivation journaled before the seat; successor = floor-tighten tuning with entryBandHighCents 90 -> 95 only.',
+  provenance: 'owner orders 2026-10-29 — first-hundred campaign, crew lead',
+})
+
+const CAMPAIGN_LINE = JSON.stringify({
+  ts: '2026-10-29T17:29:02.000Z',
+  source: 'hundred-campaign',
+  run_id: 'campaign-adoption-m-1793294098053-20261029',
+  kind: 'campaign-mandate',
+  check: 'first-hundred campaign unit transition',
+  ref: 'm-1793294098053-1ddd3534',
+  summary: 'ADOPTED parent-issued successor: unit two closed at +7.88c net realized; successor live, $12 stake -> $100 goal, 7 contracts per entry.',
+  provenance: 'owner order 2026-10-29 12:12 CDT — parent-issued successor, campaign adoption',
 })
 
 function sourceOf(text: string): NexusIntakeSource {
@@ -373,6 +418,89 @@ describe('nexusIntake sync', () => {
     const result = await syncNexusIntake(sourceOf(''), repo)
     expect(result).toEqual({ status: 'synced', fetched: 0, added: 0, admitted: 0 })
     expect(repo.listCandidates()).toHaveLength(0)
+  })
+})
+
+describe('nexusIntake Nexus Bank auto-admission (owner ruling, 2026-10-29)', () => {
+  beforeEach(() => storage.clear())
+
+  const BANK_LINES: Array<[string, string, string]> = [
+    ['counterfactual decision-outcome (source owner-preapproved)', COUNTERFACTUAL_LINE, 'owner-preapproved'],
+    ['molding-walk live-molding-record', MOLDING_LINE, 'molding-walk'],
+    ['crew-lead molding-event', MOLDING_EVENT_LINE, 'crew-lead-derivation'],
+    ['first-hundred campaign-mandate', CAMPAIGN_LINE, 'hundred-campaign'],
+  ]
+
+  for (const [name, line, source] of BANK_LINES) {
+    it(`AUTO-ADMITS a ${name} record carrying run_id + ref under the OWNER marker`, async () => {
+      const record = parseNexusIntakeLine(line)
+      expect(record).not.toBeNull()
+      expect(record && intakeAutoAdmit(record)).toBe(false)
+      expect(record && intakeBankAutoAdmit(record)).toBe(true)
+      expect(record && intakeAutoAdmitMarker(record)).toBe(OWNER_ADMITTED_BY)
+      const repo = new CorpusRepository()
+      const result = await syncNexusIntake(sourceOf(line), repo)
+      expect(result).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+      const candidates = repo.listCandidates()
+      expect(candidates).toHaveLength(1)
+      expect(candidates[0].admissionStatus).toBe('approved')
+      expect(candidates[0].metadata).toMatchObject({ intakeSource: source, admittedBy: OWNER_ADMITTED_BY })
+      const knowledge = repo.listKnowledge()
+      expect(knowledge).toHaveLength(1)
+      expect(knowledgeOrigin(knowledge[0])).toBe('AUTO-ADDED · OWNER-DIRECTED')
+    })
+
+    it(`keeps a ${name} record missing run_id PENDING — the class names run_id, no partial credit`, async () => {
+      const broken = { ...(JSON.parse(line) as Record<string, unknown>) }
+      delete broken.run_id
+      const parsed = parseNexusIntakeLine(JSON.stringify(broken))
+      expect(parsed?.runId).toBe('')
+      expect(parsed && intakeBankAutoAdmit(parsed)).toBe(false)
+      expect(parsed && intakeAutoAdmitMarker(parsed)).toBeNull()
+      const repo = new CorpusRepository()
+      const result = await syncNexusIntake(sourceOf(JSON.stringify(broken)), repo)
+      expect(result).toEqual({ status: 'synced', fetched: 1, added: 1, admitted: 0 })
+      expect(repo.listCandidates()[0].admissionStatus).toBe('candidate')
+      expect(repo.getApprovedCount()).toBe(0)
+      expect(repo.listKnowledge()).toEqual([])
+    })
+  }
+
+  it('AUTO-ADMITS a Bank record whose subject is a check with no ref — the criteria name ref or check', async () => {
+    const checkOnly = { ...(JSON.parse(MOLDING_EVENT_LINE) as Record<string, unknown>) }
+    delete checkOnly.ref
+    const record = parseNexusIntakeLine(JSON.stringify(checkOnly))
+    expect(record?.ref).toBe('')
+    expect(record?.subject).toContain('crew-lead derivation')
+    expect(record && intakeBankAutoAdmit(record)).toBe(true)
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(JSON.stringify(checkOnly)), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+    expect(repo.listKnowledge()).toHaveLength(1)
+  })
+
+  it('drops a Bank-kind record carrying neither ref nor check at validation — shapeless records never reach admission', () => {
+    const shapeless = { ...(JSON.parse(MOLDING_EVENT_LINE) as Record<string, unknown>) }
+    delete shapeless.ref
+    delete shapeless.check
+    expect(parseNexusIntakeLine(JSON.stringify(shapeless))).toBeNull()
+  })
+
+  it('drops the F-037 shape at validation: a Bank kind carrying title/status only, no subject and no text', () => {
+    const f037 = JSON.stringify({
+      ts: '2026-10-28T19:50:00.000Z',
+      source: 'owner-decision',
+      kind: 'decision-outcome',
+      title: 'the habitat that never existed',
+      status: 'verified',
+    })
+    expect(parseNexusIntakeLine(f037)).toBeNull()
+  })
+
+  it('still never auto-admits a canary record — its kinds are not Bank kinds', () => {
+    const record = parseNexusIntakeLine(CANARY_LINE)
+    expect(record && intakeBankAutoAdmit(record)).toBe(false)
+    expect(record && intakeAutoAdmitMarker(record)).toBeNull()
   })
 })
 
