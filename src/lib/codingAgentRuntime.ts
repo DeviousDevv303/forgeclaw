@@ -276,7 +276,12 @@ export function isExplicitToolRequest(prompt: string): boolean {
 
 export interface ExplicitToolCall {
   name: string
-  input: Record<string, string>
+  /**
+   * Tool arguments. Text-parsed calls (extractExplicitToolCall) always carry strings — that is
+   * what was typed — but programmatic routes (liveDataRouting) pass schema-typed values
+   * (numbers for numeric parameters); executors accept both.
+   */
+  input: Record<string, unknown>
   /** Set when required arguments are missing; the call must not be executed. */
   error?: string
   /** Non-fatal adjustments the parser made (e.g. an auto-closed quote); shown with the result. */
