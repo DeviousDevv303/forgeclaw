@@ -18,11 +18,14 @@
  * by a model tool outside a /funds command shows its OK / No buttons at once.
  *
  * The balance section is a floating pop-up, not part of the panel's layout (Cristian's
- * ask, 2026-10-23): it overlays the chat instead of pushing it up, appears whenever a
- * fresh balance lands, and dismisses itself after 30 seconds (or on its close button).
+ * ask, 2026-10-23): it overlays the chat instead of pushing it up. Since 2026-10-29
+ * (owner: the pop-up was "way too big and it lasts too long and pops up too frequent")
+ * it is a compact card that opens only when the owner taps its balance chip, and
+ * dismisses itself after 4 seconds (or on its close button); automatic reads update
+ * its contents silently and never open it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FUNDS_CHANGED_EVENT, loadFunds, money, type FundsPosition } from '../lib/fundsLedger'
 import { effectiveKalshiRelayUrl, loadKalshiCredentials } from '../lib/kalshiAuth'
 import { createKalshiClient, relayFallbackFetcher } from '../lib/kalshiTrade'
@@ -58,20 +61,27 @@ function ProposalRow({ p, onCommand }: { p: FundsPosition; onCommand: (text: str
 }
 
 /**
- * How long the balance pop-up stays on screen after a fresh read lands (Cristian's
- * ask, 2026-10-23: "a 30 second pop up"). A constant, not a setting: the owner asked
- * for one fixed behaviour, and a knob nobody set would just be another silent state.
+ * How long the balance pop-up stays on screen once opened (Cristian's ask,
+ * 2026-10-23: "a 30 second pop up"; shortened 2026-10-29 — owner: it "lasts too
+ * long"). A constant, not a setting: the owner asked for one fixed behaviour, and
+ * a knob nobody set would just be another silent state.
  */
-const BALANCE_POPUP_VISIBLE_MS = 30_000
+const BALANCE_POPUP_VISIBLE_MS = 4_000
 
 const balancePopupStyle: React.CSSProperties = {
   position: 'fixed', right: '12px', bottom: '12px', zIndex: 70,
-  width: 'min(400px, calc(100vw - 24px))', boxSizing: 'border-box',
-  background: '#101408', border: '1px solid #2a3319', borderRadius: '9px',
-  padding: '8px 10px', boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
+  width: 'min(320px, calc(100vw - 24px))', boxSizing: 'border-box',
+  background: '#101408', border: '1px solid #2a3319', borderRadius: '8px',
+  padding: '6px 8px', boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
+}
+const balanceChipStyle: React.CSSProperties = {
+  position: 'fixed', right: '12px', bottom: '12px', zIndex: 70,
+  background: '#101408', color: '#cfe3b8', border: '1px solid #2a3319', borderRadius: '999px',
+  padding: '4px 10px', fontSize: '11px', fontFamily: 'monospace', cursor: 'pointer',
+  boxShadow: '0 4px 14px rgba(0,0,0,0.45)',
 }
 const closeStyle: React.CSSProperties = {
-  background: 'none', border: 'none', color: '#8a9a6a', cursor: 'pointer', fontSize: '14px', lineHeight: 1, padding: '0 0 2px',
+  background: 'none', border: 'none', color: '#8a9a6a', cursor: 'pointer', fontSize: '13px', lineHeight: 1, padding: '0 0 2px',
 }
 
 /**
@@ -85,15 +95,19 @@ const closeStyle: React.CSSProperties = {
  *
  * Presentation (Cristian's ask, 2026-10-23): a floating card fixed to the viewport's
  * bottom-right corner, out of the layout flow, so a balance read no longer pushes
- * the chat up. Each fresh read shows it and restarts the 30-second countdown; the
- * close button hides it until the next fresh read. Content, formatting and the
- * refresh action are unchanged — only where and how long it sits on screen moved.
+ * the chat up. Frequency (owner's correction, 2026-10-29 — the card popped up on
+ * every automatic read): the reads above still run on mount and on refreshKey, but
+ * they only update the block — the card itself opens solely from the owner's tap on
+ * its compact balance chip (the Refresh button lives inside the card, so before
+ * this change there was no way to ask for the card without it already being up),
+ * and while it is open a fresh block restarts the 4-second countdown. The close
+ * button hides it, and no automatic read re-opens it. Content and formatting come
+ * from the shared formatter, unchanged.
  */
 function KalshiLiveSection({ refreshKey }: { refreshKey: number }) {
   const [block, setBlock] = useState<string | null>(null)
   const [reading, setReading] = useState(false)
-  const [visible, setVisible] = useState(true)
-  const hideTimer = useRef<number | null>(null)
+  const [visible, setVisible] = useState(false)
 
   const refresh = useCallback(async () => {
     const creds = loadKalshiCredentials()
@@ -107,37 +121,42 @@ function KalshiLiveSection({ refreshKey }: { refreshKey: number }) {
     }
   }, [])
 
+  // Automatic reads (mount, and App's refreshKey bump after every /funds command)
+  // update the block silently — they never touch `visible`.
   useEffect(() => { void refresh() }, [refresh, refreshKey])
 
-  // A fresh balance (re)shows the pop-up and restarts its countdown. The block text
-  // carries its own read timestamp, so every completed read is a new string and
-  // lands here — a manual Refresh therefore re-opens a dismissed pop-up too.
+  // The auto-dismiss countdown runs only while the card is open; a fresh block
+  // landing while it is open (e.g. the in-card Refresh) restarts the countdown.
   useEffect(() => {
-    if (block === null) return
-    setVisible(true)
-    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current)
-    hideTimer.current = window.setTimeout(() => setVisible(false), BALANCE_POPUP_VISIBLE_MS)
-    return () => { if (hideTimer.current !== null) window.clearTimeout(hideTimer.current) }
-  }, [block])
+    if (!visible) return
+    const id = window.setTimeout(() => setVisible(false), BALANCE_POPUP_VISIBLE_MS)
+    return () => window.clearTimeout(id)
+  }, [visible, block])
 
-  const close = useCallback(() => {
-    if (hideTimer.current !== null) window.clearTimeout(hideTimer.current)
-    hideTimer.current = null
-    setVisible(false)
-  }, [])
+  // Opening shows the block the silent reads already keep fresh; it fetches only
+  // when no read has landed yet (e.g. credentials saved moments ago), so a tap is
+  // instant and the countdown measures the open card, not a racing read.
+  const open = useCallback(() => {
+    setVisible(true)
+    if (block === null) void refresh()
+  }, [block, refresh])
 
   if (!loadKalshiCredentials()) return null
-  if (!visible) return null
+  if (!visible) {
+    return (
+      <button style={balanceChipStyle} onClick={open} aria-label="Show Kalshi (live) balance">Kalshi balance</button>
+    )
+  }
   return (
     <div style={balancePopupStyle} role="group" aria-label="Kalshi (live) balance">
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button style={closeStyle} onClick={close} aria-label="Close balance">×</button>
+        <button style={closeStyle} onClick={() => setVisible(false)} aria-label="Close balance">×</button>
       </div>
-      <div style={{ color: '#cfe3b8', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
+      <div style={{ color: '#cfe3b8', fontSize: '11px', lineHeight: 1.4, fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
         {block ?? 'Kalshi (live): reading…'}
       </div>
-      <div style={rowStyle}>
-        <button style={{ ...okStyle, opacity: reading ? 0.45 : 1 }} disabled={reading} onClick={() => { void refresh() }}>
+      <div style={{ ...rowStyle, marginTop: '4px' }}>
+        <button style={{ ...okStyle, padding: '2px 9px', fontSize: '11px', opacity: reading ? 0.45 : 1 }} disabled={reading} onClick={() => { void refresh() }}>
           {reading ? 'Reading…' : 'Refresh balance'}
         </button>
       </div>

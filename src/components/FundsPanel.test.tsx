@@ -13,10 +13,11 @@
 
 import { generateKeyPairSync, webcrypto } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { FundsPanel } from './FundsPanel'
 import { applyFundsCommand, emptyFunds, loadFunds, proposePosition, saveFunds, type ProposalInput } from '../lib/fundsLedger'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE } from '../lib/kalshiAuth'
+import { KALSHI_BALANCE_STORAGE_KEY } from '../lib/kalshiBalanceDisplay'
 
 // jsdom's WebCrypto has no Ed25519; sign with Node's, as in kalshiAuth.test.ts.
 Object.defineProperty(globalThis, 'crypto', { value: webcrypto, configurable: true })
@@ -48,7 +49,7 @@ describe('FundsPanel', () => {
     expect(container.firstChild).toBeNull()
   })
 
-  it('renders the Kalshi (live) balance with no proposal waiting, when credentials are saved (balance plan, 2026-10-23)', async () => {
+  it('balance pop-up: an automatic read lands silently, and the card opens only from its chip (2026-10-29)', async () => {
     const { privateKey } = generateKeyPairSync('ed25519')
     localStorage.setItem(KALSHI_KEY_ID_STORAGE, 'panel-test-key')
     localStorage.setItem(KALSHI_PRIVATE_KEY_STORAGE, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())
@@ -60,12 +61,19 @@ describe('FundsPanel', () => {
       ],
     }), { status: 200 })))
     render(<FundsPanel onCommand={() => {}} refreshKey={0} />)
+    // The mount read completes — it saves its last-good snapshot — yet the card
+    // stays closed: only its compact chip is on screen (owner, 2026-10-29: the
+    // pop-up "pops up too frequent" on automatic reads).
+    await waitFor(() => expect(localStorage.getItem(KALSHI_BALANCE_STORAGE_KEY)).toBeTruthy(), { timeout: 5_000 })
+    await act(async () => {})
+    expect(screen.queryByText(/Total across shards/)).toBeNull()
+    expect(screen.queryByText('Funds — proposals waiting')).toBeNull()
+    fireEvent.click(screen.getByLabelText('Show Kalshi (live) balance'))
     expect(await screen.findByText(/Total across shards — orders spend from one shard: \$25\.00/)).toBeTruthy()
     expect(screen.getByText(/shard 3 \(sports\): \$0\.00/)).toBeTruthy()
-    expect(screen.queryByText('Funds — proposals waiting')).toBeNull()
   })
 
-  it('balance pop-up: the close button hides it until the next fresh read (2026-10-23)', async () => {
+  it('balance pop-up: the close button hides it, and an automatic refresh does not re-open it (2026-10-29)', async () => {
     const { privateKey } = generateKeyPairSync('ed25519')
     localStorage.setItem(KALSHI_KEY_ID_STORAGE, 'panel-test-key')
     localStorage.setItem(KALSHI_PRIVATE_KEY_STORAGE, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString())
@@ -73,20 +81,21 @@ describe('FundsPanel', () => {
       balance: 2500, balance_dollars: '25.0000', portfolio_value: 2500, updated_ts: 1761240000,
       balance_breakdown: [{ exchange_index: 0, balance: '25.0000' }],
     }), { status: 200 })))
-    render(<FundsPanel onCommand={() => {}} refreshKey={0} />)
+    const { rerender } = render(<FundsPanel onCommand={() => {}} refreshKey={0} />)
+    await waitFor(() => expect(localStorage.getItem(KALSHI_BALANCE_STORAGE_KEY)).toBeTruthy(), { timeout: 5_000 })
+    fireEvent.click(screen.getByLabelText('Show Kalshi (live) balance'))
     expect(await screen.findByText(/Total across shards/)).toBeTruthy()
-    // Flush the fresh-read effect before clicking: it calls setVisible(true) unconditionally when the
-    // balance block lands, and if that passive effect is still queued it runs after the click and
-    // re-shows the pop-up this assertion expects to be gone. That race is the proven flake mechanism
-    // (deferred-fetch repro, 2026-10-27; CI failures on PR #319 and PR #329) — the component behavior
-    // itself is the spec ("hides it until the next fresh read"), so the fix belongs to the test's
-    // synchronization, not to the component. Registered in docs/flakes.md.
     await act(async () => {})
     fireEvent.click(screen.getByLabelText('Close balance'))
     expect(screen.queryByText(/Total across shards/)).toBeNull()
+    // A refreshKey bump is App's after-every-/funds-command signal: the read it
+    // triggers updates the block silently and must not re-open the closed card.
+    rerender(<FundsPanel onCommand={() => {}} refreshKey={1} />)
+    await act(async () => { await new Promise(r => setTimeout(r, 300)) })
+    expect(screen.queryByText(/Total across shards/)).toBeNull()
   })
 
-  it('balance pop-up: dismisses itself 30 seconds after a fresh read lands (2026-10-23)', async () => {
+  it('balance pop-up: dismisses itself 4 seconds after it is opened (2026-10-29)', async () => {
     vi.useFakeTimers()
     try {
       const { privateKey } = generateKeyPairSync('ed25519')
@@ -98,13 +107,18 @@ describe('FundsPanel', () => {
       }), { status: 200 })))
       render(<FundsPanel onCommand={() => {}} refreshKey={0} />)
       // The read chain itself waits on timers (signed-read spacing), so flush it by
-      // stepping the fake clock — the pop-up's own 30s countdown only starts once
-      // the block lands, so these steps don't eat into it.
-      for (let i = 0; i < 40 && !screen.queryByText(/Total across shards/); i++) {
+      // stepping the fake clock until the mount read has saved its snapshot. The
+      // card is closed throughout — the countdown has not started.
+      for (let i = 0; i < 40 && !localStorage.getItem(KALSHI_BALANCE_STORAGE_KEY); i++) {
         await act(async () => { vi.advanceTimersByTime(250) })
       }
+      expect(localStorage.getItem(KALSHI_BALANCE_STORAGE_KEY)).toBeTruthy()
+      expect(screen.queryByText(/Total across shards/)).toBeNull()
+      // The block already landed silently, so the tap starts no new read and the
+      // steps below measure only the 4-second countdown itself.
+      fireEvent.click(screen.getByLabelText('Show Kalshi (live) balance'))
       expect(screen.getByText(/Total across shards/)).toBeTruthy()
-      act(() => { vi.advanceTimersByTime(29_000) })
+      act(() => { vi.advanceTimersByTime(3_000) })
       expect(screen.getByText(/Total across shards/)).toBeTruthy()
       act(() => { vi.advanceTimersByTime(2_000) })
       expect(screen.queryByText(/Total across shards/)).toBeNull()
