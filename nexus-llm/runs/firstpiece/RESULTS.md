@@ -33,3 +33,10 @@ n = 31 per stratum (CI about +/-17). One template. Word-likeness uncontrolled. S
 ## Next (only operator-gated or needing a new pre-registration)
 
 A matched probe varying the template tail (entity at end of query vs. followed by "beating earnings") would test the span-overrun lead directly, inference only. Not run; needs its own pre-registration first.
+
+## Correction to the post-hoc section (same day, checked against the training data)
+
+- Unconstrained decoding on the first 8 items gives byte-identical queries to constrained decoding, so the leading "e" is the model's, not constrain.py's.
+- The span-overrun reading was WRONG as an error. Training queries copy a whole event phrase, not just the entity ("askovar shortage in Texas", "Apple above 250", "ethereum above 5k"; 2,084 Kalshi rows in the capfix data). Continuing into "beating earnings" matches that convention. The probe's exact-copy rule only requires the entity substring, so overrun is not scored as failure and should not be counted as one.
+- What remains a real failure: the first character. 51/61 queries start with "e" for entities that do not, while only 158/2,084 (7.6%) training queries start with "e". On unseen words the copy path does not supply the first character and the model emits a default; the remaining characters are then partly copied, partly dropped (amazon -> "ezon").
+- Still untested whether this is the first-copy-step failing (no preceding in-span token for the induction bias to key on). A direct test would score the first generated token against the entity's first character, inference only, with a pre-registered threshold.
