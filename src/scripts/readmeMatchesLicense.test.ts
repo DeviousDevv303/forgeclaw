@@ -10,7 +10,7 @@ describe('license statements agree with LICENSE', () => {
   const readme = readFileSync('README.md', 'utf8')
 
   it('README names the same license as LICENSE and never claims MIT', () => {
-    expect(title).toBe('ForgeClaw Proprietary Source-Available License')
+    expect(title).toBe('Copyright (c) 2026 Cristian Nunez. All rights reserved.')
     expect(readme).toContain(title)
     expect(readme).not.toMatch(/\bMIT\b/)
   })
