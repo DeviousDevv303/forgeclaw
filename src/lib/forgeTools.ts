@@ -60,6 +60,7 @@ import { readKalshiBalanceBlock } from './kalshiBalanceDisplay'
 import { crowdSettleNote, formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
 import { autoApproveHoldNote, kalshiOrderPlacedJournalEntry, maybeAutoApprove, type KalshiExecutionDeps } from './kalshiExecution'
 import { joinNexusGuidance, nexusGuidanceForDeepSeek, splitNexusGuidance } from './nexusGuidance'
+import { splitAnswerFormInstructions } from './ai/deepseekContext'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -1347,7 +1348,10 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // The NEXUS guidance block is the owner's teaching, not task-matched context: it is set aside here, exempt from
         // the overlap rule below, and put back in front. Before this, "write a poem about cats" reached the 16B with
         // no guidance at all because the whole context string was zeroed.
-        const nexusGuidance = splitNexusGuidance(context)
+        // The answer-form law rides in the same context (first block of every router payload) and is system
+        // instruction with the same exemption: set aside beside the guidance, restored in front of it.
+        const formSplit = splitAnswerFormInstructions(context)
+        const nexusGuidance = splitNexusGuidance(formSplit.rest)
         context = nexusGuidance.rest
         // A call that did not come through the router (hand-typed, a saved agent, a future path) carries no guidance block.
         // The dispatch is the one place every path passes, so it attaches the owner's teaching itself: Nexus rides every
@@ -1367,6 +1371,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           }
         }
         context = joinNexusGuidance(nexusGuidance.guidance, context)
+        if (formSplit.form) context = context ? `${formSplit.form}\n\n${context}` : formSplit.form
         if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {
           throw new Error('Invalid workflow ref.')
         }

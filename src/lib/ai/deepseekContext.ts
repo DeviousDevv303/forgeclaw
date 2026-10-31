@@ -44,6 +44,19 @@ export const ANSWER_FORM_INSTRUCTIONS = [
   '- No sign-off or signature line at the end.',
 ].join('\n')
 
+/**
+ * Split the answer-form law back out of an assembled dispatch context (buildDeepSeekTaskPayload
+ * always places it first). forgeTools sets it aside beside the NEXUS guidance before its
+ * stale-context overlap drop: the law is system instruction, not task-matched context — it must
+ * never be dropped as stale, and its words must never rescue stale context from the drop
+ * (2026-10-31: the bullet's word "about" shared a word with an unrelated task and carried a
+ * stale chromodynamics Q&A through the filter, failing nexusContinuity on CI).
+ */
+export function splitAnswerFormInstructions(context: string): { form: string; rest: string } {
+  if (!context.startsWith(ANSWER_FORM_INSTRUCTIONS)) return { form: '', rest: context }
+  return { form: ANSWER_FORM_INSTRUCTIONS, rest: context.slice(ANSWER_FORM_INSTRUCTIONS.length).replace(/^\s+/, '') }
+}
+
 function separateRuntimeEnvelope(rawTask: string): { task: string; runtimeContext?: string } {
   const marker = '[RUNTIME_STATE '
   const start = rawTask.lastIndexOf(marker)
