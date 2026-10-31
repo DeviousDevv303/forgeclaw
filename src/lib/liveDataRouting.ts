@@ -20,12 +20,20 @@ import { extractPlace, isWeatherQuestion, requestedDay } from './weather'
 
 const MAX_QUESTION_CHARS = 240
 
-const SELF_OR_CODE = /\b(forgeclaw|forge|repo|repository|branch|commit|pull request|workflow|github|codebase|source code|typescript|function|bug|deploy|nexus|corpus|codex|guardian|shell|tool|prompt|model|api key)\b/i
+const SELF_OR_CODE = /\b(forgeclaw|forge|repo|repository|branch|commit|pull request|workflow|github|codebase|source code|code review|typescript|function|bug|deploy|nexus|corpus|codex|guardian|shell|tool|prompt|model|api key)\b/i
 const ASKING = /^(?:\s*(?:hey|hi|yo|ok|okay|so|please)[,\s]+)*(?:is|are|was|were|will|does|do|did|can|could|what|whats|what's|when|who|whos|who's|where|which|how|any|tell me|show me|find|search|look up|check)\b|\?\s*$/i
 const TIME_WORD = /\b(tonight|today|tomorrow|this (?:week|weekend|morning|afternoon|evening)|right now|currently|latest|live|current|upcoming|next (?:fight|game|match|race|event)|who won|final score)\b/i
 const LIVE_TOPIC = /\b(ufc|mma|boxing|nfl|nba|mlb|nhl|wnba|ncaa|soccer|premier league|champions league|formula 1|f1|nascar|fight|fights|game|games|match|matches|schedule|scores?|standings|weather|forecast|temperature|stocks?|price|prices|news|headlines?|showtimes?|concerts?|events?)\b/i
 // Topics that are live on their own, with no time word needed.
 const ALWAYS_LIVE = /\b(weather|forecast|standings|scores?|headlines?)\b/i
+// Prediction framings (owner directive 2026-10-31: "the context that it needs… needs to
+// come from the fucking web"). A win-likelihood question is live-world by nature — form,
+// odds and prices exist only on the web, never in the user's message or the model's
+// memory — so the strong framings route on their own; the weaker framings need a contest
+// topic or a versus shape beside them.
+const STRONG_PREDICTION = /\b(?:more likely to win|likely to win|who (?:will|would) win|who wins|who do you (?:think|pick)|who (?:is|are) (?:favou?red|the favou?rite)|who you got)\b/i
+const WEAK_PREDICTION = /\b(?:odds|prediction|predictions|predict|bet on|underdog|favou?rite|favou?red)\b/i
+const VERSUS_SHAPE = /\b(?:vs\.?|versus)\b/i
 const KALSHI_MENTION = /\bkalshi\b/i
 // Words that frame a Kalshi question but never appear in a market title. kalshi_markets matches a
 // query by requiring EVERY word to appear in the title/ticker, so the query built from a question
@@ -55,11 +63,22 @@ export function isKalshiQuestion(text: string): boolean {
   return KALSHI_MENTION.test(t)
 }
 
+/** A win-likelihood / odds question: its deciding facts (form, odds, prices) live on the web. */
+export function isPredictionQuestion(text: string): boolean {
+  const t = text.trim()
+  if (!t || t.length > MAX_QUESTION_CHARS || t.includes('\n')) return false
+  if (SELF_OR_CODE.test(t)) return false
+  if (!ASKING.test(t)) return false
+  if (STRONG_PREDICTION.test(t)) return true
+  return WEAK_PREDICTION.test(t) && (LIVE_TOPIC.test(t) || VERSUS_SHAPE.test(t))
+}
+
 export function isLiveDataQuestion(text: string): boolean {
   const t = text.trim()
   if (!t || t.length > MAX_QUESTION_CHARS || t.includes('\n')) return false
   if (SELF_OR_CODE.test(t)) return false
   if (!ASKING.test(t)) return false
+  if (isPredictionQuestion(t)) return true
   if (!LIVE_TOPIC.test(t)) return false
   return TIME_WORD.test(t) || ALWAYS_LIVE.test(t)
 }

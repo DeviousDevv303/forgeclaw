@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CorpusRepository } from '../corpus'
 import { authorizationPayload, RFC8032_TEST_KEY_ID } from '../corpusAdmissionAuth'
-import { ANSWER_FORM_INSTRUCTIONS, buildDeepSeekTaskPayload, FORGECLAW_ARCHITECTURE_CONTEXT } from './deepseekContext'
+import { ANSWER_FORM_INSTRUCTIONS, buildDeepSeekTaskPayload, FORGECLAW_ARCHITECTURE_CONTEXT, splitAnswerFormInstructions } from './deepseekContext'
 import { DEEPSEEK_FALLBACK_CHECKPOINT, DEEPSEEK_PRIMARY_CHECKPOINT } from '../deepseekCheckpoints'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { readFileSync } from 'node:fs'
@@ -104,6 +104,16 @@ describe('DeepSeek task/context boundary', () => {
     expect(payload.context?.startsWith(ANSWER_FORM_INSTRUCTIONS)).toBe(true)
     expect(ANSWER_FORM_INSTRUCTIONS).toContain('Never restate, describe, or frame the task')
     expect(ANSWER_FORM_INSTRUCTIONS).toContain('No sign-off')
+  })
+
+  it('splits the answer-form law back out of an assembled context', () => {
+    const assembled = `${ANSWER_FORM_INSTRUCTIONS}\n\nNEXUS GUIDANCE block\n\nstale context`
+    expect(splitAnswerFormInstructions(assembled)).toEqual({
+      form: ANSWER_FORM_INSTRUCTIONS,
+      rest: 'NEXUS GUIDANCE block\n\nstale context',
+    })
+    expect(splitAnswerFormInstructions('no law here')).toEqual({ form: '', rest: 'no law here' })
+    expect(splitAnswerFormInstructions(ANSWER_FORM_INSTRUCTIONS)).toEqual({ form: ANSWER_FORM_INSTRUCTIONS, rest: '' })
   })
 
   it('keeps the APPLICATION_IDENTITY block out of the task the model is asked to answer', () => {

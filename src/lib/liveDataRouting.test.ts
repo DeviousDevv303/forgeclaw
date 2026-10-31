@@ -92,3 +92,27 @@ describe('routeLiveDataQuestion freshness', () => {
     expect(call.input.timelimit).toBe('w')
   })
 })
+
+describe('routeLiveDataQuestion predictions (owner, 2026-10-31)', () => {
+  const now = new Date('2026-10-31T12:00:00Z')
+  it('routes a win-likelihood question about named fighters to web search', () => {
+    const call = routeLiveDataQuestion('Who is more likely to win between Moicano and Tom Nolan?', now)!
+    expect(call.name).toBe('web_search')
+    expect(call.input.timelimit).toBe('w')
+  })
+  it('routes a plain who-wins question to web search', () => {
+    expect(routeLiveDataQuestion('Who wins, Moicano or Nolan?', now)?.name).toBe('web_search')
+  })
+  it('routes an odds question with a contest topic to web search', () => {
+    expect(routeLiveDataQuestion('What are the odds for the Moicano fight?', now)?.name).toBe('web_search')
+  })
+  it('routes a versus prediction with no sport word to web search', () => {
+    expect(routeLiveDataQuestion('What is your prediction for Moicano vs Nolan?', now)?.name).toBe('web_search')
+  })
+  it('does not route a code question that merely says win', () => {
+    expect(routeLiveDataQuestion('Who will win the argument in this code review?', now)).toBeNull()
+  })
+  it('does not route a non-question statement', () => {
+    expect(routeLiveDataQuestion('Moicano is more likely to win tonight', now)).toBeNull()
+  })
+})
