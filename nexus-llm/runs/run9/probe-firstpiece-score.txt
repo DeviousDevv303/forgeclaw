@@ -1,0 +1,3 @@
+S: n=31 routed=31 exact=7 (22.6%, CI 11-40) first-char-error=7 (22.6%)
+L: n=31 routed=31 exact=5 (16.1%, CI 7-33) first-char-error=5 (16.1%)
+exact(L)-exact(S) = -6.5 pts | fce(S)-fce(L) = 6.5 pts | interpretable(routing>=50% each) = True

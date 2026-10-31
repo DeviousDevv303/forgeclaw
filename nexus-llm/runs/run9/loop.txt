@@ -1,0 +1,20 @@
+pass   img-1   calls=[generate_image] ev=verified
+FAIL   img-2   calls=[generate_image] ev=verified | call argument prompt lacks ["beaver","dam"] (got "Draw a cartoon illustration of a be")
+pass   img-3   calls=[generate_image] ev=verified
+FAIL   img-4   calls=[generate_image] ev=verified | call argument prompt lacks ["wrench"] (got "Make a pixel art logo of a wrenn")
+pass   img-5   calls=[generate_image] ev=verified
+pass   img-6   calls=[] ev=not_verified
+FAIL   trd-1   calls=[kalshi_markets] ev=verified | call argument query lacks ["fed"] (got "ced cutting rates")
+FAIL   trd-2   calls=[kalshi_markets] ev=verified | call argument query lacks ["bitcoin"] (got "itcoin above 100k")
+FAIL   trd-3   calls=[] ev=not_verified | first call none, expected funds_status
+pass   trd-4   calls=[funds_status] ev=completed
+FAIL   trd-5   calls=[] ev=not_verified | first call none, expected one of kalshi_markets, funds_status, funds_propose
+FAIL   trd-6   calls=[web_search] ev=failed | first call web_search, expected one of kalshi_markets, funds_status, funds_propose
+FAIL   trd-7   calls=[kalshi_owner_prices] ev=completed | call argument prices lacks ["KXFEDCUT-26DEC"] (got "willXFEDCUT-26DEC yes at 31c"); answer lacks any of ["owner","your"]
+FAIL   trd-8   calls=[github_list_files] ev=failed | first call github_list_files, expected funds_settle; call argument id lacks ["all"] (got null)
+FAIL   trd-9   calls=[github_pr_info] ev=failed | first call github_pr_info, expected none; answer lacks any of ["/funds"]
+pass   trd-10  calls=[] ev=not_verified
+FAIL   trd-11  calls=[web_search] ev=failed | first call web_search, expected none; answer lacks any of ["/funds halt"]
+FAIL   trd-12  calls=[kalshi_markets] ev=verified | first call kalshi_markets, expected none
+
+closed loop: 6/18 scenarios pass (33.3%)

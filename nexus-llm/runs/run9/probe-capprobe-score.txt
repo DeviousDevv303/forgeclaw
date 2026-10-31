@@ -1,0 +1,7 @@
+cap/all          n= 60 routed= 60 strict= 40 (66.7%, 95% CI 54-77) cond=0.6667
+cap/generate_image n= 30 routed= 30 strict= 30 (100.0%, 95% CI 89-100) cond=1.0
+cap/kalshi_markets n= 30 routed= 30 strict= 10 (33.3%, 95% CI 19-51) cond=0.3333
+low/all          n= 60 routed= 60 strict= 41 (68.3%, 95% CI 56-79) cond=0.6833
+low/generate_image n= 30 routed= 30 strict= 30 (100.0%, 95% CI 89-100) cond=1.0
+low/kalshi_markets n= 30 routed= 30 strict= 11 (36.7%, 95% CI 22-55) cond=0.3667
+gap (lowercase - capitalized) = 1.7 pts
