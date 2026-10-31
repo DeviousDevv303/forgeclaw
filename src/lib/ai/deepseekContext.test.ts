@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CorpusRepository } from '../corpus'
 import { authorizationPayload, RFC8032_TEST_KEY_ID } from '../corpusAdmissionAuth'
-import { buildDeepSeekTaskPayload, FORGECLAW_ARCHITECTURE_CONTEXT } from './deepseekContext'
+import { ANSWER_FORM_INSTRUCTIONS, buildDeepSeekTaskPayload, FORGECLAW_ARCHITECTURE_CONTEXT } from './deepseekContext'
 import { DEEPSEEK_FALLBACK_CHECKPOINT, DEEPSEEK_PRIMARY_CHECKPOINT } from '../deepseekCheckpoints'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { readFileSync } from 'node:fs'
@@ -94,7 +94,16 @@ describe('DeepSeek task/context boundary', () => {
   })
 
   it('does not add ForgeClaw architecture context to an unrelated user task', () => {
-    expect(buildDeepSeekTaskPayload('What is 2 + 2?')).toEqual({ task: 'What is 2 + 2?' })
+    const payload = buildDeepSeekTaskPayload('What is 2 + 2?')
+    expect(payload.task).toBe('What is 2 + 2?')
+    expect(payload.context ?? '').not.toContain('ForgeClaw architecture facts')
+  })
+
+  it('carries the owner answer-form law first in every dispatch context (2026-10-31)', () => {
+    const payload = buildDeepSeekTaskPayload('What is 2 + 2?')
+    expect(payload.context?.startsWith(ANSWER_FORM_INSTRUCTIONS)).toBe(true)
+    expect(ANSWER_FORM_INSTRUCTIONS).toContain('Never restate, describe, or frame the task')
+    expect(ANSWER_FORM_INSTRUCTIONS).toContain('No sign-off')
   })
 
   it('keeps the APPLICATION_IDENTITY block out of the task the model is asked to answer', () => {

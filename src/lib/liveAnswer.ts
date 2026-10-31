@@ -19,8 +19,11 @@ import { stripReasoningArtifacts } from './ai/responseFilter'
 /** The instructions the synthesis hop runs under: the answer, from the results, nothing else. */
 export const LIVE_ANSWER_INSTRUCTIONS = [
   'Answer the question using ONLY facts from the live search results below.',
-  'Answer directly and plainly: start with the answer itself — no preamble, no buildup.',
-  'Use ONLY facts from the results. Never mention the search, the results, sources, or tools.',
+  'Answer directly and plainly: give JUST the answer — the fact that was asked for, in as few words as the question needs.',
+  'Use ONLY facts from the results. It must read as an answer, not a reasoning trace: do not narrate how you know, do not walk through the information, no preamble and no buildup.',
+  'Never frame the answer with sourcing language: no "based on the provided information", no "according to the results" — never mention the search, the results, sources, or tools at all.',
+  'Never describe the task or the request, and never say what the information includes or does not include. If the question asks for a judgment, give the judgment the results support — never answer with a list of factors to consider instead.',
+  'Never add a sign-off or signature at the end (no "— ForgeClaw" or any other name).',
   'Several results may disagree or be about different dates: prefer the most recent result.',
   'A result from before the day the question asks about does not answer a question about that day.',
   'If the results do not contain the answer, say so in one sentence and give the closest fact they do contain.',
@@ -42,10 +45,22 @@ export function buildSearchSummaryTask(query: string, rawResults: string): strin
  * — the answer is everything after the first blank line (the same split providerRouter uses).
  * Returns '' when there is no answer body.
  */
+const SIGN_OFF_LINE = /(^|\n)\s*—\s*(ForgeClaw|Nexus( Intelligence)?|Qwen[^\n]*|DeepSeek[^\n]*|Muse)\s*$/i
+const LEADING_HEDGE = /^(based on|according to) (the )?(provided information|information provided|search results|results|information below)[^,.:;]*[,.:;]\s*/i
+
 export function extractDeepSeekAnswer(toolOutput: string): string {
   const splitAt = toolOutput.indexOf('\n\n')
   const body = splitAt >= 0 ? toolOutput.slice(splitAt + 2) : toolOutput
-  return stripReasoningArtifacts(body).trim()
+  let answer = stripReasoningArtifacts(body).trim()
+  // Deterministic backstops for the two form defects the owner flagged live (2026-10-31): a
+  // sign-off tail ("— ForgeClaw") and a sourcing hedge opening ("Based on the provided
+  // information, …"). The instructions ban both; these strips hold even when the model slips.
+  answer = answer.replace(SIGN_OFF_LINE, '').trim()
+  if (LEADING_HEDGE.test(answer)) {
+    answer = answer.replace(LEADING_HEDGE, '')
+    answer = answer.charAt(0).toUpperCase() + answer.slice(1)
+  }
+  return answer.trim()
 }
 
 const PARSER_NOTE_LINE = /^\[parser note: [^\]]*\]\n?/

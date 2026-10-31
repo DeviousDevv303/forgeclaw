@@ -53,6 +53,12 @@ describe('LIVE_ANSWER_INSTRUCTIONS', () => {
     expect(LIVE_ANSWER_INSTRUCTIONS).toContain('most recent')
     expect(LIVE_ANSWER_INSTRUCTIONS).toContain('do not contain the answer')
   })
+
+  it('bans task restatement and factors-instead-of-judgment answers (owner, 2026-10-31)', () => {
+    expect(LIVE_ANSWER_INSTRUCTIONS).toContain('Never describe the task or the request')
+    expect(LIVE_ANSWER_INSTRUCTIONS).toContain('does not include')
+    expect(LIVE_ANSWER_INSTRUCTIONS).toContain('give the judgment')
+  })
 })
 
 describe('extractDeepSeekAnswer', () => {
@@ -68,5 +74,28 @@ describe('extractDeepSeekAnswer', () => {
   it('strips reasoning artifacts from the body', () => {
     const out = '✓ header\nStages: x.\nRun: u\n\n<think>pondering</think>The verdict stands.'
     expect(extractDeepSeekAnswer(out)).toBe('The verdict stands.')
+  })
+
+  it('strips a trailing sign-off line', () => {
+    const out = '✓ header\nStages: x.\nRun: u\n\nMunguia won by unanimous decision.\n— ForgeClaw'
+    expect(extractDeepSeekAnswer(out)).toBe('Munguia won by unanimous decision.')
+  })
+
+  it('strips a leading sourcing hedge and re-capitalizes', () => {
+    const out = '✓ header\nStages: x.\nRun: u\n\nBased on the provided information, the next UFC fight is Moicano vs Nolan.'
+    expect(extractDeepSeekAnswer(out)).toBe('The next UFC fight is Moicano vs Nolan.')
+  })
+
+  it('leaves an em-dash aside inside the answer alone', () => {
+    expect(extractDeepSeekAnswer('The cards were wide — 117-111 twice.')).toBe('The cards were wide — 117-111 twice.')
+  })
+})
+
+describe('LIVE_ANSWER_INSTRUCTIONS form bans (owner, 2026-10-31)', () => {
+  it('bans traces, sourcing language and sign-offs', () => {
+    expect(LIVE_ANSWER_INSTRUCTIONS).toContain('JUST the answer')
+    expect(LIVE_ANSWER_INSTRUCTIONS).toContain('reasoning trace')
+    expect(LIVE_ANSWER_INSTRUCTIONS).toContain('based on the provided information')
+    expect(LIVE_ANSWER_INSTRUCTIONS).toContain('sign-off')
   })
 })
