@@ -1,0 +1,17 @@
+invocation_id=watcher-q-20261031-001
+model=Qwen/Qwen3-8B
+role=primary checkpoint
+degraded=false
+creative_retry_attempted=false
+creative_retry_succeeded=false
+output_cleanup_applied=false
+tool_call_tail_dropped=false
+elapsed_seconds=185.0
+engine=llama.cpp GGUF Q4_K_M (Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf) of Qwen/Qwen3-8B
+engine_load_seconds=3.9
+generated_tokens=429
+generation_seconds=181.1
+stopped_by_time_budget=false
+prompt_trimmed=false
+nexus_guidance=none
+llama_cpp_python=0.3.36
