@@ -312,11 +312,11 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'deepseek_reason',
-    description: 'Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained; the workflow currently runs Qwen/Qwen3-8B (4-bit GGUF, CPU) as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.',
+    description: 'Primary complex-task reasoning via the repository-owned GitHub Actions workflow (provider id \'deepseek\'). The workflow runs Qwen/Qwen3-8B (4-bit GGUF, CPU) as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.',
     parameters: {
       type: 'object',
       properties: {
-        task: { type: 'string', description: 'Task for the DeepSeek reasoning workflow' },
+        task: { type: 'string', description: 'Task for the Qwen/Qwen3-8B reasoning workflow' },
         context: { type: 'string', description: 'Additional context for the task' },
         nexus_learn: { type: 'boolean', description: 'Record the dispatch as an unapproved learning candidate (default true)' },
         ref: { type: 'string', description: 'Branch or tag to run the workflow from (default main)' },
@@ -326,11 +326,11 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'ask_deepseek',
-    description: 'Ask the existing DeepSeek reasoning workflow directly. No routing delay; Qwen/Qwen3-8B is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.',
+    description: 'Ask the existing Qwen/Qwen3-8B reasoning workflow directly (tool family name \'deepseek\' retained). No routing delay; Qwen/Qwen3-8B is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.',
     parameters: {
       type: 'object',
       properties: {
-        question: { type: 'string', description: 'Question to dispatch directly to the DeepSeek reasoning workflow' },
+        question: { type: 'string', description: 'Question to dispatch directly to the Qwen/Qwen3-8B reasoning workflow' },
         context: { type: 'string', description: 'Optional additional context' },
         ref: { type: 'string', description: 'Branch or tag for the workflow (default main)' },
       },
@@ -981,7 +981,7 @@ export function formatDeepSeekResultText(
   runUrl: string,
   result: string,
 ): string {
-  return `✓ DeepSeek-16B completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${runUrl}\n\n${result}`
+  return `✓ Qwen/Qwen3-8B completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${runUrl}\n\n${result}`
 }
 
 /** Tools whose effects leave the repository or cannot be recalled; STOP reports them instead of claiming an undo. */
@@ -1324,7 +1324,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
             : Date.now() - 5 * 60_000 // conservative: assume dispatched 5 min ago
           const completed = await waitForDeepSeekResult(ctx, owner, repo, resumeInvocationId, resumeDispatchedAt)
           if (isEmptyDeepSeekResponse(completed.result)) {
-            return `[TOOL ERROR] DeepSeek-16B run ${completed.run.html_url} finished but produced an empty response.`
+            return `[TOOL ERROR] Qwen/Qwen3-8B run ${completed.run.html_url} finished but produced an empty response.`
           }
           return formatDeepSeekResultText(resumeInvocationId, owner, repo, ref, 'Resumed after app background', completed.run.html_url, completed.result)
         }
@@ -1409,7 +1409,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         try { ctx.onDeepSeekDispatch?.(invocationId, dispatchedAt) } catch { /* persistence is best-effort */ }
         const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
         if (isEmptyDeepSeekResponse(completed.result)) {
-          return `[TOOL ERROR] DeepSeek-16B run ${completed.run.html_url} finished but produced an empty response, so there is no answer to show. Nothing was recorded for learning. Try again or rephrase.`
+          return `[TOOL ERROR] Qwen/Qwen3-8B run ${completed.run.html_url} finished but produced an empty response, so there is no answer to show. Nothing was recorded for learning. Try again or rephrase.`
         }
         let learningStatus = 'not requested'
         if (nexusLearn) {

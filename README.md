@@ -31,7 +31,7 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 | Provider | Models | Runs where | Needs |
 | --- | --- | --- | --- |
-| **DeepSeek 16B** (default; legacy name) | **Qwen/Qwen3-8B**, 4-bit GGUF (Q4_K_M), 8K context, via llama.cpp (`llama-cpp-python` 0.3.36); labelled `deepseek-coder-1.3b` fallback only if it cannot run | `deepseek-16b.yml` on a free CPU runner; opt-in GPU runner | A GitHub token |
+| **Qwen/Qwen3-8B** (default; provider id `deepseek`, formerly labelled "DeepSeek 16B") | **Qwen/Qwen3-8B**, 4-bit GGUF (Q4_K_M), 8K context, via llama.cpp (`llama-cpp-python` 0.3.36); labelled `deepseek-coder-1.3b` fallback only if it cannot run | `deepseek-16b.yml` on a free CPU runner; opt-in GPU runner | A GitHub token |
 | Moonshot · Kimi | Kimi K2.6, K2.7 Code (+ Highspeed), K3 | Moonshot API | A Moonshot key |
 | Anthropic · Claude | Claude Haiku / Sonnet / Opus 5.5 | Anthropic API | An Anthropic key |
 | OpenRouter | Any tool-capable OpenRouter model (the Settings field lists the live catalogue with prices); default Claude Haiku 5.5 | OpenRouter API | An OpenRouter key (`sk-or-`) |

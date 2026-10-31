@@ -35,7 +35,7 @@ describe('DeepSeek task/context boundary', () => {
 
     expect(payload.task).toBe(task)
     expect(payload.context).toContain('ForgeClaw architecture facts')
-    expect(payload.context).toContain('the DeepSeek GitHub Actions workflow is the default reasoning runtime')
+    expect(payload.context).toContain('the Qwen/Qwen3-8B GitHub Actions workflow (provider id `deepseek`) is the default reasoning runtime')
     expect(payload.context).toContain('Moonshot/Kimi, Anthropic and local llama.cpp are explicit selectable alternatives')
     expect(payload.context).toContain('There is no browser-local model fallback')
     expect(payload.context).toContain('not repository evidence')
@@ -71,6 +71,26 @@ describe('DeepSeek task/context boundary', () => {
     expect(payload.context).not.toContain('PENDING-CORPUS-FACT')
     expect(payload.context).toContain('Actual ForgeTools results from this turn')
     expect(payload.context).toContain('HEAD: 0123456789abcdef')
+  })
+
+  it('keeps a fresh but off-domain approved record out of the payload (2026-10-30 bleed fix)', async () => {
+    const repository = new CorpusRepository({ mode: 'test' })
+    const admit = async (input: string, result: string) => {
+      const appended = await repository.appendInteraction({ input, context: '', result, runtime: 'test', model: 'test' })
+      const unsigned = { keyId: RFC8032_TEST_KEY_ID, candidateId: appended.candidate.id, candidateIntegrity: appended.candidate.integrity, issuedAt: '2026-01-01T00:00:00.000Z', expiresAt: '2030-01-01T00:00:00.000Z' }
+      const key = await globalThis.crypto.subtle.importKey('pkcs8', bufferSource(hexBytes(`${RFC8032_PKCS8_PREFIX}${RFC8032_PRIVATE_SEED}`)), { name: 'Ed25519' }, false, ['sign'])
+      const signature = new Uint8Array(await globalThis.crypto.subtle.sign({ name: 'Ed25519' }, key, new TextEncoder().encode(authorizationPayload(unsigned))))
+      await repository.admitCandidate(appended.candidate.id, { ...unsigned, signature: Array.from(signature, byte => byte.toString(16).padStart(2, '0')).join('') })
+    }
+    // retrieve() returns this for the trading task below (shared tokens: should/with/the/no),
+    // and the old guidance gate would have passed it too (shared >=4-letter words: should, with).
+    // It shares zero topic words with the task, so neither payload lane may carry it.
+    await admit('entity extraction rerun for the game packet', 'EXTRACTION-RULE: the extraction should rerun with an override when the entity pass leaves the home team and the visitors unnamed; that is the standing rule for the process.')
+    await admit('BTC window tape break discipline', 'WINDOW-RULE: for a BTC window, check the tape and the break against the mandate before taking a side; the ask must clear the repricing hurdle.')
+
+    const payload = buildDeepSeekTaskPayload('Should I take the NO side on this window, with the mandate at 7.40 and the ask at 84, tape at minus 22 bps and the break intact?')
+    expect(payload.context ?? '').not.toContain('EXTRACTION-RULE')
+    expect(payload.context ?? '').toContain('WINDOW-RULE')
   })
 
   it('does not add ForgeClaw architecture context to an unrelated user task', () => {

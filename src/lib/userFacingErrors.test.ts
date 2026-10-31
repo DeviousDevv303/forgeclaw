@@ -33,7 +33,7 @@ describe('user-facing chat response boundary', () => {
 
   it('gives every DeepSeek stage its own message, and keeps "couldn’t reach" for the reachability case only', () => {
     const raw = {
-      notDispatched: 'deepseek-not-dispatched: the request reached the DeepSeek provider without the deepseek_reason tool, so no workflow was dispatched and GitHub Actions was never contacted.',
+      notDispatched: 'deepseek-not-dispatched: the request reached the Qwen/Qwen3-8B provider (id \'deepseek\') without the deepseek_reason tool, so no workflow was dispatched and GitHub Actions was never contacted.',
       dispatchNetwork: 'deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: browser network/CORS failure — the request produced no HTTP response',
       dispatchAuth: 'deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: GitHub rejected the saved token (401 Unauthorized).',
       runNotFound: 'deepseek-run-discovery: DeepSeek dispatched but correlated run "deepseek-1-a" was not found within 120s.',
@@ -42,8 +42,8 @@ describe('user-facing chat response boundary', () => {
       runTimedOut: 'deepseek-run-poll: DeepSeek timed out after 31m. Run #12 last status: in_progress.',
       runFailed: 'deepseek-run-poll: DeepSeek run #151 concluded as "failure". Run: https://github.com/DeviousDevv303/forgeclaw/actions/runs/39188909218',
       resultUnreadable: 'deepseek-artifact-download: browser network/CORS failure — the request produced no HTTP response',
-      modelEmpty: 'DeepSeek-16B run https://github.com/DeviousDevv303/forgeclaw/actions/runs/1 finished but produced an empty response, so there is no answer to show.',
-      modelGarbled: 'DeepSeek generated an empty or garbled response. Please try rephrasing your question.',
+      modelEmpty: 'Qwen/Qwen3-8B run https://github.com/DeviousDevv303/forgeclaw/actions/runs/1 finished but produced an empty response, so there is no answer to show.',
+      modelGarbled: 'Qwen/Qwen3-8B generated an empty or garbled response. Please try rephrasing your question.',
     }
     const out = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, formatUserFacingError(v)])) as Record<keyof typeof raw, string>
 

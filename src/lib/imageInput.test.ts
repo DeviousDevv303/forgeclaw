@@ -33,7 +33,7 @@ describe('image input', () => {
 
   it('tells visitors and owners what to do instead of guessing', () => {
     expect(visionUnavailableReply(true)).toMatch(/^Free mode can't read pictures/)
-    expect(visionUnavailableReply(false)).toMatch(/Kimi, Anthropic · Claude or DeepSeek 16B/)
+    expect(visionUnavailableReply(false)).toMatch(/Kimi, Anthropic · Claude or Qwen\/Qwen3-8B/)
   })
 
   it('answers in Spanish when the app is in Spanish', () => {

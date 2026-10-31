@@ -4,7 +4,7 @@ import { sendViaRouter } from './providerRouter'
 import type { AIRequest } from './types'
 
 const PAGE = '<!DOCTYPE html>\n<html>\n<head><style>body{margin:0}</style></head>\n<body><h1>Rise & Shine</h1></body>\n</html>'
-const deepseekOk = (text: string) => `✓ DeepSeek-16B completed as deepseek-1 on o/r@main.\nStages: x\nRun: https://run\n\n${text}`
+const deepseekOk = (text: string) => `✓ Qwen/Qwen3-8B completed as deepseek-1 on o/r@main.\nStages: x\nRun: https://run\n\n${text}`
 
 describe('extractSiteHtml', () => {
   it('takes the complete document out of a fenced reply', () => {

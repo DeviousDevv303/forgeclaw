@@ -5,7 +5,7 @@
  * Live-data fast path (agent: Claude Sonnet 5.5, at operator request).
  *
  * Questions about the outside world right now ("any UFC fights tonight?", "weather today?") cannot
- * be answered by the 16B DeepSeek workflow: it runs on a CPU runner (9-23 minutes per hop), has no
+ * be answered by the Qwen/Qwen3-8B workflow: it runs on a CPU runner (9-23 minutes per hop), has no
  * live data, and a second hop is needed if it asks for a search. This module recognizes those
  * questions conservatively so the app can run web_search directly and show the results.
  *
@@ -105,6 +105,6 @@ export function routeLiveDataQuestion(text: string, now: Date = new Date()): Exp
   return {
     name: 'web_search',
     input: { query, count: 5 },
-    notes: ['live-data question answered directly by web search; the 16B DeepSeek workflow takes 9-23 minutes per step and has no live data'],
+    notes: ['live-data question answered directly by web search; the Qwen/Qwen3-8B workflow takes 9-23 minutes per step and has no live data'],
   }
 }
