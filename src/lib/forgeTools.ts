@@ -198,7 +198,6 @@ export interface ToolContext {
   waPhoneNumberId?: string
   waAccessToken?: string
   waRecipient?: string
-  braveKey?: string
   googleToken?: string
   agentId?: string
   runId?: string
@@ -505,7 +504,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'web_search',
-    description: 'Search the web for current information. Uses Brave Search if an API key is configured, otherwise real DuckDuckGo results via the ddg_search GitHub workflow (needs a GitHub token; takes ~15-40s), falling back to DuckDuckGo instant answers.',
+    description: 'Search the web for current information. Real DuckDuckGo results via the ddg_search GitHub workflow (needs a GitHub token; takes ~15-40s), falling back to DuckDuckGo instant answers.',
     parameters: {
       type: 'object',
       properties: {
@@ -916,8 +915,8 @@ export function loadToolContext(): ToolContext {
     waPhoneNumberId: wa.phoneNumberId,
     waAccessToken:   wa.accessToken,
     waRecipient:     wa.recipientNumber,
-    // No Brave key is read any more: the owner removed the Brave API key entry (2026-10-23)
-    // and web_search uses its DuckDuckGo path. The ctx.braveKey field stays for compatibility.
+    // web_search uses only its DuckDuckGo paths: the owner removed the Brave API key
+    // entry (2026-10-23) and the never-populated Brave branch was deleted (2026-10-31).
     googleToken:     safeGetItem('fc_google_token')  || undefined,
   }
 }
@@ -1608,22 +1607,10 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const query = input.query as string
         const count = Math.min(parseInt(String(input.count || '5'), 10) || 5, 10)
 
-        if (ctx.braveKey) {
-          const res = await toolFetch(ctx,
-            `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}`,
-            { headers: { Accept: 'application/json', 'X-Subscription-Token': ctx.braveKey } },
-          )
-          if (!res.ok) throw new Error(`Brave Search ${res.status}`)
-          type BraveResult = { title: string; url: string; description: string }
-          const data = await res.json() as { web?: { results: BraveResult[] } }
-          const results = data.web?.results || []
-          if (!results.length) return `No results for "${query}"`
-          return `Brave Search — "${query}":\n${results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.description}`).join('\n\n')}`
-        }
-
         // Real results without a key: the read-only ddg_search.yml workflow (see ddgWorkflowSearch.ts).
         // Failure is reported, then we fall back to Instant Answers rather than failing silently.
         let workflowNote = ''
+        let workflowError: string | null = null
         if (ctx.ghToken) {
           try {
             return await runDdgWorkflowSearch(query, count, {
@@ -1631,12 +1618,13 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
               owner: ctx.ghOwner, repo: ctx.ghRepo, token: ctx.ghToken, signal: ctx.signal,
             })
           } catch (error) {
-            workflowNote = `[DuckDuckGo workflow search failed: ${error instanceof Error ? error.message : String(error)}. Falling back to Instant Answers, which are not full web search.]\n`
+            workflowError = error instanceof Error ? error.message : String(error)
+            workflowNote = `[DuckDuckGo workflow search failed: ${workflowError}. Falling back to Instant Answers, which are not full web search.]\n`
           }
         } else {
-          // No Brave key and no GitHub token: live search cannot run at all in this browser.
+          // No GitHub token: live search cannot run at all in this browser.
           // The Instant Answers below are static reference data and must never pose as live results.
-          workflowNote = `[Live web search did not run: no Brave Search key and no GitHub token for the workflow search. What follows is DuckDuckGo Instant Answers — static reference data, NOT live search results.]\n`
+          workflowNote = `[Live web search did not run: no GitHub token for the workflow search. What follows is DuckDuckGo Instant Answers — static reference data, NOT live search results.]\n`
         }
 
         // Fallback: DuckDuckGo Instant Answers (no key, CORS-enabled)
@@ -1651,9 +1639,18 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         const topics = (data.RelatedTopics || []).slice(0, count).filter(t => t.Text)
           .map(t => `• ${t.Text}${t.FirstURL ? `\n  ${t.FirstURL}` : ''}`)
         if (topics.length) parts.push(topics.join('\n'))
-        return workflowNote + (parts.length
-          ? `DuckDuckGo Instant Answers — "${query}" (static reference data, not live search results):\n${parts.join('\n\n')}`
-          : `No results for "${query}": live search did not produce any and Instant Answers has no entry for it. Add a Brave Search API key in Settings for full web results.`)
+        if (parts.length) {
+          return workflowNote + `DuckDuckGo Instant Answers — "${query}" (static reference data, not live search results):\n${parts.join('\n\n')}`
+        }
+        // Nothing from either lane. When the workflow ran and FAILED, that is a tool
+        // failure — not "no results": the 2026-10-31 run had completed with results
+        // while the app's reads wedged, and reporting the read failure as an empty
+        // search both misinformed the owner and let the turn close as COMPLETE.
+        // The [TOOL ERROR] marker makes App.tsx classify the turn BLOCKED.
+        if (workflowError !== null) {
+          return `[TOOL ERROR] Live search results for "${query}" could not be read back (workflow search failed: ${workflowError}) and Instant Answers has no entry for it. Live search is unavailable right now — retry.`
+        }
+        return workflowNote + `Instant Answers has no entry for "${query}", and live search did not run, so there are no results to show.`
       }
 
       // ── Gmail: read ───────────────────────────────────────────────────────────

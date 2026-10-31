@@ -158,8 +158,18 @@ export async function runDdgWorkflowSearch(rawQuery: string, count: number, deps
       try { finalRun = await r.res.json() as ShellWorkflowRun; lastPollState = 'ok' } catch { lastPollState = 'run was not valid JSON' }
     }
   }
+  // The poll budget is exhausted with the run not confirmed completed. When the last poll
+  // actually read a status (lastPollState 'ok'), the run really is still going — say so.
+  // When the polls failed to read at all (network error, non-OK status, bad JSON), the run's
+  // state is UNKNOWN, not unfinished: the 2026-10-31 run had in fact completed in 13s while
+  // every status read wedged on a 30s timeout. A completed run's job log is readable even
+  // when the status endpoint is not, so fall through and try the log before declaring anything.
+  let completionUnverified = false
   if (finalRun.status !== 'completed') {
-    throw new Error(`DuckDuckGo search did not finish in time (run ${run.id}, status ${finalRun.status}, last poll: ${lastPollState}): ${finalRun.html_url ?? run.html_url}`)
+    if (lastPollState === 'ok') {
+      throw new Error(`DuckDuckGo search did not finish in time (run ${run.id}, status ${finalRun.status}, last poll: ${lastPollState}): ${finalRun.html_url ?? run.html_url}`)
+    }
+    completionUnverified = true
   }
 
   let parsed: DdgQueryResult[] | null = null
@@ -185,6 +195,9 @@ export async function runDdgWorkflowSearch(rawQuery: string, count: number, deps
     await sleep(pollMs)
   }
   if (!parsed) {
+    if (completionUnverified) {
+      throw new Error(`DuckDuckGo search run ${run.id} finished state could not be read back (last poll: ${lastPollState}) and no results were readable from its log (${lastLogState}): ${finalRun.html_url ?? run.html_url}`)
+    }
     throw new Error(`DuckDuckGo run ${run.id} ended "${finalRun.conclusion ?? 'unknown'}" but no results were readable (${lastLogState}): ${finalRun.html_url}`)
   }
   return formatDdgResults(query, count, parsed)

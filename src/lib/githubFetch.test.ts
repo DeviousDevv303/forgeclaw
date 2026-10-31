@@ -14,16 +14,30 @@ afterEach(() => {
 })
 
 describe('shared GitHub fetch boundary', () => {
-  it('bounds a GitHub API read at its stage deadline without retrying a timed-out GET', async () => {
+  it('bounds a GitHub API read at its stage deadline, retrying a timed-out GET exactly once', async () => {
     vi.useFakeTimers()
     const fetchMock = vi.fn(hangingFetch)
     vi.stubGlobal('fetch', fetchMock)
     const pending = toolFetch({ timeoutMs: 25 }, 'https://api.github.com/repos/acme/app')
     const assertion = expect(pending).rejects.toThrow('GitHub read timed out after 25ms')
-    await vi.advanceTimersByTimeAsync(26)
+    await vi.advanceTimersByTimeAsync(200)
     await assertion
-    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(fetchMock.mock.calls[0][1]?.cache).toBe('no-store')
+  })
+
+  it('returns the response when a timed-out GitHub GET succeeds on its one retry', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(hangingFetch)
+      .mockResolvedValueOnce(new Response('ready', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const pending = toolFetch({ timeoutMs: 25 }, 'https://api.github.com/repos/acme/app')
+    await vi.advanceTimersByTimeAsync(200)
+    const response = await pending
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe('ready')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('bounds a workflow-dispatch POST but never retries a non-idempotent write', async () => {

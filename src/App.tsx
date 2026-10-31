@@ -335,7 +335,7 @@ EXECUTION RULES
 — Preserve user intent across retries and iterations.
 
 AVAILABLE TOOLS — USE THEM:
-web_search (Brave), http_fetch, run_js (execute JS and see output), github_read_file, github_write_file, github_list_files, github_search_code, github_create_issue, github_run_workflow, github_get_run_status, github_get_run_logs, memory_write, memory_read, memory_list, send_whatsapp, gmail_read, gmail_send, calendar_read, calendar_create, spawn_agent.
+web_search, http_fetch, run_js (execute JS and see output), github_read_file, github_write_file, github_list_files, github_search_code, github_create_issue, github_run_workflow, github_get_run_status, github_get_run_logs, memory_write, memory_read, memory_list, send_whatsapp, gmail_read, gmail_send, calendar_read, calendar_create, spawn_agent.
 Do not describe what a tool would do — call it.
 
 QUALITY STANDARD — EXPERT LEVEL:
@@ -3276,8 +3276,8 @@ function App() {
 
               </SettingsSection>
               <SettingsSection title="Kalshi / Funds">
-              {/* Kalshi trading keys — this section replaces the Brave key slot (owner removed
-                  Brave 2026-10-23: he does not use it; web_search falls back to DuckDuckGo).
+              {/* Kalshi trading keys — this section replaced the old third-party search
+                  key slot (owner removed that key 2026-10-23; web_search uses DuckDuckGo).
                   Hidden in visitor mode: a public visitor never sees the trading keys. */}
               {!isPublicVisitor(ghToken) && (<div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>

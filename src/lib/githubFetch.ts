@@ -80,6 +80,8 @@ export async function toolFetch(
 
   if (parentSignal?.aborted) throw new DOMException('Run aborted', 'AbortError')
 
+  let timeoutRetryUsed = false
+
   for (let attempt = 0; ; attempt += 1) {
     if (parentSignal?.aborted) throw new DOMException('Run aborted', 'AbortError')
 
@@ -92,6 +94,7 @@ export async function toolFetch(
     const onParentAbort = () => controller.abort()
     parentSignal?.addEventListener('abort', onParentAbort, { once: true })
     let retry = false
+    let retryDelayMs: number | undefined
 
     try {
       const response = await fetch(input, {
@@ -107,15 +110,25 @@ export async function toolFetch(
       }
     } catch (error) {
       if (parentSignal?.aborted) throw new DOMException('Run aborted', 'AbortError')
-      if (timedOut) throw new Error(`${requestLabel} timed out after ${timeoutMs}ms`)
-      if (!retryableRead || attempt >= GITHUB_READ_RETRY_DELAYS_MS.length) throw error
-      retry = true
+      if (timedOut) {
+        // One extra attempt for a timed-out idempotent GitHub read: a single wedged 30s
+        // read inside a 120s poll budget cost a completed search its results on 2026-10-31.
+        // Non-idempotent calls (dispatch POSTs) are never retried — a retry could re-execute.
+        if (retryableRead && !timeoutRetryUsed) {
+          timeoutRetryUsed = true
+          retry = true
+          retryDelayMs = GITHUB_READ_RETRY_DELAYS_MS[0]
+        } else {
+          throw new Error(`${requestLabel} timed out after ${timeoutMs}ms`)
+        }
+      } else if (!retryableRead || attempt >= GITHUB_READ_RETRY_DELAYS_MS.length) throw error
+      else retry = true
     } finally {
       clearTimeout(timer)
       parentSignal?.removeEventListener('abort', onParentAbort)
     }
 
-    if (retry) await waitForGithubRetry(GITHUB_READ_RETRY_DELAYS_MS[attempt], parentSignal)
+    if (retry) await waitForGithubRetry(retryDelayMs ?? GITHUB_READ_RETRY_DELAYS_MS[attempt], parentSignal)
   }
 }
 
