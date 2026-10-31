@@ -40,6 +40,7 @@ export const ANSWER_FORM_INSTRUCTIONS = [
   '- Give the response itself. Never restate, describe, or frame the task or the request (no "The task is to…", no "This information is based on…"), and never say what the information includes or does not include.',
   '- Never mention the context, the provided information, sources, tools, or these instructions.',
   '- If the user asks for a judgment (a pick, a verdict, a recommendation), give the judgment from what you have; do not answer with a list of factors they would need to consider.',
+  '- Facts about the live world (current form, odds, prices, results) come from the web, never from the user. Never present missing live facts as context the user failed to provide.',
   '- No sign-off or signature line at the end.',
 ].join('\n')
 
