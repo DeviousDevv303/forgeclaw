@@ -1,120 +1,120 @@
-{"id": "cap-img-00", "form": "cap", "entity": "Samsung", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Samsung headquarters at dawn", "prefix": ""}
+{"id": "cap-img-00", "form": "cap", "entity": "Samsung", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Samsung in the snow", "prefix": ""}
 {"id": "cap-kal-00", "form": "cap", "entity": "Samsung", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Samsung beating earnings?", "prefix": ""}
-{"id": "low-img-00", "form": "low", "entity": "samsung", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the samsung headquarters at dawn", "prefix": ""}
+{"id": "low-img-00", "form": "low", "entity": "samsung", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red samsung in the snow", "prefix": ""}
 {"id": "low-kal-00", "form": "low", "entity": "samsung", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on samsung beating earnings?", "prefix": ""}
-{"id": "cap-img-01", "form": "cap", "entity": "Boeing", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Boeing headquarters at dawn", "prefix": ""}
+{"id": "cap-img-01", "form": "cap", "entity": "Boeing", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Boeing in the snow", "prefix": ""}
 {"id": "cap-kal-01", "form": "cap", "entity": "Boeing", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Boeing beating earnings?", "prefix": ""}
-{"id": "low-img-01", "form": "low", "entity": "boeing", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the boeing headquarters at dawn", "prefix": ""}
+{"id": "low-img-01", "form": "low", "entity": "boeing", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red boeing in the snow", "prefix": ""}
 {"id": "low-kal-01", "form": "low", "entity": "boeing", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on boeing beating earnings?", "prefix": ""}
-{"id": "cap-img-02", "form": "cap", "entity": "Pfizer", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Pfizer headquarters at dawn", "prefix": ""}
+{"id": "cap-img-02", "form": "cap", "entity": "Pfizer", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Pfizer in the snow", "prefix": ""}
 {"id": "cap-kal-02", "form": "cap", "entity": "Pfizer", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Pfizer beating earnings?", "prefix": ""}
-{"id": "low-img-02", "form": "low", "entity": "pfizer", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the pfizer headquarters at dawn", "prefix": ""}
+{"id": "low-img-02", "form": "low", "entity": "pfizer", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red pfizer in the snow", "prefix": ""}
 {"id": "low-kal-02", "form": "low", "entity": "pfizer", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on pfizer beating earnings?", "prefix": ""}
-{"id": "cap-img-03", "form": "cap", "entity": "Disney", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Disney headquarters at dawn", "prefix": ""}
+{"id": "cap-img-03", "form": "cap", "entity": "Disney", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Disney in the snow", "prefix": ""}
 {"id": "cap-kal-03", "form": "cap", "entity": "Disney", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Disney beating earnings?", "prefix": ""}
-{"id": "low-img-03", "form": "low", "entity": "disney", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the disney headquarters at dawn", "prefix": ""}
+{"id": "low-img-03", "form": "low", "entity": "disney", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red disney in the snow", "prefix": ""}
 {"id": "low-kal-03", "form": "low", "entity": "disney", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on disney beating earnings?", "prefix": ""}
-{"id": "cap-img-04", "form": "cap", "entity": "Cisco", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Cisco headquarters at dawn", "prefix": ""}
+{"id": "cap-img-04", "form": "cap", "entity": "Cisco", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Cisco in the snow", "prefix": ""}
 {"id": "cap-kal-04", "form": "cap", "entity": "Cisco", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Cisco beating earnings?", "prefix": ""}
-{"id": "low-img-04", "form": "low", "entity": "cisco", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the cisco headquarters at dawn", "prefix": ""}
+{"id": "low-img-04", "form": "low", "entity": "cisco", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red cisco in the snow", "prefix": ""}
 {"id": "low-kal-04", "form": "low", "entity": "cisco", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on cisco beating earnings?", "prefix": ""}
-{"id": "cap-img-05", "form": "cap", "entity": "Oracle", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Oracle headquarters at dawn", "prefix": ""}
+{"id": "cap-img-05", "form": "cap", "entity": "Oracle", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Oracle in the snow", "prefix": ""}
 {"id": "cap-kal-05", "form": "cap", "entity": "Oracle", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Oracle beating earnings?", "prefix": ""}
-{"id": "low-img-05", "form": "low", "entity": "oracle", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the oracle headquarters at dawn", "prefix": ""}
+{"id": "low-img-05", "form": "low", "entity": "oracle", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red oracle in the snow", "prefix": ""}
 {"id": "low-kal-05", "form": "low", "entity": "oracle", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on oracle beating earnings?", "prefix": ""}
-{"id": "cap-img-06", "form": "cap", "entity": "Honda", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Honda headquarters at dawn", "prefix": ""}
+{"id": "cap-img-06", "form": "cap", "entity": "Honda", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Honda in the snow", "prefix": ""}
 {"id": "cap-kal-06", "form": "cap", "entity": "Honda", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Honda beating earnings?", "prefix": ""}
-{"id": "low-img-06", "form": "low", "entity": "honda", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the honda headquarters at dawn", "prefix": ""}
+{"id": "low-img-06", "form": "low", "entity": "honda", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red honda in the snow", "prefix": ""}
 {"id": "low-kal-06", "form": "low", "entity": "honda", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on honda beating earnings?", "prefix": ""}
-{"id": "cap-img-07", "form": "cap", "entity": "Siemens", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Siemens headquarters at dawn", "prefix": ""}
+{"id": "cap-img-07", "form": "cap", "entity": "Siemens", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Siemens in the snow", "prefix": ""}
 {"id": "cap-kal-07", "form": "cap", "entity": "Siemens", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Siemens beating earnings?", "prefix": ""}
-{"id": "low-img-07", "form": "low", "entity": "siemens", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the siemens headquarters at dawn", "prefix": ""}
+{"id": "low-img-07", "form": "low", "entity": "siemens", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red siemens in the snow", "prefix": ""}
 {"id": "low-kal-07", "form": "low", "entity": "siemens", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on siemens beating earnings?", "prefix": ""}
-{"id": "cap-img-08", "form": "cap", "entity": "Netflix", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Netflix headquarters at dawn", "prefix": ""}
+{"id": "cap-img-08", "form": "cap", "entity": "Netflix", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Netflix in the snow", "prefix": ""}
 {"id": "cap-kal-08", "form": "cap", "entity": "Netflix", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Netflix beating earnings?", "prefix": ""}
-{"id": "low-img-08", "form": "low", "entity": "netflix", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the netflix headquarters at dawn", "prefix": ""}
+{"id": "low-img-08", "form": "low", "entity": "netflix", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red netflix in the snow", "prefix": ""}
 {"id": "low-kal-08", "form": "low", "entity": "netflix", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on netflix beating earnings?", "prefix": ""}
-{"id": "cap-img-09", "form": "cap", "entity": "Walmart", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Walmart headquarters at dawn", "prefix": ""}
+{"id": "cap-img-09", "form": "cap", "entity": "Walmart", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Walmart in the snow", "prefix": ""}
 {"id": "cap-kal-09", "form": "cap", "entity": "Walmart", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Walmart beating earnings?", "prefix": ""}
-{"id": "low-img-09", "form": "low", "entity": "walmart", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the walmart headquarters at dawn", "prefix": ""}
+{"id": "low-img-09", "form": "low", "entity": "walmart", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red walmart in the snow", "prefix": ""}
 {"id": "low-kal-09", "form": "low", "entity": "walmart", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on walmart beating earnings?", "prefix": ""}
-{"id": "cap-img-10", "form": "cap", "entity": "Starbucks", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Starbucks headquarters at dawn", "prefix": ""}
+{"id": "cap-img-10", "form": "cap", "entity": "Starbucks", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Starbucks in the snow", "prefix": ""}
 {"id": "cap-kal-10", "form": "cap", "entity": "Starbucks", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Starbucks beating earnings?", "prefix": ""}
-{"id": "low-img-10", "form": "low", "entity": "starbucks", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the starbucks headquarters at dawn", "prefix": ""}
+{"id": "low-img-10", "form": "low", "entity": "starbucks", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red starbucks in the snow", "prefix": ""}
 {"id": "low-kal-10", "form": "low", "entity": "starbucks", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on starbucks beating earnings?", "prefix": ""}
-{"id": "cap-img-11", "form": "cap", "entity": "Nike", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Nike headquarters at dawn", "prefix": ""}
+{"id": "cap-img-11", "form": "cap", "entity": "Nike", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Nike in the snow", "prefix": ""}
 {"id": "cap-kal-11", "form": "cap", "entity": "Nike", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Nike beating earnings?", "prefix": ""}
-{"id": "low-img-11", "form": "low", "entity": "nike", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the nike headquarters at dawn", "prefix": ""}
+{"id": "low-img-11", "form": "low", "entity": "nike", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red nike in the snow", "prefix": ""}
 {"id": "low-kal-11", "form": "low", "entity": "nike", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on nike beating earnings?", "prefix": ""}
-{"id": "cap-img-12", "form": "cap", "entity": "Adidas", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Adidas headquarters at dawn", "prefix": ""}
+{"id": "cap-img-12", "form": "cap", "entity": "Adidas", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Adidas in the snow", "prefix": ""}
 {"id": "cap-kal-12", "form": "cap", "entity": "Adidas", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Adidas beating earnings?", "prefix": ""}
-{"id": "low-img-12", "form": "low", "entity": "adidas", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the adidas headquarters at dawn", "prefix": ""}
+{"id": "low-img-12", "form": "low", "entity": "adidas", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red adidas in the snow", "prefix": ""}
 {"id": "low-kal-12", "form": "low", "entity": "adidas", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on adidas beating earnings?", "prefix": ""}
-{"id": "cap-img-13", "form": "cap", "entity": "Sony", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Sony headquarters at dawn", "prefix": ""}
+{"id": "cap-img-13", "form": "cap", "entity": "Sony", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Sony in the snow", "prefix": ""}
 {"id": "cap-kal-13", "form": "cap", "entity": "Sony", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Sony beating earnings?", "prefix": ""}
-{"id": "low-img-13", "form": "low", "entity": "sony", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the sony headquarters at dawn", "prefix": ""}
+{"id": "low-img-13", "form": "low", "entity": "sony", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red sony in the snow", "prefix": ""}
 {"id": "low-kal-13", "form": "low", "entity": "sony", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on sony beating earnings?", "prefix": ""}
-{"id": "cap-img-14", "form": "cap", "entity": "Nintendo", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Nintendo headquarters at dawn", "prefix": ""}
+{"id": "cap-img-14", "form": "cap", "entity": "Nintendo", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Nintendo in the snow", "prefix": ""}
 {"id": "cap-kal-14", "form": "cap", "entity": "Nintendo", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Nintendo beating earnings?", "prefix": ""}
-{"id": "low-img-14", "form": "low", "entity": "nintendo", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the nintendo headquarters at dawn", "prefix": ""}
+{"id": "low-img-14", "form": "low", "entity": "nintendo", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red nintendo in the snow", "prefix": ""}
 {"id": "low-kal-14", "form": "low", "entity": "nintendo", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on nintendo beating earnings?", "prefix": ""}
-{"id": "cap-img-15", "form": "cap", "entity": "Ferrari", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Ferrari headquarters at dawn", "prefix": ""}
+{"id": "cap-img-15", "form": "cap", "entity": "Ferrari", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Ferrari in the snow", "prefix": ""}
 {"id": "cap-kal-15", "form": "cap", "entity": "Ferrari", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Ferrari beating earnings?", "prefix": ""}
-{"id": "low-img-15", "form": "low", "entity": "ferrari", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the ferrari headquarters at dawn", "prefix": ""}
+{"id": "low-img-15", "form": "low", "entity": "ferrari", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red ferrari in the snow", "prefix": ""}
 {"id": "low-kal-15", "form": "low", "entity": "ferrari", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on ferrari beating earnings?", "prefix": ""}
-{"id": "cap-img-16", "form": "cap", "entity": "Porsche", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Porsche headquarters at dawn", "prefix": ""}
+{"id": "cap-img-16", "form": "cap", "entity": "Porsche", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Porsche in the snow", "prefix": ""}
 {"id": "cap-kal-16", "form": "cap", "entity": "Porsche", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Porsche beating earnings?", "prefix": ""}
-{"id": "low-img-16", "form": "low", "entity": "porsche", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the porsche headquarters at dawn", "prefix": ""}
+{"id": "low-img-16", "form": "low", "entity": "porsche", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red porsche in the snow", "prefix": ""}
 {"id": "low-kal-16", "form": "low", "entity": "porsche", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on porsche beating earnings?", "prefix": ""}
-{"id": "cap-img-17", "form": "cap", "entity": "Lufthansa", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Lufthansa headquarters at dawn", "prefix": ""}
+{"id": "cap-img-17", "form": "cap", "entity": "Lufthansa", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Lufthansa in the snow", "prefix": ""}
 {"id": "cap-kal-17", "form": "cap", "entity": "Lufthansa", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Lufthansa beating earnings?", "prefix": ""}
-{"id": "low-img-17", "form": "low", "entity": "lufthansa", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the lufthansa headquarters at dawn", "prefix": ""}
+{"id": "low-img-17", "form": "low", "entity": "lufthansa", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red lufthansa in the snow", "prefix": ""}
 {"id": "low-kal-17", "form": "low", "entity": "lufthansa", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on lufthansa beating earnings?", "prefix": ""}
-{"id": "cap-img-18", "form": "cap", "entity": "Maersk", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Maersk headquarters at dawn", "prefix": ""}
+{"id": "cap-img-18", "form": "cap", "entity": "Maersk", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Maersk in the snow", "prefix": ""}
 {"id": "cap-kal-18", "form": "cap", "entity": "Maersk", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Maersk beating earnings?", "prefix": ""}
-{"id": "low-img-18", "form": "low", "entity": "maersk", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the maersk headquarters at dawn", "prefix": ""}
+{"id": "low-img-18", "form": "low", "entity": "maersk", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red maersk in the snow", "prefix": ""}
 {"id": "low-kal-18", "form": "low", "entity": "maersk", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on maersk beating earnings?", "prefix": ""}
-{"id": "cap-img-19", "form": "cap", "entity": "Nokia", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Nokia headquarters at dawn", "prefix": ""}
+{"id": "cap-img-19", "form": "cap", "entity": "Nokia", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Nokia in the snow", "prefix": ""}
 {"id": "cap-kal-19", "form": "cap", "entity": "Nokia", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Nokia beating earnings?", "prefix": ""}
-{"id": "low-img-19", "form": "low", "entity": "nokia", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the nokia headquarters at dawn", "prefix": ""}
+{"id": "low-img-19", "form": "low", "entity": "nokia", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red nokia in the snow", "prefix": ""}
 {"id": "low-kal-19", "form": "low", "entity": "nokia", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on nokia beating earnings?", "prefix": ""}
-{"id": "cap-img-20", "form": "cap", "entity": "Ericsson", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Ericsson headquarters at dawn", "prefix": ""}
+{"id": "cap-img-20", "form": "cap", "entity": "Ericsson", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Ericsson in the snow", "prefix": ""}
 {"id": "cap-kal-20", "form": "cap", "entity": "Ericsson", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Ericsson beating earnings?", "prefix": ""}
-{"id": "low-img-20", "form": "low", "entity": "ericsson", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the ericsson headquarters at dawn", "prefix": ""}
+{"id": "low-img-20", "form": "low", "entity": "ericsson", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red ericsson in the snow", "prefix": ""}
 {"id": "low-kal-20", "form": "low", "entity": "ericsson", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on ericsson beating earnings?", "prefix": ""}
-{"id": "cap-img-21", "form": "cap", "entity": "Unilever", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Unilever headquarters at dawn", "prefix": ""}
+{"id": "cap-img-21", "form": "cap", "entity": "Unilever", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Unilever in the snow", "prefix": ""}
 {"id": "cap-kal-21", "form": "cap", "entity": "Unilever", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Unilever beating earnings?", "prefix": ""}
-{"id": "low-img-21", "form": "low", "entity": "unilever", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the unilever headquarters at dawn", "prefix": ""}
+{"id": "low-img-21", "form": "low", "entity": "unilever", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red unilever in the snow", "prefix": ""}
 {"id": "low-kal-21", "form": "low", "entity": "unilever", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on unilever beating earnings?", "prefix": ""}
-{"id": "cap-img-22", "form": "cap", "entity": "Danone", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Danone headquarters at dawn", "prefix": ""}
+{"id": "cap-img-22", "form": "cap", "entity": "Danone", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Danone in the snow", "prefix": ""}
 {"id": "cap-kal-22", "form": "cap", "entity": "Danone", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Danone beating earnings?", "prefix": ""}
-{"id": "low-img-22", "form": "low", "entity": "danone", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the danone headquarters at dawn", "prefix": ""}
+{"id": "low-img-22", "form": "low", "entity": "danone", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red danone in the snow", "prefix": ""}
 {"id": "low-kal-22", "form": "low", "entity": "danone", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on danone beating earnings?", "prefix": ""}
-{"id": "cap-img-23", "form": "cap", "entity": "Heineken", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Heineken headquarters at dawn", "prefix": ""}
+{"id": "cap-img-23", "form": "cap", "entity": "Heineken", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Heineken in the snow", "prefix": ""}
 {"id": "cap-kal-23", "form": "cap", "entity": "Heineken", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Heineken beating earnings?", "prefix": ""}
-{"id": "low-img-23", "form": "low", "entity": "heineken", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the heineken headquarters at dawn", "prefix": ""}
+{"id": "low-img-23", "form": "low", "entity": "heineken", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red heineken in the snow", "prefix": ""}
 {"id": "low-kal-23", "form": "low", "entity": "heineken", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on heineken beating earnings?", "prefix": ""}
-{"id": "cap-img-24", "form": "cap", "entity": "Chevron", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Chevron headquarters at dawn", "prefix": ""}
+{"id": "cap-img-24", "form": "cap", "entity": "Chevron", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Chevron in the snow", "prefix": ""}
 {"id": "cap-kal-24", "form": "cap", "entity": "Chevron", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Chevron beating earnings?", "prefix": ""}
-{"id": "low-img-24", "form": "low", "entity": "chevron", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the chevron headquarters at dawn", "prefix": ""}
+{"id": "low-img-24", "form": "low", "entity": "chevron", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red chevron in the snow", "prefix": ""}
 {"id": "low-kal-24", "form": "low", "entity": "chevron", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on chevron beating earnings?", "prefix": ""}
-{"id": "cap-img-25", "form": "cap", "entity": "Exxon", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Exxon headquarters at dawn", "prefix": ""}
+{"id": "cap-img-25", "form": "cap", "entity": "Exxon", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Exxon in the snow", "prefix": ""}
 {"id": "cap-kal-25", "form": "cap", "entity": "Exxon", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Exxon beating earnings?", "prefix": ""}
-{"id": "low-img-25", "form": "low", "entity": "exxon", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the exxon headquarters at dawn", "prefix": ""}
+{"id": "low-img-25", "form": "low", "entity": "exxon", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red exxon in the snow", "prefix": ""}
 {"id": "low-kal-25", "form": "low", "entity": "exxon", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on exxon beating earnings?", "prefix": ""}
-{"id": "cap-img-26", "form": "cap", "entity": "Caterpillar", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Caterpillar headquarters at dawn", "prefix": ""}
+{"id": "cap-img-26", "form": "cap", "entity": "Caterpillar", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Caterpillar in the snow", "prefix": ""}
 {"id": "cap-kal-26", "form": "cap", "entity": "Caterpillar", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Caterpillar beating earnings?", "prefix": ""}
-{"id": "low-img-26", "form": "low", "entity": "caterpillar", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the caterpillar headquarters at dawn", "prefix": ""}
+{"id": "low-img-26", "form": "low", "entity": "caterpillar", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red caterpillar in the snow", "prefix": ""}
 {"id": "low-kal-26", "form": "low", "entity": "caterpillar", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on caterpillar beating earnings?", "prefix": ""}
-{"id": "cap-img-27", "form": "cap", "entity": "Deere", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Deere headquarters at dawn", "prefix": ""}
+{"id": "cap-img-27", "form": "cap", "entity": "Deere", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Deere in the snow", "prefix": ""}
 {"id": "cap-kal-27", "form": "cap", "entity": "Deere", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Deere beating earnings?", "prefix": ""}
-{"id": "low-img-27", "form": "low", "entity": "deere", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the deere headquarters at dawn", "prefix": ""}
+{"id": "low-img-27", "form": "low", "entity": "deere", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red deere in the snow", "prefix": ""}
 {"id": "low-kal-27", "form": "low", "entity": "deere", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on deere beating earnings?", "prefix": ""}
-{"id": "cap-img-28", "form": "cap", "entity": "Whirlpool", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Whirlpool headquarters at dawn", "prefix": ""}
+{"id": "cap-img-28", "form": "cap", "entity": "Whirlpool", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Whirlpool in the snow", "prefix": ""}
 {"id": "cap-kal-28", "form": "cap", "entity": "Whirlpool", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Whirlpool beating earnings?", "prefix": ""}
-{"id": "low-img-28", "form": "low", "entity": "whirlpool", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the whirlpool headquarters at dawn", "prefix": ""}
+{"id": "low-img-28", "form": "low", "entity": "whirlpool", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red whirlpool in the snow", "prefix": ""}
 {"id": "low-kal-28", "form": "low", "entity": "whirlpool", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on whirlpool beating earnings?", "prefix": ""}
-{"id": "cap-img-29", "form": "cap", "entity": "Hershey", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the Hershey headquarters at dawn", "prefix": ""}
+{"id": "cap-img-29", "form": "cap", "entity": "Hershey", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red Hershey in the snow", "prefix": ""}
 {"id": "cap-kal-29", "form": "cap", "entity": "Hershey", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on Hershey beating earnings?", "prefix": ""}
-{"id": "low-img-29", "form": "low", "entity": "hershey", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of the hershey headquarters at dawn", "prefix": ""}
+{"id": "low-img-29", "form": "low", "entity": "hershey", "tool": "generate_image", "arg": "prompt", "prompt": "Generate an image of a red hershey in the snow", "prefix": ""}
 {"id": "low-kal-29", "form": "low", "entity": "hershey", "tool": "kalshi_markets", "arg": "query", "prompt": "What are the Kalshi odds on hershey beating earnings?", "prefix": ""}

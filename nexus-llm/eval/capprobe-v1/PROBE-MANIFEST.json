@@ -1,6 +1,6 @@
 {
   "name": "capprobe",
-  "version": "v1",
+  "version": "v1.2",
   "items": 120,
   "entities": [
     "Samsung",
@@ -34,7 +34,22 @@
     "Whirlpool",
     "Hershey"
   ],
-  "sha256": "336c3b4f935e10e7db49f9b138419e0d3709ead6f30ad5dece17df6f7a2f3e55",
+  "sha256": "03178656007183d946b55ca71238343213428fa5fe05c9e39c3a374883a36e0e",
+  "version_note": "v1.2 (2026-10-31, before any capfix result). v1 (sha 336c3b4f935e10e7) and v1.1 (9271fb403e381cc3, storefront) image templates were NOT structural instances of the training image template; the run-7 control routed 0/60 of each (route:defer) while routing the in-structure loop prompts. My first diagnosis (lexical collision with the head family) was incomplete. v1.2 image template = a structural instance of the training family (generate an image of a red {E} in the snow), enforced by the template validity gate. Kalshi template and all entities unchanged. Probe is FROZEN at v1.2: no further template changes; if an arm routes < 50% on a model, that arm is reported INCONCLUSIVE for that model.",
+  "template_validity": {
+    "image": {
+      "frame": "generate an image of",
+      "frame_in_generator": true,
+      "tail_words_missing_from_generator": [],
+      "pass": true
+    },
+    "kalshi": {
+      "frame": "what are the kalshi odds on",
+      "frame_in_generator": true,
+      "tail_words_missing_from_generator": [],
+      "pass": true
+    }
+  },
   "design": "30 held-out entities x {Capitalized, lowercase} x {image prompt, Kalshi query}; paired so capitalization is isolated within one model",
   "gating": "NOT a gated frozen suite (no cases.jsonl/MANIFEST.json): used for the capfix pre-registered criterion only"
 }
