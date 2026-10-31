@@ -118,4 +118,42 @@ describe('runDdgWorkflowSearch', () => {
   it('fails loudly when the log has no result line', async () => {
     await expect(runDdgWorkflowSearch('q', 5, { ...base, fetcher: fakeGithub({ logText: 'nothing here' }).fetcher })).rejects.toThrow('no results were readable')
   })
+
+  // The 2026-10-31 incident: the run completed in 13s while every status read wedged, so
+  // the poll budget exhausted without a single successful status read. That is a READ
+  // failure, not an unfinished run — the completed run's log must still be attempted.
+  function wedgedStatusGithub(logText: string) {
+    let name = ''
+    const calls: string[] = []
+    const fetcher = async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? 'GET'} ${url}`)
+      if (url.endsWith('/dispatches')) {
+        name = JSON.parse(String(init!.body)).inputs.invocation_id
+        return ({ ok: true, status: 204 }) as Response
+      }
+      if (url.includes('/runs?event')) {
+        return json({ workflow_runs: [{ id: 9, name: `DuckDuckGo search ${name}`, display_title: '', event: 'workflow_dispatch', status: 'in_progress', conclusion: null, created_at: new Date().toISOString(), head_branch: 'main', html_url: 'u', run_number: 1 }] })
+      }
+      if (url.endsWith('/runs/9')) throw new TypeError('Failed to fetch')
+      if (url.includes('/jobs?')) return json({ jobs: [{ id: 5 }] })
+      if (url.endsWith('/jobs/5/logs')) return ({ ok: true, status: 200, text: async () => logText }) as unknown as Response
+      return json({}, false)
+    }
+    return { fetcher, calls }
+  }
+
+  it('attempts the log read and returns its results when the poll budget exhausts on failed reads', async () => {
+    const gh = wedgedStatusGithub(resultLine)
+    const out = await runDdgWorkflowSearch('q', 5, { ...base, fetcher: gh.fetcher })
+    expect(out).toContain('Blade erosion')
+    expect(gh.calls.some(c => c.includes('/jobs?'))).toBe(true)
+    expect(gh.calls.some(c => c.includes('/jobs/5/logs'))).toBe(true)
+  })
+
+  it('reports a read-back failure, not "did not finish", when wedged polls are followed by an unreadable log', async () => {
+    const gh = wedgedStatusGithub('nothing here')
+    const pending = runDdgWorkflowSearch('q', 5, { ...base, fetcher: gh.fetcher })
+    await expect(pending).rejects.toThrow('finished state could not be read back')
+    await expect(pending).rejects.not.toThrow('did not finish in time')
+  })
 })
