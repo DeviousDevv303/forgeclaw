@@ -14,9 +14,9 @@ Read this honestly: the result is 0.6 points under the line (one more correct it
 | - generate_image arm | 1/30 | **30/30** | |
 | - kalshi_markets arm | 3/30 | 10/30 = 33.3% | |
 | capprobe cap vs low gap | 0.0 | 1.7 pts (lowercase higher) | |
-| general v1 | 65.5%-class | **72.6%** (best of any run; run 8 67.9) | 60.7% |
-| domains-v1 | | **70.2%** | 76.6% (v1.1) |
-| closed loop | | 6/18 (33.3%) | 6/18 |
+| general v1 | 63.1% | **72.6%** (best of any run; run 8 67.9) | 60.7% |
+| domains-v1 | 76.6% | **70.2%** | 76.6% (v1.1) |
+| closed loop | 8/18 (44.4%) | 6/18 (33.3%) | 6/18 |
 Format 97.6% / 91.5%, schema 100/100, overclaim 0/0, fabrication 0/0 on v1 / domains-v1.
 
 **Gate vs run 4: REJECTED** (`gate.txt`): domains-v1 70.2% is below the incumbent's 76.6%. Run 4 remains the incumbent. Not a ship decision either way.
@@ -28,6 +28,6 @@ Format 97.6% / 91.5%, schema 100/100, overclaim 0/0, fabrication 0/0 on v1 / dom
 - One seed. Run 7/8 replicate spread was several points on v1, so v1 72.6% vs 67.9% is suggestive, not established.
 
 ## Consequences
-- Do not claim the copy blocker is solved: Kalshi exact copy is ~19-33% by probe, loop is unchanged at 6/18.
+- Do not claim the copy blocker is solved: Kalshi exact copy is ~19-33% by probe, the closed loop is 6/18 (capfix 8/18, run 4 6/18), so no end-to-end gain.
 - The domains-v1 drop (76.6 -> 70.2) is what blocks promotion; diagnose by lane (tool_choice 57.7%, no_tool 66.7%) before another run. Next candidate: this recipe plus a data-mix change targeting the domains lanes, pre-registered.
 - Flag `--nonce generated` stays default OFF; recommended for the next run's recipe on the secondary evidence only.
