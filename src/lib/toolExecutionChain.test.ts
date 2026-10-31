@@ -199,8 +199,8 @@ describe('dispatcher integrity (offline)', () => {
       if (url.includes('/deepseek-16b.yml/runs?')) {
         return Response.json({ workflow_runs: [{
           id: 84,
-          name: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
-          display_title: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
+          name: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`,
+          display_title: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`,
           event: 'workflow_dispatch',
           status: 'completed',
           conclusion: 'success',
@@ -211,7 +211,7 @@ describe('dispatcher integrity (offline)', () => {
         }] })
       }
       if (url.endsWith('/actions/runs/84')) {
-        return Response.json({ id: 84, name: 'DeepSeek 16B', display_title: `DeepSeek 16B ${payload?.inputs.invocation_id}`, event: 'workflow_dispatch', status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/84', run_number: 84 })
+        return Response.json({ id: 84, name: 'Qwen/Qwen3-8B', display_title: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`, event: 'workflow_dispatch', status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/84', run_number: 84 })
       }
       if (url.endsWith('/actions/runs/84/artifacts?per_page=100')) {
         return Response.json({ artifacts: [{ name: `deepseek-${payload?.inputs.invocation_id}`, archive_download_url: 'https://example.test/deepseek.zip', expired: false }] })

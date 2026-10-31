@@ -32,8 +32,8 @@ describe('rollbackRun', () => {
     const { fetchImpl, calls } = fakeGitHub([
       repoInfo,
       [/^GET \/actions\/workflows\/deepseek-16b\.yml\/runs/, () => json({ workflow_runs: [
-        { id: 1, run_number: 7, status: 'in_progress', display_title: 'DeepSeek 16B deepseek-111-abc' },
-        { id: 2, run_number: 8, status: 'in_progress', display_title: 'DeepSeek 16B deepseek-OTHER' },
+        { id: 1, run_number: 7, status: 'in_progress', display_title: 'Qwen/Qwen3-8B deepseek-111-abc' },
+        { id: 2, run_number: 8, status: 'in_progress', display_title: 'Qwen/Qwen3-8B deepseek-OTHER' },
       ] })],
       [/^POST \/actions\/runs\/1\/cancel/, () => json({}, 202)],
       [/^GET \/actions\/runs\/1$/, () => json({ status: 'completed' })],
@@ -68,7 +68,7 @@ describe('rollbackRun', () => {
     let polls = 0
     const { fetchImpl } = fakeGitHub([
       repoInfo,
-      [/^GET \/actions\/workflows\/deepseek-16b\.yml\/runs/, () => json({ workflow_runs: [{ id: 9, status: 'in_progress', display_title: 'DeepSeek 16B deepseek-slow' }] })],
+      [/^GET \/actions\/workflows\/deepseek-16b\.yml\/runs/, () => json({ workflow_runs: [{ id: 9, status: 'in_progress', display_title: 'Qwen/Qwen3-8B deepseek-slow' }] })],
       [/^POST \/actions\/runs\/9\/(?:force-)?cancel/, () => json({}, 202)],
       [/^GET \/actions\/runs\/9$/, () => json({ status: (polls += 1) > 60 ? 'completed' : 'in_progress' })],
     ])

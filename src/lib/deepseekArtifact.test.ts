@@ -66,8 +66,8 @@ describe('DeepSeek result retrieval', () => {
       if (url.includes('/deepseek-16b.yml/runs?')) {
         return Response.json({ workflow_runs: [{
           id: 84,
-          name: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
-          display_title: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
+          name: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`,
+          display_title: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`,
           event: 'workflow_dispatch',
           status: 'completed',
           conclusion: 'success',
@@ -108,8 +108,8 @@ describe('DeepSeek result retrieval', () => {
       if (url.includes('/deepseek-16b.yml/runs?')) {
         return Response.json({ workflow_runs: [{
           id: 91,
-          name: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
-          display_title: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
+          name: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`,
+          display_title: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`,
           event: 'workflow_dispatch',
           status: 'completed',
           conclusion: 'success',
@@ -160,7 +160,7 @@ describe('DeepSeek stage-specific failures', () => {
     vi.useFakeTimers()
     const invocationId = 'deepseek-flaky-discovery'
     const run = {
-      id: 91, name: `DeepSeek 16B ${invocationId}`, display_title: `DeepSeek 16B ${invocationId}`,
+      id: 91, name: `Qwen/Qwen3-8B ${invocationId}`, display_title: `Qwen/Qwen3-8B ${invocationId}`,
       event: 'workflow_dispatch', status: 'completed', conclusion: 'success', created_at: new Date().toISOString(),
       head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/91', run_number: 91,
     }
@@ -212,7 +212,7 @@ describe('DeepSeek stage-specific failures', () => {
       if (!String(input).includes('/deepseek-16b.yml/runs?')) throw new Error(`Unexpected fetch URL: ${String(input)}`)
       if (Date.now() < deadline) return Response.json({ workflow_runs: [] })
       return Response.json({ workflow_runs: [{
-        id: 77, name: `DeepSeek 16B ${invocationId}`, display_title: `DeepSeek 16B ${invocationId}`, event: 'workflow_dispatch',
+        id: 77, name: `Qwen/Qwen3-8B ${invocationId}`, display_title: `Qwen/Qwen3-8B ${invocationId}`, event: 'workflow_dispatch',
         status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main',
         html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/77', run_number: 77,
       }] })
@@ -232,8 +232,8 @@ describe('DeepSeek stage-specific failures', () => {
       if (url.includes('/deepseek-16b.yml/runs?')) {
         return Response.json({ workflow_runs: [{
           id: 88,
-          name: `DeepSeek 16B ${invocationId}`,
-          display_title: `DeepSeek 16B ${invocationId}`,
+          name: `Qwen/Qwen3-8B ${invocationId}`,
+          display_title: `Qwen/Qwen3-8B ${invocationId}`,
           event: 'workflow_dispatch',
           status: 'in_progress',
           conclusion: null,
@@ -310,8 +310,8 @@ describe('DeepSeek stage-specific failures', () => {
       if (url.includes('/deepseek-16b.yml/runs?')) {
         return Response.json({ workflow_runs: [{
           id: 77,
-          name: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
-          display_title: `DeepSeek 16B ${payload?.inputs.invocation_id}`,
+          name: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`,
+          display_title: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`,
           event: 'workflow_dispatch',
           status: 'completed',
           conclusion: 'success',
