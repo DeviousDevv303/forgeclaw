@@ -1,0 +1,25 @@
+## WATCHER REPORT — SNAPSHOT EXAM
+
+1. BANK — status vs ledger: mandate, equity (API value / D1 value), mode, killed, open positions, variant; each value with its ref.
+ - mandate: The mandate is not explicitly provided in the snapshot, so it cannot be verified.
+ - equity (API value / D1 value): 
+ - API value: 22 cents (ref: "kalshi_balance_cents" in "api_status")
+ - D1 value: 22 cents (ref: "kalshi_balance_cents" in "api_status")
+ - mode: The mode is not explicitly provided in the snapshot, so it cannot be verified.
+ - killed: The "killed" status is not explicitly provided in the snapshot, so it cannot be verified.
+ - open positions: The open positions are not explicitly provided in the snapshot, so it cannot be verified.
+ - variant: The variant is not explicitly provided in the snapshot, so it cannot be verified.
+
+2. CHANNEL #235 — new activity since the snapshot watermark, or none (with ref).
+ - No new activity is reported in the snapshot for channel #235.
+
+3. JOBS & BOTS — canary, campaign, formation alarm states (with refs).
+ - canary: The canary status is not explicitly provided in the snapshot, so it cannot be verified.
+ - campaign: The campaign details are not explicitly provided in the snapshot, so it cannot be verified.
+ - formation alarm states: The formation alarm states are not explicitly provided in the snapshot, so it cannot be verified.
+
+4. DIVERGENCES — every mismatch between any two sources in the snapshot, or between a source and its own earlier state, listed as first-class items with both refs. If none: the single line "Divergences: none found."
+ - Divergences: none found.
+
+5. COULD NOT READ — every source or field the snapshot does not carry or that failed, with the actual error or reason. If everything in the snapshot read cleanly: "Could not read: nothing — all sources read."
+ - Could not read: nothing — all sources read.
