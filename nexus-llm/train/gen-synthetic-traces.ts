@@ -46,10 +46,10 @@ const WORD = ['alpha', 'beta', 'gamma', 'delta', 'omega', 'sigma', 'lambda', 'ka
 const TOPIC = ['solar panel efficiency', 'how bread rises', 'tide tables', 'the rules of cricket', 'grain prices', 'the speed of sound', 'rebar sizes', 'concrete curing time', 'welding rod types', 'OSHA ladder rules', 'diesel prices', 'heat pump sizing', 'roof pitch math', 'torque specs']
 const DIRS = ['src', 'docs', 'scripts', 'public', 'tests', 'lib', 'config', 'tools', 'assets', 'examples']
 const EXT = ['.ts', '.md', '.json', '.py', '.sh', '.css', '.yml', '.txt']
-const word = () => rnd() < 0.25 ? pick(NONCE) : pick(WORD)
+const word = () => rnd() < 0.25 ? capNonce() : pick(WORD)
 /** Half the prompts start with a capital, as people type them; a call copies the text as written (run 6 never saw a capital to copy). */
 const cap = (p: string) => rnd() < 0.5 ? p.charAt(0).toUpperCase() + p.slice(1) : p
-const subject = () => `${rnd() < 0.7 ? `a ${pick(ADJ)} ` : 'a '}${rnd() < 0.3 ? pick(NONCE) : pick(NOUN)}${rnd() < 0.7 ? ` ${pick(PLACE)}` : ''}`
+const subject = () => `${rnd() < 0.7 ? `a ${pick(ADJ)} ` : 'a '}${rnd() < 0.3 ? capNonce() : pick(NOUN)}${rnd() < 0.7 ? ` ${pick(PLACE)}` : ''}`
 const topic = () => rnd() < 0.5 ? pick(TOPIC) : `${pick(TOPIC)} ${pick(['in', 'for', 'near'])} ${pick(['Houston', 'Galveston', 'Denver', 'winter', '2026', 'Texas', 'small shops'])}`
 const dirName = () => rnd() < 0.4 ? pick(DIRS) : `${pick(DIRS)}/${word()}`
 const fileName = () => rnd() < 0.15 ? pick(['README.md', 'package.json', 'LICENSE', 'tsconfig.json']) : `${dirName()}/${word()}${rnd() < 0.4 ? `_${word()}` : ''}${pick(EXT)}`
@@ -68,6 +68,10 @@ const NONCE = ['zorvane', 'quindle', 'braskit', 'tomvera', 'snarpel', 'dulvane',
     for (const fw of frozenWords) if (fw.length >= 4 && w.includes(fw)) throw new Error(`nonce word "${w}" contains frozen eval word "${fw}"`)
   }
 }
+// Capitalized nonce (run 9 fix, Claude 2026-10-31): copy targets were always lowercase, so the copy head never learned to carry a
+// CAPITALIZED span whose first tokenizer piece is a lone capital letter (Fed->['F','ed']). Confirmed on run 8: lowercase 'bitcoin'
+// copied clean, capitalized 'Fed'->'E'. Half the time a nonce entity is Title-cased so the head practises lone-capital-led spans.
+const capNonce = () => { const w = pick(NONCE); return rnd() < 0.5 ? w.charAt(0).toUpperCase() + w.slice(1) : w }
 const styles = ['realistic', 'artistic', 'cartoon', 'anime', 'watercolor', 'oil painting', 'pixel art', 'cinematic']
 const words = WORD
 const snippet = () => Array.from({ length: 3 + Math.floor(rnd() * 5) }, () => pick(words)).join(' ')
