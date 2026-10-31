@@ -1,0 +1,62 @@
+{"id": "S-00", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"azon beating earning\"}}<|/call|>"}
+{"id": "L-00", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"ireland beating earnings\"}}<|/call|>"}
+{"id": "S-01", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"aing earnings\"}}<|/call|>"}
+{"id": "L-01", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"kya beating earnings\"}}<|/call|>"}
+{"id": "S-02", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"bannister beating earnings\"}}<|/call|>"}
+{"id": "L-02", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"clevelanland beating earnings\"}}<|/call|>"}
+{"id": "S-03", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"bays beating earnings\"}}<|/call|>"}
+{"id": "L-03", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"cyenne beating earnings\"}}<|/call|>"}
+{"id": "S-04", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"bayer beating earnings\"}}<|/call|>"}
+{"id": "L-04", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"bosos beating earnings\"}}<|/call|>"}
+{"id": "S-05", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"billing earnings\"}}<|/call|>"}
+{"id": "L-05", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"kingley beating earning\"}}<|/call|>"}
+{"id": "S-06", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"binance beat\"}}<|/call|>"}
+{"id": "L-06", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"aford earnings\"}}<|/call|>"}
+{"id": "S-07", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"bismarck beating earning\"}}<|/call|>"}
+{"id": "L-07", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"tomy beating earnings\"}}<|/call|>"}
+{"id": "S-08", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"brighton beating earnings\"}}<|/call|>"}
+{"id": "L-08", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"eington beating earnings\"}}<|/call|>"}
+{"id": "S-09", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"b broadcom beating earning\"}}<|/call|>"}
+{"id": "L-09", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"uod beating earnings\"}}<|/call|>"}
+{"id": "S-10", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"b brookeld beating earnings\"}}<|/call|>"}
+{"id": "L-10", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"s summerfield beat beat beat beat beat beat beat beat beat beat beat beat beat beat beat.ning.<|/answer|><|end|>"}
+{"id": "S-11", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"casper beating earnings\"}}<|/call|>"}
+{"id": "L-11", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"aus beating earnings\"}}<|/call|>"}
+{"id": "S-12", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"cco beating earnings\"}}<|/call|>"}
+{"id": "L-12", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"cco beating earnings\"}}<|/call|>"}
+{"id": "S-13", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"fairview beating earnings\"}}<|/call|>"}
+{"id": "L-13", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"dver beating earnings\"}}<|/call|>"}
+{"id": "S-14", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"fanta beating earnings\"}}<|/call|>"}
+{"id": "L-14", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"dton beating earnings\"}}<|/call|>"}
+{"id": "S-15", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"fargoing earnings\"}}<|/call|>"}
+{"id": "L-15", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"i beating earnings\"}}<|/call|>"}
+{"id": "S-16", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"fresno beating earning\"}}<|/call|>"}
+{"id": "L-16", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"morgan beating earnings\"}}<|/call|>"}
+{"id": "S-17", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"goldman beating earnings\"}}<|/call|>"}
+{"id": "L-17", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"c card beating earnings\"}}<|/call|>"}
+{"id": "S-18", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"gwood beating earning\"}}<|/call|>"}
+{"id": "L-18", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"crossross beating earnings\"}}<|/call|>"}
+{"id": "S-19", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"harborarnings\"}}<|/call|>"}
+{"id": "L-19", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"ksington beating earnings\"}}<|/call|>"}
+{"id": "S-20", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"hmes beating earnings\"}}<|/call|>"}
+{"id": "L-20", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"oond beating earning\"}}<|/call|>"}
+{"id": "S-21", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"jamestown beating earnings\"}}<|/call|>"}
+{"id": "L-21", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"pennington beating earnings\"}}<|/call|>"}
+{"id": "S-22", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"kroger beating earnings\"}}<|/call|>"}
+{"id": "L-22", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"s subaru beating earning\"}}<|/call|>"}
+{"id": "S-23", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"lanchor beating earnings\"}}<|/call|>"}
+{"id": "L-23", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"valentine beating earnings\"}}<|/call|>"}
+{"id": "S-24", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"litecoin beating earning\"}}<|/call|>"}
+{"id": "L-24", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"marsh\"}}<|/call|>"}
+{"id": "S-25", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"qantas beating earning\"}}<|/call|>"}
+{"id": "L-25", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"eett beating earnings\"}}<|/call|>"}
+{"id": "S-26", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"s sprint beating earning\"}}<|/call|>"}
+{"id": "L-26", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"germany beating earnings\"}}<|/call|>"}
+{"id": "S-27", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"square beating earnings\"}}<|/call|>"}
+{"id": "L-27", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"rod beating earnings\"}}<|/call|>"}
+{"id": "S-28", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"toment beating earnings\"}}<|/call|>"}
+{"id": "L-28", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"rania beating earnings\"}}<|/call|>"}
+{"id": "S-29", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"u are above beating earnings\"}}<|/call|>"}
+{"id": "L-29", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"ax beating earnings\"}}<|/call|>"}
+{"id": "S-30", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"vanguard beating earnings\"}}<|/call|>"}
+{"id": "L-30", "output": "<|route:tool|><|call|>{\"name\":\"kalshi_markets\",\"arguments\":{\"query\":\"von beating earnings\"}}<|/call|>"}
