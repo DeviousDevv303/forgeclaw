@@ -367,6 +367,51 @@ function tokenise(value: string): string[] {
   return Array.from(new Set(value.toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length >= 2)))
 }
 
+/**
+ * Grammatical function words carry no topic signal. They are excluded from relevance
+ * matching so two English texts are never judged "related" for sharing them alone.
+ */
+const RELEVANCE_STOPWORDS = new Set([
+  'about', 'above', 'after', 'again', 'also', 'another', 'been', 'before', 'being', 'below',
+  'between', 'could', 'different', 'does', 'done', 'each', 'from', 'have', 'into', 'just',
+  'might', 'must', 'only', 'other', 'over', 'same', 'shall', 'should', 'such', 'than',
+  'that', 'their', 'them', 'then', 'there', 'these', 'they', 'this', 'those', 'under',
+  'upon', 'very', 'were', 'what', 'when', 'where', 'which', 'while', 'whose', 'will',
+  'with', 'would', 'your', 'yours',
+])
+
+/** Topic-bearing words of a text: lowercase words of 4+ letters that are not function words. */
+export function distinctiveWords(text: string): Set<string> {
+  return new Set(text.toLowerCase().split(/[^a-z]+/).filter(w => w.length >= 4 && !RELEVANCE_STOPWORDS.has(w)))
+}
+
+/**
+ * The one relevance test for injecting a corpus record into a model's context as
+ * task-relevant knowledge. A record's topic text is its content plus the question it
+ * answers (metadata.input — an admitted interaction record's content is its result
+ * text alone, so its topic lives there). The record must share at least 3 distinctive
+ * (topic-bearing) words with the task — or ALL of the task's topic words when the
+ * task has fewer than 3, so a short question ("What is beta?") can still match the
+ * record that is exactly about its one topic word. Before this test existed, the
+ * DeepSeek payload lanes admitted records on a single shared ≥2-char token (corpus
+ * retrieve) or two shared ≥4-char words including stopwords (NEXUS guidance) —
+ * either gate passes for almost any English record against almost any English task,
+ * so off-domain records reached the workflow model labelled "relevant to this task"
+ * and it answered them instead of the question (the 2026-10-30 entity-extraction
+ * incident).
+ */
+export function recordRelevantToTask(task: string, record: Pick<CorpusRecord, 'content' | 'metadata'>): boolean {
+  const taskWords = distinctiveWords(task)
+  if (!taskWords.size) return false
+  const required = Math.min(3, taskWords.size)
+  const topicText = `${record.content}\n${record.metadata?.input ?? ''}`
+  let shared = 0
+  for (const word of distinctiveWords(topicText)) {
+    if (taskWords.has(word) && ++shared >= required) return true
+  }
+  return false
+}
+
 function taskCategory(task: string): string {
   const value = task.toLowerCase()
   if (/\b(code|coding|typescript|javascript|python|bug|debug|function|api|test)\b/.test(value)) return 'code'

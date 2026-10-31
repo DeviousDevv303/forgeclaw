@@ -31,7 +31,7 @@ describe('the guidance block travels as a unit', () => {
   })
 })
 
-describe('dispatch to the 16B workflow', () => {
+describe('dispatch to the Qwen/Qwen3-8B workflow', () => {
   async function dispatchedContext(task: string, extra = ''): Promise<string | undefined> {
     const payload = buildDeepSeekTaskPayload(task)
     let sent: Record<string, string> | undefined
@@ -159,7 +159,7 @@ describe('a trim in the workflow is never silent', () => {
     messages: [
       { role: 'user', content: 'Explain how a hash table handles collisions in detail' },
       { role: 'assistant', content: '', tool_calls: [{ id: 'c0', name: 'deepseek_reason', input: {} }] },
-      { role: 'tool', tool_call_id: 'c0', content: `✓ DeepSeek-16B completed as deepseek-1 on o/r@main.\n${stages}\nRun: https://run\n\nBuckets chain or probe.` },
+      { role: 'tool', tool_call_id: 'c0', content: `✓ Qwen/Qwen3-8B completed as deepseek-1 on o/r@main.\n${stages}\nRun: https://run\n\nBuckets chain or probe.` },
     ],
   })
   const say = async (stages: string) => { const r = await sendViaRouter(turn(stages), '', 'deepseek'); if (!r.success) throw new Error(r.error.message); return r.response.text }

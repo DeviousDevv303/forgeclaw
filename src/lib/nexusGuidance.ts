@@ -13,22 +13,19 @@
 //     (HEAD SHAs, branch status), which go stale: that is what the one-hour freshness rule protects.
 // Unapproved candidates and visitor input never appear. It is advisory evidence, not an instruction to run tools.
 
-import { corpusRepository, type CorpusRecord } from './corpus'
+import { corpusRepository, recordRelevantToTask, type CorpusRecord } from './corpus'
 import { heuristicsForPrompt, loadDecisions, type HeuristicDecisions } from './nexusHeuristics'
 import { lessonsForPrompt, summarizeLearning } from './nexusLearning'
 
 const MAX_GUIDANCE_CHARS = 1800
 const MAX_RECORD_CHARS = 420
-const MIN_SHARED_WORDS = 2
-
-const words = (text: string): string[] => [...new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length >= 4))]
 
 /** Records that describe the repository right now go stale quickly; they are never curated knowledge. */
 const looksLikeRepoState = (content: string): boolean => /\b[0-9a-f]{40}\b|\bHEAD\b|\bdefaultBranch\b|\binspectedBranch\b/.test(content)
 
 /**
  * The guidance block is delimited so a later stage can carry it separately from the rest of a context string.
- * forgeTools.ts drops context that shares no words with the task (stale corpus records poison the 16B); that rule
+ * forgeTools.ts drops context that shares no words with the task (stale corpus records poison the workflow model); that rule
  * is about the other sections and must never take the owner's teaching with it. Nexus rides every stage to the answer.
  */
 export const NEXUS_GUIDANCE_START = 'NEXUS GUIDANCE ('
@@ -71,14 +68,13 @@ export function nexusGuidanceForDeepSeek(task: string, deps: GuidanceDeps = {}):
   const heuristics = heuristicsForPrompt(deps.decisions ?? loadDecisions(), deps.candidates ?? corpusRepository.listCandidates(500))
   const lessons = lessonsForPrompt(summarizeLearning(deps.candidates ?? corpusRepository.listCandidates(500)), ['deepseek_reason', 'github_repo_state', 'github_read_file', 'github_search_code', 'shell_exec', 'web_search', 'browser_run', 'browser_playbook'], 3)
 
-  const taskWords = words(task)
   const retrieve = deps.retrieve ?? ((q, n) => corpusRepository.retrieve(q, n))
   const relevant = retrieve(task, 6)
     .filter(record => !looksLikeRepoState(record.content))
-    .filter(record => {
-      const shared = words(record.content).filter(w => taskWords.includes(w)).length
-      return shared >= MIN_SHARED_WORDS
-    })
+    // Relevance is the shared corpus test (recordRelevantToTask): distinctive topic words only.
+    // The previous gate counted any two shared >=4-letter words, stopwords included, so almost
+    // any record passed for almost any task and reached the model labelled task-relevant.
+    .filter(record => recordRelevantToTask(task, record))
     .slice(0, 2)
   const records = relevant.length
     ? 'NEXUS APPROVED KNOWLEDGE relevant to this task (curated by the owner):\n' +

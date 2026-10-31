@@ -6,7 +6,7 @@ import type { AIRequest } from './types'
 const ORIGINAL = "export function elapsed(ms: number): string {\n  return `${Math.round(ms / 1000)}s`\n}\n"
 const UPDATED = "export function elapsed(ms: number): string {\n  if (ms < 1000) return `${ms}ms`\n  return `${Math.round(ms / 1000)}s`\n}\n"
 const readResult = (body: string, truncated = false) => `File: src/lib/elapsed.ts (${body.length} bytes)\n\`\`\`\n${body}${truncated ? '\n[truncated]' : ''}\n\`\`\``
-const deepseekOk = (text: string) => `✓ DeepSeek-16B completed as deepseek-1 on o/r@main.\nStages: x\nRun: https://run\n\n${text}`
+const deepseekOk = (text: string) => `✓ Qwen/Qwen3-8B completed as deepseek-1 on o/r@main.\nStages: x\nRun: https://run\n\n${text}`
 
 describe('sculpt helpers', () => {
   it('needs both self-sculpt intent and a repository file path', () => {

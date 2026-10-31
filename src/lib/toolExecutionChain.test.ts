@@ -237,7 +237,7 @@ describe('dispatcher integrity (offline)', () => {
     expect(payload?.inputs.context).toBe('ForgeClaw architecture facts: DeepSeek-Coder 6.7B primary; Qwen2.5 WebGPU 3B secondary.')
     expect(payload?.inputs.nexus_learning).toBe('false')
     expect(payload?.inputs.invocation_id).toMatch(/^deepseek-/)
-    expect(output).toContain('DeepSeek-16B completed')
+    expect(output).toContain('Qwen/Qwen3-8B completed')
     expect(output).toContain('The capital of France is Paris.')
     expect(output).not.toContain('learning candidate')
     // dispatch + runs list + mirror completion probe + run status + mirror read

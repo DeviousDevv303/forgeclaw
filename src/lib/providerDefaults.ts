@@ -4,7 +4,7 @@
 export const PROVIDER_IDS = ['moonshot', 'corpus', 'deepseek', 'local', 'anthropic', 'muse', 'openrouter', 'nexus'] as const
 export type ProviderId = typeof PROVIDER_IDS[number]
 
-/** DeepSeek 16B (via GitHub Actions) is the default — no API key needed.
+/** Qwen/Qwen3-8B (via GitHub Actions, provider id 'deepseek') is the default — no API key needed.
  * New users get working AI immediately; Moonshot/Kimi remains selectable
  * for those with a key. */
 export const DEFAULT_PROVIDER: ProviderId = 'deepseek'

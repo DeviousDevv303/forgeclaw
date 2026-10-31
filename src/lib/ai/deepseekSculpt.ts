@@ -39,8 +39,8 @@ export function extractRewrittenFile(reply: string, original: string): { content
   const blocks = [...reply.matchAll(/```[A-Za-z0-9_+-]*\n([\s\S]*?)```/g)].map(m => m[1])
   const content = (blocks.sort((a, b) => b.length - a.length)[0] ?? '').replace(/\s+$/, '\n')
   if (!content.trim()) return { error: 'DeepSeek did not return the file in a code block' }
-  if (content.trim() === original.trim()) return { error: 'DeepSeek returned the file unchanged' }
-  if (content.length < original.length * 0.5) return { error: `DeepSeek returned ${content.length} characters for a ${original.length}-character file, which looks like an incomplete rewrite` }
+  if (content.trim() === original.trim()) return { error: 'Qwen/Qwen3-8B returned the file unchanged' }
+  if (content.length < original.length * 0.5) return { error: `Qwen/Qwen3-8B returned ${content.length} characters for a ${original.length}-character file, which looks like an incomplete rewrite` }
   if (/\b(?:rest of (?:the )?(?:file|code) (?:unchanged|remains)|\.\.\. ?(?:existing|unchanged) code)\b/i.test(content)) return { error: 'DeepSeek left a placeholder instead of the complete file' }
   return { content }
 }

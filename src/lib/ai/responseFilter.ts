@@ -9,7 +9,7 @@
  * NOT a word blacklist. It removes:
  * 1. <think>...</think> blocks (DeepSeek-R1 style reasoning wrappers)
  * 2. Leading "Reasoning:"/"Analysis:" labeled blocks
- * 3. The deepseek_reason tool result header (✓ DeepSeek-16B completed...)
+ * 3. The deepseek_reason tool result header (✓ Qwen/Qwen3-8B completed...)
  *
  * It does NOT strip English phrases like "I need to" or "Let me check" —
  * those appear in legitimate responses and must be preserved.
@@ -17,7 +17,7 @@
 
 const THINK_BLOCK_RE = /<think>[\s\S]*?<\/think>/gi;
 const LABELED_BLOCK_RE = /^(?:reasoning|analysis|thought process|internal monologue):\s*\n([\s\S]*?)(?=\n\n|\n[A-Z#])/gim;
-const TOOL_HEADER_RE = /^✓ DeepSeek-16B completed as [^\n]*\n\n/;
+const TOOL_HEADER_RE = /^✓ Qwen\/Qwen3-8B completed as [^\n]*\n\n/;
 // Application identity blocks that leak from the prompt into model output
 const APP_IDENTITY_RE = /\[APPLICATION_IDENTITY[\s\S]*?\[\/APPLICATION_IDENTITY\]/gi;
 const APP_IDENTITY_FRAGMENT_RE = /^What's the state of the POLYMARKET\s*\[APPLICATION_IDENTITY[^\]]*\]?/gim;

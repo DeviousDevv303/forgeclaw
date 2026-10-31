@@ -20,7 +20,7 @@ describe('deepseek_reason user-visible output', () => {
       'https://github.com/DeviousDevv303/forgeclaw/actions/runs/1',
       'The answer text.',
     )
-    expect(out).toContain('✓ DeepSeek-16B completed as deepseek-1791324489222-tc7ush on DeviousDevv303/forgeclaw@main.')
+    expect(out).toContain('✓ Qwen/Qwen3-8B completed as deepseek-1791324489222-tc7ush on DeviousDevv303/forgeclaw@main.')
     expect(out).toContain('The answer text.')
     expect(out).toContain('learning-persistence=unapproved candidate recorded.')
   })
