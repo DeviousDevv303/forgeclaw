@@ -27,6 +27,11 @@ on:
         required: false
         default: ""
         type: string
+      timelimit:
+        description: "Optional freshness limit: d (past day), w (past week), m (past month), y (past year); empty = no limit. A filtered search that returns nothing retries unfiltered."
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -50,6 +55,7 @@ jobs:
           SEARCH_QUERIES: ${{ inputs.queries }}
           MAX_RESULTS: ${{ inputs.max_results }}
           DELAY_SECONDS: ${{ inputs.delay_seconds }}
+          TIMELIMIT: ${{ inputs.timelimit }}
         run: |
           python - <<'PY'
           import json
@@ -60,45 +66,73 @@ jobs:
 
           queries = [line.strip() for line in os.environ["SEARCH_QUERIES"].splitlines() if line.strip()]
           if not queries:
-              raise SystemExit("At least one non-empty query is required.")
+            raise SystemExit("At least one non-empty query is required.")
 
           try:
-              max_results = max(1, min(int(os.environ.get("MAX_RESULTS", "5")), 25))
-              delay_seconds = max(1.0, min(float(os.environ.get("DELAY_SECONDS", "3")), 30.0))
+            max_results = max(1, min(int(os.environ.get("MAX_RESULTS", "5")), 25))
+            delay_seconds = max(1.0, min(float(os.environ.get("DELAY_SECONDS", "3")), 30.0))
           except ValueError as exc:
-              raise SystemExit(f"MAX_RESULTS and DELAY_SECONDS must be numeric: {exc}")
+            raise SystemExit(f"MAX_RESULTS and DELAY_SECONDS must be numeric: {exc}")
+
+          # Freshness: an optional DuckDuckGo timelimit (d/w/m/y). Anything else means no limit.
+          timelimit = os.environ.get("TIMELIMIT", "").strip().lower()
+          if timelimit not in ("d", "w", "m", "y"):
+            timelimit = ""
 
           # ddgs defaults to a 5 s timeout and races only a couple of engines per batch, so one slow
           # engine (2026-10-22: html.duckduckgo.com timed out) failed the whole search. Use a longer
           # timeout and retry; each attempt reshuffles which engines ddgs tries.
           ATTEMPTS = 3
+
+          def search_once(client, query, tl):
+            kwargs = {"max_results": max_results}
+            if tl:
+              kwargs["timelimit"] = tl
+            return list(client.text(query, **kwargs))
+
           results = []
           with DDGS(timeout=15) as client:
-              for index, query in enumerate(queries):
-                  if index:
-                      # Space requests to reduce the chance of DuckDuckGo rate limiting.
-                      time.sleep(delay_seconds)
-                  print(f"Searching query {index + 1}/{len(queries)}: {query}")
-                  errors = []
-                  for attempt in range(1, ATTEMPTS + 1):
-                      try:
-                          hits = list(client.text(query, max_results=max_results))
-                          results.append({"query": query, "results": hits})
-                          print(json.dumps({"query": query, "count": len(hits), "results": hits}, indent=2))
-                          break
-                      except Exception as exc:
-                          # Keep the failure tied to its query while making throttling visible.
-                          errors.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
-                          print(f"Search failed for {query!r} ({errors[-1]})", file=sys.stderr)
-                          if attempt < ATTEMPTS:
-                              time.sleep(2 * attempt)
-                  else:
-                      results.append({"query": query, "error": "; ".join(errors)})
+            for index, query in enumerate(queries):
+              if index:
+                # Space requests to reduce the chance of DuckDuckGo rate limiting.
+                time.sleep(delay_seconds)
+              print(f"Searching query {index + 1}/{len(queries)}: {query}")
+              errors = []
+              hits = None
+              freshness = "unfiltered"
+              # Fresh first: when a timelimit is set, try it first; if it yields no hits
+              # (or every attempt errors), fall back to an unfiltered search so the caller
+              # is never empty-handed for the sake of freshness.
+              plan = [timelimit, ""] if timelimit else [""]
+              for tl in plan:
+                for attempt in range(1, ATTEMPTS + 1):
+                  try:
+                    found = search_once(client, query, tl)
+                    if found:
+                      hits = found
+                      freshness = f"timelimit={tl}" if tl else ("unfiltered-fallback" if timelimit else "unfiltered")
+                      break
+                  except Exception as exc:
+                    # Keep the failure tied to its query while making throttling visible.
+                    errors.append(f"attempt {attempt} (timelimit={tl or 'none'}): {type(exc).__name__}: {exc}")
+                    print(f"Search failed for {query!r} ({errors[-1]})", file=sys.stderr)
+                    if attempt < ATTEMPTS:
+                      time.sleep(2 * attempt)
+                if hits is not None:
+                  break
+                if tl:
+                  print(f"No fresh hits for {query!r} within timelimit={tl}; retrying unfiltered.")
+              if hits is not None:
+                entry = {"query": query, "results": hits, "freshness": freshness}
+                results.append(entry)
+                print(json.dumps({"query": query, "count": len(hits), "freshness": freshness, "results": hits}, indent=2))
+              else:
+                results.append({"query": query, "error": "; ".join(errors) if errors else "No results."})
+            print("Search summary:")
+            print(json.dumps(results, indent=2))
 
-          print("Search summary:")
-          print(json.dumps(results, indent=2))
-          # Single-line machine-readable result for ForgeClaw's web_search tool.
-          print("FORGECLAW_SEARCH_JSON " + json.dumps(results))
-          if all("error" in item for item in results):
+            # Single-line machine-readable result for ForgeClaw's web_search tool.
+            print("FORGECLAW_SEARCH_JSON " + json.dumps(results))
+            if all("error" in item for item in results):
               raise SystemExit("All DuckDuckGo searches failed.")
           PY
