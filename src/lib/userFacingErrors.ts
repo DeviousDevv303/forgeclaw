@@ -55,41 +55,41 @@ export function formatUserFacingError(rawMessage: string): string {
 }
 
 /**
- * One message per DeepSeek stage, keyed on the stage label the tool and router put on the error.
+ * One message per Qwen/Qwen3-8B stage, keyed on the stage label the tool and router put on the error.
  * Each says what is known about the run, so a dispatch that never happened, a run that is still
  * executing on GitHub, and a reply the model gave never collapse into the same "can't reach" text.
  */
 function formatDeepSeekStageError(message: string): string | undefined {
   if (/^deepseek-not-dispatched\b/i.test(message)) {
-    return 'DeepSeek was not started for this message: ForgeClaw did not offer it the DeepSeek tool, so nothing was sent to GitHub Actions. This is a ForgeClaw routing error, not a connection problem.'
+    return 'Qwen/Qwen3-8B was not started for this message: ForgeClaw did not offer it the deepseek_reason tool, so nothing was sent to GitHub Actions. This is a ForgeClaw routing error, not a connection problem.'
   }
   if (/deepseek-dispatch\b/i.test(message)) {
     const auth = /\b(?:401|403|404)\b/.test(message)
     return auth
-      ? 'DeepSeek was not started: GitHub refused the workflow dispatch for the saved token. Nothing ran. Check the GitHub token in Settings (Actions: Read and write on this repository), then try again.'
-      : 'DeepSeek was not started: the workflow dispatch did not reach GitHub. Nothing ran. Please try again in a moment.'
+      ? 'Qwen/Qwen3-8B was not started: GitHub refused the workflow dispatch for the saved token. Nothing ran. Check the GitHub token in Settings (Actions: Read and write on this repository), then try again.'
+      : 'Qwen/Qwen3-8B was not started: the workflow dispatch did not reach GitHub. Nothing ran. Please try again in a moment.'
   }
   if (/deepseek-run-discovery[\s\S]*was not found within/i.test(message)) {
-    return 'DeepSeek was dispatched, but its workflow run did not appear on GitHub within 2 minutes. It may still run: check GitHub Actions before asking again so it does not run twice.'
+    return 'Qwen/Qwen3-8B was dispatched, but its workflow run did not appear on GitHub within 2 minutes. It may still run: check GitHub Actions before asking again so it does not run twice.'
   }
   if (/deepseek-run-discovery[\s\S]*\b(?:401|403|404)\b/i.test(message)) {
-    return 'DeepSeek was dispatched, but GitHub refused to list its workflow runs for the saved token. Check the GitHub token in Settings (Actions: Read on this repository).'
+    return 'Qwen/Qwen3-8B was dispatched, but GitHub refused to list its workflow runs for the saved token. Check the GitHub token in Settings (Actions: Read on this repository).'
   }
   if (/deepseek-run-discovery/i.test(message)) {
-    return 'DeepSeek was dispatched, but I couldn’t reach GitHub Actions in time to find its run. The job may still finish on GitHub. If it keeps happening, open Settings and run “TEST GITHUB READ” to check the connection.'
+    return 'Qwen/Qwen3-8B was dispatched, but I couldn’t reach GitHub Actions in time to find its run. The job may still finish on GitHub. If it keeps happening, open Settings and run “TEST GITHUB READ” to check the connection.'
   }
   if (/deepseek-run-poll[\s\S]*timed out after/i.test(message)) {
-    return 'DeepSeek’s workflow run was still not finished when ForgeClaw stopped waiting. Open the run in GitHub Actions to see whether it completed.'
+    return 'Qwen/Qwen3-8B’s workflow run was still not finished when ForgeClaw stopped waiting. Open the run in GitHub Actions to see whether it completed.'
   }
   const concluded = message.match(/deepseek-run-poll[\s\S]*concluded as "([^"]*)"/i)
   if (concluded) {
-    return `DeepSeek’s workflow run finished as “${concluded[1]}” on GitHub, so there is no answer. The run log in GitHub Actions shows the failing step.`
+    return `Qwen/Qwen3-8B’s workflow run finished as “${concluded[1]}” on GitHub, so there is no answer. The run log in GitHub Actions shows the failing step.`
   }
   if (/deepseek-(?:artifact|result)[\w-]*/i.test(message) && !/quality validation|empty response|without a non-empty result/i.test(message)) {
-    return 'DeepSeek’s workflow run finished, but I couldn’t read its result from GitHub. The answer is stored with the run in GitHub Actions.'
+    return 'Qwen/Qwen3-8B’s workflow run finished, but I couldn’t read its result from GitHub. The answer is stored with the run in GitHub Actions.'
   }
-  if (/DeepSeek[\s\S]*(?:quality validation|empty response|without a non-empty result|empty or garbled)/i.test(message)) {
-    return 'DeepSeek ran and replied, but its reply was empty or unusable, so there is no answer to show. Try rephrasing the question.'
+  if (/Qwen\/Qwen3-8B[\s\S]*(?:quality validation|empty response|without a non-empty result|empty or garbled)/i.test(message)) {
+    return 'Qwen/Qwen3-8B ran and replied, but its reply was empty or unusable, so there is no answer to show. Try rephrasing the question.'
   }
   return undefined
 }

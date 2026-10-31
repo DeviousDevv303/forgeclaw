@@ -56,7 +56,7 @@ export async function runSculptCommand(command: SculptCommand, run: (call: ToolC
   const file = readFileBody(read)
   if ('error' in file) return { ok: false, text: `Self-sculpt of ${command.path} stopped before any change: ${file.error}`, steps }
   const rewrite = await step('deepseek_reason', { task: sculptTask(command.instruction, command.path, file.content), profile: 'code', nexus_learn: true })
-  if (failed(rewrite) || !rewrite.startsWith('✓ DeepSeek-16B completed as ')) return { ok: false, text: `The workflow model could not rewrite ${command.path}, so nothing was proposed. ${rewrite.slice(0, 300)}`, steps }
+  if (failed(rewrite) || !rewrite.startsWith('✓ Qwen/Qwen3-8B completed as ')) return { ok: false, text: `The workflow model could not rewrite ${command.path}, so nothing was proposed. ${rewrite.slice(0, 300)}`, steps }
   const next = extractRewrittenFile(rewrite.split('\n\n').slice(1).join('\n\n'), file.content)
   if ('error' in next) return { ok: false, text: `${next.error}, so nothing was proposed for ${command.path}.`, steps }
   const proposed = await step('sculpt_self', { file_path: command.path, content: next.content, reason: `/sculpt ${command.path}: ${command.instruction.replace(/\s+/g, ' ').slice(0, 200)}` })

@@ -17,7 +17,7 @@ describe('stripReasoningArtifacts', () => {
   });
 
   it('removes the DeepSeek tool header', () => {
-    const input = '✓ DeepSeek-16B completed as checkpoint=abc123\n\nActual answer here.';
+    const input = '✓ Qwen/Qwen3-8B completed as checkpoint=abc123\n\nActual answer here.';
     expect(stripReasoningArtifacts(input)).toBe('Actual answer here.');
   });
 

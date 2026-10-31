@@ -815,7 +815,7 @@ function App() {
   const [sendingNexusStore, setSendingNexusStore] = useState(false)
   const normalizedActiveModel = activeProvider === 'local' ? localModel : isDeepSeekProvider(activeProvider) ? 'deepseek-16b' : activeProvider === 'moonshot' ? moonshotModel : activeProvider === 'muse' ? metaModel : activeProvider === 'openrouter' ? openrouterModel.trim() : anthropicModel
   const activeModelLabel = isDeepSeekProvider(activeProvider)
-    ? corpusProvider.models[0]?.label ?? 'DeepSeek 16B · GitHub Actions'
+    ? corpusProvider.models[0]?.label ?? 'Qwen/Qwen3-8B · GitHub Actions'
     : activeProvider === 'local'
       ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
     : activeProvider === 'moonshot'
@@ -832,7 +832,7 @@ function App() {
     ? lastRuntimeMessage.provider === 'GitHub Actions' || lastRuntimeMessage.provider === 'deepseek'
       ? 'Level 1 · direct DeepSeek dispatch'
       : lastRuntimeMessage.provider === 'corpus'
-        ? 'Level 1 · DeepSeek 16B GitHub Actions'
+        ? 'Level 1 · Qwen/Qwen3-8B GitHub Actions'
       : lastRuntimeMessage.provider === 'moonshot'
             ? `Level 1 · Moonshot/Kimi (${lastRuntimeMessage.model})`
         : lastRuntimeMessage.provider === 'muse'
@@ -1282,7 +1282,7 @@ function App() {
       : displayContent
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now(), ...(options.resumedAfterInterrupt ? { resumedAfterInterrupt: true } : {}) }
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'muse' ? metaApiKey : activeProvider === 'openrouter' ? openrouterApiKey : ''
-    const currentProviderLabel = isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'muse' ? 'Meta (Muse)' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'
+    const currentProviderLabel = isDeepSeekProvider(activeProvider) ? 'Qwen/Qwen3-8B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'muse' ? 'Meta (Muse)' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : activeProvider === 'muse' ? 'LLM_...' : activeProvider === 'openrouter' ? 'sk-or-...' : 'sk-ant-...'
 
     const explicitDeepSeek = !imageUrl ? parseDirectDeepSeekCommand(promptText) : null
@@ -1599,7 +1599,7 @@ function App() {
       : imageUrl
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
       : deepSeekDuoDefault
-        ? '\n\nPRIMARY REASONING POLICY\nThe DeepSeek 16B GitHub Actions workflow is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
+        ? '\n\nPRIMARY REASONING POLICY\nThe Qwen/Qwen3-8B GitHub Actions workflow (provider id \'deepseek\') is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
         ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'browser_run') ? `\n${BROWSER_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'error_report') ? `\n${ERROR_PLAN_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'funds_propose') ? `\n${FUNDS_GUIDANCE}${ownerRulesPrompt()}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
       : needsManualTools
@@ -2192,9 +2192,9 @@ function App() {
       const deepSeekCheckpoint = deepSeekSuccessOutput.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable'
       if (deepSeekSucceeded) source = 'cloud'
       if (deepSeekSucceeded) {
-        resolvedModel = `DeepSeek 16B Actions (${deepSeekCheckpoint})`
+        resolvedModel = `Qwen/Qwen3-8B Actions (${deepSeekCheckpoint})`
       } else if (deepSeekFailed) {
-        resolvedModel = `DeepSeek 16B Actions (workflow failed)`
+        resolvedModel = `Qwen/Qwen3-8B Actions (workflow failed)`
       }
       if (deepSeekFailed) {
         const failedDeepSeekResult = allToolResults.find(result => result.name === 'deepseek_reason' && result.isError)
@@ -2735,7 +2735,7 @@ function App() {
     if (activeProvider === 'local') return <span style={{ color: localEndpoint ? '#6b6b6b' : '#ef4444' }}>{localEndpoint ? activeModelLabel : t('status.localEndpointMissing')}</span>
     const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : activeProvider === 'muse' ? !!metaApiKey : activeProvider === 'openrouter' ? !!openrouterApiKey : true
     if (!keyPresent) return <span style={{ color: '#ef4444' }}>{activeProvider === 'muse' ? t('status.metaNoKey') : activeProvider === 'openrouter' ? t('status.openrouterNoKey') : t('status.anthropicNoKey')}</span>
-    if (isDeepSeekProvider(activeProvider)) return <span style={{ color: '#6b6b6b' }}>DeepSeek 16B · GitHub Actions</span>
+    if (isDeepSeekProvider(activeProvider)) return <span style={{ color: '#6b6b6b' }}>Qwen/Qwen3-8B · GitHub Actions</span>
     return <span style={{ color: lastSource === 'cloud' ? '#3b82f6' : '#6b6b6b', fontWeight: lastSource === 'cloud' ? 'bold' : 'normal' }}>{activeModelLabel}</span>
   }
 
@@ -2906,13 +2906,13 @@ function App() {
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.runtimeProvider')}</label>
                 <select
-                  // 'deepseek' and 'corpus' are the same DeepSeek 16B runtime; show it as the one DeepSeek option.
+                  // 'deepseek' and 'corpus' are the same Qwen/Qwen3-8B runtime; show it as the one Qwen option.
                   value={activeProvider === 'deepseek' ? 'corpus' : activeProvider}
                   onChange={e => setActiveProvider(e.target.value as ProviderId)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
                   <option value="moonshot" style={{ background: '#111' }}>Moonshot · Kimi</option>
-                  <option value="corpus" style={{ background: '#111' }}>DeepSeek 16B · GitHub Actions</option>
+                  <option value="corpus" style={{ background: '#111' }}>Qwen/Qwen3-8B · GitHub Actions</option>
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
                   <option value="muse" style={{ background: '#111' }}>Muse · Meta</option>
                   <option value="openrouter" style={{ background: '#111' }}>OpenRouter</option>
@@ -2951,7 +2951,7 @@ function App() {
               {isDeepSeekProvider(activeProvider) && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
-                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>DeepSeek 16B · GitHub Actions</span>
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Qwen/Qwen3-8B · GitHub Actions</span>
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>{t('settings.corpusDesc')}</span>
                 </div>
               )}
@@ -3147,7 +3147,7 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>{t('settings.operatorDiagnostics')}</div>
                 {[
-                  [t('diag.rowRuntimeProvider'), isDeepSeekProvider(activeProvider) ? 'DeepSeek 16B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : activeProvider === 'muse' ? 'Muse · Meta' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'],
+                  [t('diag.rowRuntimeProvider'), isDeepSeekProvider(activeProvider) ? 'Qwen/Qwen3-8B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : activeProvider === 'muse' ? 'Muse · Meta' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'],
                   [t('diag.rowRuntimeModel'), activeModelLabel],
                   [t('diag.rowLastRoute'), lastRuntimeRoute],
                   [t('diag.rowAuthState'), activeProvider === 'local' ? (localEndpoint ? t('diag.endpointConfigured') : t('diag.missingLower')) : activeProvider === 'anthropic' ? (anthropicApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'moonshot' ? (moonshotApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'muse' ? (metaApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'openrouter' ? (openrouterApiKey ? t('diag.presentLower') : t('diag.missingLower')) : safeGetItem('gh_token') ? t('diag.githubTokenPresent') : t('diag.githubTokenMissing')],

@@ -46,7 +46,7 @@ describe('reply language follows the header selector', () => {
     expect(await dispatchedTask('en')).toBe('¿Cómo funciona ForgeClaw?')
   })
 
-  it('sends it on ordinary chat with the DeepSeek 16B provider too (router path)', async () => {
+  it('sends it on ordinary chat with the Qwen/Qwen3-8B provider too (router path)', async () => {
     localStorage.setItem('fm_provider', 'corpus')
     const task = await dispatchedTask('es', 'Explica cómo se forman los arcoíris')
     expect(task.startsWith('Explica cómo se forman los arcoíris')).toBe(true)

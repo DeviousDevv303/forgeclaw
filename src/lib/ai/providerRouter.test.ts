@@ -4,7 +4,7 @@ import type { AIRequest } from './types'
 import { buildRuntimeRequestContext } from '../codingAgentRuntime'
 
 describe('provider router', () => {
-  it('uses DeepSeek 16B as the default without probing localhost', async () => {
+  it('uses Qwen/Qwen3-8B (provider id deepseek) as the default without probing localhost', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     await expect(getBestProvider('')).resolves.toEqual({ providerId: 'deepseek', model: 'deepseek-16b', level: 1 })
@@ -76,12 +76,12 @@ describe('provider router', () => {
       messages: [
         { role: 'user', content: 'Answer from the workflow.' },
         { role: 'assistant', content: '', tool_calls: [{ id: 'call-1', name: 'deepseek_reason', input: { task: 'Answer from the workflow.' } }] },
-        { role: 'tool', tool_call_id: 'call-1', content: '✓ DeepSeek-16B completed as run-1; checkpoint=deepseek-16b\n\nVerified answer.' },
+        { role: 'tool', tool_call_id: 'call-1', content: '✓ Qwen/Qwen3-8B completed as run-1; checkpoint=deepseek-16b\n\nVerified answer.' },
       ],
       tools: [{ name: 'deepseek_reason', description: 'reason', parameters: {} }],
     }
     const result = await sendViaRouter(request, '', 'corpus')
-    expect(result).toMatchObject({ success: true, response: { provider: 'deepseek', text: 'Verified answer.', model: 'DeepSeek 16B Actions (deepseek-16b)' } })
+    expect(result).toMatchObject({ success: true, response: { provider: 'deepseek', text: 'Verified answer.', model: 'Qwen/Qwen3-8B Actions (deepseek-16b)' } })
   })
 
   it('says DeepSeek was not dispatched, not that GitHub is unreachable, when the request carries no deepseek_reason tool', async () => {

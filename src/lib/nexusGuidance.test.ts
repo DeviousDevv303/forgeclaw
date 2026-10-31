@@ -64,3 +64,25 @@ describe('DeepSeek receives it', () => {
     expect(payload.task).toBe('explain the build pipeline')
   })
 })
+
+describe('guidance record relevance (2026-10-30 bleed fix)', () => {
+  // The incident: a trading question was answered with entity-extraction text. The old gate
+  // counted any two shared >=4-letter words — stopwords included — so this record passed it
+  // (shared: "should", "with") while sharing ZERO topic words with the task.
+  const tradingTask = 'Should I take the NO side on this window, with the mandate at 7.40 and the ask at 84, tape at minus 22 bps and the break intact?'
+  const extractionRecord = record('x1', 'EXTRACTION RULE: the extraction should rerun with an override when the entity pass leaves the home team and the visitors unnamed; that is the standing rule for the process.')
+
+  it('does not carry a record that shares only function words with the task', () => {
+    const g = nexusGuidanceForDeepSeek(tradingTask, { ...none, retrieve: () => [extractionRecord] })
+    expect(g.records).toBe(0)
+    expect(g.text).not.toContain('EXTRACTION RULE')
+  })
+
+  it('still carries a record that shares real topic words with the task', () => {
+    const bankRecord = record('x2', 'WINDOW RULE: for a BTC window, check the tape and the break against the mandate before taking a side; the ask must clear the repricing hurdle.')
+    const g = nexusGuidanceForDeepSeek(tradingTask, { ...none, retrieve: () => [extractionRecord, bankRecord] })
+    expect(g.records).toBe(1)
+    expect(g.text).toContain('WINDOW RULE')
+    expect(g.text).not.toContain('EXTRACTION RULE')
+  })
+})

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CorpusRepository, appendDeepSeekLearning, extractImagePatterns, integrityHash, suggestImprovedPrompt } from './corpus'
+import { CorpusRepository, appendDeepSeekLearning, distinctiveWords, extractImagePatterns, integrityHash, recordRelevantToTask, suggestImprovedPrompt } from './corpus'
 import { authorizationPayload, RFC8032_TEST_KEY_ID, type CandidateAuthorization } from './corpusAdmissionAuth'
 import { corpusProvider } from './ai/providers/corpusProvider'
 import { buildDeepSeekTaskPayload } from './ai/deepseekContext'
@@ -508,5 +508,47 @@ describe('CORPUS admission persistence failures', () => {
     const failResult = strictSetItem('fail-key', 'fail-value')
     expect(failResult.ok).toBe(false)
     expect(failResult.error).toBeDefined()
+  })
+})
+
+describe('recordRelevantToTask — the shared corpus-injection relevance test', () => {
+  const tradingTask = 'Should I take the NO side on this window, with the mandate at 7.40 and the ask at 84, tape at minus 22 bps and the break intact?'
+
+  it('rejects a record that shares only function words with the task', () => {
+    // Shares "should" and "with" (both stopwords) and no topic word at all.
+    expect(recordRelevantToTask(tradingTask, { content: 'The extraction should rerun with an override when the entity pass leaves the home team and the visitors unnamed.', metadata: {} })).toBe(false)
+  })
+
+  it('rejects a record that shares fewer than three topic words', () => {
+    // Shares exactly one topic word: "window".
+    expect(recordRelevantToTask(tradingTask, { content: 'A window for the rerun closes after two attempts; the process then stops.', metadata: {} })).toBe(false)
+  })
+
+  it('accepts a record that shares three or more topic words', () => {
+    // Shares window, tape, break, mandate, side.
+    expect(recordRelevantToTask(tradingTask, { content: 'For a BTC window, check the tape and the break against the mandate before taking a side.', metadata: {} })).toBe(true)
+  })
+
+  it('distinctiveWords drops function words and short words', () => {
+    const words = distinctiveWords('The mandate should be checked with the tape')
+    expect(words.has('mandate')).toBe(true)
+    expect(words.has('checked')).toBe(true)
+    expect(words.has('tape')).toBe(true)
+    expect(words.has('should')).toBe(false)
+    expect(words.has('with')).toBe(false)
+    expect(words.has('the')).toBe(false)
+  })
+})
+
+describe('recordRelevantToTask — short tasks and metadata-carried topics', () => {
+  it('matches a one-topic-word question against the record about exactly that word', () => {
+    expect(recordRelevantToTask('What is beta?', { content: 'Beta is the second letter.', metadata: { input: 'What is beta?' } })).toBe(true)
+    expect(recordRelevantToTask('What is beta?', { content: 'Gamma is the third letter.', metadata: { input: 'What is gamma?' } })).toBe(false)
+  })
+
+  it('reads the topic from metadata.input when the content is result text alone', () => {
+    const record = { content: 'APPROVED-CORPUS-FACT', metadata: { input: 'ForgeClaw default reasoning flow' } }
+    expect(recordRelevantToTask('Explain ForgeClaw default reasoning flow.', record)).toBe(true)
+    expect(recordRelevantToTask('Should I take the NO side on this BTC window?', record)).toBe(false)
   })
 })

@@ -28,7 +28,7 @@ describe('DeepSeek deep research route', () => {
       { role: 'tool', content: '[TOOL ERROR] deep_research found no readable sources for "x". Nothing can be cited.', tool_call_id: 'r1' },
     ]), '', 'deepseek')
     expect(result.success).toBe(false)
-    if (!result.success) expect(result.error.message).toMatch(/gathered no usable sources, so DeepSeek was not asked to answer from memory/)
+    if (!result.success) expect(result.error.message).toMatch(/gathered no usable sources, so Qwen\/Qwen3-8B was not asked to answer from memory/)
   })
 
   it('does not treat ordinary questions as research', () => {

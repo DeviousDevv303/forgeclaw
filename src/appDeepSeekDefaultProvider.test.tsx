@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // DEFAULT_PROVIDER is 'deepseek' (#124) while the settings selector stores 'corpus'. Both are the
-// DeepSeek 16B GitHub Actions runtime, so an ordinary question must dispatch the workflow under
+// Qwen/Qwen3-8B GitHub Actions runtime (provider id 'deepseek'), so an ordinary question must dispatch the workflow under
 // either id. Before this was fixed, 'deepseek' only offered the deepseek_reason tool for prompts
 // containing a complexity keyword; every other question failed without contacting GitHub.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
