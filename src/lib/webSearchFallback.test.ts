@@ -23,21 +23,29 @@ describe('web_search with no live search route configured', () => {
   it('labels Instant Answers as static reference data, not live results', async () => {
     stubInstantAnswers({ AbstractText: 'A lighthouse is a tower with a light.', RelatedTopics: [] })
     const out = await call('web_search', { query: 'what is a lighthouse', count: 5 })
+    expect(isToolFailureOutput(out)).toBe(false)
     expect(out).toContain('Live web search did not run')
     expect(out).toContain('NOT live search results')
     expect(out).toContain('DuckDuckGo Instant Answers')
     expect(out).toContain('A lighthouse is a tower with a light.')
   })
 
-  it('says plainly when neither live search nor Instant Answers produced anything', async () => {
+  // Acceptance retest 2026-10-31: with no token, search never ran and Instant Answers had
+  // no entry — the honest text still let the turn close COMPLETE. A turn that produced no
+  // results because search could not run is a failure state: same [TOOL ERROR] marking as
+  // the workflow-failure path, with the truthful did-not-run labelling kept.
+  it('marks the no-token empty outcome as a tool failure while keeping the truthful note', async () => {
     stubInstantAnswers({ AbstractText: '', RelatedTopics: [] })
     const out = await call('web_search', { query: 'obscure query with no entry', count: 5 })
+    expect(isToolFailureOutput(out)).toBe(true)
     expect(out).toContain('Live web search did not run')
+    expect(out).toContain('no GitHub token for the workflow search')
     expect(out).toContain('Instant Answers has no entry')
+    expect(out).toContain('NOT live search results')
+    expect(out).toContain('no results to show')
     expect(out).not.toContain('did not produce')
     expect(out).not.toContain('Brave Search API key in Settings')
     expect(out).not.toMatch(/^No results for/)
-    expect(isToolFailureOutput(out)).toBe(false)
   })
 })
 
