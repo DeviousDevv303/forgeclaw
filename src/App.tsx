@@ -1683,6 +1683,14 @@ function App() {
         guardianPosture,
         requestGuardianApproval,
         codingAgentState: compressedState,
+        // Persist a DeepSeek run the moment it is dispatched, as the direct /deepseek path does (above), so a page closed while this
+        // reply waits on the workflow re-attaches to the SAME run on reload (resumeOrphanedDeepSeekRun) instead of falling back to the
+        // whole-task resend, which would start a second 9-23 minute workflow. findInterruptedTask skips a reply that has a saved run
+        // (skipReplyId), so the two recovery paths never both fire. One saved slot: if a turn dispatches several, the last one wins.
+        // The run is cleared in the finally below when this reply ends (answered, failed or stopped).
+        onDeepSeekDispatch: (invocationId: string, dispatchedAt: number) => {
+          saveActiveDeepSeekRun({ invocationId, dispatchedAt, messageId: msgId, question: promptText })
+        },
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
           runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, currentApiKey, ATTRIBUTED_TOOLS, {
             ...loadToolContext(),
@@ -2347,6 +2355,10 @@ function App() {
       }
     } finally {
       if (learningRunRef.current === learningId) learningRunRef.current = ''
+      // This reply's saved DeepSeek run is over (answered, failed or stopped). Matched on the reply id and kept OUTSIDE the active-run guard
+      // below: STOP nulls activeRunRef before this runs, and a leftover would re-attach to a finished run on the next load. A page that is
+      // killed never reaches this line, which is exactly when the saved run is wanted.
+      if (cloudMsgId && loadActiveDeepSeekRun()?.messageId === cloudMsgId) clearActiveDeepSeekRun()
       // "Reconnecting" must not outlive the run; the "back" confirmation clears itself.
       setConnectionNotice(prev => (prev === 'reconnecting' ? null : prev))
       if (activeRunRef.current?.id === runId) {
