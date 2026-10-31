@@ -1,0 +1,23 @@
+## WATCHER REPORT — SNAPSHOT EXAM
+
+1. BANK — status vs ledger: mandate, equity (API value / D1 value), mode, killed, open positions, variant; each value with its ref.
+- Mandate: No mandate data provided in the snapshot.
+- Equity: No equity column in the snapshot's mandates data. Could not derive equity from provided data.
+- Mode: The /api/status top-level field `mode` is not provided in the snapshot.
+- Killed: The `killed` status is not provided in the snapshot.
+- Open positions: No data on open positions provided in the snapshot.
+- Variant: No variant information provided in the snapshot.
+
+2. CHANNEL #235 — new activity since the snapshot watermark, or none (with ref).
+- No new activity reported in the snapshot for channel #235.
+
+3. JOBS & BOTS — canary, campaign, formation alarm states (with refs).
+- Canary last run: The canary last run is recorded as "157e4256" with the note "snapshot taken before the merge".
+- Campaign: No campaign data provided in the snapshot.
+- Formation alarm states: No formation alarm states provided in the snapshot.
+
+4. DIVERGENCES — every mismatch between any two sources in the snapshot, or between a source and its own earlier state, listed as first-class items with both refs.
+- Divergences: none found.
+
+5. COULD NOT READ — every source or field the snapshot does not carry or that failed, with the actual error or reason.
+- Could not read: nothing — all sources read.
