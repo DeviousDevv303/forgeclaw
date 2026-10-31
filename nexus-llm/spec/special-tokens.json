@@ -16,5 +16,7 @@
   "<|ev:not_verified|>",
   "<|answer|>",
   "<|/answer|>",
-  "<|end|>"
+  "<|end|>",
+  "<|mode:copy|>",
+  "<|mode:create|>"
 ]

@@ -98,19 +98,28 @@ class NexusLM(nn.Module):
         scores = scores.masked_fill(torch.ones(t, t, dtype=torch.bool, device=h.device).triu(1), float("-inf"))
         return scores.softmax(-1), torch.sigmoid(self.copy_gate(h)).squeeze(-1)
 
-    def loss(self, idx, y):
-        """Mean NLL of the targets y (-100 = ignored). Plain cross-entropy without copy; the exact mixture likelihood with it."""
+    def loss(self, idx, y, w=None):
+        """Mean NLL of the targets y (-100 = ignored). Plain cross-entropy without copy; the exact mixture likelihood with it.
+        w (run 8) optionally weights each target position (copied-span tokens count more); w=None is the unweighted mean,
+        bit-identical to the pre-run-8 loss."""
         h = self.hidden(idx)
         logits = h @ self.tok.weight.T
         if not self.c.copy:
-            return F.cross_entropy(logits.view(-1, logits.shape[-1]), y.view(-1), ignore_index=-100)
+            if w is None:
+                return F.cross_entropy(logits.view(-1, logits.shape[-1]), y.view(-1), ignore_index=-100)
+            valid = y != -100
+            nll = F.cross_entropy(logits.view(-1, logits.shape[-1]), y.view(-1), ignore_index=-100, reduction="none").view_as(y)
+            return (nll * w * valid).sum() / (w * valid).sum().clamp_min(1)
         valid = y != -100
         yc = y.clamp(min=0)
         p_gen = logits.log_softmax(-1).gather(-1, yc.unsqueeze(-1)).squeeze(-1).exp()
         attn, g = self._copy_parts(h, idx)
         p_copy = (attn * (idx.unsqueeze(1) == yc.unsqueeze(2))).sum(-1)  # mass on earlier tokens equal to the target
         p = g * p_gen + (1 - g) * p_copy
-        return -(torch.log(p.clamp_min(1e-9)) * valid).sum() / valid.sum().clamp_min(1)
+        nll = -torch.log(p.clamp_min(1e-9))
+        if w is None:
+            return (nll * valid).sum() / valid.sum().clamp_min(1)
+        return (nll * w * valid).sum() / (w * valid).sum().clamp_min(1)
 
     @torch.no_grad()
     def next_logprobs(self, ids):

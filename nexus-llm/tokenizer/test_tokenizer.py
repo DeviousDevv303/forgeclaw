@@ -14,9 +14,11 @@ CUSTODY = json.loads((HERE / "CUSTODY.json").read_text())
 
 
 class SpecialTokens(unittest.TestCase):
-    def test_there_are_eighteen(self):
-        self.assertEqual(len(SPECIAL), 18)
-        self.assertEqual(len(set(SPECIAL)), 18)
+    def test_there_are_twenty(self):
+        # 18 transcript tokens + the run-8 frame-side mode tokens (<|mode:copy|>, <|mode:create|>):
+        # harness-presented control tokens, never emitted inside a transcript.
+        self.assertEqual(len(SPECIAL), 20)
+        self.assertEqual(len(set(SPECIAL)), 20)
 
     def test_each_is_exactly_one_piece_with_its_own_id(self):
         ids = set()
