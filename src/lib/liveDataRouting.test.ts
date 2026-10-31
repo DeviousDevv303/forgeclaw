@@ -84,3 +84,11 @@ describe('Kalshi questions route to the live kalshi_markets API', () => {
     expect(buildKalshiQuery('what does kalshi say?')).toBe('')
   })
 })
+
+describe('routeLiveDataQuestion freshness', () => {
+  it('routes a live question to web_search with a past-week timelimit', () => {
+    const call = routeLiveDataQuestion('Is there any UFC fights tonight', new Date('2026-10-31T12:00:00Z'))!
+    expect(call.name).toBe('web_search')
+    expect(call.input.timelimit).toBe('w')
+  })
+})

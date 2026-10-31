@@ -510,6 +510,7 @@ export const FORGE_TOOLS: ToolDef[] = [
       properties: {
         query: { type: 'string', description: 'Search query' },
         count: { type: 'number', description: 'Number of results to return, default 5, max 10' },
+        timelimit: { type: 'string', description: 'Optional freshness limit: "d" past day, "w" past week, "m" past month. Use "w" for questions about today or this week. A filtered search that finds nothing retries unfiltered.' },
       },
       required: ['query'],
     },
@@ -1616,7 +1617,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
             return await runDdgWorkflowSearch(query, count, {
               fetcher: (url, init) => toolFetch(ctx, url, init),
               owner: ctx.ghOwner, repo: ctx.ghRepo, token: ctx.ghToken, signal: ctx.signal,
-            })
+            }, typeof input.timelimit === 'string' ? input.timelimit : undefined)
           } catch (error) {
             workflowError = error instanceof Error ? error.message : String(error)
             workflowNote = `[DuckDuckGo workflow search failed: ${workflowError}. Falling back to Instant Answers, which are not full web search.]\n`

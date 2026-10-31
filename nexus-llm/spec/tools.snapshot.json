@@ -1,6 +1,6 @@
 {
   "generatedFrom": "src/lib/forgeTools.ts FORGE_TOOLS + src/lib/nexusConvergence.ts NOT_EVIDENCE_TOOLS",
-  "sourceSha": "bb09eee18a6899b2aa785b0af6238feb8b18d77d",
+  "sourceSha": "9cebc2660eb9d4d6ecc3e0426d39dd18453e4cb9",
   "notEvidenceTools": [
     "analyze_image",
     "ask_deepseek",
@@ -193,13 +193,13 @@
     },
     {
       "name": "deepseek_reason",
-      "description": "Primary complex-task reasoning via the repository-owned DeepSeek GitHub Actions workflow. The existing DeepSeek-16B route/API name is retained; the workflow currently runs Qwen/Qwen3-8B (4-bit GGUF, CPU) as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.",
+      "description": "Primary complex-task reasoning via the repository-owned GitHub Actions workflow (provider id 'deepseek'). The workflow runs Qwen/Qwen3-8B (4-bit GGUF, CPU) as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.",
       "parameters": {
         "type": "object",
         "properties": {
           "task": {
             "type": "string",
-            "description": "Task for the DeepSeek reasoning workflow"
+            "description": "Task for the Qwen/Qwen3-8B reasoning workflow"
           },
           "context": {
             "type": "string",
@@ -221,13 +221,13 @@
     },
     {
       "name": "ask_deepseek",
-      "description": "Ask the existing DeepSeek reasoning workflow directly. No routing delay; Qwen/Qwen3-8B is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.",
+      "description": "Ask the existing Qwen/Qwen3-8B reasoning workflow directly (tool family name 'deepseek' retained). No routing delay; Qwen/Qwen3-8B is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.",
       "parameters": {
         "type": "object",
         "properties": {
           "question": {
             "type": "string",
-            "description": "Question to dispatch directly to the DeepSeek reasoning workflow"
+            "description": "Question to dispatch directly to the Qwen/Qwen3-8B reasoning workflow"
           },
           "context": {
             "type": "string",
@@ -552,7 +552,7 @@
     },
     {
       "name": "web_search",
-      "description": "Search the web for current information. Uses Brave Search if an API key is configured, otherwise real DuckDuckGo results via the ddg_search GitHub workflow (needs a GitHub token; takes ~15-40s), falling back to DuckDuckGo instant answers.",
+      "description": "Search the web for current information. Real DuckDuckGo results via the ddg_search GitHub workflow (needs a GitHub token; takes ~15-40s), falling back to DuckDuckGo instant answers.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -563,6 +563,10 @@
           "count": {
             "type": "number",
             "description": "Number of results to return, default 5, max 10"
+          },
+          "timelimit": {
+            "type": "string",
+            "description": "Optional freshness limit: \"d\" past day, \"w\" past week, \"m\" past month. Use \"w\" for questions about today or this week. A filtered search that finds nothing retries unfiltered."
           }
         },
         "required": [
