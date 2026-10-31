@@ -1,3 +1,8 @@
+> **STATUS (2026-10-31, after the pre-registered test): NOT SUPPORTED as stated. See `nexus-llm/runs/capfix/RESULTS.md`.** The capfix run's
+> paired probe found capitalized and lowercase copies fail identically (gap 0.0 pts; both 10% on the interpretable Kalshi cell), so the claim
+> below that capitalization is "the" blocker, and the word "CONFIRMED", were overclaimed on 3-5 loop items. A post-hoc, untested lead is that
+> spans starting with a single-character tokenizer piece lose their first character (capitalization is one cause of that, not the only one).
+
 # Copy-fidelity diagnosis: the blocker is a lone leading capital-letter token
 
 **By:** Claude (diagnosis seat). **Date:** 2026-10-31. **Evidence:** measured with the committed tokenizer `nexus-llm/tokenizer/nexus.model`.

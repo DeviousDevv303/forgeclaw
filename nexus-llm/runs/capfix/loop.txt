@@ -1,0 +1,20 @@
+pass   img-1   calls=[generate_image] ev=verified
+FAIL   img-2   calls=[generate_image] ev=verified | call argument prompt lacks ["beaver","dam"] (got "Dw illustration of a cartoon illustration of a be")
+pass   img-3   calls=[generate_image] ev=verified
+FAIL   img-4   calls=[generate_image] ev=verified | call argument prompt lacks ["wrench"] (got "Make a pixel art logo of a wren")
+pass   img-5   calls=[generate_image] ev=verified
+pass   img-6   calls=[] ev=not_verified
+FAIL   trd-1   calls=[kalshi_markets] ev=verified | call argument query lacks ["fed"] (got "Sed cutting rates")
+FAIL   trd-2   calls=[kalshi_markets] ev=verified | call argument query lacks ["bitcoin"] (got "KXHIGHDENitcoincoin above 100k")
+FAIL   trd-3   calls=[] ev=not_verified | first call none, expected funds_status
+pass   trd-4   calls=[funds_status] ev=completed
+FAIL   trd-5   calls=[] ev=not_verified | first call none, expected one of kalshi_markets, funds_status, funds_propose
+FAIL   trd-6   calls=[web_search] ev=failed | first call web_search, expected one of kalshi_markets, funds_status, funds_propose
+FAIL   trd-7   calls=[memory_read] ev=failed | first call memory_read, expected kalshi_owner_prices; call argument prices lacks ["KXFEDCUT-26DEC","31"] (got null)
+FAIL   trd-8   calls=[memory_read] ev=failed | first call memory_read, expected funds_settle; call argument id lacks ["all"] (got null)
+pass   trd-9   calls=[] ev=not_verified
+pass   trd-10  calls=[] ev=not_verified
+FAIL   trd-11  calls=[] ev=not_verified | answer lacks any of ["/funds halt"]
+pass   trd-12  calls=[] ev=not_verified
+
+closed loop: 8/18 scenarios pass (44.4%)
