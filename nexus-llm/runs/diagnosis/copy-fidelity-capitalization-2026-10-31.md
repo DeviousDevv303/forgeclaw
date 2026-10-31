@@ -37,3 +37,26 @@ training and poorly copied, and once the first token is wrong the whole span dri
 ## Scope note
 This is the specific blocker for BOTH image fidelity and trading (Kalshi queries) end-to-end. It is a copy/tokenization issue, not a
 routing one - routing is already ~75% on domains. Fixing it is the highest-leverage data change for runs 9-11.
+
+## CONFIRMED on run 8's real outputs (committed `nexus-llm/runs/run8/`)
+Run 8 (nonce augmentation + copy-weighting 2.0x) is the proof. Its loop jumped to **10/18 (best yet**, run 7 = 3/18, run 4 = 6/18) because
+the data lever fixed the LOWERCASE copies — and the remaining failures are exactly the capitalized proper nouns this diagnosis predicts:
+
+| scenario | prompt entity | run 8 copied | verdict |
+|---|---|---|---|
+| trd-1 | the **Fed** cutting rates | `"E cutting rates"` | capitalized → lone-capital mangle (F→E, dropped) |
+| trd-6 | **Fed** cut | `"ced cut..."` | same |
+| trd-2 | **bitcoin** above 100k | `"bitcoin above 1000k..."` | lowercase → **copied clean** (only the number drifted) |
+| img-1 | red **pickup** truck | `pickup` | lowercase → **copied clean** |
+| img-4 | **wrench** | `wrenchnchn` | multi-piece suffix doubled |
+
+So: the data-side copy lever WORKS (lowercase entities now copy; loop 6→10/18), and the residual blocker is precisely the lone-leading-capital
+split on capitalized proper nouns. **Run-9 prescription, validated:** add capitalized proper-noun copy targets (Fed, Bitcoin, Tesla, Nvidia,
+Apple, ...) matching the eval's capitalization, at high frequency. No tokenizer change needed to test this; it is a data-mix change.
+
+## Run 8 promotion verdict (verified from committed gate.txt)
+v1 **67.9%** (clean win over run 4's 60.7%); domains-v1 **76.6%** (format/schema 100, overclaim/fab 0); loop 10/18; pipeline ELIGIBLE.
+BUT domains-v1 76.6% is scored on **domains-v1**, while run 4's 76.6% was on **domains-v1.1** (the two differ by one corrected case). A tie
+across suite versions is not a STRICT win, so run 8 is **not a clean auto-replace** under replace-only-if-better; run 4 stays incumbent.
+Decisive missing measurement: re-score run 8 on **domains-v1.1** (run 4's exact suite). If it holds >= 76.6% there, then — given the clear
+v1 win and 10/18 loop — it IS a clean replace. That needs run 8's checkpoint (in the training container, not mine).
