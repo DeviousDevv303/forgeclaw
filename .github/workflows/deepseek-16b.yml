@@ -1,15 +1,17 @@
 # Directive item 1 — DeepSeek primary reasoning workflow.
 #
-# Truthfulness: the route/API name is "DeepSeek 16B" for continuity, but the
-# checkpoint that actually runs is a public DeepSeek instruct model. The
-# original deepseek-coder-16b-instruct identifier is not a public Hugging Face
-# model, and this runner is CPU-only. `result_meta.txt` always records the exact
+# Truthfulness: the workflow display name is "Qwen/Qwen3-8B", the checkpoint that
+# actually runs (DEEPSEEK_PRIMARY_CHECKPOINT, src/lib/deepseekCheckpoints.ts). The
+# internal route/provider id stays "deepseek" for continuity; only the GitHub
+# Actions display is renamed so the run list is honest about the real model. The
+# CPU-only fallback is a smaller public DeepSeek instruct checkpoint
+# (deepseek-coder-1.3b-instruct). `result_meta.txt` always records the exact
 # checkpoint that produced the result, so the UI never has to guess.
 #
 # Reliability: the primary general-chat checkpoint (7B) is a genuine memory
 # risk on a 16 GB CPU runner. If it cannot be loaded or executed, the workflow
 # falls back to the smaller public DeepSeek checkpoint rather than failing the
-# run. The DeepSeek role, dispatch contract, artifact contract and mirror
+# run. The reasoning role, dispatch contract, artifact contract and mirror
 # contract stay identical in both cases.
 #
 # Delivery: the result is published twice.
@@ -18,8 +20,8 @@
 #      deployed GitHub Pages browser (same pattern as generated-images);
 #   2. an uploaded artifact (`deepseek-<invocation_id>`) as the durable fallback.
 
-name: DeepSeek 16B
-run-name: DeepSeek 16B ${{ inputs.invocation_id }}
+name: Qwen/Qwen3-8B
+run-name: Qwen/Qwen3-8B ${{ inputs.invocation_id }}
 
 on:
   workflow_dispatch:

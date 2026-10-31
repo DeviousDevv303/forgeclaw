@@ -58,7 +58,7 @@ describe('relay worker', () => {
     const post = (task: string) => worker.fetch(req('/v1/reason', { method: 'POST', body: JSON.stringify({ task }) }), e)
     expect((await post('')).status).toBe(400)
     expect((await post('x'.repeat(4001))).status).toBe(413)
-    inProgress = [{ display_title: 'DeepSeek 16B public-abc-123' }]
+    inProgress = [{ display_title: 'Qwen/Qwen3-8B public-abc-123' }]
     expect((await post('hi')).status).toBe(503)  // one public run already in progress (limit 1)
     inProgress = []
     expect((await post('hi')).status).toBe(202)
@@ -73,7 +73,7 @@ describe('relay worker', () => {
     const archive = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' })
     let state = 'in_progress'
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.includes('/runs?event=')) return Response.json({ workflow_runs: [{ id: 7, display_title: `DeepSeek 16B ${id}`, status: state, conclusion: state === 'completed' ? 'success' : null }] })
+      if (url.includes('/runs?event=')) return Response.json({ workflow_runs: [{ id: 7, display_title: `Qwen/Qwen3-8B ${id}`, status: state, conclusion: state === 'completed' ? 'success' : null }] })
       if (url.endsWith('/actions/runs/7/artifacts?per_page=20')) return Response.json({ artifacts: [{ id: 99, name: `deepseek-${id}`, expired: false }] })
       if (url.endsWith('/actions/artifacts/99/zip')) return new Response(archive)
       return new Response('{}', { status: 404 })
@@ -168,7 +168,7 @@ describe('relay worker', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/runs?status=')) return Response.json({ workflow_runs: [] })
       if (url.endsWith('/dispatches')) return new Response(null, { status: 204 })
-      if (url.includes('/runs?event=')) return Response.json({ workflow_runs: [{ id: 7, display_title: `DeepSeek 16B ${id}`, status: 'completed', conclusion: 'success' }] })
+      if (url.includes('/runs?event=')) return Response.json({ workflow_runs: [{ id: 7, display_title: `Qwen/Qwen3-8B ${id}`, status: 'completed', conclusion: 'success' }] })
       if (url.endsWith('/actions/runs/7/artifacts?per_page=20')) return Response.json({ artifacts: [{ id: 99, name: `deepseek-${id}`, expired: false }] })
       if (url.endsWith('/actions/artifacts/99/zip')) return new Response(archive.slice(0))
       return new Response('{}', { status: 404 })
@@ -194,7 +194,7 @@ describe('relay worker', () => {
       vi.stubGlobal('fetch', vi.fn(async (url: string) => {
         if (url.includes('/runs?status=')) return Response.json({ workflow_runs: [] })
         if (url.endsWith('/dispatches')) return new Response(null, { status: 204 })
-        if (url.includes('/runs?event=')) return Response.json({ workflow_runs: ids.map((id, i) => ({ id: 100 + i, display_title: `DeepSeek 16B ${id}`, status: 'completed', conclusion: opts.conclusion ?? 'success' })) })
+        if (url.includes('/runs?event=')) return Response.json({ workflow_runs: ids.map((id, i) => ({ id: 100 + i, display_title: `Qwen/Qwen3-8B ${id}`, status: 'completed', conclusion: opts.conclusion ?? 'success' })) })
         if (/\/actions\/runs\/\d+\/artifacts/.test(url)) { const i = Number(/runs\/(\d+)\//.exec(url)![1]) - 100; return Response.json({ artifacts: [{ id: 900 + i, name: `deepseek-${ids[i]}`, expired: false }] }) }
         if (/\/actions\/artifacts\/\d+\/zip/.test(url)) return new Response(archive.slice(0))
         return new Response('{}', { status: 404 })
