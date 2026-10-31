@@ -1,0 +1,24 @@
+## WATCHER REPORT — SNAPSHOT EXAM
+
+1. BANK — status vs ledger: mandate, equity (API value / D1 value), mode, killed, open positions, variant; each value with its ref.
+- mandate: not applicable (no mandate data provided)
+- equity (API value): 35 cents (ref: api_status.equity_cents)
+- equity (D1 value): not applicable (no D1 equity data provided)
+- mode: not applicable (no mode data provided)
+- killed: false (ref: api_status.killed)
+- open positions: not applicable (no open positions data provided)
+- variant: cg-1-strike93-x-ceiling-off (ref: api_status.variant)
+
+2. CHANNEL #235 — new activity since the snapshot watermark, or none (with ref).
+- No new activity reported (ref: none)
+
+3. JOBS & BOTS — canary, campaign, formation alarm states (with refs).
+- canary: not applicable (no canary data provided)
+- campaign: not applicable (no campaign data provided)
+- formation alarm states: not applicable (no formation alarm data provided)
+
+4. DIVERGENCES — every mismatch between any two sources in the snapshot, or between a source and its own earlier state, listed as first-class items with both refs. If none: the single line "Divergences: none found."
+- Divergences: none found.
+
+5. COULD NOT READ — every source or field the snapshot does not carry or that failed, with the actual error or reason. If everything in the snapshot read cleanly: "Could not read: nothing — all sources read."
+- Could not read: kalshiBalanceCents (value: null, error: too many requests)
