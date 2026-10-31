@@ -7,7 +7,8 @@
  * Questions about the outside world right now ("any UFC fights tonight?", "weather today?") cannot
  * be answered by the Qwen/Qwen3-8B workflow: it runs on a CPU runner (9-23 minutes per hop), has no
  * live data, and a second hop is needed if it asks for a search. This module recognizes those
- * questions conservatively so the app can run web_search directly and show the results.
+ * questions conservatively so the app can run web_search directly and answer from the results
+ * (App.tsx synthesizes the reply via liveAnswer.ts — the raw hits are never the reply).
  *
  * Deliberately narrow: it must look like a question AND mention a live-world topic, and anything
  * that sounds like ForgeClaw/code/repo work is left on the normal path. A miss costs nothing (the
