@@ -1646,11 +1646,14 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // failure — not "no results": the 2026-10-31 run had completed with results
         // while the app's reads wedged, and reporting the read failure as an empty
         // search both misinformed the owner and let the turn close as COMPLETE.
+        // The same holds when the workflow never ran at all (no token): a turn that
+        // produced no results because search could not run is a failure state,
+        // however honestly its text is labelled (acceptance retest 2026-10-31).
         // The [TOOL ERROR] marker makes App.tsx classify the turn BLOCKED.
         if (workflowError !== null) {
           return `[TOOL ERROR] Live search results for "${query}" could not be read back (workflow search failed: ${workflowError}) and Instant Answers has no entry for it. Live search is unavailable right now — retry.`
         }
-        return workflowNote + `Instant Answers has no entry for "${query}", and live search did not run, so there are no results to show.`
+        return `[TOOL ERROR] Live web search did not run for "${query}" (no GitHub token for the workflow search) and Instant Answers has no entry for it. Instant Answers is static reference data, NOT live search results — there are no results to show.`
       }
 
       // ── Gmail: read ───────────────────────────────────────────────────────────
