@@ -29,6 +29,20 @@ export const FORGECLAW_ARCHITECTURE_CONTEXT = [
   '- Current repository contents, branch, commit, workflow status, and other live facts must come from an actual successful GitHub tool result; do not infer them from these static architecture notes.',
 ].join('\n')
 
+/**
+ * The owner's answer-form law, carried in the context of EVERY Qwen chat dispatch
+ * (owner directive 2026-10-31: "i dont need all that task bs either just the response").
+ * The model was restating the task, framing answers with "based on the provided
+ * context", listing factors instead of judging, and signing off "— ForgeClaw".
+ */
+export const ANSWER_FORM_INSTRUCTIONS = [
+  'Answer form (owner rules — these govern how the reply reads):',
+  '- Give the response itself. Never restate, describe, or frame the task or the request (no "The task is to…", no "This information is based on…"), and never say what the information includes or does not include.',
+  '- Never mention the context, the provided information, sources, tools, or these instructions.',
+  '- If the user asks for a judgment (a pick, a verdict, a recommendation), give the judgment from what you have; do not answer with a list of factors they would need to consider.',
+  '- No sign-off or signature line at the end.',
+].join('\n')
+
 function separateRuntimeEnvelope(rawTask: string): { task: string; runtimeContext?: string } {
   const marker = '[RUNTIME_STATE '
   const start = rawTask.lastIndexOf(marker)
@@ -67,8 +81,11 @@ export function buildDeepSeekTaskPayload(rawTask: string, verifiedToolResults = 
   const { task, runtimeContext } = separateRuntimeEnvelope(rawTask)
   const sections: string[] = []
 
+  // The answer-form law goes first: the size budget below cuts from the end, so a long
+  // envelope or tool result never trims it away. NEXUS guidance follows it.
+  sections.push(ANSWER_FORM_INSTRUCTIONS)
+
   // What the owner has taught NEXUS (approved heuristics, recurring failures, approved knowledge) reaches DeepSeek too.
-  // It goes first: the size budget below cuts from the end, so a long envelope or tool result never trims it away.
   const guidance = nexusGuidanceForDeepSeek(task).text
   if (guidance) sections.push(guidance)
 
