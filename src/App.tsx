@@ -137,6 +137,7 @@ import { cleanForSpeech, createSpeechController, type SpeechSynthLike, type Spee
 import { answerOutcome } from './lib/nexusConvergence'
 import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
+import { buildLiveAnswerTask, buildSearchSummaryTask, cleanSearchDisplay, extractDeepSeekAnswer } from './lib/liveAnswer'
 import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
 import { resolveMetaModel } from './lib/ai/providers/metaProvider'
 import { fetchOpenRouterModels, isOpenRouterModelId, resolveOpenRouterModel } from './lib/ai/providers/openrouterProvider'
@@ -1787,11 +1788,50 @@ function App() {
         const rawOutput = explicitTool.error ?? await executeTool(call, { ...toolCtx, actor: 'operator' })
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         // Surface parser adjustments (e.g. an auto-closed quote) so nothing is guessed silently.
-        const output = explicitTool.notes?.length && !explicitTool.error
+        // Web-search replies are the exception (owner, 2026-10-31: "that goes for any web
+        // search"): on the answer path the note is gibberish in front of the answer — the parsed
+        // input stays visible in the activity log, the bubble never carries the note.
+        const output = explicitTool.notes?.length && !explicitTool.error && !liveDataCall && call.name !== 'web_search'
           ? `[parser note: ${explicitTool.notes.join('; ')}]\n${rawOutput}`
           : rawOutput
         // Judge the tool's own output: the parser-note prefix must not hide a leading [TOOL ERROR] or ✗.
         const isError = isToolFailureOutput(rawOutput)
+        // A web search gets an ANSWER, not the raw tool dump (owner, 2026-10-31 — any web search,
+        // live-data routed or hand-typed alike): one deepseek_reason hop reads the search hits and
+        // answers — the same workflow execution path as every other Qwen answer in this app. A
+        // live-data question is answered as asked; a hand-typed search is summarized from its
+        // query. If the hop fails or comes back empty, the fallback is the hit list with the
+        // plumbing stripped (cleanSearchDisplay). Weather and Kalshi live calls already return
+        // formatted answers, so they display as-is. The synthesis is display-only: nexus_learn
+        // is off so it never becomes learning data.
+        let displayOutput = output
+        let answerModel: string | null = null
+        if (!isError && call.name === 'web_search') {
+          displayOutput = rawOutput
+          try {
+            const query = typeof call.input?.query === 'string' ? call.input.query : ''
+            const task = liveDataCall || !query
+              ? buildLiveAnswerTask(promptText, rawOutput)
+              : buildSearchSummaryTask(query, rawOutput)
+            const synthCall: ToolCall = {
+              id: `live-answer-${Date.now()}`,
+              name: 'deepseek_reason',
+              input: { task, nexus_learn: false },
+            }
+            const synthOutput = await executeTool(synthCall, { ...toolCtx, actor: 'operator' })
+            if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+            const answer = isToolFailureOutput(synthOutput) ? '' : extractDeepSeekAnswer(synthOutput)
+            if (answer) {
+              displayOutput = answer
+              answerModel = 'Qwen/Qwen3-8B'
+            } else {
+              displayOutput = cleanSearchDisplay(rawOutput)
+            }
+          } catch {
+            if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+            displayOutput = cleanSearchDisplay(rawOutput)
+          }
+        }
         void recordLearning({ channel: 'tool', input: promptText, result: rawOutput, outcome: outcomeFromToolOutput(rawOutput), toolName: call.name, actor: 'operator', origin: promptOrigin(promptText) })
         const result: ToolResult = { toolCallId: call.id, name: call.name, output, isError }
         setCodingAgentState(recordToolProgress(call.name, output))
@@ -1808,7 +1848,7 @@ function App() {
         // Resolve the streaming placeholder in place; appending a second bubble
         // left the placeholder spinning forever.
         setMessages(prev => prev.map(message => message.id === msgId
-          ? { ...message, content: output, streaming: false, provider: 'ForgeClaw', model: 'direct tool dispatch', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [result] }
+          ? { ...message, content: displayOutput, streaming: false, provider: 'ForgeClaw', model: answerModel ?? 'direct tool dispatch', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [result] }
           : message,
         ))
         setRequestStatus(isError ? 'blocked' : 'success')
