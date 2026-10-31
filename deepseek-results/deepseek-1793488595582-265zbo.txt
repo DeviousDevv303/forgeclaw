@@ -1,0 +1,3 @@
+```tool_call
+{"name": "github_read_file", "arguments": {"path": "simulation_results.txt"}}
+```
