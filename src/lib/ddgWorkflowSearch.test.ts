@@ -157,3 +157,43 @@ describe('runDdgWorkflowSearch', () => {
     await expect(pending).rejects.not.toThrow('did not finish in time')
   })
 })
+
+describe('runDdgWorkflowSearch timelimit dispatch', () => {
+  const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => '' }) as unknown as Response
+  function recordingGithub() {
+    let name = ''
+    let dispatched: Record<string, string> | null = null
+    const fetcher = async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/dispatches')) {
+        dispatched = JSON.parse(String(init!.body)).inputs as Record<string, string>
+        name = dispatched.invocation_id
+        return ({ ok: true, status: 204 }) as Response
+      }
+      if (url.includes('/runs?event')) {
+        return json({ workflow_runs: [{ id: 9, name: `DuckDuckGo search ${name}`, display_title: '', event: 'workflow_dispatch', status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'u', run_number: 1 }] })
+      }
+      if (url.endsWith('/runs/9')) return json({ id: 9, status: 'completed', conclusion: 'success', html_url: 'u' })
+      if (url.includes('/jobs?')) return json({ jobs: [{ id: 5 }] })
+      if (url.endsWith('/jobs/5/logs')) return ({ ok: true, status: 200, text: async () => resultLine }) as unknown as Response
+      return json({})
+    }
+    return { fetcher, inputs: () => dispatched }
+  }
+  const base = { owner: 'o', repo: 'r', token: 't', sleep: async () => {}, pollMs: 0, runDiscoveryTimeoutMs: 50, runCompletionTimeoutMs: 50, logTimeoutMs: 50 }
+
+  it('passes a valid timelimit to the workflow dispatch', async () => {
+    const gh = recordingGithub()
+    await runDdgWorkflowSearch('q', 5, { ...base, fetcher: gh.fetcher }, 'w')
+    expect(gh.inputs()?.timelimit).toBe('w')
+  })
+  it('omits the input when no timelimit is given', async () => {
+    const gh = recordingGithub()
+    await runDdgWorkflowSearch('q', 5, { ...base, fetcher: gh.fetcher })
+    expect(gh.inputs()).not.toHaveProperty('timelimit')
+  })
+  it('omits a timelimit the workflow does not declare', async () => {
+    const gh = recordingGithub()
+    await runDdgWorkflowSearch('q', 5, { ...base, fetcher: gh.fetcher }, 'fortnight')
+    expect(gh.inputs()).not.toHaveProperty('timelimit')
+  })
+})

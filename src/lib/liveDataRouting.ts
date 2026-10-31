@@ -105,7 +105,9 @@ export function routeLiveDataQuestion(text: string, now: Date = new Date()): Exp
   if (!query) return null
   return {
     name: 'web_search',
-    input: { query, count: 5 },
+    // timelimit 'w': a live verdict is fresh news — search the past week first (the workflow
+    // falls back to unfiltered when the filtered search finds nothing).
+    input: { query, count: 5, timelimit: 'w' },
     notes: ['live-data question answered directly by web search; the Qwen/Qwen3-8B workflow takes 9-23 minutes per step and has no live data'],
   }
 }
