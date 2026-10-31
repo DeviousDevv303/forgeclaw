@@ -71,7 +71,41 @@ const NONCE = ['zorvane', 'quindle', 'braskit', 'tomvera', 'snarpel', 'dulvane',
 // Capitalized nonce (run 9 fix, Claude 2026-10-31): copy targets were always lowercase, so the copy head never learned to carry a
 // CAPITALIZED span whose first tokenizer piece is a lone capital letter (Fed->['F','ed']). Confirmed on run 8: lowercase 'bitcoin'
 // copied clean, capitalized 'Fed'->'E'. Half the time a nonce entity is Title-cased so the head practises lone-capital-led spans.
-const capNonce = () => { const w = pick(NONCE); return rnd() < 0.5 ? w.charAt(0).toUpperCase() + w.slice(1) : w }
+// Generated nonces (--nonce generated; run 9 hypothesis H3, pre-registered in runs/diagnosis/gennonce-preregistration-2026-10-31.md).
+// The fixed pool above is 48 words ending in a few shared suffixes with skewed first letters: a 4M model can MEMORISE it, so copying
+// it proves nothing about copying a word it has never seen. Here each call draws a fresh string (first letter uniform over a-z, ~80%
+// pronounceable, ~20% arbitrary letters), so copy targets almost never repeat. Default OFF: without the flag the generator output is
+// byte-identical to before (same rnd() call sequence), so earlier runs stay reproducible.
+const GEN_NONCE = opt('--nonce', 'pool') === 'generated'
+const LETTERS = 'abcdefghijklmnopqrstuvwxyz'
+const VOWELS = 'aeiou'
+const probeText = GEN_NONCE
+  ? ['../eval/capprobe-v1/probe.jsonl', '../eval/firstpiece-v1/probe.jsonl'].map(p => readFileSync(join(here, p), 'utf8')).join('\n').toLowerCase()
+  : ''
+const frozenLong = GEN_NONCE ? [...new Set(readFileSync(join(here, '../eval/v1/cases.jsonl'), 'utf8').concat(readFileSync(join(here, '../eval/domains-v1/cases.jsonl'), 'utf8'), readFileSync(join(here, '../eval/loop/scenarios.json'), 'utf8')).toLowerCase().match(/[a-z]{4,}/g) ?? [])] : []
+const genNonceRaw = (): string => {
+  const len = 4 + Math.floor(rnd() * 6)
+  let w = LETTERS[Math.floor(rnd() * 26)]
+  const arbitrary = rnd() < 0.2
+  while (w.length < len) {
+    if (arbitrary) { w += LETTERS[Math.floor(rnd() * 26)]; continue }
+    const prevVowel = VOWELS.includes(w[w.length - 1])
+    const wantVowel = prevVowel ? rnd() < 0.25 : rnd() < 0.8
+    w += wantVowel ? VOWELS[Math.floor(rnd() * 5)] : LETTERS[Math.floor(rnd() * 26)]
+  }
+  return w
+}
+/** A fresh word that appears in no frozen eval text and no probe (capprobe-v1, firstpiece-v1), either direction. Rejection-sampled. */
+const genNonce = (): string => {
+  for (;;) {
+    const w = genNonceRaw()
+    if (probeText.includes(w)) continue
+    if (frozenLong.some(fw => w.includes(fw) || fw === w)) continue
+    return w
+  }
+}
+const nonce = (): string => GEN_NONCE ? genNonce() : pick(NONCE)
+const capNonce = () => { const w = nonce(); return rnd() < 0.5 ? w.charAt(0).toUpperCase() + w.slice(1) : w }
 const styles = ['realistic', 'artistic', 'cartoon', 'anime', 'watercolor', 'oil painting', 'pixel art', 'cinematic']
 const words = WORD
 const snippet = () => Array.from({ length: 3 + Math.floor(rnd() * 5) }, () => pick(words)).join(' ')
@@ -251,7 +285,7 @@ const makers: Array<[string, () => void]> = [
     emit('kalshi_read', p, traced([s], ok ? `Kalshi's YES ask for ${m.ticker} is ${cents(ask)}, an implied ${Math.round(ask * 100)}%. That is a price, not a guarantee.`
       : 'I could not read Kalshi, so I have no price. If you tell me the price you see, I can use it as your number.')) }],
   ['kalshi_search', () => {
-    const ev = rnd() < 0.3 ? pick([`${pick(NONCE)} futures above ${int(20, 900)}`, `the ${pick(NONCE)} index at a record high`, `${pick(NONCE)} coin above ${int(2, 90)} dollars`, `a ${pick(NONCE)} shortage in Texas`])
+    const ev = rnd() < 0.3 ? pick([`${nonce()} futures above ${int(20, 900)}`, `the ${nonce()} index at a record high`, `${nonce()} coin above ${int(2, 90)} dollars`, `a ${nonce()} shortage in Texas`])
       : pick(['Tesla above 300', 'Nvidia beating earnings', 'the ECB cutting rates', 'Apple above 250', 'Ohio State winning', 'the Lakers winning', 'Toyota recalls', 'OPEC cutting output', 'recession', 'unemployment', 'gas prices', 'rain in Seattle', 'snow in Denver', 'inflation', 'ethereum above 5k', 'a government shutdown', 'the S&P 500 record', 'gold above 3000', 'a hurricane landfall', 'egg prices'])
     const when = pick(['', ' this month', ' in December', ' by Friday', ' this year'])
     const p = pick([`What are the Kalshi odds on ${ev}${when}?`, `What does Kalshi charge for ${ev}${when}?`, `Show me Kalshi markets about ${ev}`, `How likely does Kalshi think ${ev} is${when}?`])

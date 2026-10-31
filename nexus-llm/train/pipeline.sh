@@ -2,6 +2,7 @@
 # One NEXUS training run end to end, reproducible from the repo by any lane (no container state needed):
 #   synthetic data -> resumable training -> constrained predictions on every frozen suite -> gate -> closed loop.
 #   nexus-llm/train/pipeline.sh <work-dir OUTSIDE the repo> <preset> <rows> <seed> <steps> <lr> [incumbent-preds-dir] [init-checkpoint]
+# GEN_ARGS passes extra flags to the generator (e.g. GEN_ARGS='--nonce generated').
 # Example (run 7): nexus-llm/train/pipeline.sh /tmp/run7 small-copy-ind 30000 23 5000 6e-4 /tmp/run4/eval
 # Needs: node + npm deps (repo root), python3 with torch and sentencepiece (set PY=/path/to/venv/python), ~1 h on 4 CPU cores for small.
 # Re-run the same command after a restart: training resumes from <work-dir>/ckpt/resume.pt and finished stages are skipped.
@@ -13,7 +14,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p "$W/eval"
 case "$(cd "$W" && pwd)/" in "$ROOT"/*) echo "work dir must be outside the repo" >&2; exit 2 ;; esac
 cd "$ROOT"
-[ -f "$W/data.jsonl" ] || npx vite-node nexus-llm/train/gen-synthetic-traces.ts --out "$W/data.jsonl" --n "$ROWS" --seed "$SEED"
+[ -f "$W/data.jsonl" ] || npx vite-node nexus-llm/train/gen-synthetic-traces.ts --out "$W/data.jsonl" --n "$ROWS" --seed "$SEED" ${GEN_ARGS:-}
 cd nexus-llm/train
 if [ ! -f "$W/ckpt/model.pt" ]; then
   EXTRA=(); [ -f "$W/ckpt/resume.pt" ] && EXTRA+=(--resume); [ -n "$INIT" ] && EXTRA+=(--init "$INIT")
