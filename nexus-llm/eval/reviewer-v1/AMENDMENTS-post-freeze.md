@@ -41,7 +41,7 @@ Computed from the git objects at that commit, not from the working tree. **A gra
 
 - **Near-miss control(s):** at least one clean-but-messy row (imprecise prose, every checkable claim carried). Candidate: PR #343 (a body overstatement flagged in review, sound diff, merged). Needs a verdict for "match, with a noted imprecision".
 - **Spec cases 1 and 7** from the staged AGENTS.md lessons (`muse/benchmark-inputs-handoff` @ `3f95a214`, file SHA-256 `6fcbf211…`).
-- **Control tolerance (DECIDED by the grading seat, #235 comments 6553302314 and 6553312331).** For the current nine fixtures the operative bar is Amendment 2 below (zero over-rejects beyond one of three; see there). For an expanded v1.1 set (near-miss controls, the AGENTS.md cases, 6 or more controls): over-rejects ≤ 1 per 6+ controls, false-passes 0, with that benchmark's own freeze free to tighten to zero if its near-miss controls calibrate clean.
+- **Control tolerance (DECIDED by the grading seat, #235 comments 6553302314 and 6553312331).** For the current nine fixtures the operative bar is Amendment 2 below (at least 2 of 3 controls correct; trap rows carry no error budget). For an expanded v1.1 set (near-miss controls, the AGENTS.md cases, 6 or more controls): over-rejects ≤ 1 per 6+ controls, false-passes 0, with that benchmark's own freeze free to tighten to zero if its near-miss controls calibrate clean.
 
 ## A4. The frozen bar versus the "asymmetric" candidate (kimi), corrected
 
@@ -59,23 +59,41 @@ So the two bars differ in exactly one cell, and it is not a false pass: the PR i
 
 ## Amendment 2 — the operative bar for the v1 fixtures (adopted before any exam ran)
 
-Adopted by the grading seat as the **final pre-run bar** (#235 comment 6553312331; the answer on the RV-02 sentence is comment 6553361882). This section replaces the frozen §5 pass rule for grading purposes. The frozen doc is unchanged, and a grade names this amendment in words.
+**The quoted text below is the operative text.** It is copied from the grading seat's issue comments on #235, with comment ID and creation time. Issue comments are editable, so a grade binds to the quotes in this file (read at a recorded hash), not to the live comments; the comments are cited as origin. If a ruling changes later, it enters through a new amendment file, not by editing the comment. The frozen doc is unchanged.
 
-**PASS iff all of:**
-1. all **6 mismatch/reject rows** (RV-02, 03, 04, 05, 07, 08) have the exactly correct verdict, kind included;
-2. at least **2 of 3 controls** (RV-01, 06, 09) correct;
-3. evidence correct on at least 8 of 9 rows;
-4. no invented evidence (any file, line, count, ID or symbol not in the row's `input`, or any `must_not_state` string asserted);
-5. RV-08 precision (flagging comment 6378832841 or 6378772441 as phantom, or accepting either phantom, fails).
+**1. The bar.** Comment 6553312331 (2026-11-01T04:17:32Z):
 
-A `claims-match` on any trap row makes that trap incorrect under (1), so the frozen false-pass gate is subsumed; it stays written for clause (4). Trap rows carry no error budget. Per the grading seat: the frozen and asymmetric bars differ in exactly one cell, a trap row flagged with a wrong but non-clean kind, which passes the frozen bar and fails this one. The frozen §5.2 clause about "`claims-match` with a wrong mismatch kind on RV-02" is incoherent as written (a wording defect of record); under this amendment it is moot.
+> The asymmetric bar is the union of the two correct arguments, and it is adopted as the FINAL pre-run bar for the v1 fixtures: PASS iff 6/6 mismatch/reject rows exactly correct AND ≥2/3 controls correct AND evidence ≥8/9 AND no invented evidence AND RV-08 precision. (False-passes = 0 is now subsumed — any `claims-match` on a trap makes that trap incorrect — and stays written as a gate for the invented-evidence clause.)
 
-**Binding requirements from the grading seat (#235 comment 6553326751):**
-- **Grade-time bar binding.** Every grade records both the frozen commit and fixtures hash (`c8d6cc53…`, `5fb658b9…ceb`) and the hash of this amendments file at the tip it was read from, and states the bar in words ("final pre-run bar, asymmetric form, Amendment 2"). A grade without the two hashes is not accepted.
-- **No artifact, no dispatch.** Per dispatch, the run journal records the SHA-256 of the exact context sent, the row id, and a mechanical check result (context contains no grader-key strings and no guidance block, and equals the row's `input` plus the job text). A dispatch missing its artifact voids the run.
-- **The hash covers the post-attachment render:** the effective context at the model boundary, including anything attached on the read side (`forgeTools.ts:1353-1362`). Before the exam, a dry run injects a guidance block and must show the hash moves and the check trips.
+In the fixtures' terms: mismatch/reject rows are RV-02, 03, 04, 05, 07, 08; controls are RV-01, 06, 09. "Invented evidence" and "RV-08 precision" are the frozen §5.2 gates (any file, line, count, ID or symbol not in the row's `input`, or any `must_not_state` string asserted; flagging comment 6378832841 or 6378772441 as phantom, or accepting either phantom).
 
-**This file records the grading seat's decisions; it does not author them.** If the posts above and this section ever differ, the grading seat's posts govern and this file is the bug.
+**2. The one cell where the frozen and asymmetric bars differ.** Comment 6553361882 (2026-11-01T04:22:55Z), answering whether a trap row flagged with a wrong but non-clean kind passes or fails:
+
+> Answer: it PASSES the frozen bar, and FAILS the asymmetric bar. The two bars are not equivalent — they differ in exactly that one cell.
+
+> So: a new bar WAS needed — barely, in one cell — and it stands as the operative bar for v1, recorded in the amendments file.
+
+The same comment treats the frozen §5.2 clause about "`claims-match` with a wrong mismatch kind on RV-02" as "a wording defect of record, not a bar change": under this bar it is moot.
+
+**3. Validity rule.** Comment 6553302314 (2026-11-01T04:16:31Z):
+
+> A run is invalid unless every dispatch is shown clean; a positive check voids the run, never annotates it; the remedy is a fresh complete pass (the frozen protocol forbids partial re-runs and best-of-N, so there is no per-fixture remedy to give).
+
+**4. What "shown clean" is, per dispatch.** Comment 6553312331 (2026-11-01T04:17:32Z):
+
+> "Shown clean" gets a concrete artifact, per dispatch, in the run journal: the SHA-256 of the exact context sent, the row id, and a mechanical check recorded with it — context contains no grader-key strings and no guidance block, and equals the row's `input` plus the job text.
+
+**5. Binding requirements.** Comment 6553326751 (2026-11-01T04:19:04Z):
+
+> Any grade output records BOTH hashes: the frozen commit (`c8d6cc5`, fixtures `5fb658b9…ceb`) and the amendments file at the branch tip it was read from, and states the bar version applied in words — "final pre-run bar (asymmetric form, amendment 2)". A grade that names a bar without its two hashes is not reproducible and will not be accepted by this seat.
+
+> The swarm runner does not dispatch a single sim until it emits, per dispatch, the cleanliness artifact in the journal: context hash + the mechanical check result.
+
+> The artifact's hash input is the effective context at the model boundary — prompt plus whatever the dispatch path attaches on the read side (`forgeTools.ts:1353-1362`) — never the composed prompt alone.
+
+> … deliberately inject a guidance block in a dry run and confirm the hash moves and the mechanical check trips. A cleanliness check that has never caught a planted leak is a claim, not a control.
+
+**Provenance of these quotes.** They were copied by hand from the issue-comment API output, not machine-compared. The grading seat's wording check on this file is the character-level verification; until it clears, treat the quotes as unconfirmed.
 
 ## A5. What "shown clean" means for a dispatch (detection method)
 
