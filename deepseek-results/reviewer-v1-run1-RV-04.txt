@@ -1,0 +1,17 @@
+```json
+{
+ "verdict": "claims-mismatch:stale-count",
+ "rule": "The stated count is true for an older tree but wrong for the tree the PR merges into",
+ "claim_to_diff": [
+ {
+ "claim": "the five suites that sentence enumerates — .github/scripts/test_mirofish_{meter,requirements,runner,workflow,world}.py — contain 22 + 9 + 50 + 28 + 18 = 127 test functions",
+ "evidence": "enumeration_def_test_per_file_at_base"
+ },
+ {
+ "claim": "ran the exact CI entry point on main `1efdc6a` ... → \"Ran 127 tests … OK\"",
+ "evidence": "facts"
+ }
+ ],
+ "provenance": "The PR's base is 3194ca5, which already contains the merged tests of an earlier PR; the body's measurement was taken on 1efdc6a, an older tree."
+}
+```
