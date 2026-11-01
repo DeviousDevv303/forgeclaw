@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "auto-admit:owner-class",
+ "rule": "intakeOwnerAutoAdmit",
+ "provenance": "The candidate has source 'owner-decision', kind 'settlement', run_id missing, ref 'BTC15M-215AM-OPEN-20261026', ts '2026-10-26T14:07:00Z', subject missing, text present. The ref is not resolved against the record's own evidence (summary and provenance), but the rule for owner-class auto-admission does not require a resolvable ref."
+}
+```
