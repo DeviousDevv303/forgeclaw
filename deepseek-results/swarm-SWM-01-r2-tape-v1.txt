@@ -1,0 +1,28 @@
+```json
+{
+ "seat": "TAPE",
+ "round": 2,
+ "status": "ok",
+ "challenges": [
+ {
+ "challenge_id": "SWM-01-TAPE-01",
+ "target_seat": "TAPE",
+ "target_claim": "Alexander Volkanovski leads in control time share",
+ "refs": ["control_time_share_pct: 14.3"],
+ "attack": {
+ "assumption": "Volkanovski's control time share is a reliable indicator of his dominance in the fight.",
+ "heuristic": "Compare Volkanovski's control time share with Evloev's to assess relative dominance.",
+ "first_principles": "Volkanovski's control_time_share_pct: 14.3%; Evloev's control_time_share_pct: 35.4% (from 'control_time_share_pct: 35.4 (3,398 seconds of career control vs 749 seconds against)')",
+ "extension": "If Volkanovski's control time share is significantly lower than Evloev's, it suggests that Evloev may be more dominant in controlling the fight's pace and location.",
+ "convergence": "The data shows that Evloev has a much higher control time share. This challenges the assumption that Volkanovski's control time share indicates dominance; instead, it highlights Evloev's ability to dictate the fight's rhythm."
+ }
+ },
+ {
+ "challenge_id": "SWM-01-TAPE-02",
+ "target_seat": "TAPE",
+ "target_claim": "Movsar Evloev has a higher takedown accuracy",
+ "refs": ["td_acc_pct: 52.6 (51 of 97)"],
+ "attack": {
+ "assumption": "Evloev's takedown accuracy is a strong indicator of his effectiveness in striking and taking the fight to the ground.",
+ "heuristic": "Compare Evloev's takedown accuracy with Volkanovski's to assess their respective striking abilities.",
+ "first_principles": "Evloev's td_acc_pct: 52.6% (51 of 97); Volkanovski's td_acc_pct: 3
