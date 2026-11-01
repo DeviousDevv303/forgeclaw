@@ -1,0 +1,21 @@
+```json
+{
+ "verdict": "claims-match",
+ "rule": "Every claim is carried by the diff and nothing the body does not claim was removed",
+ "claim_to_diff": [
+ {
+ "claim": "`deepseekArtifact.test.ts`: the 3 run-list mocks that still said `DeepSeek 16B` now say `Qwen/Qwen3-8B`, the workflow's real `name`/`run-name`.",
+ "evidence": "src/lib/deepseekArtifact.test.ts:78, src/lib/deepseekArtifact.test.ts:120, src/lib/deepseekArtifact.test.ts:322"
+ },
+ {
+ "claim": "`deepseekContext.ts:26`: the prompt now says the workflow is named `Qwen/Qwen3-8B` and that only the provider id and model id are legacy.",
+ "evidence": "src/lib/ai/deepseekContext.ts:23"
+ },
+ {
+ "claim": "Strings only; no logic change.",
+ "evidence": "none"
+ }
+ ],
+ "provenance": "The diff shows that the three run-list mocks in `deepseekArtifact.test.ts` have been updated to reflect the new name `Qwen/Qwen3-8B`. In `deepseekContext.ts`, the line at position 23 has been modified to indicate that the workflow is now named `Qwen/Qwen3-8B`, and only the provider id and model id are legacy. The claim that there is no logic change is supported by the diff, which shows only string changes."
+}
+```
