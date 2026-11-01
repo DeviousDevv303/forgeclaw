@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "auto-admit:bank-class",
+ "rule": "Bank class (intakeBankAutoAdmit): kind in {decision-outcome, live-molding-record, molding-event, campaign-mandate} + run_id + subject.",
+ "provenance": "The candidate has the following fields present: ts, source, kind, subject, text, run_id. The ref is 'm-1793294098053-1ddd3534', which resolves to a valid record as it refers to a mandate issued by the crew lead. The candidate's kind is 'campaign-mandate', which matches the bank class criteria."
+}
+```
