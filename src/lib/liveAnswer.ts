@@ -15,6 +15,8 @@
  * is a safety label for the model on the normal agent path, not for the user's eyes.
  */
 import { stripReasoningArtifacts } from './ai/responseFilter'
+import { todayLabel } from './currentInfo'
+import { STALE_RESULTS_NOTE } from './ddgWorkflowSearch'
 
 /** The instructions the synthesis hop runs under: the answer, from the results, nothing else. */
 export const LIVE_ANSWER_INSTRUCTIONS = [
@@ -27,16 +29,29 @@ export const LIVE_ANSWER_INSTRUCTIONS = [
   'Several results may disagree or be about different dates: prefer the most recent result.',
   'A result from before the day the question asks about does not answer a question about that day.',
   'If the results do not contain the answer, say so in one sentence and give the closest fact they do contain.',
+  'Never present an event from another date as the one asked about. If no result is about the day asked, say that nothing from that day was found.',
+  'Name only people, events and outcomes that appear in the results; never add a name, opponent, method or round from memory.',
 ].join('\n')
 
+const DAY_MS = 24 * 60 * 60 * 1000
+/** The date line the synthesis hop needs to apply the date rules above: today, and the day asked about when the question names one. */
+export function liveAnswerDateLine(question: string, now: Date = new Date()): string {
+  const asked = /\b(yesterday|last night)\b/i.test(question) ? new Date(now.getTime() - DAY_MS)
+    : /\btomorrow\b/i.test(question) ? new Date(now.getTime() + DAY_MS)
+      : /\b(tonight|today|right now)\b/i.test(question) ? now : null
+  return `Today's date is ${todayLabel(now)}.${asked && asked !== now ? ` The question asks about ${todayLabel(asked)}.` : asked ? ' The question asks about today.' : ''}`
+}
+
 /** The deepseek_reason task for the synthesis hop: instructions + the question + the raw hits. */
-export function buildLiveAnswerTask(question: string, rawResults: string): string {
-  return `${LIVE_ANSWER_INSTRUCTIONS}\n\nQuestion: ${question}\n\nLive search results:\n${rawResults}`
+// 2026-11-01: this task carried no date, so "a result from before the day the question asks about" could not
+// be applied — the hop relabelled the September 19 card as last night's. The date now rides in the task.
+export function buildLiveAnswerTask(question: string, rawResults: string, now: Date = new Date()): string {
+  return `${LIVE_ANSWER_INSTRUCTIONS}\n${liveAnswerDateLine(question, now)}\n\nQuestion: ${question}\n\nLive search results:\n${rawResults}`
 }
 
 /** The synthesis task for a hand-typed web_search call: there is no question, so summarize the hits. */
-export function buildSearchSummaryTask(query: string, rawResults: string): string {
-  return `${LIVE_ANSWER_INSTRUCTIONS}\n\nRequest: Summarize the web search results for "${query}".\n\nLive search results:\n${rawResults}`
+export function buildSearchSummaryTask(query: string, rawResults: string, now: Date = new Date()): string {
+  return `${LIVE_ANSWER_INSTRUCTIONS}\n${liveAnswerDateLine(query, now)}\n\nRequest: Summarize the web search results for "${query}".\n\nLive search results:\n${rawResults}`
 }
 
 /**
@@ -72,4 +87,40 @@ const DDG_HEADER_LINE = /^DuckDuckGo web search — "[^"]*" \(\d+ results?; untr
  */
 export function cleanSearchDisplay(rawOutput: string): string {
   return rawOutput.replace(PARSER_NOTE_LINE, '').replace(DDG_HEADER_LINE, '').trim()
+}
+
+// ─── Grounding check (deterministic; the instructions above are not enough on their own) ─────────
+// 2026-11-01 graded failure: the synthesized answer named a KO and an opponent that no result carried.
+// Any capitalized name in the answer must occur in the search results, or the answer is withheld and
+// the user sees the hits instead. A false withhold costs a less polished reply; a false pass costs a
+// fabricated fact presented as current, so this errs toward withholding.
+const NOT_NAMES = new Set(['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'by', 'for', 'of', 'to', 'with', 'from', 'after',
+  'before', 'he', 'she', 'they', 'it', 'his', 'her', 'their', 'this', 'that', 'these', 'those', 'there', 'here', 'no', 'not', 'nothing',
+  'yes', 'none', 'both', 'all', 'one', 'two', 'three', 'four', 'five', 'round', 'rounds', 'main', 'event', 'card', 'note', 'today',
+  'tonight', 'yesterday', 'tomorrow', 'last', 'night', 'win', 'won', 'wins', 'def', 'vs', 'versus', 'is', 'was', 'were', 'are',
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'i', 'if', 'when', 'as', 'so', 'also'])
+const fold = (t: string) => t.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+
+/** Capitalized words in the answer that never occur in the sources (accent- and case-insensitive). */
+export function unsupportedNames(answer: string, sources: string): string[] {
+  const src = fold(sources)
+  const out = new Set<string>()
+  for (const m of answer.matchAll(/\b\p{Lu}[\p{L}'’-]{2,}/gu)) {
+    const word = m[0].replace(/['’]s$/, '').replace(/[-'’]+$/, '')
+    const f = fold(word)
+    if (NOT_NAMES.has(f) || f.length < 3) continue
+    if (!src.includes(f)) out.add(word)
+  }
+  return [...out]
+}
+
+/**
+ * What the chat shows for a synthesized live answer: the answer when every name in it is in the
+ * results ('' otherwise — the caller then shows the hits), with the stale-results note in front when
+ * the search had to fall back to older, unfiltered results.
+ */
+export function groundedLiveAnswer(answer: string, rawResults: string): string {
+  if (!answer || unsupportedNames(answer, rawResults).length) return ''
+  return rawResults.includes(STALE_RESULTS_NOTE) ? `${STALE_RESULTS_NOTE}\n\n${answer}` : answer
 }
