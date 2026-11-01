@@ -1,0 +1,21 @@
+```json
+{
+ "verdict": "claims-match",
+ "rule": "Every claim is carried by the diff and nothing the body does not claim was removed",
+ "claim_to_diff": [
+ {
+ "claim": "src/lib/kalshiMarkets.ts:133-148 — the sentence now says \"Signed **market** reads are paused until …\"; the F-024 why-comment records the two-path split so the next editor does not re-broaden it.",
+ "evidence": "file:src/lib/kalshiMarkets.ts:133-148"
+ },
+ {
+ "claim": "src/lib/kalshiReadSigner.test.ts — the three assertions now assert the scoped sentence (one carries the F-024 note).",
+ "evidence": "file:src/lib/kalshiReadSigner.test.ts"
+ },
+ {
+ "claim": "No behavior change beyond the sentence's scope; the pause mechanics are untouched.",
+ "evidence": "none"
+ }
+ ],
+ "provenance": "The diff shows the changes made to src/lib/kalshiMarkets.ts and src/lib/kalshiReadSigner.test.ts, which align with the claims in the PR body. The sentence about signed market reads being paused is updated as claimed, and the test assertions now reflect the scoped sentence. No other code changes are present that would indicate a behavior change beyond the sentence's scope."
+}
+```
