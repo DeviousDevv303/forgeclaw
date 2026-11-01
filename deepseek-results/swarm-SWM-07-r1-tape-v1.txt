@@ -1,0 +1,16 @@
+{
+ "seat": "TAPE",
+ "round": 1,
+ "status": "ok",
+ "brief": "Kai Kamaka III leads in striking volume with a sapm of 6.03 compared to Andre Fili's 4.55, and his slpm is also higher at 5.49 versus 3.89 for Fili. Kamaka shows better accuracy with a str_acc_pct of 59 compared to Fili's 38, though Fili has better defense with a str_def_pct of 50 versus Kamaka's Could-Not-Read. In terms of takedowns, Kamaka has a td_acc_pct of 54 (7 of 13) compared to Fili's Could-Not-Read. Kamaka's volume note indicates that 41 percent of his landed volume goes to the body, while Fili's note shows 73 percent of his landed volume goes to the head. Both fighters have Could-Not-Read stats for control_time_share_pct, knockdown_differential, sub_att_per_15, td_def_pct, and td_per_15.",
+ "claims": [
+ {"claim": "Kai Kamaka III leads in striking volume with a sapm of 6.03 compared to Andre Fili's 4.55", "ref": "stat_line.sapm"},
+ {"claim": "Kai Kamaka III has better accuracy with a str_acc_pct of 59 compared to Andre Fili's 38", "ref": "stat_line.str_acc_pct"},
+ {"claim": "Andre Fili has better defense with a str_def_pct of 50 versus Kai Kamaka III's Could-Not-Read", "ref": "stat_line.str_def_pct"},
+ {"claim": "Kai Kamaka III has a td_acc_pct of 54 (7 of 13) compared to Andre Fili's Could-Not-Read", "ref": "stat_line.td_acc_pct"},
+ {"claim": "Kai Kamaka III's volume note indicates that 41 percent of his landed volume goes to the body, while Andre Fili's note shows 73 percent of his landed volume goes to the head", "ref": "stat_line.volume_note"}
+ ],
+ "could_not_read": ["control_time_share_pct", "knockdown_differential", "sub_att_per_15", "td_def_pct", "td_per_15"],
+ "distribution": {"A": 0.6, "B": 0.4},
+ "state_pull": null
+}
