@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "auto-admit:audit-class",
+ "rule": "Audit class (intakeAutoAdmit): source fallacy-audit + kind finding-confirmed or suspect-cleared + run_id + ref.",
+ "provenance": "Candidate has ts, source, and kind present; subject is missing but not required for audit class. Text is present as summary. Run_id is present. Ref is F-099. The ref resolves against the provenance (fallacy-audit ledger §2 (F-008)), which is referenced in the summary."
+}
+```
