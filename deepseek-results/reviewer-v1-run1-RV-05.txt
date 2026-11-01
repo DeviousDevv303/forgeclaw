@@ -1,0 +1,13 @@
+```json
+{
+ "verdict": "claims-match",
+ "rule": "Every claim is carried by the diff and nothing the body does not claim was removed",
+ "claim_to_diff": [
+ {
+ "claim": "board scan read the game/fight series ... in full",
+ "evidence": "kalshiMarkets.ts:353"
+ }
+ ],
+ "provenance": "Read code from kalshiMarkets.ts, commit 5cb49098e3ee3e64adce65ef911ea66e30de4858"
+}
+```
