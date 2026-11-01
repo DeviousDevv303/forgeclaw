@@ -1,0 +1,17 @@
+```json
+{
+ "seat": "TAPE",
+ "round": 1,
+ "status": "ok",
+ "brief": "Alexander Volkanovski leads in several key statistics, including control time share (14.3% vs. 35.4%), takedown accuracy (34.0% vs. 52.6%), and takedowns per 15 minutes (1.63 vs. 4.78). However, Evloev has a higher striking accuracy (47.6% vs. 57.1%) and defense (61.3% vs. 58.7%). Volkanovski also has a better strike-to-strike ratio (slpm: 5.99 vs. 3.91) and a higher submission attempt rate per 15 minutes (Could-Not-Read vs. Could-Not-Read). Both fighters have similar UFC fight time (Volkanovski: 303.0 min, Evloev: 160.0 min), but Volkanovski's record is more varied with a higher number of wins by knockout and decision.",
+ "claims": [
+ {"claim": "Alexander Volkanovski leads in control time share", "ref": "control_time_share_pct: 14.3"},
+ {"claim": "Movsar Evloev has a higher takedown accuracy", "ref": "td_acc_pct: 52.6 (51 of 97)"},
+ {"claim": "Alexander Volkanovski has a better strike-to-strike ratio", "ref": "slpm: 5.99 vs. 3.91"},
+ {"claim": "Movsar Evloev has higher striking defense", "ref": "str_def_pct: 61.3 vs. 58.7"}
+ ],
+ "could_not_read": ["knockdown_differential", "sub_att_per_15", "absorbed figure"],
+ "distribution": {"A": 0.4, "B": 0.6},
+ "state_pull": null
+}
+```
