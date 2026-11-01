@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "auto-admit:audit-class",
+ "rule": "intakeAutoAdmit",
+ "provenance": "Candidate has ts, source, and kind present. Subject is missing, but ref is present (F-001). Text is present. Run_id is present. Ref resolves to fallacy-audit ledger §1 (F-001), which matches the candidate's provenance and summary."
+}
+```
