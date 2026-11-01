@@ -1,0 +1,15 @@
+```json
+{
+ "verdict": "reject:not-a-record",
+ "rule": "Recordhood (validateIntakeRecord)",
+ "provenance": {
+ "ts": "2026-10-27T04:03:00Z",
+ "source": "owner-decision",
+ "kind": "project-decision",
+ "subject": "Nexus Intelligence fast-tracked as an LLM",
+ "text": "Cristian's typed directive 2026-10-26 23:02 CDT: fast-track Nexus Intelligence as an LLM with tool calls and a web search pipeline as first-class capabilities; Claude aligned with the owner on the direction (owner's statement). Filed under corpus creativity domain + announced on #235 per the owner's instruction. Foundation same evening: four corpus artifacts admitted; J-01 tool-call enforcement implemented (uncommitted); web-search pipeline traced with DDG hop measured median 15s / p90 17s. Record: ~/workspace/agent-channel/nexus-intelligence-fasttrack-decision-2026-10-26.md. Not decided: app rename; live-data raw-vs-synthesis; per-lane build assignments.",
+ "run_id": "missing",
+ "ref": "missing"
+ }
+}
+```
