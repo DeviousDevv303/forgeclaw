@@ -54,6 +54,16 @@ on:
         required: false
         default: chat
         type: string
+      exam_forbidden:
+        description: "Swarm exam only: base64 of a JSON list of strings that must not appear in the final prompt. Empty (default) = off and non-exam traffic is untouched. The list is visible in the public run record."
+        required: false
+        default: ''
+        type: string
+      exam_leak_canary:
+        description: "Swarm exam dry run only: plants a marked guidance block in the context so the leak check can be shown to trip. Must be empty for every exam payload."
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -104,6 +114,8 @@ jobs:
           CONTEXT: ${{ inputs.context }}
           INVOCATION_ID: ${{ inputs.invocation_id }}
           PROFILE: ${{ inputs.profile }}
+          EXAM_FORBIDDEN: ${{ inputs.exam_forbidden }}
+          EXAM_LEAK_CANARY: ${{ inputs.exam_leak_canary }}
           # -1 offloads every layer when a GPU runner is configured; 0 keeps the CPU path.
           DEEPSEEK_GPU_LAYERS: ${{ vars.FORGECLAW_GPU_RUNNER && '-1' || '0' }}
         run: |
@@ -113,6 +125,9 @@ jobs:
           # The model uses every core; at equal priority the agent was starved and cancel requests sat
           # unhandled for 25+ minutes (runs 161/162, 2026-10-19). Speed is unchanged when nothing competes.
           os.nice(10)
+          import base64
+          import hashlib
+          import json
           import re
           import sys
           import time
@@ -144,6 +159,29 @@ jobs:
           context = os.environ.get('CONTEXT', '').strip()
           invocation_id = os.environ['INVOCATION_ID']
 
+          # --- Swarm exam wiring (W1-W3; spec: nexus-llm/eval/swarm-wiring-design.md section 3.1) ---------------
+          # Everything below is inert unless an exam input is set: normal traffic keeps its prompt, its mirror files and its
+          # public exposure. EXAM_MODE is what turns on the prompt mirror (see the publish step).
+          EXAM_LEAK_CANARY = os.environ.get('EXAM_LEAK_CANARY', '').strip()
+          EXAM_FORBIDDEN_RAW = os.environ.get('EXAM_FORBIDDEN', '').strip()
+          EXAM_MODE = bool(EXAM_LEAK_CANARY or EXAM_FORBIDDEN_RAW)
+          NO_CONTEXT_PLACEHOLDER = '(No additional context was supplied.)'
+          exam_forbidden = []
+          exam_forbidden_error = None
+          if EXAM_FORBIDDEN_RAW:
+              # A denylist that cannot be read must never silently turn the scan off (that would fail open).
+              try:
+                  decoded = json.loads(base64.b64decode(EXAM_FORBIDDEN_RAW, validate=True).decode('utf-8'))
+                  if not isinstance(decoded, list) or not decoded or not all(isinstance(item, str) and item for item in decoded):
+                      raise ValueError('not a non-empty list of non-empty strings')
+                  exam_forbidden = decoded
+              except Exception as error:  # noqa: BLE001
+                  exam_forbidden_error = f'{type(error).__name__}: {error}'[:120]
+          prompt_log = []  # every fitted prompt handed to the fast engine, in call order
+
+          def sha_hex(text):
+              return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
           torch.set_num_threads(min(4, os.cpu_count() or 1))
 
           def is_presentation_task(task_text):
@@ -157,9 +195,17 @@ jobs:
               'and Closing Invitation. Do not use a letter greeting or name placeholder. '
           ) if is_presentation_task(task) else ''
 
+          # W3: the planted-leak dry run. The block goes where the app's guidance attachment goes: first in the context,
+          # joined to the rest with a blank line (joinNexusGuidance in src/lib/nexusGuidance.ts), and the sent context
+          # stays one contiguous substring of the prompt. Off (empty) = byte-identical to the previous behaviour.
+          context_sent = context or NO_CONTEXT_PLACEHOLDER
+          context_shown = context_sent
+          if EXAM_LEAK_CANARY:
+              context_shown = f'NEXUS GUIDANCE (dry-run canary)\n{EXAM_LEAK_CANARY}\n[END NEXUS GUIDANCE]\n\n{context_sent}'
+
           user_content = (
               f"Task:\n{task}\n\nVerified project, CORPUS, and tool context:\n"
-              f"{context or '(No additional context was supplied.)'}\n\n"
+              f"{context_shown}\n\n"
               'Answer the actual task directly and concretely from the supplied '
               'context. Distinguish static architecture facts from live repository '
               'facts. This workflow has no direct tool authority: never claim a '
@@ -344,6 +390,10 @@ jobs:
               return restored, True, 'kept' if guidance in restored else 'cut'
           # --- NEXUS guidance protection (end) -----------------------------------------------------------
 
+          def record_fitted_prompt(prompt_text, trimmed_flag):
+              # W1: hash the exact fitted prompt, after the guidance-keeping fit and before generation.
+              prompt_log.append({'text': prompt_text, 'sha': sha_hex(prompt_text), 'trimmed': trimmed_flag})
+
           def run_fast(llm, active_messages, max_new_tokens):
               system_text = '\n\n'.join(m['content'] for m in active_messages if m['role'] == 'system')
               user_text = '\n\n'.join(m['content'] for m in active_messages if m['role'] == 'user')
@@ -352,6 +402,7 @@ jobs:
               prompt, trimmed, guidance = fit_keeping_guidance(
                   prompt, lambda text: len(llm.tokenize(text.encode('utf-8'), add_bos=False)), budget)
               fast['guidance'] = guidance
+              record_fitted_prompt(prompt, trimmed)
               stream = llm.create_completion(prompt, max_tokens=max_new_tokens, temperature=0.6, top_p=0.9,
                                              repeat_penalty=1.1,
                                              stop=deepseek_gguf.STOP, stream=True)
@@ -514,6 +565,52 @@ jobs:
 
           with open('result.txt', 'w', encoding='utf-8') as handle:
               handle.write(result)
+          # --- Swarm exam wiring: meta lines (W1 hash, W2 scan) ---------------------------------------------------
+          if prompt_log:
+              ctx_basis, ctx_hash, prompt_calls = 'fitted_prompt', prompt_log[0]['sha'], len(prompt_log)
+          else:
+              # The slow fallback never fits a prompt string; hash the joined messages and say so. A fallback run is not an
+              # exam instrument (spec 3.3 rule A5), so this value exists only so the field is never silently missing.
+              joined_messages = '\n\n'.join(f"{m['role']}: {m['content']}" for m in messages)
+              ctx_basis, ctx_hash, prompt_calls = 'joined_messages', sha_hex(joined_messages), 0
+          exam_meta = f'context_sha256={ctx_hash}\ncontext_sha256_basis={ctx_basis}\nprompt_calls={prompt_calls}\n'
+          if len(prompt_log) > 1:
+              # A creative-task retry builds a second, different prompt. The first prompt is the one derived from the dispatched
+              # task and context; the others are listed so a reader can see that the answer may have come from a later one.
+              exam_meta += 'prompt_sha256_all=' + ','.join(item['sha'] for item in prompt_log) + '\n'
+          if EXAM_MODE and prompt_log:
+              # Exhaustive scaffold segments: prompt == pre + task + mid + context + post, byte for byte. Anything attached
+              # outside the task and context strings changes one of these three hashes.
+              head = 'Task:\n' + task + '\n\nVerified project, CORPUS, and tool context:\n'
+              first_prompt = prompt_log[0]['text']
+              at_head = first_prompt.find(head)
+              at_context = first_prompt.find(context_sent, at_head + len(head)) if at_head >= 0 else -1
+              if at_head < 0 or at_context < 0:
+                  exam_meta += f'segments=unavailable:{"task-marker-not-found" if at_head < 0 else "context-not-found"}\n'
+              else:
+                  task_start = at_head + len('Task:\n')
+                  task_end = task_start + len(task)
+                  context_end = at_context + len(context_sent)
+                  pre_text, mid_text, post_text = first_prompt[:task_start], first_prompt[task_end:at_context], first_prompt[context_end:]
+                  assert pre_text + task + mid_text + context_sent + post_text == first_prompt
+                  exam_meta += (f'segment_sha256_pre={sha_hex(pre_text)}\nsegment_sha256_mid={sha_hex(mid_text)}\n'
+                                f'segment_sha256_post={sha_hex(post_text)}\n')
+          if EXAM_FORBIDDEN_RAW:
+              if exam_forbidden_error:
+                  exam_meta += 'context_check=FAIL:exam_forbidden-unreadable\n'
+                  print(f'::error title=Exam denylist unreadable::{exam_forbidden_error}')
+              else:
+                  scanned = [item['text'] for item in prompt_log] or ['\n\n'.join(m['content'] for m in messages)]
+                  hit = next((needle for needle in exam_forbidden if any(needle in text for text in scanned)), None)
+                  if hit is None:
+                      exam_meta += 'context_check=clean\n'
+                  else:
+                      exam_meta += f'context_check=FAIL:{hit}\n'
+                      print('::error title=Exam context check FAIL::a forbidden string appeared in the final prompt; this dispatch is not a valid exam statement')
+          if EXAM_MODE and prompt_log:
+              with open('prompt_final.txt', 'w', encoding='utf-8') as handle:
+                  handle.write(prompt_log[0]['text'])
+
           with open('result_meta.txt', 'w', encoding='utf-8') as handle:
               handle.write(
                   f'invocation_id={invocation_id}\n'
@@ -538,6 +635,7 @@ jobs:
                       f'engine=transformers float16 (slow fallback: {FALLBACK_MODEL})\n'
                       f'fast_engine_error={fast["error"] or "not attempted"}\n'
                   )
+                  + exam_meta
               )
           print(f'Wrote DeepSeek result for {invocation_id} using {model_used}')
           PY
@@ -566,6 +664,12 @@ jobs:
           cp result.txt "/tmp/deepseek-results-worktree/deepseek-results/${INVOCATION_ID}.txt"
           cp result_meta.txt "/tmp/deepseek-results-worktree/deepseek-results/${INVOCATION_ID}.meta.txt"
           git -C /tmp/deepseek-results-worktree add "deepseek-results/${INVOCATION_ID}.txt" "deepseek-results/${INVOCATION_ID}.meta.txt"
+          # W1: the fitted prompt is mirrored only for swarm-exam dispatches (prompt_final.txt exists only then), so ordinary
+          # chat context never lands on the public results branch.
+          if [ -f prompt_final.txt ]; then
+            cp prompt_final.txt "/tmp/deepseek-results-worktree/deepseek-results/${INVOCATION_ID}.prompt.txt"
+            git -C /tmp/deepseek-results-worktree add "deepseek-results/${INVOCATION_ID}.prompt.txt"
+          fi
           git -C /tmp/deepseek-results-worktree commit -m "deepseek: publish ${INVOCATION_ID}"
           # Concurrent runs push to the same branch; on a rejected push, rebase onto the new tip and retry.
           for attempt in 1 2 3 4; do
@@ -583,6 +687,7 @@ jobs:
           path: |
             result.txt
             result_meta.txt
+            prompt_final.txt
           if-no-files-found: error
           retention-days: 7
 
