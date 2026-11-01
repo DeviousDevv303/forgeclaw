@@ -38,6 +38,8 @@ export interface LearningEventInput {
   origin?: 'voice' | 'typed'
   /** The run that produced this event (a retry of a run shares its parent's id). */
   runId?: string
+  /** 'qwen' when the answer may carry Qwen's own text (nexusConvergence.answerLineage): such a record never converges on its own. */
+  lineage?: 'qwen'
 }
 
 /** The id for a run's learning events: a retry inherits its parent's id, so it never counts as an independent run. */
@@ -81,6 +83,7 @@ export function buildLearningEvent(event: LearningEventInput): CorpusInteraction
     origin: event.origin ?? (event.channel === 'voice' ? 'voice' : 'typed'),
     actor: event.actor ?? 'user',
     ...(event.toolName ? { tool: event.toolName } : {}),
+    ...(event.lineage ? { lineage: event.lineage } : {}),
   }
   return {
     input: input.text,

@@ -134,7 +134,7 @@ import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { diagKeyFormat } from './lib/diagKeyFormat'
 import { isToolFailureOutput } from './lib/toolOutcome'
 import { cleanForSpeech, createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
-import { answerOutcome } from './lib/nexusConvergence'
+import { answerLineage, answerOutcome } from './lib/nexusConvergence'
 import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
 import { buildLiveAnswerTask, buildSearchSummaryTask, cleanSearchDisplay, extractDeepSeekAnswer } from './lib/liveAnswer'
@@ -1165,7 +1165,7 @@ function App() {
     prompt: string,
     response: string,
     source: string,
-    event: Partial<Pick<LearningEventInput, 'channel' | 'outcome' | 'toolName' | 'actor'>> = {},
+    event: Partial<Pick<LearningEventInput, 'channel' | 'outcome' | 'toolName' | 'actor' | 'lineage'>> = {},
   ) => {
     setCorpus(prev => {
       const next = [...prev, { prompt, response, source, timestamp: new Date().toISOString() }]
@@ -1179,6 +1179,7 @@ function App() {
       outcome: event.outcome ?? 'completed',
       toolName: event.toolName,
       actor: event.actor,
+      lineage: event.lineage,
       origin,
     })
   }
@@ -2294,7 +2295,7 @@ function App() {
       // a successful tool result behind it is 'verified', which NEXUS lets converge into knowledge (nexusConvergence.ts).
       // A model's own reasoning (deepseek_reason and the like) is not evidence; only real tool results make an answer 'verified'.
       const recordedOutcome = answerOutcome(completionPhase === 'BLOCKED', allToolResults)
-      await logToCorpus(promptText, settledLedger?.text || cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`, { outcome: recordedOutcome })
+      await logToCorpus(promptText, settledLedger?.text || cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`, { outcome: recordedOutcome, lineage: answerLineage(resolvedProvider, allToolResults) })
       // Sync plan to ForgeOps + emit terminal event
       if (nextAction) emitForge({ type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
       if (completionBlocked) emitForge({ type: 'MISSION_BLOCKED', reason: 'Repository evidence required, but no GitHub tool returned successfully' })
