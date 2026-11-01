@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "auto-admit:owner-class",
+ "rule": "intakeOwnerAutoAdmit",
+ "provenance": "The candidate has source 'owner-decision', kind 'verified-corpus', and run_id missing. The ref is not present, but the record's own evidence (source, kind, and status) supports owner-class auto-admission. The text is not present, but the subject is implied through the context of the corpus being admitted by an owner decision."
+}
+```
