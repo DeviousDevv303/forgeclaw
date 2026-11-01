@@ -1,0 +1,23 @@
+```json
+{
+ "seat": "STATE",
+ "round": 2,
+ "status": "ok",
+ "challenges": [
+ {
+ "challenge_id": "SWM-01-STATE-01",
+ "target_seat": "STYLES",
+ "target_claim": "Evloev's positional top control may not be sufficient to secure a win if Volkanovski's striking is neutralized",
+ "refs": ["style_adjusted_read: \"The +2.68 strike differential... it is not a padded number\""],
+ "attack": {
+ "assumption": "Volkanovski's striking being the decisive factor in the fight",
+ "heuristic": "Assessing whether the claim about Evloev's positional top control is supported by the packet data",
+ "first_principles": "The packet states that Volkanovski has a +2.68 strike differential, which is not a padded number. This suggests that his striking is a significant advantage.",
+ "extension": "If we consider the same claim in a different weight class or fighter's mirror number, does it hold? The packet provides no such data for other weight classes or fighters.",
+ "convergence": "The claim about Evloev's positional top control not being sufficient if Volkanovski's striking is neutralized seems to rely on the assumption that striking is the decisive factor. However, the packet supports that Volkanovski's striking differential is significant, which implies that his striking may indeed be a key factor."
+ }
+ }
+ ],
+ "cannot_attack": null
+}
+```
