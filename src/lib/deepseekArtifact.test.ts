@@ -78,7 +78,7 @@ describe('DeepSeek result retrieval', () => {
         }] })
       }
       if (url.endsWith('/actions/runs/84')) {
-        return Response.json({ id: 84, status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/84', run_number: 84, name: 'DeepSeek 16B', display_title: 'DeepSeek 16B', event: 'workflow_dispatch' })
+        return Response.json({ id: 84, status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/84', run_number: 84, name: 'Qwen/Qwen3-8B', display_title: 'Qwen/Qwen3-8B', event: 'workflow_dispatch' })
       }
       if (url.includes('raw.githubusercontent.com') && url.endsWith('.meta.txt')) return new Response('model=deepseek-ai/deepseek-coder-6.7b-instruct\nrole=primary checkpoint\nelapsed_seconds=8.2\n', { status: 200 })
       if (url.includes('raw.githubusercontent.com')) return new Response('Mirror answer from the workflow.', { status: 200 })
@@ -120,7 +120,7 @@ describe('DeepSeek result retrieval', () => {
         }] })
       }
       if (url.endsWith('/actions/runs/91')) {
-        return Response.json({ id: 91, status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/91', run_number: 91, name: 'DeepSeek 16B', display_title: 'DeepSeek 16B', event: 'workflow_dispatch' })
+        return Response.json({ id: 91, status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/91', run_number: 91, name: 'Qwen/Qwen3-8B', display_title: 'Qwen/Qwen3-8B', event: 'workflow_dispatch' })
       }
       if (url.includes('raw.githubusercontent.com')) return new Response('', { status: 404 })
       if (url.includes('/artifacts?')) {
@@ -322,7 +322,7 @@ describe('DeepSeek stage-specific failures', () => {
         }] })
       }
       if (url.endsWith('/actions/runs/77')) {
-        return Response.json({ id: 77, status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/77', run_number: 77, name: 'DeepSeek 16B', display_title: 'DeepSeek 16B', event: 'workflow_dispatch' })
+        return Response.json({ id: 77, status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/77', run_number: 77, name: 'Qwen/Qwen3-8B', display_title: 'Qwen/Qwen3-8B', event: 'workflow_dispatch' })
       }
       if (url.includes('raw.githubusercontent.com')) return new Response('', { status: 404 })
       if (url.includes('/artifacts?')) return Response.json({ artifacts: [] })
