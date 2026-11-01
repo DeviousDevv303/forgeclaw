@@ -96,5 +96,27 @@ class Load(unittest.TestCase):
             g.load_model("/tmp/d", lambda repo: ["only.Q8_0.gguf"], lambda *a: "x", object)
 
 
+
+class SamplingSeed(unittest.TestCase):
+    def test_same_id_same_seed_and_different_ids_differ(self):
+        self.assertEqual(g.sampling_seed("deepseek-1-a"), g.sampling_seed("deepseek-1-a"))
+        self.assertNotEqual(g.sampling_seed("deepseek-1-a"), g.sampling_seed("deepseek-1-b"))
+
+    def test_the_seed_is_a_hash_of_the_id_not_the_id(self):
+        import hashlib
+        iid = "deepseek-1793488693195-vhkzhi"
+        self.assertEqual(g.sampling_seed(iid), int.from_bytes(hashlib.sha256(iid.encode("utf-8")).digest()[:4], "big") % 0xFFFFFFFF)
+        # sequential ids do not give sequential seeds
+        self.assertNotEqual(abs(g.sampling_seed("swarm-1") - g.sampling_seed("swarm-2")), 1)
+
+    def test_never_llama_cpps_random_sentinel(self):
+        # 0xFFFFFFFF tells llama.cpp to pick a random seed, which would silently undo reproducibility.
+        self.assertNotEqual(g.seed_from_digest(b"\xff\xff\xff\xff" + b"\x00" * 28), g.LLAMA_RANDOM_SEED)
+        self.assertEqual(g.seed_from_digest(b"\xff\xff\xff\xff"), 0)
+        self.assertEqual(g.seed_from_digest(b"\xff\xff\xff\xfe"), 0xFFFFFFFE)
+        for iid in ("a", "b", "swarm-dryrun-clean-001", "x" * 500):
+            self.assertTrue(0 <= g.sampling_seed(iid) < g.LLAMA_RANDOM_SEED)
+
+
 if __name__ == "__main__":
     unittest.main()

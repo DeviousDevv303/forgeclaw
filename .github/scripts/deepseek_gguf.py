@@ -15,6 +15,7 @@ should be treated as proof that the fast path worked.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import time
 
@@ -25,6 +26,24 @@ QUANT = "q4_k_m"
 N_CTX = 8192
 N_THREADS = 4         # the runner has 4 vCPUs
 STOP = ["<|im_end|>", "<|im_start|>"]  # end of the assistant turn; stop a hallucinated next turn
+
+
+# llama.cpp reserves 0xFFFFFFFF (LLAMA_DEFAULT_SEED) to mean "pick a random seed", so a derived seed must never equal it.
+LLAMA_RANDOM_SEED = 0xFFFFFFFF
+
+
+def seed_from_digest(digest):
+    """The first 4 bytes of a digest as an unsigned 32-bit seed in 0..0xFFFFFFFE (never llama.cpp's random sentinel)."""
+    return int.from_bytes(digest[:4], "big") % LLAMA_RANDOM_SEED
+
+
+def sampling_seed(invocation_id):
+    """The sampling seed for one dispatch, from a SHA-256 of its invocation id (owner decision 2026-11-01, #235).
+
+    Hashing, not the raw id, so sequential or low-entropy ids cannot pattern the sampler. Same id -> same seed -> the
+    same output; different ids sample independently. Without an explicit seed, llama-cpp-python 0.3.36 derives one from a
+    constant, so every dispatch of the same prompt was the same sample, and a retried wrong answer came back unchanged."""
+    return seed_from_digest(hashlib.sha256(invocation_id.encode("utf-8")).digest())
 
 
 def pick_gguf_file(files, quant=QUANT):
