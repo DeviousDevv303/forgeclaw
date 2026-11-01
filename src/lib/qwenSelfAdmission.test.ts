@@ -55,8 +55,8 @@ describe('Route C: Qwen answers never admit themselves', () => {
     expect(r.inGuidance).toBe(false)
   })
 
-  it('a Qwen-provider turn is caught by its runtime even if the lineage marker were missing', async () => {
-    await recordLearningEvent({ channel: 'chat', input: TASK, result: 'NOMARK the falcon ledger total is 401', outcome: 'verified', runtime: 'deepseek', model: 'deepseek-16b' })
+  it('a Qwen-provider turn is caught by its runtime even when a caller wrongly states lineage none', async () => {
+    await recordLearningEvent({ channel: 'chat', input: TASK, result: 'NOMARK the falcon ledger total is 401', outcome: 'verified', runtime: 'deepseek', model: 'deepseek-16b', lineage: 'none' })
     expect(corpusRepository.listCandidates(1000).find(c => c.content.startsWith('NOMARK'))?.metadata.admittedBy).toBeUndefined()
   })
 })
@@ -66,8 +66,8 @@ describe('lineage helpers', () => {
     expect(answerLineage('deepseek', [])).toBe('qwen')
     expect(answerLineage('corpus', [{ name: 'web_search' }])).toBe('qwen')
     expect(answerLineage('moonshot', [{ name: 'web_search' }, { name: 'ask_deepseek' }])).toBe('qwen')
-    expect(answerLineage('moonshot', [{ name: 'web_search' }])).toBeUndefined()
-    expect(answerLineage('anthropic', [])).toBeUndefined()
+    expect(answerLineage('moonshot', [{ name: 'web_search' }])).toBe('none')
+    expect(answerLineage('anthropic', [])).toBe('none')
   })
   it('hasQwenLineage reads the marker, and for older records the runtime, the model id or the deepseek source', () => {
     expect(hasQwenLineage({ metadata: { lineage: 'qwen' } })).toBe(true)

@@ -21,7 +21,7 @@ describe('buildLearningEvent', () => {
     expect(built.context).toContain('outcome=completed')
   })
   it('defaults voice-channel events to voice origin and others to typed', () => {
-    expect(buildLearningEvent({ ...base, channel: 'voice' }).metadata?.origin).toBe('voice')
+    expect(buildLearningEvent({ ...base, channel: 'voice', lineage: 'none' }).metadata?.origin).toBe('voice')
     expect(buildLearningEvent(base).metadata?.origin).toBe('typed')
   })
   it('redacts secrets in input and result and flags it', () => {

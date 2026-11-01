@@ -7,7 +7,7 @@ import { visitorCandidate } from './visitorLearning'
 let n = 0
 function candidate(tool: string | undefined, outcome: string, result: string, timestamp = `2026-10-20T0${n % 10}:00:00Z`): LearningCandidate {
   n += 1
-  const event = buildLearningEvent({ channel: tool ? 'tool' : 'chat', input: `call ${n}`, result, outcome: outcome as never, runtime: 'moonshot', model: 'kimi-k2.6', toolName: tool, actor: 'agent' })
+  const event = buildLearningEvent({ channel: tool ? 'tool' : 'chat', input: `call ${n}`, result, outcome: outcome as never, runtime: 'moonshot', model: 'kimi-k2.6', toolName: tool, actor: 'agent', lineage: 'none' })
   return { id: `c${n}`, corpusId: 'nexus-local', source: event.source!, content: result, timestamp, version: n, recordType: 'learning_candidate', integrity: `i${n}`, admissionStatus: 'candidate', metadata: event.metadata!, sourceInteractionId: `x${n}`, runtime: 'moonshot', model: 'kimi-k2.6', input: event.input, context: event.context, generatedResult: result }
 }
 

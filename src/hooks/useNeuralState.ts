@@ -193,6 +193,7 @@ export function useNeuralState(
               runtime: 'forgeclaw-ui',
               model: provider,
               actor: 'agent',
+              lineage: 'none', // a latency measurement, not an answer
             })
           }
           requestStartRef.current = 0

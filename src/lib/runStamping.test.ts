@@ -5,7 +5,7 @@ import { buildLearningEvent, learningRunId } from './learningEvents'
 import { corpusRepository } from './corpus'
 
 const event = (runId?: string, outcome: 'verified' | 'completed' = 'verified') =>
-  buildLearningEvent({ channel: 'chat', input: 'how many open PRs', result: 'Two (github_list_prs).', outcome, runtime: 'kimi', model: 'k2', actor: 'user', runId })
+  buildLearningEvent({ channel: 'chat', input: 'how many open PRs', result: 'Two (github_list_prs).', outcome, runtime: 'kimi', model: 'k2', actor: 'user', runId, lineage: 'none' })
 
 describe('run ids on learning events', () => {
   beforeEach(() => localStorage.clear())

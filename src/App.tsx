@@ -135,7 +135,7 @@ import { diagKeyFormat } from './lib/diagKeyFormat'
 import { isToolFailureOutput } from './lib/toolOutcome'
 import { cleanForSpeech, createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
 import { answerLineage, answerOutcome } from './lib/nexusConvergence'
-import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type LearningEventInput } from './lib/learningEvents'
+import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type DistributiveOmit, type LearningEventInput, type LearningLineage } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
 import { buildLiveAnswerTask, buildSearchSummaryTask, cleanSearchDisplay, extractDeepSeekAnswer } from './lib/liveAnswer'
 import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
@@ -1154,7 +1154,7 @@ function App() {
   /** Record one learning event (voice/chat/tool/shell) as an unapproved CORPUS candidate. Best-effort; never blocks the request. */
   // The run whose events are being recorded (set at the start of sendPrompt, cleared when it ends).
   const learningRunRef = useRef('')
-  const recordLearning = async (event: Omit<LearningEventInput, 'runtime' | 'model'>) => {
+  const recordLearning = async (event: DistributiveOmit<LearningEventInput, 'runtime' | 'model'>) => {
     const stored = await recordLearningEvent({ ...event, runId: learningRunRef.current || undefined, runtime: activeProvider, model: normalizedActiveModel })
     if (!stored && event.input.trim()) {
       emitFailure({ source: 'forgemind', severity: 'warning', message: 'CORPUS learning event was not stored (local storage unavailable or full).' })
@@ -1165,7 +1165,8 @@ function App() {
     prompt: string,
     response: string,
     source: string,
-    event: Partial<Pick<LearningEventInput, 'channel' | 'outcome' | 'toolName' | 'actor' | 'lineage'>> = {},
+    // Lineage is required: a chat turn that forgets it would be free to admit itself (Route C). Say 'none' when no Qwen text is in it.
+    event: { lineage: LearningLineage } & Partial<Pick<LearningEventInput, 'channel' | 'outcome' | 'toolName' | 'actor'>>,
   ) => {
     setCorpus(prev => {
       const next = [...prev, { prompt, response, source, timestamp: new Date().toISOString() }]
@@ -1464,7 +1465,7 @@ function App() {
       }])
       emitFailure({ source: 'forgemind', severity: 'warning', message: 'Guardian blocked this task.', context: { taskId } })
       // NEXUS learns from every outcome, refusals included (still an unapproved candidate).
-      void recordLearning({ channel: promptOrigin(promptText) === 'voice' ? 'voice' : 'chat', input: promptText, result: 'Task blocked by Guardian admission before any model or tool ran.', outcome: 'blocked', actor: 'user', origin: promptOrigin(promptText) })
+      void recordLearning({ channel: promptOrigin(promptText) === 'voice' ? 'voice' : 'chat', input: promptText, result: 'Task blocked by Guardian admission before any model or tool ran.', outcome: 'blocked', actor: 'user', origin: promptOrigin(promptText), lineage: 'none' })
       return
     }
 
@@ -1913,7 +1914,7 @@ function App() {
         setRequestStatus(isError ? 'blocked' : 'success')
         setLastRequestError(isError ? output : '')
         setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
-        await logToCorpus(promptText, output, `${activeProvider}:${normalizedActiveModel}`, { channel: 'shell', outcome: outcomeFromToolOutput(output), toolName: 'shell_exec', actor: 'operator' })
+        await logToCorpus(promptText, output, `${activeProvider}:${normalizedActiveModel}`, { channel: 'shell', outcome: outcomeFromToolOutput(output), toolName: 'shell_exec', actor: 'operator', lineage: 'none' })
         resolveTask(taskId)
         return
       }
@@ -2364,7 +2365,7 @@ function App() {
       // working after "temporary connection problem" and nothing was). Cancels and silent retries return before this point.
       emitForge({ type: 'MISSION_BLOCKED', reason: `Request failed: ${rawMsg.replace(/\s+/g, ' ').slice(0, 140)}` })
       // A failed run is the most useful thing NEXUS can learn from; it used to be recorded nowhere.
-      void recordLearning({ channel: promptOrigin(promptText) === 'voice' ? 'voice' : 'chat', input: promptText, result: `Run failed: ${rawMsg}`, outcome: 'failed', actor: 'user', origin: promptOrigin(promptText) })
+      void recordLearning({ channel: promptOrigin(promptText) === 'voice' ? 'voice' : 'chat', input: promptText, result: `Run failed: ${rawMsg}`, outcome: 'failed', actor: 'user', origin: promptOrigin(promptText), lineage: 'none' })
       const failedToolResults = runToolResults.length ? runToolResults : undefined
       if (cloudMsgId) {
         setMessages(prev => prev.map(m => {

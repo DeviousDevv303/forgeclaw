@@ -8,7 +8,7 @@ import { corpusRepository, type LearningCandidate } from './corpus'
 import { heuristicsForPrompt } from './nexusHeuristics'
 
 const chat = (outcome: 'verified' | 'completed' | 'failed' | 'blocked', actor: 'user' | 'agent' = 'user') =>
-  buildLearningEvent({ channel: 'chat', input: 'how many open PRs are there', result: 'Two: #209 and #210 (github_list_prs).', outcome, runtime: 'kimi', model: 'k2', actor })
+  buildLearningEvent({ channel: 'chat', input: 'how many open PRs are there', result: 'Two: #209 and #210 (github_list_prs).', outcome, runtime: 'kimi', model: 'k2', actor, lineage: 'none' })
 
 describe('what converges into knowledge by itself', () => {
   beforeEach(() => localStorage.clear())

@@ -77,8 +77,8 @@ export const QWEN_LINEAGE_TOOLS: ReadonlySet<string> = new Set(['deepseek_reason
 const QWEN_RUNTIMES: ReadonlySet<string> = new Set(['deepseek', 'corpus'])
 
 /** 'qwen' when a turn's answer may carry Qwen's own text: the Qwen provider answered, or a Qwen tool ran in the turn. */
-export function answerLineage(provider: string, results: ReadonlyArray<{ name: string }>): 'qwen' | undefined {
-  return QWEN_RUNTIMES.has(provider) || results.some(result => QWEN_LINEAGE_TOOLS.has(result.name)) ? 'qwen' : undefined
+export function answerLineage(provider: string, results: ReadonlyArray<{ name: string }>): 'qwen' | 'none' {
+  return QWEN_RUNTIMES.has(provider) || results.some(result => QWEN_LINEAGE_TOOLS.has(result.name)) ? 'qwen' : 'none'
 }
 
 /**
