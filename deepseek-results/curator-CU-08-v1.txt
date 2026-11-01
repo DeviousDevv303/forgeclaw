@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "auto-admit:bank-class",
+ "rule": "Bank class (intakeBankAutoAdmit): kind in {decision-outcome, live-molding-record, molding-event, campaign-mandate} + run_id + subject.",
+ "provenance": "The candidate has a 'kind' of 'live-molding-record', a 'run_id' of 'owner-strike-doctrine-20261029', and a 'subject' of 'OWNER DOCTRINE'. The ref 'owner-strike-doctrine' resolves to the summary, which is consistent with the provenance. All required fields for bank-class auto-admission are present."
+}
+```
