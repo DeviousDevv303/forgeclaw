@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "auto-admit:owner-class",
+ "rule": "intakeOwnerAutoAdmit",
+ "provenance": "source: owner-decision, kind: verified-corpus-candidates, run_id: missing, ref: resolved (candidate came from 'Muse-Lane Verified Corpus Candidates (MC-001 to MC-023)'), ts: present, text: present, subject: present"
+}
+```
