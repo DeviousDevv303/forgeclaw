@@ -1,0 +1,15 @@
+```json
+{
+ "verdict": "auto-admit:owner-class",
+ "rule": "intakeOwnerAutoAdmit",
+ "provenance": {
+ "ts": "2026-10-24T20:40:00.000Z",
+ "source": "owner-decision",
+ "kind": "decision-outcome",
+ "subject": "UFC 333, Petr Yan vs Merab Dvalishvili",
+ "text": "Owner betting case study — UFC 333, Petr Yan vs Merab Dvalishvili (Oct 24, 2026, Abu Dhabi). START: the market (Kalshi priced Merab the favorite, ~57c), the statistics pages, and ForgeClaw's own framework all leaned Dvalishvili; ForgeClaw's seven-section research run returned no framework bet (its conditional Merab trigger never filled). THE OWNER'S BASIS, in his own words: 'I bet in favor of Yan because I felt it' — and the feeling rested on fight evidence he can name: in the second fight of the trilogy Yan stuffed Merab's takedowns and stayed on his feet, not getting taken down, so the owner knew Yan most likely wasn't getting taken down in the third either; and Yan is the far better Muay Thai striker — on that basis, a wrap. Merab took the first fight on wrestling and pace; Yan adjusted in the second and had his number from there. EXPLICITLY NOT THE BASIS: Merab's weight cut (that came from the app's simulation report, not the owner). END GAME: Yan won the decision and retained the UFC bantamweight title; the position (42 Yan YES contracts at ~59.6c average, $25 staked natively in the Kalshi app) settles $41.87 (+$16.87); the $25-to-$100 plan stands ~42% complete. TRAINING ENCODING (owner ruling, 2026-10-24): Kimi's amendment prescribed weight zero for gut calls until a track record exists; the OWNER OVERRIDES that prescription for grounded reads like this one (override notated on issue #235, no disrespect to Kimi) — because this call rested on observed fight facts (fight-2 takedown defense, striking superiority), it CARRIES WEIGHT in Nexus bet training as evidence-bearing pattern recognition. The chamber learns this record WITH its documented basis attached, so what it learns is the grounded kind of conviction.",
+ "run_id": "owner-bet-yan-ufc333-20261024",
+ "ref": "UFC333-YAN-20261024"
+ }
+}
+```
