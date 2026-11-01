@@ -1,0 +1,13 @@
+```json
+{
+ "verdict": "claims-match",
+ "rule": "Every claim is carried by the diff and nothing the body does not claim was removed",
+ "claim_to_diff": [
+ {
+ "claim": "syncPending returns status 'synced' (rendered to the user as \"Synced N candidate updates\") after a webhook sync",
+ "evidence": "code:699: return { attempted: records.length, admitted, status: 'synced' }"
+ }
+ ],
+ "provenance": "The code diff shows that the function `syncPending` returns an object with a `status` property set to 'synced'. The UI string for 'corpus.syncedMany' also supports the claim about the rendered message."
+}
+```
