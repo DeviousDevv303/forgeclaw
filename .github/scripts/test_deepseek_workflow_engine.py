@@ -311,6 +311,13 @@ class ExamWiring(unittest.TestCase):
         self.assertEqual(m["context_sha256"], hashes[0])
         self.assertEqual(sha(files["prompt_final.txt"]), hashes[0])
 
+    def test_the_meta_carries_the_commit_the_run_executed_at(self):
+        sha40 = "ab" * 20
+        _, m, _ = exam_run(GITHUB_SHA=sha40)
+        self.assertEqual(m["workflow_commit"], sha40)
+        _, other, _ = exam_run()
+        self.assertEqual(other["workflow_commit"], "unknown")  # honest when the runner variable is absent
+
     def test_the_slow_fallback_labels_its_hash_basis_honestly(self):
         proc, result, meta, files = run_with_files({"EXAM_FORBIDDEN": denylist("grading_key")}, drop_stubs=("llama_cpp.py",))
         m = meta_dict(meta)

@@ -574,6 +574,9 @@ jobs:
               joined_messages = '\n\n'.join(f"{m['role']}: {m['content']}" for m in messages)
               ctx_basis, ctx_hash, prompt_calls = 'joined_messages', sha_hex(joined_messages), 0
           exam_meta = f'context_sha256={ctx_hash}\ncontext_sha256_basis={ctx_basis}\nprompt_calls={prompt_calls}\n'
+          # The commit this run executed at. The dry-run anchor record carries it, and the runner refuses a live run whose
+          # pinned commit differs, so an old clean anchor can never vouch for newer composition behaviour.
+          exam_meta += f"workflow_commit={os.environ.get('GITHUB_SHA', 'unknown')}\n"
           if len(prompt_log) > 1:
               # A creative-task retry builds a second, different prompt. The first prompt is the one derived from the dispatched
               # task and context; the others are listed so a reader can see that the answer may have come from a later one.
