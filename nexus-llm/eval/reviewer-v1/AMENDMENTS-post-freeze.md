@@ -29,7 +29,7 @@ Computed from the git objects at that commit, not from the working tree. **A gra
 - **Weights.** Qwen3-8B is a third-party base the fleet does not train; only Nexus is trained here. Nexus must have its training data checked for these findings before it is graded on this exam.
 - **Dispatch context.** `nexus_learning=false` only stops the dispatch being recorded (`forgeTools.ts:1316`); Nexus guidance is attached on the read side at dispatch (`forgeTools.ts:1353-1362`). So whether a dispatch is clean is a property of the harness.
 - **Harness rule.** Each dispatch carries the row's `input` as the *entire* context, grader keys stripped, `nexus_learning=false`, and no guidance block. The full dispatched context is logged per run.
-- **Validity rule (proposed, for the grading seat's confirmation).** A run is **invalid unless every dispatch is shown clean.** A positive check does not annotate the run, it voids it. Because the protocol forbids partial re-runs and best-of-N, the remedy is a fresh complete pass, not a re-run of the dirty fixture.
+- **Validity rule (CONFIRMED by the grading seat, #235 comment 6553302314).** A run is **invalid unless every dispatch is shown clean.** A positive check does not annotate the run, it voids it. Because the protocol forbids partial re-runs and best-of-N, the remedy is a fresh complete pass, not a re-run of the dirty fixture.
 
 ## A2. Known-error bound, as of the freeze
 
@@ -41,7 +41,7 @@ Computed from the git objects at that commit, not from the working tree. **A gra
 
 - **Near-miss control(s):** at least one clean-but-messy row (imprecise prose, every checkable claim carried). Candidate: PR #343 (a body overstatement flagged in review, sound diff, merged). Needs a verdict for "match, with a noted imprecision".
 - **Spec cases 1 and 7** from the staged AGENTS.md lessons (`muse/benchmark-inputs-handoff` @ `3f95a214`, file SHA-256 `6fcbf211…`).
-- **Control tolerance (open).** Kimi proposed all 3 controls exact. The grading seat kept ≤ 1/3 for v1 and pre-registered kimi's form for v1.1. See the discussion on #235 about how that choice is made: the case is that it should rest on the role's error costs and on a larger control set, not on which scenario a single run happens to land in.
+- **Control tolerance (DECIDED by the grading seat, #235 comments 6553302314 and 6553312331).** For the current nine fixtures the operative bar is Amendment 2 below (at least 2 of 3 controls correct; trap rows carry no error budget). For an expanded v1.1 set (near-miss controls, the AGENTS.md cases, 6 or more controls): over-rejects ≤ 1 per 6+ controls, false-passes 0, with that benchmark's own freeze free to tighten to zero if its near-miss controls calibrate clean.
 
 ## A4. The frozen bar versus the "asymmetric" candidate (kimi), corrected
 
@@ -53,22 +53,60 @@ Kimi's candidate: 6/6 trap rows correct AND ≥ 2/3 controls accepted. Enumerati
 | any trap row, called `claims-match` (a false pass) | **fail** (§5.2 hard gate) | fail |
 | any trap row, flagged but with the wrong kind | pass (8/9) | **fail** |
 
-So the two bars differ in exactly one cell, and it is not a false pass: the PR is still blocked, with the wrong stated reason. The "controls ≥ 2/3" half is identical to the frozen "over-rejects ≤ 1/3". The earlier worry that the frozen bar admits a missed trap with perfect controls is true only for a wrong-kind flag, because a clean call on any trap already trips the gate. Whether a wrong-kind flag should cost the exam is a design choice (does the kind matter downstream?), not a cost-asymmetry result. Pre-registered as the v1.1 candidate form, with the tolerance for controls stated as a rate over a larger control set (see A3).
+So the two bars differ in exactly one cell, and it is not a false pass: the PR is still blocked, with the wrong stated reason. The "controls ≥ 2/3" half is identical to the frozen "over-rejects ≤ 1/3". The earlier worry that the frozen bar admits a missed trap with perfect controls is true only for a wrong-kind flag, because a clean call on any trap already trips the gate. Whether a wrong-kind flag should cost the exam is a design choice (does the kind matter downstream?), not a cost-asymmetry result. **Superseded:** this paragraph pre-registered the asymmetric form as a v1.1 candidate. The grading seat adopted it for v1 before any exam ran; see Amendment 2 below, which is the operative bar.
 
 **Wording defect in the frozen §5.2 (not fixed here, since the doc is frozen):** the clause "so does `claims-match` with a wrong mismatch kind on RV-02" is incoherent, because `claims-match` is not a mismatch kind. Its intent is unrecorded. Two readings: (a) a stray clause with no extra force; (b) RV-02 must be flagged with exactly `lost-lines` or the exam fails, which would make RV-02 stricter than the other trap rows. This file records the literal text. The grading seat should state the intended reading before the first exam run, and v1.1 should fix the sentence.
+
+## Amendment 2 — the operative bar for the v1 fixtures (adopted before any exam ran)
+
+**The quoted text below is the operative text.** It is copied from the grading seat's issue comments on #235, with comment ID and creation time. Issue comments are editable, so a grade binds to the quotes in this file (read at a recorded hash), not to the live comments; the comments are cited as origin. If a ruling changes later, it enters through a new amendment file, not by editing the comment. The frozen doc is unchanged.
+
+**1. The bar.** Comment 6553312331 (2026-11-01T04:17:32Z):
+
+> The asymmetric bar is the union of the two correct arguments, and it is adopted as the FINAL pre-run bar for the v1 fixtures: PASS iff 6/6 mismatch/reject rows exactly correct AND ≥2/3 controls correct AND evidence ≥8/9 AND no invented evidence AND RV-08 precision. (False-passes = 0 is now subsumed — any `claims-match` on a trap makes that trap incorrect — and stays written as a gate for the invented-evidence clause.)
+
+In the fixtures' terms: mismatch/reject rows are RV-02, 03, 04, 05, 07, 08; controls are RV-01, 06, 09. "Invented evidence" and "RV-08 precision" are the frozen §5.2 gates (any file, line, count, ID or symbol not in the row's `input`, or any `must_not_state` string asserted; flagging comment 6378832841 or 6378772441 as phantom, or accepting either phantom).
+
+**2. The one cell where the frozen and asymmetric bars differ.** Comment 6553361882 (2026-11-01T04:22:55Z), answering whether a trap row flagged with a wrong but non-clean kind passes or fails:
+
+> Answer: it PASSES the frozen bar, and FAILS the asymmetric bar. The two bars are not equivalent — they differ in exactly that one cell.
+
+> So: a new bar WAS needed — barely, in one cell — and it stands as the operative bar for v1, recorded in the amendments file.
+
+The same comment treats the frozen §5.2 clause about "`claims-match` with a wrong mismatch kind on RV-02" as "a wording defect of record, not a bar change": under this bar it is moot.
+
+**3. Validity rule.** Comment 6553302314 (2026-11-01T04:16:31Z):
+
+> A run is invalid unless every dispatch is shown clean; a positive check voids the run, never annotates it; the remedy is a fresh complete pass (the frozen protocol forbids partial re-runs and best-of-N, so there is no per-fixture remedy to give).
+
+**4. What "shown clean" is, per dispatch.** Comment 6553312331 (2026-11-01T04:17:32Z):
+
+> "Shown clean" gets a concrete artifact, per dispatch, in the run journal: the SHA-256 of the exact context sent, the row id, and a mechanical check recorded with it — context contains no grader-key strings and no guidance block, and equals the row's `input` plus the job text.
+
+**5. Binding requirements.** Comment 6553326751 (2026-11-01T04:19:04Z):
+
+> Any grade output records BOTH hashes: the frozen commit (`c8d6cc5`, fixtures `5fb658b9…ceb`) and the amendments file at the branch tip it was read from, and states the bar version applied in words — "final pre-run bar (asymmetric form, amendment 2)". A grade that names a bar without its two hashes is not reproducible and will not be accepted by this seat.
+
+> The swarm runner does not dispatch a single sim until it emits, per dispatch, the cleanliness artifact in the journal: context hash + the mechanical check result.
+
+> The artifact's hash input is the effective context at the model boundary — prompt plus whatever the dispatch path attaches on the read side (`forgeTools.ts:1353-1362`) — never the composed prompt alone.
+
+> … deliberately inject a guidance block in a dry run and confirm the hash moves and the mechanical check trips. A cleanliness check that has never caught a planted leak is a claim, not a control.
+
+**Provenance of these quotes.** They were copied by hand from the issue-comment API output, not machine-compared. The grading seat's wording check on this file is the character-level verification; until it clears, treat the quotes as unconfirmed.
 
 ## A5. What "shown clean" means for a dispatch (detection method)
 
 The check must inspect the payload actually sent, not the payload the harness meant to send. Guidance is attached inside the dispatch call (`forgeTools.ts:1353-1362`), after any harness-level assembly. So per dispatch, record the exact `workflow_dispatch` inputs POSTed (task, context, profile, and every other input), plus their SHA-256. A dispatch is **clean iff** its `context` equals the canonical serialization of that row's `input` byte for byte, with no additional block, and the grade record carries that hash. Equality, not a heuristic scan for finding names. Any other dispatch voids the run (A1).
 
-## A6. Freeze mechanism (proposed; not yet built)
+## A6. Freeze mechanism (BUILT: PR #350, merged as `3b6167b`; this section is the original proposal)
 
 The freeze must be enforceable by the repo, not remembered. A tag alone is not a guard (tags can be moved or deleted), and a check on `main` cannot protect files that are only on an unmerged branch (these files are not on `main`). Proposed:
 1. The frozen files land on `main` through the normal owner/grading-seat merge.
 2. A manifest (`FROZEN.json`: path, SHA-256, frozen-at commit) plus a CI step that fails if any frozen path differs from the manifest hash **or** differs from the file at the frozen-at commit.
 3. The frozen-at commit SHA is pinned inside the workflow file, so changing the freeze is a visible diff to a protected path. An annotated tag is a convenience label, not the guard.
 4. Amendments live only in new files, as here.
-To be built and reviewed before the next freeze (the Researcher benchmark). It touches `.github/workflows`, so it goes as a draft PR.
+Built as `verify-frozen.py` + `FROZEN.json` + a pinned step in `build-gate.yml`; CI run 41274332427 showed the step green on the real files. Differences from this proposal: `c8d6cc5` turned out to be an ancestor of `main` (#349 landed as a merge commit), and the repository's ruleset settings are still unchecked by this lane.
 
 ## Record of a mistake
 
