@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "reject:not-a-record",
+ "rule": "Recordhood (validateIntakeRecord)",
+ "provenance": "Candidate lacks 'subject' and 'text' fields. 'ref' is missing, so it cannot be checked for resolution. The candidate does not meet the requirements of a record as per the validation rules."
+}
+```
