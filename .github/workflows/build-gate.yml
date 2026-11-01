@@ -19,6 +19,10 @@ jobs:
       - run: npm ci
       - name: Check for merge conflict markers
         run: npm run check:conflicts
+      # Frozen exams: any edit to a frozen file changes FROZEN.json's hash, so it also has to change this pin,
+      # which is a visible diff to a protected path. Grading separately requires `--origin` (the frozen_at commit).
+      - name: Check frozen exams are unchanged
+        run: python3 nexus-llm/eval/verify-frozen.py --manifest-sha256 a1c7254e1928fa41e2877ebdad98a370a3ea61f89fd8d8492d6e0c5afffb0a9e
       - name: Check embedded DeepSeek Python syntax
         run: npm run check:deepseek-workflow
       - name: Run test suite
