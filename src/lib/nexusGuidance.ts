@@ -16,6 +16,7 @@
 import { corpusRepository, recordRelevantToTask, type CorpusRecord } from './corpus'
 import { heuristicsForPrompt, loadDecisions, type HeuristicDecisions } from './nexusHeuristics'
 import { lessonsForPrompt, summarizeLearning } from './nexusLearning'
+import { CONVERGED_BY, hasQwenLineage } from './nexusConvergence'
 
 const MAX_GUIDANCE_CHARS = 1800
 const MAX_RECORD_CHARS = 420
@@ -75,11 +76,19 @@ export function nexusGuidanceForDeepSeek(task: string, deps: GuidanceDeps = {}):
     // The previous gate counted any two shared >=4-letter words, stopwords included, so almost
     // any record passed for almost any task and reached the model labelled task-relevant.
     .filter(record => recordRelevantToTask(task, record))
+    // A record that admitted itself by convergence and carries Qwen lineage (stored before the 2026-11-01 gate) never reaches
+    // a prompt: no one reviewed it, and it would hand Qwen its own unchecked claims back as knowledge.
+    .filter(record => !(record.metadata.admittedBy === CONVERGED_BY && hasQwenLineage(record)))
     .slice(0, 2)
-  const records = relevant.length
-    ? 'NEXUS APPROVED KNOWLEDGE relevant to this task (curated by the owner):\n' +
-      relevant.map(r => `- ${r.content.replace(/\s+/g, ' ').trim().slice(0, MAX_RECORD_CHARS)}`).join('\n')
-    : ''
+  // Labels say who vouched: only records the owner (or the owner's criteria) admitted are "curated by the owner";
+  // a record that converged on its own is labeled as exactly that.
+  const line = (r: CorpusRecord) => `- ${r.content.replace(/\s+/g, ' ').trim().slice(0, MAX_RECORD_CHARS)}`
+  const curated = relevant.filter(r => r.metadata.admittedBy !== CONVERGED_BY)
+  const converged = relevant.filter(r => r.metadata.admittedBy === CONVERGED_BY)
+  const records = [
+    curated.length ? 'NEXUS APPROVED KNOWLEDGE relevant to this task (curated by the owner):\n' + curated.map(line).join('\n') : '',
+    converged.length ? 'NEXUS LEARNED KNOWLEDGE relevant to this task (admitted automatically from evidence-backed answers; not reviewed by the owner):\n' + converged.map(line).join('\n') : '',
+  ].filter(Boolean).join('\n')
 
   const parts = [heuristics, lessons, records].filter(Boolean)
   if (!parts.length) return empty

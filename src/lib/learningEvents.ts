@@ -25,8 +25,10 @@ export type LearningChannel = 'chat' | 'voice' | 'tool' | 'shell'
 export type LearningOutcome = 'attempted' | 'completed' | 'verified' | 'blocked' | 'failed'
 export type LearningActor = 'user' | 'operator' | 'agent'
 
-export interface LearningEventInput {
-  channel: LearningChannel
+/** 'qwen' when an answer may carry Qwen's own text (nexusConvergence.answerLineage); 'none' when it cannot. */
+export type LearningLineage = 'qwen' | 'none'
+
+interface LearningEventBase {
   input: string
   result: string
   outcome: LearningOutcome
@@ -39,6 +41,22 @@ export interface LearningEventInput {
   /** The run that produced this event (a retry of a run shares its parent's id). */
   runId?: string
 }
+
+// Lineage lives in metadata only, never in `context`: the context is hashed into a record's identity, so the marker must
+// not turn an existing fact into a new record.
+
+/**
+ * A learning event. Chat and voice events are the ones that can converge into knowledge on their own (nexusConvergence),
+ * so they MUST state their lineage when written: forgetting it is a type error, not a silent self-admission (Route C,
+ * owner directive 2026-11-01). Tool and shell events never converge and may omit it. Stored records read lineage as
+ * optional metadata, because records written before this existed carry none.
+ */
+export type LearningEventInput =
+  | (LearningEventBase & { channel: 'chat' | 'voice'; lineage: LearningLineage })
+  | (LearningEventBase & { channel: 'tool' | 'shell'; lineage?: LearningLineage })
+
+/** Omit that keeps the chat/voice vs tool/shell distinction (the built-in Omit collapses a union). */
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
 /** The id for a run's learning events: a retry inherits its parent's id, so it never counts as an independent run. */
 export function learningRunId(parent?: string): string {
@@ -90,7 +108,7 @@ export function buildLearningEvent(event: LearningEventInput): CorpusInteraction
     model: event.model,
     source: `learning:${event.channel}`,
     // The run id stays out of `context`: that is hashed, and the same fact from two runs must stay one record (whose runs list grows).
-    metadata: { ...fields, ...(event.runId ? { run: event.runId } : {}), redacted_or_truncated: String(input.redacted || result.redacted), admission: 'unapproved' },
+    metadata: { ...fields, ...(event.runId ? { run: event.runId } : {}), ...(event.lineage === 'qwen' ? { lineage: 'qwen' } : {}), redacted_or_truncated: String(input.redacted || result.redacted), admission: 'unapproved' },
   }
 }
 

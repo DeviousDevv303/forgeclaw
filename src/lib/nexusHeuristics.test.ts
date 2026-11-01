@@ -7,7 +7,7 @@ import { VISITOR_SOURCE } from './nexusLearning'
 let n = 0
 function prompt(text: string, opts: { visitor?: boolean; actor?: 'user' | 'agent' } = {}): LearningCandidate {
   n += 1
-  const e = buildLearningEvent({ channel: 'chat', input: text, result: 'ok', outcome: 'completed', runtime: 'moonshot', model: 'kimi', actor: opts.actor ?? 'user' })
+  const e = buildLearningEvent({ channel: 'chat', input: text, result: 'ok', outcome: 'completed', runtime: 'moonshot', model: 'kimi', actor: opts.actor ?? 'user', lineage: 'none' })
   const metadata = opts.visitor ? { ...e.metadata!, channel: 'visitor', visitor: 'abc' } : e.metadata!
   return { id: `c${n}`, corpusId: 'nexus-local', source: opts.visitor ? VISITOR_SOURCE : e.source!, content: 'ok', timestamp: `2026-10-20T1${n % 10}:00:00Z`, version: n, recordType: 'learning_candidate', integrity: `i${n}`, admissionStatus: 'candidate', metadata, sourceInteractionId: `x${n}`, runtime: 'moonshot', model: 'kimi', input: e.input, context: e.context, generatedResult: 'ok' }
 }

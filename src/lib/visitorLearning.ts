@@ -63,7 +63,7 @@ export async function verifyVisitorRecords(records: unknown[], ownerKey: string)
 
 /** An unapproved NEXUS candidate for one verified visitor record. */
 export function visitorCandidate(r: VisitorRecord): CorpusInteractionInput {
-  const event = buildLearningEvent({ channel: 'chat', input: r.task, result: r.result, outcome: r.outcome, runtime: 'public-relay', model: r.model || 'public', actor: 'user', toolName: r.tool })
+  const event = buildLearningEvent({ channel: 'chat', input: r.task, result: r.result, outcome: r.outcome, runtime: 'public-relay', model: r.model || 'public', lineage: 'qwen', actor: 'user', toolName: r.tool })
   return {
     ...event,
     source: VISITOR_SOURCE,

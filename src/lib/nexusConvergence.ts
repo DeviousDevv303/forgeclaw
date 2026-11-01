@@ -62,8 +62,36 @@ export function convergencePhase(input: CorpusInteractionInput): Extract<NexusPh
   const outcome = field(input, 'outcome')
   if (input.source === PLAYBOOK_SOURCE) return outcome === 'completed' ? 'extension' : null
   const channel = field(input, 'channel')
-  if ((channel === 'chat' || channel === 'voice') && field(input, 'actor') === 'user' && outcome === 'verified') return 'first_principles'
+  if ((channel === 'chat' || channel === 'voice') && field(input, 'actor') === 'user' && outcome === 'verified') {
+    // Machines do not promote machines (owner, 2026-11-01): a successful evidence tool proves the tool ran, not that Qwen's
+    // claims are true, so an answer with Qwen lineage stays a candidate. The owner's approval (or CURATOR, once live) is its
+    // only way in. Answers from other providers backed by evidence still converge, as before.
+    return hasQwenLineage(input) ? null : 'first_principles'
+  }
   return null
+}
+
+/** Tools whose output is Qwen's own text (the Qwen/Qwen3-8B workflow). */
+export const QWEN_LINEAGE_TOOLS: ReadonlySet<string> = new Set(['deepseek_reason', 'ask_deepseek'])
+/** Provider ids that answer through the Qwen workflow (providerRouter.isDeepSeekProvider). */
+const QWEN_RUNTIMES: ReadonlySet<string> = new Set(['deepseek', 'corpus'])
+
+/** 'qwen' when a turn's answer may carry Qwen's own text: the Qwen provider answered, or a Qwen tool ran in the turn. */
+export function answerLineage(provider: string, results: ReadonlyArray<{ name: string }>): 'qwen' | 'none' {
+  return QWEN_RUNTIMES.has(provider) || results.some(result => QWEN_LINEAGE_TOOLS.has(result.name)) ? 'qwen' : 'none'
+}
+
+/**
+ * Whether a record (a new interaction, or one stored before the lineage marker existed) carries Qwen lineage: the explicit
+ * marker, a Qwen runtime, a DeepSeek/Qwen model id, or the deepseek learning source. Errs toward "yes": the cost of a false
+ * yes is that a record waits for the owner instead of admitting itself.
+ */
+export function hasQwenLineage(record: { source?: string; runtime?: string; model?: string; context?: string; metadata?: Record<string, string> }): boolean {
+  const metadata = record.metadata ?? {}
+  const marker = metadata.lineage ?? new RegExp('(?:^|; )lineage=([^;]+)').exec(record.context || '')?.[1]
+  const runtime = record.runtime ?? metadata.runtime ?? ''
+  const model = record.model ?? metadata.model ?? ''
+  return marker === 'qwen' || QWEN_RUNTIMES.has(runtime) || /deepseek|qwen/i.test(model) || (record.source ?? '').startsWith('deepseek:')
 }
 
 /** Before this date, chat answers given while the provider was "corpus" were admitted with no signature or review (a8276fa, removed by #61). */

@@ -24,7 +24,7 @@ class LimitedStorage {
 }
 
 const chat = (n: number, outcome: 'completed' | 'verified' = 'completed') =>
-  buildLearningEvent({ channel: 'chat', input: `question ${n}`, result: `answer ${n} ${'x'.repeat(1_500)}`, outcome, runtime: 'kimi', model: 'k2', actor: 'user', runId: `run-${n}` })
+  buildLearningEvent({ channel: 'chat', input: `question ${n}`, result: `answer ${n} ${'x'.repeat(1_500)}`, outcome, runtime: 'kimi', model: 'k2', actor: 'user', runId: `run-${n}`, lineage: 'none' })
 
 describe('when the browser\'s storage is full', () => {
   beforeEach(() => { vi.stubGlobal('localStorage', new LimitedStorage(40_000)) })
@@ -68,7 +68,7 @@ describe('tool and shell records stay small; chat answers keep their full bound'
     expect(shell.result.length).toBe(MAX_TOOL_RECORD_CHARS)
   })
   it('a chat answer keeps up to 4,000 characters', () => {
-    const answer = buildLearningEvent({ channel: 'chat', input: 'q', result: 'a'.repeat(5_000), outcome: 'completed', runtime: 'kimi', model: 'k2' })
+    const answer = buildLearningEvent({ channel: 'chat', input: 'q', result: 'a'.repeat(5_000), outcome: 'completed', runtime: 'kimi', model: 'k2', lineage: 'none' })
     expect(answer.result.length).toBe(4_000)
   })
   it('a failure still shows its cause in the first lines', () => {
