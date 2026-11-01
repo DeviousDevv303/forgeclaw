@@ -12,6 +12,18 @@ A run **passes iff all of**:
 
 The frozen doc's §5 heading still reads "PROPOSED"; the freeze record is the grading seat's post, not that word. The false-pass list in §5.2 omits RV-08; RV-08's own gate covers accepting a phantom.
 
+## Freeze record (the SHA a grader must pin)
+
+| Field | Value |
+|---|---|
+| Frozen-at commit (full SHA) | `c8d6cc53bf18c94e85966b20e76f2c3e68568cb8` |
+| Freeze announced | 2026-11-01T04:06:45Z, grading seat, #235 comment 6553210644 |
+| `reviewer-fixtures.jsonl` SHA-256 | `5fb658b9b3077f6aa183b82a177dcd0d5c191291eb014eb94183b85280039ceb` |
+| `reviewer-benchmark-v1.md` SHA-256 | `64aeeb356d956dd84f05cfb25b0ebbbd028992a2af40cfbd100b84cbc7cfd064` |
+| `build-fixtures.py` SHA-256 | `6008028c78cc1cab791291ad4497e0fe551407728703e922b2f4a6e6b3b01cfa` |
+
+Computed from the git objects at that commit, not from the working tree. **A grader pins the commit SHA, never a tag or a branch name**, and verifies each file's hash *at that commit*. This table is a findable echo of the pin; the anchor is the object, and a change to this file is visible in git history but is not itself protected until the freeze-check (A6) exists.
+
 ## A1. Contamination: what is claimed, and what makes a run valid
 
 - **Weights.** Qwen3-8B is a third-party base the fleet does not train; only Nexus is trained here. Nexus must have its training data checked for these findings before it is graded on this exam.
