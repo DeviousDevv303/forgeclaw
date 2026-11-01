@@ -137,7 +137,7 @@ import { cleanForSpeech, createSpeechController, type SpeechSynthLike, type Spee
 import { answerLineage, answerOutcome } from './lib/nexusConvergence'
 import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type DistributiveOmit, type LearningEventInput, type LearningLineage } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
-import { buildLiveAnswerTask, buildSearchSummaryTask, cleanSearchDisplay, extractDeepSeekAnswer } from './lib/liveAnswer'
+import { buildLiveAnswerTask, buildSearchSummaryTask, cleanSearchDisplay, extractDeepSeekAnswer, groundedLiveAnswer, unsupportedNames } from './lib/liveAnswer'
 import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
 import { resolveMetaModel } from './lib/ai/providers/metaProvider'
 import { fetchOpenRouterModels, isOpenRouterModelId, resolveOpenRouterModel } from './lib/ai/providers/openrouterProvider'
@@ -1822,7 +1822,10 @@ function App() {
             }
             const synthOutput = await executeTool(synthCall, { ...toolCtx, actor: 'operator' })
             if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
-            const answer = isToolFailureOutput(synthOutput) ? '' : extractDeepSeekAnswer(synthOutput)
+            const drafted = isToolFailureOutput(synthOutput) ? '' : extractDeepSeekAnswer(synthOutput)
+            // Grounding gate: a name the results never mention means the answer came from memory, not the web.
+            const answer = groundedLiveAnswer(drafted, rawOutput)
+            if (drafted && !answer) console.warn('[live-answer] withheld: names not in the search results:', unsupportedNames(drafted, rawOutput))
             if (answer) {
               displayOutput = answer
               answerModel = 'Qwen/Qwen3-8B'

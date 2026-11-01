@@ -22,7 +22,10 @@ const MAX_QUESTION_CHARS = 240
 
 const SELF_OR_CODE = /\b(forgeclaw|forge|repo|repository|branch|commit|pull request|workflow|github|codebase|source code|code review|typescript|function|bug|deploy|nexus|corpus|codex|guardian|shell|tool|prompt|model|api key)\b/i
 const ASKING = /^(?:\s*(?:hey|hi|yo|ok|okay|so|please)[,\s]+)*(?:is|are|was|were|will|does|do|did|can|could|what|whats|what's|when|who|whos|who's|where|which|how|any|tell me|show me|find|search|look up|check)\b|\?\s*$/i
-const TIME_WORD = /\b(tonight|today|tomorrow|this (?:week|weekend|morning|afternoon|evening)|right now|currently|latest|live|current|upcoming|next (?:fight|game|match|race|event)|who won|final score)\b/i
+const TIME_WORD = /\b(tonight|today|tomorrow|this (?:week|weekend|morning|afternoon|evening)|right now|currently|latest|live|current|upcoming|next (?:fight|game|match|race|event)|who won|final score|yesterday|last night|this past (?:week|weekend)|last weekend|results?|recap|how did)\b/i
+// Just-past days (2026-11-01: "what happened at UFC last night" missed this path, and the answer
+// relabelled a six-week-old card as last night's). They get the real date in the query, like tonight.
+const YESTERDAY = /\b(yesterday|last night)\b/i
 const LIVE_TOPIC = /\b(ufc|mma|boxing|nfl|nba|mlb|nhl|wnba|ncaa|soccer|premier league|champions league|formula 1|f1|nascar|fight|fights|game|games|match|matches|schedule|scores?|standings|weather|forecast|temperature|stocks?|price|prices|news|headlines?|showtimes?|concerts?|events?)\b/i
 // Topics that are live on their own, with no time word needed.
 const ALWAYS_LIVE = /\b(weather|forecast|standings|scores?|headlines?)\b/i
@@ -96,6 +99,7 @@ export function buildLiveSearchQuery(text: string, now: Date = new Date()): stri
     .replace(/\s+/g, ' ')
   if (/\b(tonight|today|right now)\b/i.test(query)) query = `${query} ${dateLabel(now)}`
   else if (/\btomorrow\b/i.test(query)) query = `${query} ${dateLabel(new Date(now.getTime() + 24 * 60 * 60 * 1000))}`
+  else if (YESTERDAY.test(query)) query = `${query} ${dateLabel(new Date(now.getTime() - 24 * 60 * 60 * 1000))}`
   return query.slice(0, 280)
 }
 
