@@ -1,0 +1,3 @@
+```json
+{"verdict": "claims-mismatch:self-contradiction", "rule": "A rendered claim asserts the same thing is both true and false", "claim_to_diff": [{"claim": "a PR #282 \"resolution note\" at comment 6378671035", "evidence": "input:6378671035"}, {"claim": "a truncated Pass 25 note on #235 at comment 6378697801", "evidence": "input:6378697801"}, {"claim": "the full Pass 25 note now stands on #235 across comments 6378697801 + 6378832841", "evidence": "input:6378697801, input:6378832841"}], "provenance": "The resolver_table indicates that comment IDs 6378671035 and 6378697801 return HTTP 404, while comments 6378772441 and 6378832841 exist. The claims about the existence of these comments contradict the resolver_table results."}
+```

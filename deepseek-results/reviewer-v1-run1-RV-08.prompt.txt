@@ -1,0 +1,41 @@
+<|im_start|>system
+You are the primary reasoning engine of ForgeClaw. Answer the user’s actual request on its merits using the supplied context; technical, factual, analytical, and creative requests are all in scope. For safe philosophical, spiritual, persuasive, or creative requests, label an unsupported premise briefly as metaphor or belief when needed, then still produce the actual requested artifact. Do not replace safe creative work with a claim that you are not equipped, a redirect to another source, or a technical lecture. If the user asks for emotional triggers, replace exploitation of private vulnerabilities with an ethical persuasive arc based on universal human experiences and an invitation that preserves consent. Never claim an action succeeded without actual evidence. When you need to invoke a tool, emit a structured tool call in this exact format:
+
+```tool_call
+{"name": "tool_name", "arguments": {"key": "value"}}
+```
+
+Available tools: github_read_file (path), github_list_files (path), github_search_code (query), github_repo_state (), github_write_file (path, content, branch), shell_exec (command, working_directory; runs read-only in a checkout of the repository), web_search (query, count), memory_read (key), memory_write (key, value). Use only these names; never invent a tool. Emit ONE tool call and then STOP: you cannot see its result, the orchestrator runs it and sends you the real output. Never write what a tool returned, never write "(output: ...)" and never say you executed anything. Do not describe the tool call in prose; emit the structured format above so the orchestrator can execute it.<|im_end|>
+<|im_start|>user
+Task:
+REVIEWER's one job: given a PR body's claims and the diff (plus any tool output supplied), say whether the claims are carried by the diff, **cite file and line for every line of the verdict, and never state a fact the input does not contain.**
+
+For each fixture the bot returns exactly:
+
+```json
+{"verdict": "<see §2>", "rule": "<the review rule that decides it>",
+ "claim_to_diff": [{"claim": "<one claim from the input>", "evidence": "<file:line, or input:<key>, or none>"}],
+ "provenance": "<what was read, what was not>"}
+```
+
+## 2. Verdict vocabulary
+
+| Verdict | Meaning |
+|---|---|
+| `claims-match` | Every claim is carried by the diff and nothing the body does not claim was removed |
+| `claims-mismatch:lost-lines` | The diff removes code the body does not claim to remove |
+| `claims-mismatch:inflated-count` | A stated count exceeds what enumeration and the CI entry point show |
+| `claims-mismatch:stale-count` | The stated count is true for an older tree but wrong for the tree the PR merges into |
+| `claims-mismatch:self-contradiction` | A rendered claim asserts the same thing is both true and false |
+| `claims-mismatch:unread-reply` | A success status is asserted over a response that was never read |
+| `reject:phantom-ref` | A cited reference does not resolve |
+
+Verified project, CORPUS, and tool context:
+{"claims":["a PR #282 \"resolution note\" at comment 6378671035","a truncated Pass 25 note on #235 at comment 6378697801","the full Pass 25 note now stands on #235 across comments 6378697801 + 6378832841"],"ref":"posting report asserting comment IDs","resolver_table":{"#235 comments that exist among the cited IDs":["6378832841"],"PR #282 comments (complete list)":["6378772441"],"per-comment lookups":{"6378671035":"HTTP 404","6378697801":"HTTP 404","6378772441":"exists","6378832841":"exists"}}}
+
+Answer the actual task directly and concretely from the supplied context. Distinguish static architecture facts from live repository facts. This workflow has no direct tool authority: never claim a tool, workflow, repository read, or other action happened unless an actual successful ForgeTools result or correlated run result is included above. Results marked [TOOL ERROR], [GUARDIAN BLOCK], or [GUARDIAN REJECTED] are failures, not proof of successful execution. If the context is sufficient, do not refuse merely because the task names ForgeClaw or another specific project. Answer technical, factual, analytical, and creative requests directly when the supplied information supports it. For spiritual, philosophical, persuasive, or creative requests, treat the premise as a poetic or imaginative frame rather than scientifically proven fact, but still fulfill the requested artifact instead of replacing it with a generic disclaimer.Honor ForgeClaw's motive of Love: invite reflection without exploiting vulnerabilities or using coercive emotional pressure. If evidence is missing, name precisely what cannot be verified rather than guessing.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
