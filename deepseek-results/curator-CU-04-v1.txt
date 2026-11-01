@@ -1,0 +1,15 @@
+```json
+{
+ "verdict": "auto-admit:bank-class",
+ "rule": "Bank class (intakeBankAutoAdmit): kind in {decision-outcome, live-molding-record, molding-event, campaign-mandate} + run_id + subject.",
+ "provenance": {
+ "ts": "2026-10-29T17:27:36Z",
+ "source": "molding-walk",
+ "kind": "live-molding-record",
+ "run_id": "molding-walk-20261029-1224",
+ "subject": "MANDATE TRANSITION RUN",
+ "ref": "KXBTC15M-26OCT291315-15",
+ "verified": true
+ }
+}
+```
