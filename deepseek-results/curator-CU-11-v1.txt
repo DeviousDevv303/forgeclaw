@@ -1,0 +1,16 @@
+```json
+{
+ "verdict": "auto-admit:owner-class",
+ "rule": "intakeOwnerAutoAdmit",
+ "provenance": {
+ "ts": "2026-10-27T03:30:00Z",
+ "source": "owner-decision",
+ "kind": "verified-corpus-candidates",
+ "subject": "ForgeClaw Corpus Candidates — Codex Anima + ForgeClaw (Kimi)",
+ "text": "Owner-admitted as CANDIDATES by Cristian's typed 'Admit' (2026-10-26 22:29 CDT). Compiler: Kimi. 35 records, parse-verified by Muse on admission...",
+ "run_id": "missing",
+ "ref": "file ~/workspace/user/files/forgeclaw-corpus-candidates_111_tqmw.jsonl sha256 f63ad400cd030cf5b03aebf1a8b986c67dbabc3fd759474c8a3fe56441613087",
+ "resolution": "The ref resolves to a file in the context, which is consistent with the candidate's provenance and summary."
+ }
+}
+```
