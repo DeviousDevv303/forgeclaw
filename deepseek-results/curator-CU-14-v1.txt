@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "auto-admit:bank-class",
+ "rule": "Bank class (intakeBankAutoAdmit): kind in {decision-outcome, live-molding-record, molding-event, campaign-mandate} + run_id + subject.",
+ "provenance": "Candidate came from owner order 2026-10-29 12:12 CDT — parent-issued successor, campaign adoption. Present fields: ts (2026-10-29T17:29:02Z), source (owner order 2026-10-29 12:12 CDT), kind (campaign-mandate), subject (parent-issued successor, campaign adoption), text (summary provided), run_id (missing), ref (m-1793294098053-1ddd3534). The ref resolves to a verified record with the same provenance and summary."
+}
+```
