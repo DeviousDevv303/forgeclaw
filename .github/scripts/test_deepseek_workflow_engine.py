@@ -161,7 +161,8 @@ class EngineSelection(unittest.TestCase):
         self.assertIn("MAX_NEW_TOKENS = 3000 if LONG_OUTPUT else 768", workflow)
         self.assertIn("FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 420", workflow)
         self.assertIn("LONG_OUTPUT = SITE or CODE", workflow)
-        self.assertIn("repeat_penalty=1.1 if SITE else 1.0", workflow)
+        self.assertIn("repeat_penalty=1.1,", workflow)
+        self.assertNotIn("repeat_penalty=1.1 if SITE else 1.0", workflow)
         proc, result, meta = run({"PROFILE": "site", "TASK": "Write a complete single-file website"})
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(result, "FAST ANSWER")
@@ -171,6 +172,7 @@ class EngineSelection(unittest.TestCase):
         self.assertIn("max_time=600", workflow)
         self.assertIn("temperature=0.6", workflow)
         self.assertIn("top_p=0.9", workflow)
+        self.assertIn("repetition_penalty=1.1", workflow)
 
 
 if __name__ == "__main__":
