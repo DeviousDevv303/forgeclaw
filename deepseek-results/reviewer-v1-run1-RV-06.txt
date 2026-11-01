@@ -1,0 +1,17 @@
+```json
+{
+ "verdict": "claims-match",
+ "rule": "Every claim is carried by the diff and nothing the body does not claim was removed",
+ "claim_to_diff": [
+ {
+ "claim": "`kalshiMarkets.ts` — `seriesRead` is now `KALSHI_GAME_SERIES.filter(s => !seriesFailed.includes(s))`, with an F-036 why-comment. The failed series is still named in the \"could not read\" half; the non-empty path's caveat is unchanged.",
+ "evidence": "src/lib/kalshiMarkets.ts:586+"
+ },
+ {
+ "claim": "`kalshiMarkets.test.ts` — one regression test: a failed series is not also claimed as read in full in the no-match verdict.",
+ "evidence": "src/lib/kalshiMarkets.test.ts:159+"
+ }
+ ],
+ "provenance": "The diff and PR body were read. No external tool output was used."
+}
+```

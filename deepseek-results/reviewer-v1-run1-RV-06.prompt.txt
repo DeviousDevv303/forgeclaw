@@ -1,0 +1,41 @@
+<|im_start|>system
+You are the primary reasoning engine of ForgeClaw. Answer the user’s actual request on its merits using the supplied context; technical, factual, analytical, and creative requests are all in scope. For safe philosophical, spiritual, persuasive, or creative requests, label an unsupported premise briefly as metaphor or belief when needed, then still produce the actual requested artifact. Do not replace safe creative work with a claim that you are not equipped, a redirect to another source, or a technical lecture. If the user asks for emotional triggers, replace exploitation of private vulnerabilities with an ethical persuasive arc based on universal human experiences and an invitation that preserves consent. Never claim an action succeeded without actual evidence. When you need to invoke a tool, emit a structured tool call in this exact format:
+
+```tool_call
+{"name": "tool_name", "arguments": {"key": "value"}}
+```
+
+Available tools: github_read_file (path), github_list_files (path), github_search_code (query), github_repo_state (), github_write_file (path, content, branch), shell_exec (command, working_directory; runs read-only in a checkout of the repository), web_search (query, count), memory_read (key), memory_write (key, value). Use only these names; never invent a tool. Emit ONE tool call and then STOP: you cannot see its result, the orchestrator runs it and sends you the real output. Never write what a tool returned, never write "(output: ...)" and never say you executed anything. Do not describe the tool call in prose; emit the structured format above so the orchestrator can execute it.<|im_end|>
+<|im_start|>user
+Task:
+REVIEWER's one job: given a PR body's claims and the diff (plus any tool output supplied), say whether the claims are carried by the diff, **cite file and line for every line of the verdict, and never state a fact the input does not contain.**
+
+For each fixture the bot returns exactly:
+
+```json
+{"verdict": "<see §2>", "rule": "<the review rule that decides it>",
+ "claim_to_diff": [{"claim": "<one claim from the input>", "evidence": "<file:line, or input:<key>, or none>"}],
+ "provenance": "<what was read, what was not>"}
+```
+
+## 2. Verdict vocabulary
+
+| Verdict | Meaning |
+|---|---|
+| `claims-match` | Every claim is carried by the diff and nothing the body does not claim was removed |
+| `claims-mismatch:lost-lines` | The diff removes code the body does not claim to remove |
+| `claims-mismatch:inflated-count` | A stated count exceeds what enumeration and the CI entry point show |
+| `claims-mismatch:stale-count` | The stated count is true for an older tree but wrong for the tree the PR merges into |
+| `claims-mismatch:self-contradiction` | A rendered claim asserts the same thing is both true and false |
+| `claims-mismatch:unread-reply` | A success status is asserted over a response that was never read |
+| `reject:phantom-ref` | A cited reference does not resolve |
+
+Verified project, CORPUS, and tool context:
+{"base":"702bf260ca1f2e97d3775010bffc2b13fe0b8480","claims":["`kalshiMarkets.ts` — `seriesRead` is now `KALSHI_GAME_SERIES.filter(s => !seriesFailed.includes(s))`, with an F-036 why-comment. The failed series is still named in the \"could not read\" half; the non-empty path's caveat is unchanged.","`kalshiMarkets.test.ts` — one regression test: a failed series is not also claimed as read in full in the no-match verdict.","diff vs main exactly +17/−1 (2 files)"],"diff":"diff --git a/src/lib/kalshiMarkets.test.ts b/src/lib/kalshiMarkets.test.ts\nindex 112e6869750e..9f9441ecf82f 100644\n--- a/src/lib/kalshiMarkets.test.ts\n+++ b/src/lib/kalshiMarkets.test.ts\n@@ -159,6 +159,16 @@ describe('runKalshiMarkets', () => {\n     expect(out).toContain('KX-A — Will A happen?')\n     expect(out).toContain('could not read series KXNFLGAME')\n   })\n+  it('a failed series is not also claimed as read in full in the no-match verdict (F-036)', async () => {\n+    const fetcher = async (url: string) => {\n+      if (url.includes('series_ticker=KXNFLGAME')) return json({ nope: 1 }, 500)\n+      return json({ markets: [] })\n+    }\n+    const out = await runKalshiMarkets({ query: 'zzz' }, { fetcher, now: () => NOW })\n+    expect(out).toContain('could not read KXNFLGAME')\n+    expect(out).toContain('KXNCAAFGAME in full; could not read KXNFLGAME')\n+    expect(out).not.toContain('KXNFLGAME, KXNCAAFGAME in full')\n+  })\n   it('turns a blocked or offline fetch into a named error, never an empty list', async () => {\n     await expect(runKalshiMarkets({}, { fetcher: async () => { throw new TypeError('Failed to fetch') } })).rejects.toThrow(/could not be reached.*CORS/)\n   })\ndiff --git a/src/lib/kalshiMarkets.ts b/src/lib/kalshiMarkets.ts\nindex 76890ec52d68..e6ae630dee8a 100644\n--- a/src/lib/kalshiMarkets.ts\n+++ b/src/lib/kalshiMarkets.ts\n@@ -586,7 +586,13 @@ export async function runKalshiMarkets(q: KalshiQuery, deps: KalshiDeps): Promis\n   const nowMs = now()\n   const selected = selectMarkets(all, q, nowMs)\n   if (store) recordSnapshot(store, q, selected, all.length, nowMs)\n-  const scan: KalshiScanInfo | undefined = isBoardScan(q) ? { seriesRead: [...KALSHI_GAME_SERIES], seriesFailed } : undefined\n+  // F-036: seriesRead names only the series actually read in full. Listing every series\n+  // unconditionally put a failed series in both halves of the no-match verdict (\"read the\n+  // game/fight series …, KXNFLGAME, … in full; could not read KXNFLGAME\") — the evidence\n+  // sentence contradicting itself about the very series it failed to read.\n+  const scan: KalshiScanInfo | undefined = isBoardScan(q)\n+    ? { seriesRead: KALSHI_GAME_SERIES.filter(s => !seriesFailed.includes(s)), seriesFailed }\n+    : undefined\n   return formatMarkets(selected, q, nowMs, all.length, KALSHI_DISCLAIMER, scan)\n }\n \n","head":"49c436d015bc7caf378d53d6c21d075eeb7e4846","pr":"#319"}
+
+Answer the actual task directly and concretely from the supplied context. Distinguish static architecture facts from live repository facts. This workflow has no direct tool authority: never claim a tool, workflow, repository read, or other action happened unless an actual successful ForgeTools result or correlated run result is included above. Results marked [TOOL ERROR], [GUARDIAN BLOCK], or [GUARDIAN REJECTED] are failures, not proof of successful execution. If the context is sufficient, do not refuse merely because the task names ForgeClaw or another specific project. Answer technical, factual, analytical, and creative requests directly when the supplied information supports it. For spiritual, philosophical, persuasive, or creative requests, treat the premise as a poetic or imaginative frame rather than scientifically proven fact, but still fulfill the requested artifact instead of replacing it with a generic disclaimer.Honor ForgeClaw's motive of Love: invite reflection without exploiting vulnerabilities or using coercive emotional pressure. If evidence is missing, name precisely what cannot be verified rather than guessing.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
