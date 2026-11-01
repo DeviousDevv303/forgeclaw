@@ -55,6 +55,9 @@ class Llama:
     def __init__(self, **kw): pass
     def tokenize(self, b, add_bos=True): return list(range(len(b) // 4))
     def create_completion(self, prompt, **kw):
+        import json as _json
+        with open('stub_calls.jsonl', 'a') as _f:
+            _f.write(_json.dumps({'seed': kw.get('seed'), 'repeat_penalty': kw.get('repeat_penalty')}) + '\\n')
         if os.environ.get('STUB_FAST_BOOM'):
             raise RuntimeError('boom mid-generation')
         if os.environ.get('STUB_EMPTY_PRIMARY'):
@@ -317,6 +320,30 @@ class ExamWiring(unittest.TestCase):
         self.assertEqual(m["workflow_commit"], sha40)
         _, other, _ = exam_run()
         self.assertEqual(other["workflow_commit"], "unknown")  # honest when the runner variable is absent
+
+    def test_the_sampling_seed_comes_from_the_invocation_id(self):
+        sys.path.insert(0, str(HERE))
+        import deepseek_gguf as g
+        def go(iid):
+            proc, result, meta, files = run_with_files({"INVOCATION_ID": iid}, names=("stub_calls.jsonl",))
+            calls = [json.loads(line) for line in files["stub_calls.jsonl"].splitlines()]
+            return meta_dict(meta), calls, result
+        m1, c1, r1 = go("deepseek-1793488693195-vhkzhi")
+        m2, c2, r2 = go("deepseek-1793488693195-vhkzhi")
+        m3, c3, _ = go("deepseek-1793488693196-aaaaaa")
+        expected = g.sampling_seed("deepseek-1793488693195-vhkzhi")
+        self.assertEqual(m1["sampling_seed"], str(expected))
+        self.assertEqual([c["seed"] for c in c1], [expected])  # the engine is actually called with it, not just recorded
+        self.assertEqual(m1["sampling_seed_applied"], "true")
+        self.assertEqual((m1["sampling_seed"], r1), (m2["sampling_seed"], r2))  # same id, same seed
+        self.assertNotEqual(m1["sampling_seed"], m3["sampling_seed"])  # different id, different seed
+        self.assertEqual(c3[0]["seed"], g.sampling_seed("deepseek-1793488693196-aaaaaa"))
+
+    def test_the_slow_fallback_says_its_answer_was_not_seeded(self):
+        _, _, meta, _ = run_with_files({}, drop_stubs=("llama_cpp.py",))
+        m = meta_dict(meta)
+        self.assertRegex(m["sampling_seed"], r"^\d+$")
+        self.assertEqual(m["sampling_seed_applied"], "false")
 
     def test_the_slow_fallback_labels_its_hash_basis_honestly(self):
         proc, result, meta, files = run_with_files({"EXAM_FORBIDDEN": denylist("grading_key")}, drop_stubs=("llama_cpp.py",))

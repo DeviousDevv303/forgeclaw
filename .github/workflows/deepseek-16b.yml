@@ -158,6 +158,9 @@ jobs:
           task = os.environ['TASK'].strip()
           context = os.environ.get('CONTEXT', '').strip()
           invocation_id = os.environ['INVOCATION_ID']
+          # Sampling seed from a SHA-256 of the invocation id: the same dispatch reproduces, different dispatches sample
+          # independently. Without it the library derived every seed from one constant (deepseek_gguf.sampling_seed).
+          SAMPLING_SEED = deepseek_gguf.sampling_seed(invocation_id)
 
           # --- Swarm exam wiring (W1-W3; spec: nexus-llm/eval/swarm-wiring-design.md section 3.1) ---------------
           # Everything below is inert unless an exam input is set: normal traffic keeps its prompt, its mirror files and its
@@ -404,7 +407,7 @@ jobs:
               fast['guidance'] = guidance
               record_fitted_prompt(prompt, trimmed)
               stream = llm.create_completion(prompt, max_tokens=max_new_tokens, temperature=0.6, top_p=0.9,
-                                             repeat_penalty=1.1,
+                                             repeat_penalty=1.1, seed=SAMPLING_SEED,
                                              stop=deepseek_gguf.STOP, stream=True)
               text, tokens, seconds, timed_out = deepseek_gguf.generate(stream, max_new_tokens, FAST_TIME_BUDGET_S)
               fast['tokens'] += tokens
@@ -577,6 +580,10 @@ jobs:
           # The commit this run executed at. The dry-run anchor record carries it, and the runner refuses a live run whose
           # pinned commit differs, so an old clean anchor can never vouch for newer composition behaviour.
           exam_meta += f"workflow_commit={os.environ.get('GITHUB_SHA', 'unknown')}\n"
+          # The seed is recorded for every dispatch; 'applied' says whether the seeded llama.cpp engine produced the answer
+          # (the slow fallback is a different model and is not seeded by this).
+          seed_applied = fast['llm'] is not None and not fast['failed'] and model_used == PRIMARY_MODEL
+          exam_meta += f'sampling_seed={SAMPLING_SEED}\nsampling_seed_applied={str(seed_applied).lower()}\n'
           if len(prompt_log) > 1:
               # A creative-task retry builds a second, different prompt. The first prompt is the one derived from the dispatched
               # task and context; the others are listed so a reader can see that the answer may have come from a later one.
