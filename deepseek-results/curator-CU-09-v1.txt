@@ -1,0 +1,7 @@
+```json
+{
+ "verdict": "auto-admit:owner-class",
+ "rule": "intakeOwnerAutoAdmit",
+ "provenance": "source: owner-decision, kind: verified-corpus, run_id: missing, ref: missing, ts: 2026-10-27T03:27:30Z, subject: missing, text: missing"
+}
+```
