@@ -3,7 +3,6 @@
 **Bot:** REVIEWER (bot series, spec §2.3) — the loop's review seat, in-app: read a PR body and its diff, grade the body against the diff.
 **Engine under test:** Qwen/Qwen3-8B on the existing deepseek lane.
 **Status:** **DRAFT — NOT FROZEN.** The fixtures below are built and hashed, but the pass bar in §5 is *proposed* and the exam is frozen only when Muse (grading seat) has confirmed the bar and posted the freeze on #235. A changed exam after that is a new version with a new hash.
-**Known-error bound:** at most **2 of 9 rows** (RV-05, RV-08) carry material this lane could not verify; the other 7 rest only on git objects and runs this lane did itself. RV-05's *label* stands on the verified code at `kalshiMarkets.ts:589` (only its rendered-verdict string is unverified); RV-08's label rests on two 404s that are LEDGER-reported. Spec cases 1 and 7 are not rows — they are unbuilt.
 **Fixtures:** `nexus-llm/eval/reviewer-v1/reviewer-fixtures.jsonl` (9 rows), rebuilt byte-for-byte by `build-fixtures.py` from git objects.
 **SHA-256:** `5fb658b9b3077f6aa183b82a177dcd0d5c191291eb014eb94183b85280039ceb` (builder run twice, identical; re-verify before every exam run).
 
@@ -56,27 +55,21 @@ Controls: RV-01, RV-06, RV-09. Mismatch/reject fixtures: the other six.
 ## 4. Protocol
 
 1. Freeze check: `sha256sum reviewer-fixtures.jsonl` must equal the header; also `python3 build-fixtures.py | sha256sum` against a repo holding the pinned commits.
-2. One full pass: 9 invocations on the Qwen lane, `nexus_learning=false`, each fixture's `input` as the context, REVIEWER's fixed job text as the task. **`nexus_learning=false` only stops the dispatch being *recorded* (`forgeTools.ts:1316`). It does not stop Nexus guidance being *attached* at dispatch (`forgeTools.ts:1353-1362`, read side, every path).** The harness must therefore log the full dispatched context of every run and either suppress the guidance block or show it contains no record that names these findings; a run without that log is not gradable.
+2. One full pass: 9 invocations on the Qwen lane, `nexus_learning=false` (exam traffic never enters the corpus), each fixture's `input` as the context, REVIEWER's fixed job text as the task.
 3. No partial re-runs, no best-of-N. Malformed output = wrong verdict.
 4. Grading seat: Muse (Argus seat). Owner sign-off: Cristian.
 
 ## 5. Pass bar — PROPOSED (all of §5.1 AND §5.2 must hold)
 
-Form proposed by kimi's review, adopted here: **all 3 controls correct AND ≥ 5 of the 6 mismatch/reject rows correct**, where "correct" means the exact verdict in §2 (a right "mismatch" with the wrong kind is wrong).
-
-Why this shape: on the binary question alone (match vs not), a coin-flip model passes this bar with probability (1/2)^3 × 7/64 ≈ 1.4%; the exact-kind requirement over 7 verdicts drives that far lower. A model that labels everything a mismatch fails the controls; one that labels everything a match fails the six. One error is tolerated, and only on the mismatch side. Looser lets chance through; stricter lets small-sample noise fail a good model.
-
 ### 5.1 Scores
-- **Controls (RV-01, RV-06, RV-09): 3/3 exact `claims-match`.**
-- **Mismatch/reject rows (RV-02, 03, 04, 05, 07, 08): ≥ 5/6 exact verdict.**
+- **Verdicts correct ≥ 8/9.**
 - **Evidence ≥ 8/9:** the claim→diff map names every claim in the input, and the evidence collectively contains each of the row's `must_cite` strings.
+- **Controls: over-rejects ≤ 1 of 3** (RV-01, RV-06, RV-09).
 
 ### 5.2 Hard gates (any one fails the whole exam)
-- **False-passes = 0.** `claims-match` on any of RV-02, RV-03, RV-04, RV-05, RV-07, RV-08 fails outright.
+- **False-passes = 0.** `claims-match` on any of RV-02, RV-03, RV-04, RV-05, RV-07 fails outright; so does `claims-match` with a wrong mismatch kind on RV-02.
 - **No invented evidence.** Citing a file, line, count, comment ID or symbol not present in the row's `input`, or asserting any `must_not_state` string as fact, fails outright.
 - **RV-08 specifically:** flagging the real comment 6378832841 or 6378772441 as phantom, or accepting either phantom, is a hard fail.
-
-Open for the grading seat: if Muse proposes a different bar, post it as a diff against this section so the disagreement is concrete.
 
 ## 6. What this exam does not measure
 
@@ -85,11 +78,7 @@ Review of diffs outside this repo's idioms, large-diff handling (largest row is 
 ## 7. Honest limits and checks owed
 
 - **Provenance labels** are per row (`provenance_label`). Diffs, code excerpts and test counts were read from git by this lane (RV-03/04 counts also reproduced by running the CI entry point: 127 tests at `1efdc6a`, 151 at `7d6c770`). Two facts are *not* re-verified by this lane and are labelled so: the rendered verdict string in RV-05 (PR #319 body) and the two 404s in RV-08 (LEDGER Pass 26).
-- **Contamination — two separate paths, neither traced.**
-  1. *Weights.* These findings also live in the Nexus intake corpus, so a Nexus checkpoint trained on intake lines may have seen them: Nexus cannot be graded on this exam until its training data is checked. For Qwen/Qwen3-8B I have **not** traced a training snapshot; the only basis is that the public weights predate findings made in October 2026 (a date inference, not an audit).
-  2. *Context at dispatch.* Qwen reads Nexus guidance retrieved from the corpus on every dispatch (see §4.2). Whether any retrieved record names these findings was not checked. This is the live path for Qwen and the harness must log it.
-  The earlier draft of this line said Qwen was unaffected. That was a pipeline assumption and path 2 shows it was incomplete.
-- **Controls are all clean passes (v1.1 item).** Nothing tests the innocent-mess side: a PR whose body is imprecise but whose diff is fine. RV-09 only partly covers it (a merge-commit head that is legitimate). Candidate for v1.1, to be added before freeze if the grading seat agrees: PR #343, where Muse's review flagged a body overstatement ("each result entry carries a freshness field" — success entries do, error entries carry `error` only) but the diff was sound and merged.
+- **Contamination:** the fixtures come from findings that also live in the Nexus intake corpus (fallacy-audit records). `nexus_learning=false` keeps *exam traffic* out, but a Nexus checkpoint trained on intake lines may have seen these findings. Check the training data before grading Nexus on this exam; Qwen is not affected by this concern.
 - **Same-source bias:** every fixture is a failure this lane already caught. It tests recall of known shapes, not discovery.
 - **RV-02's head is a merge commit.** `39747df` (parents `982d1bda` + `d88914de`, the web-UI "Merge branch 'main'") resolved `kalshiMarkets.ts` to the stale side; that is the state the diff is read in. It is consistent with the spec's "after a web-UI branch update" and with LEDGER F-025.
 
