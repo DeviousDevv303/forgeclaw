@@ -1,0 +1,13 @@
+```json
+{
+ "verdict": "claims-match",
+ "rule": "Every claim is carried by the diff and nothing the body does not claim was removed",
+ "claim_to_diff": [
+ {
+ "claim": "Verified offline (200+ Python tests, run in CI by `src/scripts/mirofishRunner.test.ts`): the metering proxy, the world builder",
+ "evidence": "ci_entry_point_output"
+ }
+ ],
+ "provenance": "Read ci_entry_point_output from the context and verified that it aligns with the claim about the verification of the metering proxy and the world builder."
+}
+```
