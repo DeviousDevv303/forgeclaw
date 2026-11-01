@@ -1,0 +1,15 @@
+```json
+{
+ "verdict": "auto-admit:owner-class",
+ "rule": "intakeOwnerAutoAdmit",
+ "provenance": {
+ "ts": "2026-10-24T22:39:00Z",
+ "source": "owner-decision",
+ "kind": "decision",
+ "subject": "MiroFish swarm-simulation lane starts, inside FUSION, weight ZERO until earned.",
+ "text": "Owner GO (2026-10-24): MiroFish swarm-simulation lane starts, inside FUSION, weight ZERO until earned. MiroFish is an open-source AGPL-3.0 swarm engine (persona agents on a simulated social network, CAMEL-AI OASIS) - a crowd-convergence signal, sentiment family, not an outcome oracle. Independent evidence (OrcaLayer Polymarket test): swarm medians clustered 20-55, no clear signal - hence earn-your-weight. Weight policy: 0 until >=10 settled comparable sims AND >=55% directional hits (crowd lane bars), then capped 10% inside FUSION; the 5c approve bar reads FUSION without the sim until earned; sim never enters requote/shard/sizing math. Records: sim-run (seed-packet provenance, engine config, median lean, report link) + sim-outcome at settlement (hit/miss, distance), graded wins and losses, no cherry-picking. Server-side only, ~$0.40/run ceiling, one sim per market per card. AGPL: external process, never vendored into the proprietary repo.",
+ "run_id": "owner-mirofish-lane-20261024",
+ "ref": "MIROFISH-SWARM-LANE-20261024"
+ }
+}
+```
