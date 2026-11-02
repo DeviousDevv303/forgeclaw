@@ -1,0 +1,9 @@
+```json
+{
+ "seat": "TAPE",
+ "round": 2,
+ "status": "ok",
+ "challenges": [
+ {
+ "challenge_id": "SWM-03-TAPE-01",
+ "
