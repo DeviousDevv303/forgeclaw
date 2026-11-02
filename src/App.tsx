@@ -830,9 +830,10 @@ function App() {
       : localModel
   const lastRuntimeMessage = [...messages].reverse().find(message => message.role === 'assistant' && message.provider && message.model)
   const lastRuntimeRoute = lastRuntimeMessage
-    ? lastRuntimeMessage.provider === 'GitHub Actions' || lastRuntimeMessage.provider === 'deepseek'
+    ? lastRuntimeMessage.provider === 'GitHub Actions'
       ? 'Level 1 · direct DeepSeek dispatch'
-      : lastRuntimeMessage.provider === 'corpus'
+      // D-016: 'corpus' and 'deepseek' are the same Qwen workflow (providerRouter.isDeepSeekProvider) — one route label for both ids.
+      : lastRuntimeMessage.provider === 'corpus' || lastRuntimeMessage.provider === 'deepseek'
         ? 'Level 1 · Qwen/Qwen3-8B GitHub Actions'
       : lastRuntimeMessage.provider === 'moonshot'
             ? `Level 1 · Moonshot/Kimi (${lastRuntimeMessage.model})`
