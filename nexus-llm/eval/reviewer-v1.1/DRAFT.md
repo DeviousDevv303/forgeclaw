@@ -30,3 +30,10 @@ RV-11 extends `checkRefs`: every `Reviewed-by: X` must resolve to a submitted re
 
 ## Not done yet
 The builder (`build-fixtures.py`, from git and API objects), the row inputs, and their hashes. They are built once the grading seat accepts this row set.
+
+## Update 2026-11-03 (builder lane, after the grading seat's ruling on #235 6591250897)
+- Ruling applied: row set accepted; **2 controls added** (6 controls, 14 rows). The controls are RV-13 (PR #356, base `4382e09f`, head `f2a5b61a`) and RV-14 (PR #359, base `155453eb`, head `b4aefcec`). Both are third-party claim-to-diff controls whose claim sets I read against the full diff. Gate-evidence claims in the bodies and #359's "callers need no change" claim are excluded because a diff cannot carry them.
+- Built: `build-new-rows.py` (git objects only, deterministic, asserts on every pinned fact) and its output `reviewer-new-rows.jsonl`. RV-01..RV-09 are still to be carried over from frozen v1 with the accepted `must_cite` repair; that concat step is not done.
+- Limitation on the controls: all six are claim-to-diff or near-miss. None exercises the test-count or refs *pass* path.
+- Existing PR #357 checks on the new rows: RV-12, RV-13 and RV-14 raise no flag (lost-lines passes). RV-10 and RV-11 are all `skip`, so they are not caught by code yet. RV-10 needs a mechanism-presence check, and RV-11 needs the `Reviewed-by` attestation check. Neither is built.
+- Correction: an earlier commit on this branch (`dfaf4a57`) contains an empty `reviewer-new-rows.jsonl` and the builder before its cwd fix. The next commit supersedes both.

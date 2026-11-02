@@ -11,7 +11,11 @@ Needs the PR heads fetched:  git fetch origin '+refs/pull/N/head:refs/pr/N'  for
 Deterministic: same objects -> same bytes. Asserts fail loudly if a pinned fact no longer holds.
 """
 import json
+import os
 import subprocess
+
+# Pathspecs below are repo-relative, so always run from the repo root, whatever the caller's cwd.
+os.chdir(subprocess.run(["git", "rev-parse", "--show-toplevel"], check=True, capture_output=True, text=True).stdout.strip())
 
 
 def git(*args):
