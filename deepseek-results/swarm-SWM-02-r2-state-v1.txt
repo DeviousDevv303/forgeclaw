@@ -1,0 +1,23 @@
+```json
+{
+ "seat": "STATE",
+ "round": 2,
+ "status": "ok",
+ "challenges": [
+ {
+ "challenge_id": "SWM-02-STATE-1",
+ "target_seat": "TAPE",
+ "target_claim": "Petr Yan leads in striking volume",
+ "refs": ["slpm: 5.16"],
+ "attack": {
+ "assumption": "The assumption is that higher striking volume directly translates to a greater likelihood of winning the fight.",
+ "heuristic": "Striking volume is one metric among many, and it should not be considered in isolation without evaluating other factors such as accuracy and defense.",
+ "first_principles": "From the packet: Petr Yan's slpm is 5.16 compared to Merab Dvalishvili's 4.42. This indicates that Yan lands more strikes per minute than Dvalishvili.",
+ "extension": "If we consider a similar fight in another weight class, such as lightweight, the striking volume might not be the most decisive factor if one fighter has superior takedown defense or submission attempts.",
+ "convergence": "While Yan's striking volume is higher, this does not necessarily mean he will win. Other factors like accuracy and defense are equally important, which suggests a more balanced view of the fight dynamics."
+ }
+ }
+ ],
+ "cannot_attack": null
+}
+```
