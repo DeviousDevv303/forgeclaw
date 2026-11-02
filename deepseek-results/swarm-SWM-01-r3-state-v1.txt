@@ -1,0 +1,23 @@
+```json
+{
+ "seat": "STATE",
+ "round": 3,
+ "status": "ok",
+ "distribution": {
+ "A": 0.5,
+ "B": 0.5
+ },
+ "moves": [],
+ "unchanged_declaration": {
+ "ref": "style_adjusted_read: \"The +2.68 strike differential... it is not a padded number\""
+ },
+ "responses": [
+ {
+ "challenge_id": "SWM-01-STATE-01",
+ "disposition": "answered",
+ "ref": "style_adjusted_read: \"The +2.68 strike differential... it is not a padded number\""
+ }
+ ],
+ "state_pull": null
+}
+```
