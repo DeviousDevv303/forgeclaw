@@ -26,6 +26,16 @@ describe('sculpt helpers', () => {
     expect(extractRewrittenFile('```ts\n' + UPDATED + '// rest of the file unchanged\n```', ORIGINAL)).toMatchObject({ error: expect.stringContaining('placeholder') })
     expect(extractRewrittenFile('no code here', ORIGINAL)).toMatchObject({ error: expect.stringContaining('code block') })
   })
+  it('refuses ellipsis placeholders past the halfway point (D-001 regression)', () => {
+    // The placeholder sits after >50% of the file, so the length guard cannot catch it;
+    // only the placeholder guard can. The canonical comment form and the bare line-start
+    // form both slipped past the old regex (a \b before \.\.\. never matches after a space).
+    const long = Array.from({ length: 10 }, (_, i) => `export const line${i} = ${i}`).join('\n') + '\n'
+    const kept = long.split('\n').slice(0, 7).join('\n')
+    expect(extractRewrittenFile('```ts\n' + kept + '\n// ... existing code\n```', long)).toMatchObject({ error: expect.stringContaining('placeholder') })
+    expect(extractRewrittenFile('```ts\n' + kept + '\n... existing code\n```', long)).toMatchObject({ error: expect.stringContaining('placeholder') })
+    expect(extractRewrittenFile('```ts\n' + kept + '\n// ... unchanged code\n```', long)).toMatchObject({ error: expect.stringContaining('placeholder') })
+  })
 })
 
 describe('DeepSeek self-sculpt chain in the router', () => {

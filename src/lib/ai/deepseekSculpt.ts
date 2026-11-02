@@ -41,6 +41,9 @@ export function extractRewrittenFile(reply: string, original: string): { content
   if (!content.trim()) return { error: 'DeepSeek did not return the file in a code block' }
   if (content.trim() === original.trim()) return { error: 'Qwen/Qwen3-8B returned the file unchanged' }
   if (content.length < original.length * 0.5) return { error: `Qwen/Qwen3-8B returned ${content.length} characters for a ${original.length}-character file, which looks like an incomplete rewrite` }
-  if (/\b(?:rest of (?:the )?(?:file|code) (?:unchanged|remains)|\.\.\. ?(?:existing|unchanged) code)\b/i.test(content)) return { error: 'DeepSeek left a placeholder instead of the complete file' }
+  // D-001: the \b must live inside the "rest of" alternative only — before \.\.\. it can never
+  // match after a space or at line start ('.' is a non-word char), which let the canonical
+  // "// ... existing code" placeholder through to sculpt_self as a truncated rewrite.
+  if (/(?:\brest of (?:the )?(?:file|code) (?:unchanged|remains)|\.\.\.\s*(?:existing|unchanged) code\b)/i.test(content)) return { error: 'DeepSeek left a placeholder instead of the complete file' }
   return { content }
 }
