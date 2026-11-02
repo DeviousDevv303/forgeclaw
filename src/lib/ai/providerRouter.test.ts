@@ -81,7 +81,35 @@ describe('provider router', () => {
       tools: [{ name: 'deepseek_reason', description: 'reason', parameters: {} }],
     }
     const result = await sendViaRouter(request, '', 'corpus')
-    expect(result).toMatchObject({ success: true, response: { provider: 'deepseek', text: 'Verified answer.', model: 'Qwen/Qwen3-8B Actions (deepseek-16b)' } })
+    // D-016: the synthesis return attributes the SELECTED provider id ('corpus' here), not a hardcoded 'deepseek'.
+    expect(result).toMatchObject({ success: true, response: { provider: 'corpus', text: 'Verified answer.', model: 'Qwen/Qwen3-8B Actions (deepseek-16b)' } })
+  })
+
+  it('attributes every path of one selected provider with the same provider id (D-016)', async () => {
+    const tools = [{ name: 'deepseek_reason', description: 'reason', parameters: {} }]
+    const greeting = await sendViaRouter({ model: 'deepseek-16b', systemPrompt: '', messages: [{ role: 'user', content: 'hello' }], tools }, '', 'corpus')
+    const synthesis = await sendViaRouter({
+      model: 'deepseek-16b', systemPrompt: '', tools,
+      messages: [
+        { role: 'user', content: 'Answer from the workflow.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'call-1', name: 'deepseek_reason', input: { task: 'Answer from the workflow.' } }] },
+        { role: 'tool', tool_call_id: 'call-1', content: '✓ Qwen/Qwen3-8B completed as run-1; checkpoint=deepseek-16b\n\nVerified answer.' },
+      ],
+    }, '', 'corpus')
+    if (!greeting.success || !synthesis.success) throw new Error('router failed')
+    expect(greeting.response.provider).toBe('corpus')
+    expect(synthesis.response.provider).toBe(greeting.response.provider)
+    // And a 'deepseek'-selected session keeps 'deepseek' on the synthesis path too.
+    const deepseekSynthesis = await sendViaRouter({
+      model: 'deepseek-16b', systemPrompt: '', tools,
+      messages: [
+        { role: 'user', content: 'Answer from the workflow.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'call-1', name: 'deepseek_reason', input: { task: 'Answer from the workflow.' } }] },
+        { role: 'tool', tool_call_id: 'call-1', content: '✓ Qwen/Qwen3-8B completed as run-1; checkpoint=deepseek-16b\n\nVerified answer.' },
+      ],
+    }, '', 'deepseek')
+    if (!deepseekSynthesis.success) throw new Error('router failed')
+    expect(deepseekSynthesis.response.provider).toBe('deepseek')
   })
 
   it('says DeepSeek was not dispatched, not that GitHub is unreachable, when the request carries no deepseek_reason tool', async () => {
