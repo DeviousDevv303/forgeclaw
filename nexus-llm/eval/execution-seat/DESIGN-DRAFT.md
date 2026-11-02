@@ -105,3 +105,10 @@ Same sandbox, same graders, real-shaped tasks, **deliver nowhere**: output goes 
 ## 10. Next steps, none yet taken
 
 Probe the sandbox primitives on a throwaway runner and publish the results; write the check code with canaries; write the rows and hidden tests; hold for converge and presentation. Nothing starts without the seat's order.
+
+## 11. Model policy (owner direction, relayed on #235; added 2026-11-03)
+
+Seats are model-agnostic: the model proposes, the sandbox runs, code grades. Nothing in §1–§8 names a model, and the exam is the same whichever model sits.
+- **Qwen sits first, under binding checks.** The sandbox contains harm. It does not stop a model from reporting success on a run that failed, which is why X3–X5 exist; a code flag is binding and the model may not overrule it.
+- **Traces are captured from day one** (the §2 artifact). What may *train* follows the held-out partition and the learning-loop ruling: frozen exam rows and held-out probes never train; only curriculum-partitioned, denylisted traces can, paired and Route-C gated; the trigger fires an evaluation checkpoint, never a training run, and the Nexus loop owns when weights move. Shadow-mode traces are held, not trained on, until the owner says.
+- **Nexus is the succession target** and takes the seat when the frozen exam says it wins, by the same ladder. No component here swaps a seat on its own.
