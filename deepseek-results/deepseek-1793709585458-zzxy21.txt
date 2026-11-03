@@ -1,0 +1,3 @@
+```tool_call
+{"name": "web_search", "arguments": {"query": "weather in Stillwater Oklahoma November 3 2026", "count": 5}}
+```
