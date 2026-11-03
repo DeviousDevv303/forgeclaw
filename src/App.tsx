@@ -1308,7 +1308,7 @@ function App() {
         timestamp: Date.now(),
         source: 'cloud',
         provider: 'GitHub Actions',
-        model: 'Qwen workflow dispatch (6.7B checkpoint)',
+        model: 'Qwen3-8B workflow dispatch',
         streaming: Boolean(question),
       }])
       if (!question) {
@@ -1355,7 +1355,7 @@ function App() {
           ? { type: 'MISSION_BLOCKED', reason: 'Direct Qwen workflow dispatch failed' }
           : { type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
         setMessages(prev => prev.map(message => message.id === msgId
-          ? { ...message, content: output, streaming: false, provider: 'GitHub Actions', model: 'Qwen workflow dispatch (6.7B checkpoint)', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [{ toolCallId: call.id, name: call.name, output, isError }] }
+          ? { ...message, content: output, streaming: false, provider: 'GitHub Actions', model: 'Qwen3-8B workflow dispatch', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [{ toolCallId: call.id, name: call.name, output, isError }] }
           : message,
         ))
         setRequestStatus(isError ? 'blocked' : 'success')

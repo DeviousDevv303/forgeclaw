@@ -113,7 +113,9 @@ export function knowledgeOrigin(record: { timestamp: string; metadata: Record<st
  * Principles knowledge. A model's reasoning, review or vision reading is not evidence of a fact.
  */
 export const NOT_EVIDENCE_TOOLS: ReadonlySet<string> = new Set([
-  'qwen_reason', 'ask_qwen', 'review_code', 'spawn_agent', 'analyze_image',
+  // 'deepseek_reason' and 'ask_deepseek' are the names these two tools had before the rename; a saved conversation or a model can still call them,
+  // and a Qwen answer must not become evidence under the old name.
+  'qwen_reason', 'ask_qwen', 'deepseek_reason', 'ask_deepseek', 'review_code', 'spawn_agent', 'analyze_image',
   'coding_task_update', 'memory_write', 'memory_read', 'memory_list',
   // The funds ledger is the app's own record, not evidence about the world (funds_settle reads Kalshi and is).
   'funds_status', 'funds_propose',
