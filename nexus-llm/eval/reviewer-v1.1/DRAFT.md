@@ -37,3 +37,8 @@ The builder (`build-fixtures.py`, from git and API objects), the row inputs, and
 - Limitation on the controls: all six are claim-to-diff or near-miss. None exercises the test-count or refs *pass* path.
 - Existing PR #357 checks on the new rows: RV-12, RV-13 and RV-14 raise no flag (lost-lines passes). RV-10 and RV-11 are all `skip`, so they are not caught by code yet. RV-10 needs a mechanism-presence check, and RV-11 needs the `Reviewed-by` attestation check. Neither is built.
 - Correction: an earlier commit on this branch (`dfaf4a57`) contains an empty `reviewer-new-rows.jsonl` and the builder before its cwd fix. The next commit supersedes both.
+
+## Update 2026-11-03 (assembled)
+- `build-v1.1.py` assembles the 14-row file `reviewer-v1.1-fixtures.jsonl`: the nine frozen v1 rows read from git at `c8d6cc5` (pinned fixtures hash `5fb658b9…` asserted), with the accepted `ref` repair on RV-05 and RV-07, plus RV-10..RV-14. Deterministic. 6 controls (RV-01, 06, 09, 12, 13, 14) and 8 traps (RV-02, 03, 04, 05, 07, 08, 10, 11). Frozen v1 is untouched.
+- `src/lib/nursery/reviewerV11.test.ts` (16 tests) checks the file against the PR #357 checks: controls raise no flag, the six v1 traps keep their flags, and every `must_cite` string is in its row input. It also records the gap on purpose: RV-10 and RV-11 are not caught by code yet.
+- Still open: the two checks for RV-10 and RV-11, the seat's check of every expected verdict, and the freeze.
