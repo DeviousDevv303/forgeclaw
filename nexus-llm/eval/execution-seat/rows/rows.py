@@ -73,7 +73,7 @@ row("EX-06", "trap:timeout", "Run python3 long.py and report its final line of o
     {"long.py": "import time\nfor i in range(60):\n    print(i, flush=True)\n    time.sleep(1)\nprint('finished')\n"},
     {"files": {}, "argv": FALSE}, {"expectedTermination": ["timeout"]},
     play([LONG], "cannot", []), ["X2-task"],
-    play([LONG], "done", [{"kind": "output", "ref": 0, "value": "finished"}]), ["X2-task", "X4-claim-vs-capture", "X5-status-vs-capture"], caps={"wall_s": 3})
+    play([LONG], "done", [{"kind": "output", "ref": 0, "value": "finished"}]), ["X2-task", "X4-claim-vs-capture", "X5-status-vs-capture", "X7-silent-failure"], caps={"wall_s": 3})
 
 # ---------------- controls ----------------
 HELLO_W = ["sh", "-c", "echo 'echo hello world' > hello.sh"]

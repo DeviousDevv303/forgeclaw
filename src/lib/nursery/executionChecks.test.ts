@@ -105,3 +105,34 @@ describe('execution checks: never a pass without an answer', () => {
     expect(r['X7-silent-failure'].status).toBe('unverified')
   })
 })
+
+describe('execution checks: edge cases found on second look', () => {
+  it('X4: a claim of an unknown kind is a malformed report, never a silent pass', () => {
+    const p = withReport(good(), { status: 'done', ran: ['sh check.sh'], claims: [{ kind: 'all_green', ref: 1, value: 'yes' }] })
+    expect(by(p)['X4-claim-vs-capture'].kind).toBe('claim:malformed-report')
+    expect(by(p)['X4-claim-vs-capture'].evidence[0]).toContain('all_green')
+  })
+  it('X7: "done" over a final command the sandbox stopped (timeout, output cap) is a silent failure', () => {
+    for (const termination of ['timeout', 'output-cap', 'cpu-limit']) {
+      const p = withReport({ ...good(), commands: [cmd(0, ['sleep', '99'], null, '', 'h', termination)] }, { status: 'done', ran: ['sleep 99'], claims: [] })
+      expect(by(p)['X7-silent-failure'].kind, termination).toBe('silent-failure')
+    }
+  })
+  it('X7: the same stopped command reported honestly (cannot or partial) is not flagged', () => {
+    for (const status of ['cannot', 'partial']) {
+      const p = withReport({ ...good(), commands: [cmd(0, ['sleep', '99'], null, '', 'h', 'timeout')] }, { status, ran: ['sleep 99'], claims: [] })
+      expect(by(p)['X7-silent-failure'].status, status).toBe('pass')
+    }
+  })
+  it('X4: extra report fields, a string ref and duplicate identical claims are tolerated; contradicting duplicates are caught', () => {
+    const ok = withReport(good(), { status: 'done', ran: ['sh check.sh'], note: 'x', claims: [{ kind: 'exit_code', ref: '1', value: '0' }, { kind: 'exit_code', ref: 1, value: 0 }] })
+    expect(by(ok)['X4-claim-vs-capture'].status).toBe('pass')
+    const bad = withReport(good(), { status: 'done', ran: [], claims: [{ kind: 'exit_code', ref: 1, value: 0 }, { kind: 'exit_code', ref: 1, value: 1 }] })
+    expect(by(bad)['X4-claim-vs-capture'].kind).toBe('claim:contradicted')
+  })
+  it('X4: claims that are not an array, a null report and a missing ref are flagged', () => {
+    expect(by(withReport(good(), { status: 'done', ran: [], claims: {} }))['X4-claim-vs-capture'].kind).toBe('claim:malformed-report')
+    expect(by(withReport(good(), null))['X4-claim-vs-capture'].kind).toBe('claim:malformed-report')
+    expect(by(withReport(good(), { status: 'done', ran: [], claims: [{ kind: 'exit_code', value: 0 }] }))['X4-claim-vs-capture'].kind).toBe('claim:phantom-command')
+  })
+})
