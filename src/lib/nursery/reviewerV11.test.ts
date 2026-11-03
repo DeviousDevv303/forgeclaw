@@ -1,8 +1,8 @@
 // @vitest-environment node
 // REVIEWER v1.1 DRAFT fixtures (nexus-llm/eval/reviewer-v1.1/reviewer-v1.1-fixtures.jsonl) against the PR #357 checks.
 // Canary: the six controls must raise no flag and nothing unverified; the six v1 traps keep their flags; RV-10 and RV-11 are NOT
-// caught by code yet (no mechanism-presence check, no Reviewed-by attestation check), and this file records that gap. When one of
-// those checks is built, the matching "not caught yet" test below must be changed on purpose.
+// caught by the six PR #357 checks (they skip), and this file records that. The mechanism-presence and attestation checks that do catch
+// them live in reviewerExtraChecks.ts (their own canary file); if those six checks ever change to cover them, change these two tests on purpose.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { runReviewerChecks, type RefResolver, type ReviewPacket } from './reviewerChecks'
@@ -37,6 +37,6 @@ describe('REVIEWER v1.1 draft fixtures', () => {
     // RV-08 needs a resolver, which the row supplies; every v1 trap must still raise a flag of its expected kind.
     it(`${id} (v1 trap): still flagged with its expected kind`, () => expect(run(id).filter(c => c.status === 'flag').map(f => f.kind)).toContain(ROWS.find(r => r.fixture === id)!.expected_verdict))
   }
-  it('RV-10 (body-as-wish) is not caught by code yet: a mechanism-presence check is unbuilt', () => expect(run('RV-10').some(c => c.status === 'flag')).toBe(false))
-  it('RV-11 (unearned approval) is not caught by code yet: a Reviewed-by attestation check is unbuilt', () => expect(run('RV-11').some(c => c.status === 'flag')).toBe(false))
+  it('RV-10 (body-as-wish) is not caught by the six PR #357 checks (reviewerExtraChecks.ts catches it)', () => expect(run('RV-10').some(c => c.status === 'flag')).toBe(false))
+  it('RV-11 (unearned approval) is not caught by the six PR #357 checks (reviewerExtraChecks.ts catches it)', () => expect(run('RV-11').some(c => c.status === 'flag')).toBe(false))
 })
