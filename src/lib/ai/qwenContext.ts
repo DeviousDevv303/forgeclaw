@@ -1,9 +1,9 @@
 import { corpusRepository, formatCorpusContext, recordRelevantToTask } from '../corpus'
-import { nexusGuidanceForDeepSeek } from '../nexusGuidance'
+import { nexusGuidanceForQwen } from '../nexusGuidance'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
-import { DEEPSEEK_FALLBACK_CHECKPOINT, DEEPSEEK_PRIMARY_CHECKPOINT } from '../deepseekCheckpoints'
+import { QWEN_FALLBACK_CHECKPOINT, QWEN_PRIMARY_CHECKPOINT } from '../qwenCheckpoints'
 
-export interface DeepSeekTaskPayload {
+export interface QwenTaskPayload {
   task: string
   context?: string
 }
@@ -21,9 +21,9 @@ const MAX_VERIFIED_TOOL_CHARS = 16_000
  */
 export const FORGECLAW_ARCHITECTURE_CONTEXT = [
   'ForgeClaw architecture facts (checked-in runtime configuration; static design facts, not live repository-state evidence):',
-  `- DEFAULT_PROVIDER is \`${DEFAULT_PROVIDER}\`: the Qwen/Qwen3-8B GitHub Actions workflow (provider id \`deepseek\`) is the default reasoning runtime and needs no API key. Moonshot/Kimi, Anthropic and local llama.cpp are explicit selectable alternatives.`,
-  '- When the user selects the Qwen/Qwen3-8B provider (id `deepseek`), the provider router deterministically dispatches `deepseek_reason`. A repository-state request can first dispatch `github_repo_state` when that tool is available.',
-  `- You are \`${DEEPSEEK_PRIMARY_CHECKPOINT}\`, run by the GitHub Actions workflow (named \`Qwen/Qwen3-8B\`; provider id \`deepseek\`, a legacy id) on a CPU-only runner as a 4-bit GGUF (Q4_K_M) through llama.cpp, with \`${DEEPSEEK_FALLBACK_CHECKPOINT}\` only if the primary cannot run. A short answer usually takes a few minutes. The provider id and model id are legacy names; no 16B model runs.`,
+  `- DEFAULT_PROVIDER is \`${DEFAULT_PROVIDER}\`: the Qwen/Qwen3-8B GitHub Actions workflow (provider id \`qwen\`) is the default reasoning runtime and needs no API key. Moonshot/Kimi, Anthropic and local llama.cpp are explicit selectable alternatives.`,
+  '- When the user selects the Qwen/Qwen3-8B provider (id `qwen`), the provider router deterministically dispatches `qwen_reason`. A repository-state request can first dispatch `github_repo_state` when that tool is available.',
+  `- You are \`${QWEN_PRIMARY_CHECKPOINT}\`, run by the GitHub Actions workflow (named \`Qwen/Qwen3-8B\`; provider id \`qwen\`, a legacy id) on a CPU-only runner as a 4-bit GGUF (Q4_K_M) through llama.cpp, with \`${QWEN_FALLBACK_CHECKPOINT}\` only if the primary cannot run. A short answer usually takes a few minutes. The provider id and model id are legacy names; no 16B model runs.`,
   '- The App executes actual tool calls through the ForgeTools dispatcher and appends returned tool output to the next turn. Qwen/Qwen3-8B text is not proof that an action happened; only a real dispatcher result is. A result marked [TOOL ERROR], [GUARDIAN BLOCK], or [GUARDIAN REJECTED] is not evidence of successful execution.',
   '- There is no browser-local model fallback. If the Qwen/Qwen3-8B workflow fails, surface the verified failure and do not invent a replacement answer.',
   '- Current repository contents, branch, commit, workflow status, and other live facts must come from an actual successful GitHub tool result; do not infer them from these static architecture notes.',
@@ -45,7 +45,7 @@ export const ANSWER_FORM_INSTRUCTIONS = [
 ].join('\n')
 
 /**
- * Split the answer-form law back out of an assembled dispatch context (buildDeepSeekTaskPayload
+ * Split the answer-form law back out of an assembled dispatch context (buildQwenTaskPayload
  * always places it first). forgeTools sets it aside beside the NEXUS guidance before its
  * stale-context overlap drop: the law is system instruction, not task-matched context — it must
  * never be dropped as stale, and its words must never rescue stale context from the drop
@@ -76,7 +76,7 @@ function separateRuntimeEnvelope(rawTask: string): { task: string; runtimeContex
 }
 
 /** Extract only the user's textual objective, excluding appended runtime/image payloads. */
-export function extractOriginalDeepSeekTask(rawTask: string): string {
+export function extractOriginalQwenTask(rawTask: string): string {
   const { task } = separateRuntimeEnvelope(rawTask)
   const imageMarker = '\n\n[IMAGE_ATTACHMENT]\n'
   const imageStart = task.indexOf(imageMarker)
@@ -91,7 +91,7 @@ function asksAboutForgeClawArchitecture(task: string): boolean {
  * Keep the exact user objective separate from relevant context. Only approved
  * CORPUS records are selected; live GitHub/tool facts remain explicitly labelled.
  */
-export function buildDeepSeekTaskPayload(rawTask: string, verifiedToolResults = ''): DeepSeekTaskPayload {
+export function buildQwenTaskPayload(rawTask: string, verifiedToolResults = ''): QwenTaskPayload {
   const { task, runtimeContext } = separateRuntimeEnvelope(rawTask)
   const sections: string[] = []
 
@@ -99,14 +99,14 @@ export function buildDeepSeekTaskPayload(rawTask: string, verifiedToolResults = 
   // envelope or tool result never trims it away. NEXUS guidance follows it.
   sections.push(ANSWER_FORM_INSTRUCTIONS)
 
-  // What the owner has taught NEXUS (approved heuristics, recurring failures, approved knowledge) reaches DeepSeek too.
-  const guidance = nexusGuidanceForDeepSeek(task).text
+  // What the owner has taught NEXUS (approved heuristics, recurring failures, approved knowledge) reaches Qwen too.
+  const guidance = nexusGuidanceForQwen(task).text
   if (guidance) sections.push(guidance)
 
   if (asksAboutForgeClawArchitecture(task)) sections.push(FORGECLAW_ARCHITECTURE_CONTEXT)
   if (runtimeContext) sections.push(`ForgeClaw runtime envelope (identity/routing hints only; not repository evidence):\n${runtimeContext}`)
 
-  const CORPUS_FRESHNESS_MS = 60 * 60 * 1000 // 1 hour — stale records poison DeepSeek
+  const CORPUS_FRESHNESS_MS = 60 * 60 * 1000 // 1 hour — stale records poison Qwen
   // Freshness alone is not relevance: retrieve() admits a record on one shared token, so the
   // shared distinctive-word test decides which fresh records are actually about this task.
   const freshCorpusRecords = corpusRepository.retrieve(task, 3).filter(r => {

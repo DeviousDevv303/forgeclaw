@@ -17,7 +17,7 @@ export function decodeBase64Utf8(base64: string): string {
 
 /**
  * The github_read_file result. A whole file keeps the long-standing shape (`File: path (N bytes)` and a fence), which
- * the DeepSeek and /sculpt chains parse. A page says which lines it holds and how to get the next one, and ends with
+ * the Qwen and /sculpt chains parse. A page says which lines it holds and how to get the next one, and ends with
  * "[truncated]" so a chain that needs the whole file refuses it instead of rewriting part of it.
  */
 export function formatFileRead(path: string, size: number | undefined, text: string, startLine = 1): string {

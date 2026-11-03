@@ -173,15 +173,15 @@ describe('budget-aware manual tool catalog', () => {
 
   it('offers repository inspection tools first so a coding task can act in a small budget', () => {
     const bounded = injectToolSchemaWithinBudget('SYSTEM', toolsForCapability('coding-readonly', FORGE_TOOLS), 1600)
-    // DeepSeek-primary invariant: deepseek_reason takes priority even in readonly mode
-    expect(bounded.included).toContain('deepseek_reason')
+    // Qwen-primary invariant: qwen_reason takes priority even in readonly mode
+    expect(bounded.included).toContain('qwen_reason')
   })
 
   it('fits the granted coding set inside the reserved system budget', () => {
     const granted = toolsForCapability('coding', FORGE_TOOLS)
     const bounded = injectToolSchemaWithinBudget('SYSTEM', granted, SUB_AGENT_SYSTEM_RESERVE)
-    // DeepSeek-primary invariant: deepseek_reason must survive budget constraints
-    expect(bounded.included).toContain('deepseek_reason')
+    // Qwen-primary invariant: qwen_reason must survive budget constraints
+    expect(bounded.included).toContain('qwen_reason')
     expect(bounded.included).toContain('github_repo_state')
   })
 
@@ -424,12 +424,11 @@ describe('saved-agent run reaches real tools without native function calling', (
 
 describe('existing systems are untouched', () => {
   it('keeps the provider registry and its tool-support facts intact', () => {
-    expect(Object.keys(PROVIDERS).sort()).toEqual(['anthropic', 'corpus', 'deepseek', 'local', 'moonshot', 'muse', 'nexus', 'openrouter', 'qwen'])
+    expect(Object.keys(PROVIDERS).sort()).toEqual(['anthropic', 'corpus', 'local', 'moonshot', 'muse', 'nexus', 'openrouter', 'qwen'])
     expect(modelSupportsTools('nexus', 'qwen')).toBe(false)
     expect(modelSupportsTools('local', 'qwen2.5:1.5b')).toBe(true)
-    expect(modelSupportsTools('deepseek', 'deepseek-16b')).toBe(true)
-    expect(modelSupportsTools('qwen', 'deepseek-16b')).toBe(true)
-    expect(Object.keys(PROVIDERS).length).toBe(9)
+    expect(modelSupportsTools('qwen', 'qwen3-8b')).toBe(true)
+    expect(Object.keys(PROVIDERS).length).toBe(8)
   })
 
   it('keeps every pre-existing tool name in the registry', () => {

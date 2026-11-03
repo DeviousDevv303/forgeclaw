@@ -5,7 +5,7 @@
 // to initialize or use this module; synchronization is an explicit optional path.
 
 import { safeGetItem, safeRemoveItem, safeSetItem, strictGetItem, strictRemoveItem, strictSetItem, type StorageResult } from './storage'
-import { DEEPSEEK_PRIMARY_CHECKPOINT } from './deepseekCheckpoints'
+import { QWEN_PRIMARY_CHECKPOINT } from './qwenCheckpoints'
 import { CONVERGED_BY, convergencePhase } from './nexusConvergence'
 import { type AdmissionTrustConfig, type CandidateAuthorization, type AuthorizationValidation, verifyCandidateAuthorization } from './corpusAdmissionAuth'
 
@@ -66,11 +66,11 @@ export interface CandidateAdmissionResult {
 
 /**
  * Directive item 3 — NEXUS Learning.
- * Design decision: DeepSeek output enters the existing raw-interaction and
+ * Design decision: Qwen output enters the existing raw-interaction and
  * unapproved-candidate pipeline instead of bypassing integrity/admission.
  * Remaining work: a later verifier or explicit sync must admit candidates.
  */
-export interface DeepSeekLearningInput {
+export interface QwenLearningInput {
   task: string
   result: string
   invocationId: string
@@ -393,7 +393,7 @@ export function distinctiveWords(text: string): Set<string> {
  * (topic-bearing) words with the task — or ALL of the task's topic words when the
  * task has fewer than 3, so a short question ("What is beta?") can still match the
  * record that is exactly about its one topic word. Before this test existed, the
- * DeepSeek payload lanes admitted records on a single shared ≥2-char token (corpus
+ * Qwen payload lanes admitted records on a single shared ≥2-char token (corpus
  * retrieve) or two shared ≥4-char words including stopwords (NEXUS guidance) —
  * either gate passes for almost any English record against almost any English task,
  * so off-domain records reached the workflow model labelled "relevant to this task"
@@ -428,7 +428,7 @@ function taskComplexity(task: string, context = ''): string {
   return 'simple'
 }
 
-function deepSeekMetadata(task: string, context: string): Record<string, string> {
+function qwenMetadata(task: string, context: string): Record<string, string> {
   return {
     keywords: tokenise(`${task} ${context}`).slice(0, 24).join(','),
     taskType: taskCategory(task),
@@ -715,15 +715,15 @@ export class CorpusRepository {
     })
   }
 
-  appendDeepSeekLearning(input: DeepSeekLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
+  appendQwenLearning(input: QwenLearningInput): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
     return this.appendInteraction({
-      input: `[DEEPSEEK_TASK] ${input.task}`,
+      input: `[QWEN_TASK] ${input.task}`,
       context: input.context || `invocation_id=${input.invocationId}`,
-      result: `[DEEPSEEK_RESULT]\n${input.result}`,
+      result: `[QWEN_RESULT]\n${input.result}`,
       runtime: 'github-actions',
-      model: input.model || DEEPSEEK_PRIMARY_CHECKPOINT,
-      source: 'deepseek:github-actions',
-      metadata: deepSeekMetadata(input.task, input.context || ''),
+      model: input.model || QWEN_PRIMARY_CHECKPOINT,
+      source: 'qwen:github-actions',
+      metadata: qwenMetadata(input.task, input.context || ''),
     })
   }
 
@@ -1060,15 +1060,15 @@ export class CorpusRepository {
 
 export const corpusRepository = new CorpusRepository()
 
-/** Add a DeepSeek response to the local NEXUS learning ledger. */
-export function appendDeepSeekLearning(
+/** Add a Qwen response to the local NEXUS learning ledger. */
+export function appendQwenLearning(
   task: string,
-  deepseekResult: string,
+  qwenResult: string,
   invocationId: string,
   context = '',
   model?: string,
 ): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
-  return corpusRepository.appendDeepSeekLearning({ task, result: deepseekResult, invocationId, context, model })
+  return corpusRepository.appendQwenLearning({ task, result: qwenResult, invocationId, context, model })
 }
 
 /** Return an approved local answer when NEXUS has a matching learned record. */

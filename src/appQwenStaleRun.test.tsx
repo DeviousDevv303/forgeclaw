@@ -1,18 +1,18 @@
 // @vitest-environment jsdom
-// 2026-10-22: a DeepSeek reply whose saved run had passed the 30-minute workflow window kept "Still working" on screen
+// 2026-10-22: a Qwen reply whose saved run had passed the 30-minute workflow window kept "Still working" on screen
 // forever: the saved run was cleared on load but the reply stayed "running". It now ends as interrupted, with the
 // saved run cleared and nothing started on its own.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 
-const RUN_KEY = 'forgeclaw_active_deepseek_run'
+const RUN_KEY = 'forgeclaw_active_qwen_run'
 let fetchMock: ReturnType<typeof vi.fn>
 
 function seed(dispatchedAgoMs: number) {
   const t = Date.now() - dispatchedAgoMs
   localStorage.setItem('forgemind_history', JSON.stringify([
-    { id: 'u1', role: 'user', content: '/deepseek what is two plus two', timestamp: t },
-    { id: 'a1', role: 'assistant', content: 'Dispatching through the DeepSeek reasoning workflow…', streaming: true, timestamp: t },
+    { id: 'u1', role: 'user', content: '/qwen what is two plus two', timestamp: t },
+    { id: 'a1', role: 'assistant', content: 'Dispatching through the Qwen reasoning workflow…', streaming: true, timestamp: t },
   ]))
   localStorage.setItem(RUN_KEY, JSON.stringify({ invocationId: 'inv-1', dispatchedAt: t, messageId: 'a1', question: 'what is two plus two' }))
 }
@@ -31,7 +31,7 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.resetModules() })
 
-describe('a DeepSeek run past the workflow window', () => {
+describe('a Qwen run past the workflow window', () => {
   it('ends as interrupted instead of "Still working" forever, and its saved run is cleared', async () => {
     seed(3 * 3600_000)
     const { default: App } = await import('./App')
@@ -42,7 +42,7 @@ describe('a DeepSeek run past the workflow window', () => {
     expect(localStorage.getItem(RUN_KEY)).toBeNull()
   })
 
-  it('is not re-run unasked (a DeepSeek workflow takes 9-23 minutes)', async () => {
+  it('is not re-run unasked (a Qwen workflow takes 9-23 minutes)', async () => {
     seed(3 * 3600_000)
     const { default: App } = await import('./App')
     render(<App />)

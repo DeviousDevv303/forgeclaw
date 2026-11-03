@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // 2026-10-20 Kimi troubleshooting. With Kimi selected:
-//  - "review/analyze/debug" wording and every coding task handed Kimi deepseek_reason and told it to
-//    delegate to the slow DeepSeek workflow (only 'anthropic' was exempt);
+//  - "review/analyze/debug" wording and every coding task handed Kimi qwen_reason and told it to
+//    delegate to the slow Qwen workflow (only 'anthropic' was exempt);
 //  - Kimi's reasoning_content was dropped between tool-call turns, which Moonshot says must be sent back;
 //  - a tool call cut off at the output limit ran with input {} instead of being reported.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -95,14 +95,14 @@ describe('Kimi is a first-class hosted reasoner', () => {
     expect((other.tools ?? []).map(t => t.function.name)).not.toContain('browser_run')
   }, 30_000)
 
-  it('never hands Kimi the DeepSeek workflow, for analyze wording or a coding task', async () => {
+  it('never hands Kimi the Qwen workflow, for analyze wording or a coding task', async () => {
     for (const prompt of ['review and analyze the efficiency of my GitHub workflows', 'check the repo and fix the failing build-gate test']) {
       cleanup(); vi.resetModules(); fetchMock.mockClear()
       const [body] = await send(prompt, 1)
       const names = (body.tools ?? []).map(tool => tool.function.name)
-      expect(names, prompt).not.toContain('deepseek_reason')
-      expect(names, prompt).not.toContain('ask_deepseek')
-      expect(body.messages[0].content, prompt).not.toMatch(/Use deepseek_reason/)
+      expect(names, prompt).not.toContain('qwen_reason')
+      expect(names, prompt).not.toContain('ask_qwen')
+      expect(body.messages[0].content, prompt).not.toMatch(/Use qwen_reason/)
       expect(body.messages[0].content, prompt).toContain('You are the reasoning engine for this turn')
       expect(names, prompt).toContain('github_read_file')
       expect(names, prompt).toContain('shell_exec')

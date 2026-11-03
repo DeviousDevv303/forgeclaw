@@ -2,8 +2,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { CorpusRepository } from '../corpus'
 import { authorizationPayload, RFC8032_TEST_KEY_ID } from '../corpusAdmissionAuth'
-import { ANSWER_FORM_INSTRUCTIONS, buildDeepSeekTaskPayload, FORGECLAW_ARCHITECTURE_CONTEXT, splitAnswerFormInstructions } from './deepseekContext'
-import { DEEPSEEK_FALLBACK_CHECKPOINT, DEEPSEEK_PRIMARY_CHECKPOINT } from '../deepseekCheckpoints'
+import { ANSWER_FORM_INSTRUCTIONS, buildQwenTaskPayload, FORGECLAW_ARCHITECTURE_CONTEXT, splitAnswerFormInstructions } from './qwenContext'
+import { QWEN_FALLBACK_CHECKPOINT, QWEN_PRIMARY_CHECKPOINT } from '../qwenCheckpoints'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { readFileSync } from 'node:fs'
 import { buildRuntimeRequestContext } from '../codingAgentRuntime'
@@ -26,16 +26,16 @@ const RFC8032_PKCS8_PREFIX = '302e020100300506032b657004220420'
 const hexBytes = (value: string) => Uint8Array.from({ length: value.length / 2 }, (_, index) => Number.parseInt(value.slice(index * 2, index * 2 + 2), 16))
 const bufferSource = (value: Uint8Array) => value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer
 
-describe('DeepSeek task/context boundary', () => {
+describe('Qwen task/context boundary', () => {
   beforeEach(() => storage.clear())
 
   it('preserves the user task and supplies relevant ForgeClaw architecture separately from runtime state', () => {
     const task = "Explain ForgeClaw's default reasoning flow. Tell me which model is primary and which is secondary."
-    const payload = buildDeepSeekTaskPayload(`${task}\n\n[RUNTIME_STATE repository="DeviousDevv303/forgeclaw" taskStatus="idle"]\nRepository evidence comes from GitHub tools; never infer or preload contents.\n[/RUNTIME_STATE]`)
+    const payload = buildQwenTaskPayload(`${task}\n\n[RUNTIME_STATE repository="DeviousDevv303/forgeclaw" taskStatus="idle"]\nRepository evidence comes from GitHub tools; never infer or preload contents.\n[/RUNTIME_STATE]`)
 
     expect(payload.task).toBe(task)
     expect(payload.context).toContain('ForgeClaw architecture facts')
-    expect(payload.context).toContain('the Qwen/Qwen3-8B GitHub Actions workflow (provider id `deepseek`) is the default reasoning runtime')
+    expect(payload.context).toContain('the Qwen/Qwen3-8B GitHub Actions workflow (provider id `qwen`) is the default reasoning runtime')
     expect(payload.context).toContain('Moonshot/Kimi, Anthropic and local llama.cpp are explicit selectable alternatives')
     expect(payload.context).toContain('There is no browser-local model fallback')
     expect(payload.context).toContain('not repository evidence')
@@ -63,7 +63,7 @@ describe('DeepSeek task/context boundary', () => {
     const signature = new Uint8Array(await globalThis.crypto.subtle.sign({ name: 'Ed25519' }, key, new TextEncoder().encode(authorizationPayload(unsigned))))
     await repository.admitCandidate(approved.candidate.id, { ...unsigned, signature: Array.from(signature, byte => byte.toString(16).padStart(2, '0')).join('') })
 
-    const payload = buildDeepSeekTaskPayload(
+    const payload = buildQwenTaskPayload(
       'Explain ForgeClaw default reasoning flow.',
       'github_repo_state result:\nHEAD: 0123456789abcdef',
     )
@@ -88,19 +88,19 @@ describe('DeepSeek task/context boundary', () => {
     await admit('entity extraction rerun for the game packet', 'EXTRACTION-RULE: the extraction should rerun with an override when the entity pass leaves the home team and the visitors unnamed; that is the standing rule for the process.')
     await admit('BTC window tape break discipline', 'WINDOW-RULE: for a BTC window, check the tape and the break against the mandate before taking a side; the ask must clear the repricing hurdle.')
 
-    const payload = buildDeepSeekTaskPayload('Should I take the NO side on this window, with the mandate at 7.40 and the ask at 84, tape at minus 22 bps and the break intact?')
+    const payload = buildQwenTaskPayload('Should I take the NO side on this window, with the mandate at 7.40 and the ask at 84, tape at minus 22 bps and the break intact?')
     expect(payload.context ?? '').not.toContain('EXTRACTION-RULE')
     expect(payload.context ?? '').toContain('WINDOW-RULE')
   })
 
   it('does not add ForgeClaw architecture context to an unrelated user task', () => {
-    const payload = buildDeepSeekTaskPayload('What is 2 + 2?')
+    const payload = buildQwenTaskPayload('What is 2 + 2?')
     expect(payload.task).toBe('What is 2 + 2?')
     expect(payload.context ?? '').not.toContain('ForgeClaw architecture facts')
   })
 
   it('carries the owner answer-form law first in every dispatch context (2026-10-31)', () => {
-    const payload = buildDeepSeekTaskPayload('What is 2 + 2?')
+    const payload = buildQwenTaskPayload('What is 2 + 2?')
     expect(payload.context?.startsWith(ANSWER_FORM_INSTRUCTIONS)).toBe(true)
     expect(ANSWER_FORM_INSTRUCTIONS).toContain('Never restate, describe, or frame the task')
     expect(ANSWER_FORM_INSTRUCTIONS).toContain('No sign-off')
@@ -119,7 +119,7 @@ describe('DeepSeek task/context boundary', () => {
   it('keeps the APPLICATION_IDENTITY block out of the task the model is asked to answer', () => {
     // Exactly what App.tsx sends: the question, then buildRuntimeRequestContext().
     const envelope = buildRuntimeRequestContext({ owner: 'DeviousDevv303', repo: 'forgeclaw', taskStatus: 'idle' })
-    const payload = buildDeepSeekTaskPayload(`What causes rainbows to form after rain?\n\n${envelope}`)
+    const payload = buildQwenTaskPayload(`What causes rainbows to form after rain?\n\n${envelope}`)
     expect(payload.task).toBe('What causes rainbows to form after rain?')
     expect(payload.task).not.toMatch(/APPLICATION_IDENTITY|RUNTIME_STATE/)
     // Still available to the model, but labelled as context, not as the question.
@@ -130,17 +130,17 @@ describe('DeepSeek task/context boundary', () => {
   it('leaves an identity block the user typed mid-question in the task', () => {
     const envelope = buildRuntimeRequestContext({ owner: 'DeviousDevv303', repo: 'forgeclaw', taskStatus: 'idle' })
     const typed = 'Explain this tag: [APPLICATION_IDENTITY application="X"] then more words [/APPLICATION_IDENTITY] and why it matters'
-    expect(buildDeepSeekTaskPayload(`${typed}\n\n${envelope}`).task).toBe(typed)
+    expect(buildQwenTaskPayload(`${typed}\n\n${envelope}`).task).toBe(typed)
   })
 
   it('tells the model the real default provider and the checkpoints the workflow actually runs', () => {
     // The model answers "what is ForgeClaw running?" from these facts, so they must match the source.
     // They had drifted: they claimed DEFAULT_PROVIDER `moonshot` and a 6.7B coder checkpoint.
-    const workflow = readFileSync(new URL('../../../.github/workflows/deepseek-16b.yml', import.meta.url), 'utf8')
-    expect(workflow).toContain(`PRIMARY_MODEL = '${DEEPSEEK_PRIMARY_CHECKPOINT}'`)
-    expect(workflow).toContain(`FALLBACK_MODEL = '${DEEPSEEK_FALLBACK_CHECKPOINT}'`)
+    const workflow = readFileSync(new URL('../../../.github/workflows/qwen3-8b.yml', import.meta.url), 'utf8')
+    expect(workflow).toContain(`PRIMARY_MODEL = '${QWEN_PRIMARY_CHECKPOINT}'`)
+    expect(workflow).toContain(`FALLBACK_MODEL = '${QWEN_FALLBACK_CHECKPOINT}'`)
     expect(FORGECLAW_ARCHITECTURE_CONTEXT).toContain(`DEFAULT_PROVIDER is \`${DEFAULT_PROVIDER}\``)
-    expect(FORGECLAW_ARCHITECTURE_CONTEXT).toContain(DEEPSEEK_PRIMARY_CHECKPOINT)
+    expect(FORGECLAW_ARCHITECTURE_CONTEXT).toContain(QWEN_PRIMARY_CHECKPOINT)
     expect(FORGECLAW_ARCHITECTURE_CONTEXT).not.toMatch(/moonshot`; Moonshot\/Kimi K2\.6 is the primary|deepseek-coder-6\.7b/)
   })
 })

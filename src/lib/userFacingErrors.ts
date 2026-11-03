@@ -31,8 +31,8 @@ export function isTransientNetworkError(rawMessage: string): boolean {
 /** Convert technical runtime failures into concise, actionable chat responses. */
 export function formatUserFacingError(rawMessage: string): string {
   const message = rawMessage.trim()
-  const deepSeek = formatDeepSeekStageError(message)
-  if (deepSeek) return deepSeek
+  const qwen = formatQwenStageError(message)
+  if (qwen) return qwen
   if (/shell execution dispatched but correlated run|correlated run .* not found/i.test(message)) {
     return 'GitHub accepted the shell request, but its workflow run was not visible yet. Nothing was reported as completed. Please try again in a moment; the execution panel will keep the technical run details.'
   }
@@ -41,7 +41,7 @@ export function formatUserFacingError(rawMessage: string): string {
   }
   if (/network|failed to fetch|econnrefused|enotfound|etimedout|timeout|timed out/i.test(message)) {
     // Extract tool name if present in the message for a more specific error
-    const toolMatch = message.match(/(github_\w+|shell_exec|deepseek_reason)/i)
+    const toolMatch = message.match(/(github_\w+|shell_exec|qwen_reason)/i)
     const toolName = toolMatch ? toolMatch[1] : null
     if (toolName) {
       return `Connection failed during ${toolName}. This usually means GitHub's API is rate-limiting or having issues. Wait 30 seconds and try again. If it keeps happening, check the execution panel for details.`
@@ -59,33 +59,33 @@ export function formatUserFacingError(rawMessage: string): string {
  * Each says what is known about the run, so a dispatch that never happened, a run that is still
  * executing on GitHub, and a reply the model gave never collapse into the same "can't reach" text.
  */
-function formatDeepSeekStageError(message: string): string | undefined {
-  if (/^deepseek-not-dispatched\b/i.test(message)) {
-    return 'Qwen/Qwen3-8B was not started for this message: ForgeClaw did not offer it the deepseek_reason tool, so nothing was sent to GitHub Actions. This is a ForgeClaw routing error, not a connection problem.'
+function formatQwenStageError(message: string): string | undefined {
+  if (/^qwen-not-dispatched\b/i.test(message)) {
+    return 'Qwen/Qwen3-8B was not started for this message: ForgeClaw did not offer it the qwen_reason tool, so nothing was sent to GitHub Actions. This is a ForgeClaw routing error, not a connection problem.'
   }
-  if (/deepseek-dispatch\b/i.test(message)) {
+  if (/qwen-dispatch\b/i.test(message)) {
     const auth = /\b(?:401|403|404)\b/.test(message)
     return auth
       ? 'Qwen/Qwen3-8B was not started: GitHub refused the workflow dispatch for the saved token. Nothing ran. Check the GitHub token in Settings (Actions: Read and write on this repository), then try again.'
       : 'Qwen/Qwen3-8B was not started: the workflow dispatch did not reach GitHub. Nothing ran. Please try again in a moment.'
   }
-  if (/deepseek-run-discovery[\s\S]*was not found within/i.test(message)) {
+  if (/qwen-run-discovery[\s\S]*was not found within/i.test(message)) {
     return 'Qwen/Qwen3-8B was dispatched, but its workflow run did not appear on GitHub within 2 minutes. It may still run: check GitHub Actions before asking again so it does not run twice.'
   }
-  if (/deepseek-run-discovery[\s\S]*\b(?:401|403|404)\b/i.test(message)) {
+  if (/qwen-run-discovery[\s\S]*\b(?:401|403|404)\b/i.test(message)) {
     return 'Qwen/Qwen3-8B was dispatched, but GitHub refused to list its workflow runs for the saved token. Check the GitHub token in Settings (Actions: Read on this repository).'
   }
-  if (/deepseek-run-discovery/i.test(message)) {
+  if (/qwen-run-discovery/i.test(message)) {
     return 'Qwen/Qwen3-8B was dispatched, but I couldn’t reach GitHub Actions in time to find its run. The job may still finish on GitHub. If it keeps happening, open Settings and run “TEST GITHUB READ” to check the connection.'
   }
-  if (/deepseek-run-poll[\s\S]*timed out after/i.test(message)) {
+  if (/qwen-run-poll[\s\S]*timed out after/i.test(message)) {
     return 'Qwen/Qwen3-8B’s workflow run was still not finished when ForgeClaw stopped waiting. Open the run in GitHub Actions to see whether it completed.'
   }
-  const concluded = message.match(/deepseek-run-poll[\s\S]*concluded as "([^"]*)"/i)
+  const concluded = message.match(/qwen-run-poll[\s\S]*concluded as "([^"]*)"/i)
   if (concluded) {
     return `Qwen/Qwen3-8B’s workflow run finished as “${concluded[1]}” on GitHub, so there is no answer. The run log in GitHub Actions shows the failing step.`
   }
-  if (/deepseek-(?:artifact|result)[\w-]*/i.test(message) && !/quality validation|empty response|without a non-empty result/i.test(message)) {
+  if (/qwen-(?:artifact|result)[\w-]*/i.test(message) && !/quality validation|empty response|without a non-empty result/i.test(message)) {
     return 'Qwen/Qwen3-8B’s workflow run finished, but I couldn’t read its result from GitHub. The answer is stored with the run in GitHub Actions.'
   }
   if (/Qwen\/Qwen3-8B[\s\S]*(?:quality validation|empty response|without a non-empty result|empty or garbled)/i.test(message)) {

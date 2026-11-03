@@ -2,9 +2,9 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 //
 // ForgeClaw public relay (Cloudflare Worker). Lets visitors of the public ForgeClaw site use the hosted
-// model (deepseek-16b.yml, Qwen/Qwen3-8B) without ever holding the owner's credentials.
+// model (qwen3-8b.yml, Qwen/Qwen3-8B) without ever holding the owner's credentials.
 //
-// What it can do: dispatch TWO workflows (deepseek-16b.yml, chat profile, no NEXUS learning; and
+// What it can do: dispatch TWO workflows (qwen3-8b.yml, chat profile, no NEXUS learning; and
 // deep-research.yml, which searches the live web and reads pages), both without a mirror branch, and
 // read those runs' result artifacts. Nothing else: no repository writes, no other workflow, no tools. Abuse limits: allowed origins only, a per-IP hourly quota (needs the RATE KV binding), and a
 // cap on concurrently running public jobs so visitors cannot starve the owner's own runs.
@@ -21,7 +21,7 @@
 //   RESEND_API_KEY   optional secret; with REPORT_EMAIL, error reports are emailed through Resend
 //   REPORT_EMAIL     the owner's email address for error reports
 
-const WORKFLOW = 'deepseek-16b.yml'
+const WORKFLOW = 'qwen3-8b.yml'
 const RESEARCH_WORKFLOW = 'deep-research.yml'
 const ID_RE = /^public-[a-z0-9]{6,12}-[a-z0-9]{6,12}$/
 const MAX_TASK_CHARS = 4000
@@ -262,7 +262,7 @@ async function readReasoning(id, env, cors) {
     await recordLearning(env, id, { outcome: 'failed', result: `[TOOL ERROR] model run concluded ${run.conclusion}`, model: '' })
     return json({ status: 'failed', conclusion: run.conclusion }, 200, cors)
   }
-  const files = await readArtifact(env, run, `deepseek-${id}`, ['result.txt', 'result_meta.txt'])
+  const files = await readArtifact(env, run, `qwen-${id}`, ['result.txt', 'result_meta.txt'])
   if (!files) return json({ status: 'failed', conclusion: 'no result artifact' }, 200, cors)
   const model = /^model=(.+)$/m.exec(files['result_meta.txt'] || '')?.[1] || ''
   const result = files['result.txt'] || ''
@@ -287,7 +287,7 @@ async function recordLearning(env, id, outcome) {
     v: 2,
     id,
     kind: noted.kind,
-    tool: noted.kind === 'research' ? 'deep_research' : 'deepseek_reason',
+    tool: noted.kind === 'research' ? 'deep_research' : 'qwen_reason',
     task: String(noted.task || ''),
     result,
     outcome: outcome.outcome,

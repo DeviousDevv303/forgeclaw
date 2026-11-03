@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// Run 157 (2026-10-19): a DeepSeek question was still generating on GitHub when Enter sent it again.
+// Run 157 (2026-10-19): a Qwen question was still generating on GitHub when Enter sent it again.
 // The second send took over the active run without stopping the first, so the first answer was
 // discarded when it arrived and its bubble never rendered, while a duplicate run (158) was dispatched.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -26,7 +26,7 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.resetModules() })
 
-const dispatches = () => fetchMock.mock.calls.filter(([url, init]) => String(url).includes('deepseek-16b.yml/dispatches') && (init as RequestInit | undefined)?.method === 'POST')
+const dispatches = () => fetchMock.mock.calls.filter(([url, init]) => String(url).includes('qwen3-8b.yml/dispatches') && (init as RequestInit | undefined)?.method === 'POST')
 
 describe('sending while a request is still running', () => {
   it('does not start a second run or abandon the first, and keeps the typed text', async () => {
@@ -45,8 +45,8 @@ describe('sending while a request is still running', () => {
     expect(box.value).toBe('Good morning, give me a calisthenics workout for today')
     // The ignored Enter is explained, not silent.
     expect(screen.getByText('Still working on your last request. Press STOP to cancel it.')).toBeTruthy()
-    // The running bubble shows a sign of life with the DeepSeek wait.
-    await waitFor(() => expect(screen.getByText(/Still working · \d+:\d\d · DeepSeek usually takes 2–6 min/)).toBeTruthy(), { timeout: 8000 })
+    // The running bubble shows a sign of life with the Qwen wait.
+    await waitFor(() => expect(screen.getByText(/Still working · \d+:\d\d · Qwen usually takes 2–6 min/)).toBeTruthy(), { timeout: 8000 })
   }, 20_000)
 
   it('accepts a new send after STOP, so the guard can never lock the chat', async () => {

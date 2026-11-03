@@ -59,7 +59,7 @@ describe('dispatcher integrity (offline)', () => {
     for (const required of [
       'github_read_file', 'github_write_file', 'github_list_files', 'github_search_code',
       'github_repo_state', 'github_verify_commit', 'coding_task_update',
-      'run_js', 'memory_write', 'memory_read', 'spawn_agent', 'ask_deepseek',
+      'run_js', 'memory_write', 'memory_read', 'spawn_agent', 'ask_qwen',
     ]) {
       expect(toolNames).toContain(required)
     }
@@ -191,12 +191,12 @@ describe('dispatcher integrity (offline)', () => {
     let payload: { ref: string; inputs: { task: string; context: string; nexus_learning: string; invocation_id: string } } | undefined
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.endsWith('/deepseek-16b.yml/dispatches')) {
+      if (url.endsWith('/qwen3-8b.yml/dispatches')) {
         dispatchedUrl = url
         payload = JSON.parse(String(init?.body)) as NonNullable<typeof payload>
         return new Response(null, { status: 204 })
       }
-      if (url.includes('/deepseek-16b.yml/runs?')) {
+      if (url.includes('/qwen3-8b.yml/runs?')) {
         return Response.json({ workflow_runs: [{
           id: 84,
           name: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`,
@@ -214,29 +214,29 @@ describe('dispatcher integrity (offline)', () => {
         return Response.json({ id: 84, name: 'Qwen/Qwen3-8B', display_title: `Qwen/Qwen3-8B ${payload?.inputs.invocation_id}`, event: 'workflow_dispatch', status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/84', run_number: 84 })
       }
       if (url.endsWith('/actions/runs/84/artifacts?per_page=100')) {
-        return Response.json({ artifacts: [{ name: `deepseek-${payload?.inputs.invocation_id}`, archive_download_url: 'https://example.test/deepseek.zip', expired: false }] })
+        return Response.json({ artifacts: [{ name: `qwen-${payload?.inputs.invocation_id}`, archive_download_url: 'https://example.test/qwen.zip', expired: false }] })
       }
       // The mirror is probed first; a missing mirror falls through to the artifact.
       if (url.includes('raw.githubusercontent.com')) return new Response('', { status: 404 })
-      if (url === 'https://example.test/deepseek.zip') return new Response(zipBytes, { status: 200 })
+      if (url === 'https://example.test/qwen.zip') return new Response(zipBytes, { status: 200 })
       throw new Error(`Unexpected fetch URL: ${url}`)
     })
     vi.stubGlobal('fetch', fetchMock)
 
     const output = await executeTool({
-      id: 'direct-deepseek-test',
-      name: 'ask_deepseek',
+      id: 'direct-qwen-test',
+      name: 'ask_qwen',
       input: {
         question: "Explain ForgeClaw's default reasoning flow. Tell me which model is primary and which is secondary.",
         context: 'ForgeClaw architecture facts: DeepSeek-Coder 6.7B primary; Qwen2.5 WebGPU 3B secondary.',
       },
     }, { ...ctx(), ghToken: 'test-token', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' })
 
-    expect(dispatchedUrl).toBe('https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/deepseek-16b.yml/dispatches')
+    expect(dispatchedUrl).toBe('https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/qwen3-8b.yml/dispatches')
     expect(payload?.inputs.task).toBe("Explain ForgeClaw's default reasoning flow. Tell me which model is primary and which is secondary.")
     expect(payload?.inputs.context).toBe('ForgeClaw architecture facts: DeepSeek-Coder 6.7B primary; Qwen2.5 WebGPU 3B secondary.')
     expect(payload?.inputs.nexus_learning).toBe('false')
-    expect(payload?.inputs.invocation_id).toMatch(/^deepseek-/)
+    expect(payload?.inputs.invocation_id).toMatch(/^qwen-/)
     expect(output).toContain('Qwen/Qwen3-8B completed')
     expect(output).toContain('The capital of France is Paris.')
     expect(output).not.toContain('learning candidate')

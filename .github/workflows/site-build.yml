@@ -11,7 +11,7 @@ run-name: Site build ${{ inputs.invocation_id }}
 #   mirror - contents: write, runs no model-written code; copies the output to builds/<id>/ on the
 #            site-builds branch, where ForgeClaw (src/lib/siteBuild.ts) reads it and publishes it to the
 #            site repository with the operator's token. Artifact zips are not reliably downloadable
-#            from the browser, so this mirror is the delivery path (same pattern as deepseek-results).
+#            from the browser, so this mirror is the delivery path (same pattern as qwen-results).
 on:
   workflow_dispatch:
     inputs:

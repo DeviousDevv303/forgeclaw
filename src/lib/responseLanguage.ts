@@ -2,7 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 //
 // Reply-language instructions keyed by the UI language selected in the header.
-// Providers that accept a system prompt receive these there; the DeepSeek
+// Providers that accept a system prompt receive these there; the Qwen
 // workflow builds its own system prompt from `task`/`context`, so the selected
 // language has to travel inside the task text.
 
@@ -14,7 +14,7 @@ export const RESPONSE_LANGUAGE_INSTRUCTIONS: Record<string, string> = {
 }
 
 /**
- * Append the reply-language instruction to a DeepSeek task. English is the
+ * Append the reply-language instruction to a Qwen task. English is the
  * workflow's default, so English and unknown values leave the task unchanged.
  */
 export function withResponseLanguage(task: string, lang?: string): string {

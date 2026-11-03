@@ -214,7 +214,7 @@ export function extractExplicitShellCommand(prompt: string): string | null {
  * model entirely and still pass through the Guardian gate inside executeTool, so
  * co-sign rules (gmail_send, send_whatsapp, calendar_create, github_run_workflow,
  * writes to main) are unchanged. Excluded on purpose: run_js, sculpt_self,
- * spawn_agent, http_fetch, deepseek_reason, generate_image, analyze_image and
+ * spawn_agent, http_fetch, qwen_reason, generate_image, analyze_image and
  * review_code (free-form or multi-line inputs), and shell_exec (own command path).
  */
 const DIRECT_TOOLS: Record<string, { required: string[]; usage: string }> = {

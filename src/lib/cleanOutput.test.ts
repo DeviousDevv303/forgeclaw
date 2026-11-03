@@ -8,7 +8,7 @@ describe('cleanOutput preserves identifiers', () => {
     '[GUARDIAN REJECTED] github_write_file was not executed.',
     '[TOOL ERROR] No GitHub token configured. Add gh_token in memory or settings.',
     'Created docs/my_file_name.md in DeviousDevv303/forgeclaw',
-    'Run deepseek_reason then github_repo_state.',
+    'Run qwen_reason then github_repo_state.',
     'See issue #12 and C# notes',
     'Use (a, b) => a > b and x -> y',
     '__init__.py and __dirname are names',

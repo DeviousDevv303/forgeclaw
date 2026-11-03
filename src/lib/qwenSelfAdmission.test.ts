@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { corpusRepository, type CorpusRecord } from './corpus'
 import { recordLearningEvent } from './learningEvents'
 import { answerLineage, answerOutcome, CONVERGED_BY, hasQwenLineage } from './nexusConvergence'
-import { nexusGuidanceForDeepSeek } from './nexusGuidance'
+import { nexusGuidanceForQwen } from './nexusGuidance'
 
 beforeEach(() => localStorage.clear())
 
@@ -20,14 +20,14 @@ async function chatTurn(task: string, answer: string, provider: string, model: s
     outcome: answerOutcome(false, results),
     admittedBy: stored?.metadata.admittedBy ?? null,
     retrievable: corpusRepository.retrieve(task, 10).some(r => r.content.includes(answer.slice(0, 20))),
-    inGuidance: nexusGuidanceForDeepSeek(task).text.includes(answer.slice(0, 20)),
+    inGuidance: nexusGuidanceForQwen(task).text.includes(answer.slice(0, 20)),
   }
 }
 const TASK = 'zebrafinch quarterly ledger reconciliation for the falcon account'
 
 describe('Route C: Qwen answers never admit themselves', () => {
   it('(a) a Qwen answer plus a successful web_search stays a candidate: not admitted, not retrievable, not guidance', async () => {
-    const r = await chatTurn(TASK, 'QWEN-A the falcon ledger total is 401', 'deepseek', 'deepseek-16b', ['web_search', 'deepseek_reason'])
+    const r = await chatTurn(TASK, 'QWEN-A the falcon ledger total is 401', 'qwen', 'qwen3-8b', ['web_search', 'qwen_reason'])
     expect(r.outcome).toBe('verified') // the evidence gate still records what happened
     expect(r.admittedBy).toBeNull()
     expect(r.retrievable).toBe(false)
@@ -35,7 +35,7 @@ describe('Route C: Qwen answers never admit themselves', () => {
   })
 
   it('(a2) the same when another provider ran Qwen as a tool in the turn', async () => {
-    const r = await chatTurn(TASK, 'QWEN-A2 the falcon ledger total is 401', 'moonshot', 'kimi-k2.7-code', ['web_search', 'deepseek_reason'])
+    const r = await chatTurn(TASK, 'QWEN-A2 the falcon ledger total is 401', 'moonshot', 'kimi-k2.7-code', ['web_search', 'qwen_reason'])
     expect(r.admittedBy).toBeNull()
     expect(r.inGuidance).toBe(false)
   })
@@ -49,32 +49,32 @@ describe('Route C: Qwen answers never admit themselves', () => {
   })
 
   it('(c) a Qwen answer alone is unchanged: completed, a candidate', async () => {
-    const r = await chatTurn(TASK, 'QWEN-C the falcon ledger total is 401', 'deepseek', 'deepseek-16b', ['deepseek_reason'])
+    const r = await chatTurn(TASK, 'QWEN-C the falcon ledger total is 401', 'qwen', 'qwen3-8b', ['qwen_reason'])
     expect(r.outcome).toBe('completed')
     expect(r.admittedBy).toBeNull()
     expect(r.inGuidance).toBe(false)
   })
 
   it('a Qwen-provider turn is caught by its runtime even when a caller wrongly states lineage none', async () => {
-    await recordLearningEvent({ channel: 'chat', input: TASK, result: 'NOMARK the falcon ledger total is 401', outcome: 'verified', runtime: 'deepseek', model: 'deepseek-16b', lineage: 'none' })
+    await recordLearningEvent({ channel: 'chat', input: TASK, result: 'NOMARK the falcon ledger total is 401', outcome: 'verified', runtime: 'qwen', model: 'qwen3-8b', lineage: 'none' })
     expect(corpusRepository.listCandidates(1000).find(c => c.content.startsWith('NOMARK'))?.metadata.admittedBy).toBeUndefined()
   })
 })
 
 describe('lineage helpers', () => {
   it('answerLineage: Qwen provider, or a Qwen tool anywhere in the turn', () => {
-    expect(answerLineage('deepseek', [])).toBe('qwen')
+    expect(answerLineage('qwen', [])).toBe('qwen')
     expect(answerLineage('corpus', [{ name: 'web_search' }])).toBe('qwen')
-    expect(answerLineage('moonshot', [{ name: 'web_search' }, { name: 'ask_deepseek' }])).toBe('qwen')
+    expect(answerLineage('moonshot', [{ name: 'web_search' }, { name: 'ask_qwen' }])).toBe('qwen')
     expect(answerLineage('moonshot', [{ name: 'web_search' }])).toBe('none')
     expect(answerLineage('anthropic', [])).toBe('none')
   })
-  it('hasQwenLineage reads the marker, and for older records the runtime, the model id or the deepseek source', () => {
+  it('hasQwenLineage reads the marker, and for older records the runtime, the model id or the qwen source', () => {
     expect(hasQwenLineage({ metadata: { lineage: 'qwen' } })).toBe(true)
     expect(hasQwenLineage({ context: 'channel=chat; outcome=verified; lineage=qwen' })).toBe(true)
     expect(hasQwenLineage({ metadata: { runtime: 'corpus', model: 'x' } })).toBe(true)
     expect(hasQwenLineage({ metadata: { runtime: 'moonshot', model: 'Qwen/Qwen3-8B' } })).toBe(true)
-    expect(hasQwenLineage({ source: 'deepseek:github-actions' })).toBe(true)
+    expect(hasQwenLineage({ source: 'qwen:github-actions' })).toBe(true)
     expect(hasQwenLineage({ metadata: { runtime: 'moonshot', model: 'kimi-k2.7-code' } })).toBe(false)
   })
 })
@@ -86,23 +86,23 @@ describe('guidance says who vouched for a record', () => {
   const task = 'falcon ledger reconciliation zebrafinch quarterly account'
 
   it('a legacy converged record with Qwen lineage (admitted before this fix) never reaches a prompt', () => {
-    const legacy = rec('l1', 'LEGACY-QWEN falcon ledger reconciliation zebrafinch quarterly account total 401', { admittedBy: CONVERGED_BY, runtime: 'deepseek', model: 'deepseek-16b' })
-    const g = nexusGuidanceForDeepSeek(task, { ...none, retrieve: () => [legacy] })
+    const legacy = rec('l1', 'LEGACY-QWEN falcon ledger reconciliation zebrafinch quarterly account total 401', { admittedBy: CONVERGED_BY, runtime: 'qwen', model: 'qwen3-8b' })
+    const g = nexusGuidanceForQwen(task, { ...none, retrieve: () => [legacy] })
     expect(g.text).not.toContain('LEGACY-QWEN')
     expect(g.records).toBe(0)
   })
 
   it('a converged record is never labeled as curated by the owner', () => {
     const learned = rec('c1', 'LEARNED falcon ledger reconciliation zebrafinch quarterly account total 391', { admittedBy: CONVERGED_BY, runtime: 'moonshot', model: 'kimi-k2.7-code' })
-    const g = nexusGuidanceForDeepSeek(task, { ...none, retrieve: () => [learned] })
+    const g = nexusGuidanceForQwen(task, { ...none, retrieve: () => [learned] })
     expect(g.text).toContain('LEARNED')
     expect(g.text).toContain('not reviewed by the owner')
     expect(g.text).not.toContain('curated by the owner')
   })
 
   it('an owner-admitted record, Qwen lineage or not, keeps the curated label', () => {
-    const owned = rec('o1', 'OWNED falcon ledger reconciliation zebrafinch quarterly account total 391', { admittedBy: 'owner-signature', runtime: 'deepseek', model: 'deepseek-16b' })
-    const g = nexusGuidanceForDeepSeek(task, { ...none, retrieve: () => [owned] })
+    const owned = rec('o1', 'OWNED falcon ledger reconciliation zebrafinch quarterly account total 391', { admittedBy: 'owner-signature', runtime: 'qwen', model: 'qwen3-8b' })
+    const g = nexusGuidanceForQwen(task, { ...none, retrieve: () => [owned] })
     expect(g.text).toContain('OWNED')
     expect(g.text).toContain('curated by the owner')
     expect(g.text).not.toContain('not reviewed by the owner')

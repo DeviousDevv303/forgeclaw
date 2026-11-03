@@ -61,8 +61,8 @@ describe('picture attachments', () => {
     await waitFor(() => expect(screen.getByText(/A particle detector at CERN\./)).toBeTruthy(), { timeout: 8000 })
   }, 20_000)
 
-  it('has DeepSeek look at the picture on Actions and answer from what the vision model saw', async () => {
-    localStorage.setItem('fm_provider', 'deepseek-16b')
+  it('has Qwen look at the picture on Actions and answer from what the vision model saw', async () => {
+    localStorage.setItem('fm_provider', 'qwen3-8b')
     const API = 'https://api.github.com/repos/DeviousDevv303/forgeclaw'
     let id = ''
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -83,7 +83,7 @@ describe('picture attachments', () => {
     const dispatch = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/image-analyze.yml/dispatches'))!
     expect(JSON.parse(String((dispatch[1] as RequestInit).body)).inputs).toMatchObject({ image_ref: `vision-inputs/${id}.png`, prompt: expect.stringContaining('what is this?') })
     // The picture went to the vision workflow; the text model was not asked to describe it, and no repository summary ran.
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/deepseek-16b.yml/dispatches'))).toBe(false)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/qwen3-8b.yml/dispatches'))).toBe(false)
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`${API}/commits/`))).toBe(false)
   }, 45_000)
 

@@ -10,31 +10,33 @@ import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
 import { installErrorHandlers, logError } from './lib/errorLog'
 
-/** Persisted DeepSeek run for resume after app background/kill. */
-interface PersistedDeepSeekRun {
+/** Persisted Qwen run for resume after app background/kill. */
+interface PersistedQwenRun {
   invocationId: string
   dispatchedAt: number
   messageId: string
   question: string
 }
-const DEEPSEEK_RUN_KEY = 'forgeclaw_active_deepseek_run'
-function saveActiveDeepSeekRun(run: PersistedDeepSeekRun) {
-  safeSetItem(DEEPSEEK_RUN_KEY, JSON.stringify(run))
+const QWEN_RUN_KEY = 'forgeclaw_active_qwen_run'
+const LEGACY_RUN_KEY = 'forgeclaw_active_deepseek_run'  // written by builds before the rename; read once, never written
+function saveActiveQwenRun(run: PersistedQwenRun) {
+  safeSetItem(QWEN_RUN_KEY, JSON.stringify(run))
 }
-function loadActiveDeepSeekRun(): PersistedDeepSeekRun | null {
-  return safeJsonParse<PersistedDeepSeekRun | null>(safeGetItem(DEEPSEEK_RUN_KEY), null)
+function loadActiveQwenRun(): PersistedQwenRun | null {
+  return safeJsonParse<PersistedQwenRun | null>(safeGetItem(QWEN_RUN_KEY) ?? safeGetItem(LEGACY_RUN_KEY), null)
 }
-function clearActiveDeepSeekRun() {
-  safeRemoveItem(DEEPSEEK_RUN_KEY)
+function clearActiveQwenRun() {
+  safeRemoveItem(QWEN_RUN_KEY)
+  safeRemoveItem(LEGACY_RUN_KEY)
 }
 
 /**
- * Resume a DeepSeek run that was orphaned when the app was backgrounded or killed.
+ * Resume a Qwen run that was orphaned when the app was backgrounded or killed.
  * Called on mount and when the tab becomes visible. If there's a persisted run
  * but no active run in memory, re-attach to the GitHub workflow and wait for the result.
  * Returns true if a resume was started.
  */
-async function resumeOrphanedDeepSeekRun(
+async function resumeOrphanedQwenRun(
   activeRunRef: React.MutableRefObject<{ id: string; controller: AbortController; messageId: string } | null>,
   deps: {
     executeTool: typeof import('./lib/forgeTools').executeTool
@@ -46,17 +48,17 @@ async function resumeOrphanedDeepSeekRun(
     setLoading: (v: boolean) => void
   },
 ): Promise<boolean> {
-  const persisted = loadActiveDeepSeekRun()
+  const persisted = loadActiveQwenRun()
   if (!persisted) return false
   if (activeRunRef.current) return false // already running, don't double-dispatch
 
   // Don't resume runs older than the workflow timeout. Its reply was left "running" when the page loaded, so end it
   // here too: clearing only the saved run left "Still working" on screen forever.
-  if (!isDeepSeekRunResumable(persisted, Date.now())) {
-    clearActiveDeepSeekRun()
+  if (!isQwenRunResumable(persisted, Date.now())) {
+    clearActiveQwenRun()
     deps.setMessages(prev => prev.map(m =>
       m.id === persisted.messageId && m.streaming
-        ? { ...m, streaming: false, agentPhase: 'BLOCKED', content: `${m.content ? `${m.content}\n\n` : ''}${DEEPSEEK_RUN_EXPIRED_NOTE}` }
+        ? { ...m, streaming: false, agentPhase: 'BLOCKED', content: `${m.content ? `${m.content}\n\n` : ''}${QWEN_RUN_EXPIRED_NOTE}` }
         : m,
     ))
     return false
@@ -69,13 +71,13 @@ async function resumeOrphanedDeepSeekRun(
   deps.setLoading(true)
   deps.setMessages(prev => prev.map(m =>
     m.id === persisted.messageId
-      ? { ...m, content: 'Resuming — reconnecting to the running DeepSeek workflow…', streaming: true }
+      ? { ...m, content: 'Resuming — reconnecting to the running Qwen workflow…', streaming: true }
       : m,
   ))
 
   try {
     const output = await deps.executeTool(
-      { id: `resume-${persisted.invocationId}`, name: 'deepseek_reason', input: {
+      { id: `resume-${persisted.invocationId}`, name: 'qwen_reason', input: {
         task: 'resume', // placeholder, not used in resume path
         resume_invocation_id: persisted.invocationId,
         resume_dispatched_at: persisted.dispatchedAt,
@@ -105,7 +107,7 @@ async function resumeOrphanedDeepSeekRun(
   } finally {
     deps.setLoading(false)
     if (activeRunRef.current?.id === runId) activeRunRef.current = null
-    clearActiveDeepSeekRun()
+    clearActiveQwenRun()
   }
   return true
 }
@@ -129,7 +131,7 @@ import type { ProviderId } from './lib/modelProviders'
 import { RESPONSE_LANGUAGE_INSTRUCTIONS, withResponseLanguage } from './lib/responseLanguage'
 import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, isDeepSeekProvider, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, metaProvider, openrouterProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, isQwenProvider, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, metaProvider, openrouterProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { diagKeyFormat } from './lib/diagKeyFormat'
 import { isToolFailureOutput } from './lib/toolOutcome'
@@ -137,7 +139,7 @@ import { cleanForSpeech, createSpeechController, type SpeechSynthLike, type Spee
 import { answerLineage, answerOutcome } from './lib/nexusConvergence'
 import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type DistributiveOmit, type LearningEventInput, type LearningLineage } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
-import { buildLiveAnswerTask, buildSearchSummaryTask, cleanSearchDisplay, extractDeepSeekAnswer, groundedLiveAnswer, unsupportedNames } from './lib/liveAnswer'
+import { buildLiveAnswerTask, buildSearchSummaryTask, cleanSearchDisplay, extractQwenAnswer, groundedLiveAnswer, unsupportedNames } from './lib/liveAnswer'
 import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
 import { resolveMetaModel } from './lib/ai/providers/metaProvider'
 import { fetchOpenRouterModels, isOpenRouterModelId, resolveOpenRouterModel } from './lib/ai/providers/openrouterProvider'
@@ -197,7 +199,7 @@ import { useForgeCore } from './hooks/useForgeCore'
 import { MissionLog } from './components/MissionLog'
 import { ReasoningTrace } from './components/ReasoningTrace'
 import type { AgentPhase } from './types/forgeOps'
-import { parseDirectDeepSeekCommand, shouldDispatchComplexTaskToDeepSeek } from './lib/deepseekCommand'
+import { parseDirectQwenCommand, shouldDispatchComplexTaskToQwen } from './lib/qwenCommand'
 import { evaluateSimpleArithmetic } from './lib/simpleArithmetic'
 import { FOUNDER_PRINCIPLES, WHY_FORGECLAW_EXISTS } from './lib/founderPrinciples'
 import ColoradoFooter from './components/ColoradoFooter'
@@ -225,7 +227,7 @@ import { FundsPanel } from './components/FundsPanel'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiCredentialPresence, kalshiKeyUsable, loadKalshiEnv, loadKalshiRelayUrl, saveKalshiCredentials, saveKalshiEnv, saveKalshiRelayUrl, type KalshiEnv } from './lib/kalshiAuth'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/pageVisibility'
-import { DEEPSEEK_RUN_EXPIRED_NOTE, isDeepSeekRunResumable } from './lib/deepseekRunResume'
+import { QWEN_RUN_EXPIRED_NOTE, isQwenRunResumable } from './lib/qwenRunResume'
 import { ConnectionToast, type ConnectionNotice } from './components/ConnectionToast'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
 import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
@@ -482,7 +484,7 @@ const ON_SCREEN_RETRY_DELAYS_MS = [1500, 4000] as const
 
 /** A prompt that runs a fixed command rather than the model: re-running it could repeat a side effect, so it waits for a tap. */
 function isFixedCommandPrompt(prompt: string): boolean {
-  return Boolean(parseDirectDeepSeekCommand(prompt) || parseSculptCommand(prompt) || parseFundsCommand(prompt)) || isExplicitShellRequest(prompt) || isExplicitToolRequest(prompt)
+  return Boolean(parseDirectQwenCommand(prompt) || parseSculptCommand(prompt) || parseFundsCommand(prompt)) || isExplicitShellRequest(prompt) || isExplicitToolRequest(prompt)
 }
 
 function cleanStoredMessage(message: Message): Message {
@@ -692,7 +694,7 @@ function App() {
       `Resume the unfinished ForgeClaw coding task. Repository evidence must be read with github_repo_state before continuing.`,
     )
     // A reload shows the unfinished task and waits for a tap (RESUME TASK). It must not dispatch
-    // anything by itself: each resume can start a 9-23 minute DeepSeek run, and a stray or pasted
+    // anything by itself: each resume can start a 9-23 minute Qwen run, and a stray or pasted
     // task would otherwise re-run on every reload.
     // Factual trail only — no execution narration, no reasoning display.
     const resumed = saveCodingAgentState({
@@ -715,14 +717,14 @@ function App() {
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = safeGetItem('forgemind_history')
     // A reply still "running" when the page closed can never finish: its request died with the page. Only a
-    // persisted DeepSeek run is re-attached (resumeOrphanedDeepSeekRun); every other one is marked
+    // persisted Qwen run is re-attached (resumeOrphanedQwenRun); every other one is marked
     // interrupted instead of showing "Still working" forever.
     // The latest interrupted task is picked up again when the owner is back (interruptedTask.ts).
     // Only a run that can still be re-attached keeps its reply "running"; an expired one is ended below.
-    const persistedRun = loadActiveDeepSeekRun()
-    const resumable = persistedRun && isDeepSeekRunResumable(persistedRun, Date.now()) ? persistedRun.messageId : undefined
+    const persistedRun = loadActiveQwenRun()
+    const resumable = persistedRun && isQwenRunResumable(persistedRun, Date.now()) ? persistedRun.messageId : undefined
     const stored = safeJsonParse<Message[]>(saved, []).map(cleanStoredMessage)
-    // An expired DeepSeek reply is never auto-resumed (it would start a 9-23 minute workflow unasked); it says to resend.
+    // An expired Qwen reply is never auto-resumed (it would start a 9-23 minute workflow unasked); it says to resend.
     const task = findInterruptedTask(stored, { now: Date.now(), skipReplyId: persistedRun?.messageId, isCommand: isFixedCommandPrompt })
     interruptedTaskRef.current = task
     return stored.map(m =>
@@ -814,8 +816,8 @@ function App() {
   const [nexusSendRepo, setNexusSendRepo] = useState<string>(() => safeGetItem('fm_nexus_send_repo') || DEFAULT_NEXUS_SEND_REPO)
   const [corpusSendStatus, setCorpusSendStatus] = useState('')
   const [sendingNexusStore, setSendingNexusStore] = useState(false)
-  const normalizedActiveModel = activeProvider === 'local' ? localModel : isDeepSeekProvider(activeProvider) ? 'deepseek-16b' : activeProvider === 'moonshot' ? moonshotModel : activeProvider === 'muse' ? metaModel : activeProvider === 'openrouter' ? openrouterModel.trim() : anthropicModel
-  const activeModelLabel = isDeepSeekProvider(activeProvider)
+  const normalizedActiveModel = activeProvider === 'local' ? localModel : isQwenProvider(activeProvider) ? 'qwen3-8b' : activeProvider === 'moonshot' ? moonshotModel : activeProvider === 'muse' ? metaModel : activeProvider === 'openrouter' ? openrouterModel.trim() : anthropicModel
+  const activeModelLabel = isQwenProvider(activeProvider)
     ? corpusProvider.models[0]?.label ?? 'Qwen/Qwen3-8B · GitHub Actions'
     : activeProvider === 'local'
       ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
@@ -831,9 +833,9 @@ function App() {
   const lastRuntimeMessage = [...messages].reverse().find(message => message.role === 'assistant' && message.provider && message.model)
   const lastRuntimeRoute = lastRuntimeMessage
     ? lastRuntimeMessage.provider === 'GitHub Actions'
-      ? 'Level 1 · direct DeepSeek dispatch'
-      // D-016: 'corpus' and 'deepseek' are the same Qwen workflow (providerRouter.isDeepSeekProvider) — one route label for both ids.
-      : lastRuntimeMessage.provider === 'corpus' || lastRuntimeMessage.provider === 'deepseek' || lastRuntimeMessage.provider === 'qwen'
+      ? 'Level 1 · direct Qwen dispatch'
+      // D-016: 'corpus' and 'qwen' are the same Qwen workflow (providerRouter.isQwenProvider) — one route label for both ids.
+      : lastRuntimeMessage.provider === 'corpus' || lastRuntimeMessage.provider === 'qwen' || lastRuntimeMessage.provider === 'deepseek'
         ? 'Level 1 · Qwen/Qwen3-8B GitHub Actions'
       : lastRuntimeMessage.provider === 'moonshot'
             ? `Level 1 · Moonshot/Kimi (${lastRuntimeMessage.model})`
@@ -956,7 +958,7 @@ function App() {
       }
     }
     const doResume = () => {
-      void resumeOrphanedDeepSeekRun(activeRunRef, {
+      void resumeOrphanedQwenRun(activeRunRef, {
         executeTool,
         loadToolContext,
         ghToken: ghToken || '',
@@ -1253,16 +1255,16 @@ function App() {
     const learningId = learningRunId(options.parentRunId)
     learningRunRef.current = learningId
 
-    // DeepSeek-primary providers require a GitHub token. Fail fast with a clear
-    // message instead of dispatching DeepSeek (which will fail) and falling back
+    // Qwen-primary providers require a GitHub token. Fail fast with a clear
+    // message instead of dispatching Qwen (which will fail) and falling back
     // to an unverified local fallback.
-    const deepSeekProvider = isDeepSeekProvider(activeProvider)
+    const qwenProvider = isQwenProvider(activeProvider)
     // A public visitor (no token, relay configured) reaches the model through the relay instead.
-    if (deepSeekProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '')) {
+    if (qwenProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '')) {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: 'assistant',
-        content: '⚠️ GitHub token required: The DeepSeek reasoning workflow needs a GitHub token to dispatch. Please add your token in Settings → GitHub Token, then try again.',
+        content: '⚠️ GitHub token required: The Qwen reasoning workflow needs a GitHub token to dispatch. Please add your token in Settings → GitHub Token, then try again.',
         timestamp: Date.now(),
       }
       setMessages(prev => [...prev,
@@ -1286,31 +1288,31 @@ function App() {
       : displayContent
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now(), ...(options.resumedAfterInterrupt ? { resumedAfterInterrupt: true } : {}) }
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'muse' ? metaApiKey : activeProvider === 'openrouter' ? openrouterApiKey : ''
-    const currentProviderLabel = isDeepSeekProvider(activeProvider) ? 'Qwen/Qwen3-8B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'muse' ? 'Meta (Muse)' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'
+    const currentProviderLabel = isQwenProvider(activeProvider) ? 'Qwen/Qwen3-8B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'muse' ? 'Meta (Muse)' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : activeProvider === 'muse' ? 'LLM_...' : activeProvider === 'openrouter' ? 'sk-or-...' : 'sk-ant-...'
 
-    const explicitDeepSeek = !imageUrl ? parseDirectDeepSeekCommand(promptText) : null
-    if (explicitDeepSeek) {
-      const question = explicitDeepSeek.question
+    const explicitQwen = !imageUrl ? parseDirectQwenCommand(promptText) : null
+    if (explicitQwen) {
+      const question = explicitQwen.question
       const startedAt = performance.now()
-      const runId = `deepseek-run-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const runId = `qwen-run-${Date.now()}-${Math.random().toString(36).slice(2)}`
       const controller = new AbortController()
       const msgId = `${Date.now() + 1}`
-      const callId = `direct-deepseek-${Date.now()}`
+      const callId = `direct-qwen-${Date.now()}`
       activeRunRef.current = { id: runId, controller, messageId: msgId, journal: startRunJournal() }
       setMessages(prev => [...prev, userMsg, {
         id: msgId,
         role: 'assistant',
-        content: question ? 'Dispatching through the DeepSeek reasoning workflow…' : 'Usage: /deepseek <question>',
+        content: question ? 'Dispatching through the Qwen reasoning workflow…' : 'Usage: /qwen <question>',
         timestamp: Date.now(),
         source: 'cloud',
         provider: 'GitHub Actions',
-        model: 'DeepSeek workflow dispatch (6.7B checkpoint)',
+        model: 'Qwen workflow dispatch (6.7B checkpoint)',
         streaming: Boolean(question),
       }])
       if (!question) {
         setRequestStatus('blocked')
-        setLastRequestError('A question is required. Usage: /deepseek <question>')
+        setLastRequestError('A question is required. Usage: /qwen <question>')
         setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
         activeRunRef.current = null
         return
@@ -1321,7 +1323,7 @@ function App() {
       setLastRequestLatencyMs(null)
       emitForge({ type: 'OBJECTIVE_RECEIVED', objective: question })
       emitForge({ type: 'PHASE_CHANGE', phase: 'EXECUTION' })
-      const call: ToolCall = { id: callId, name: 'ask_deepseek', input: { question: withResponseLanguage(question, selectedLanguage) } }
+      const call: ToolCall = { id: callId, name: 'ask_qwen', input: { question: withResponseLanguage(question, selectedLanguage) } }
       const activityId = `act_${callId}`
       setActivityLog(prev => [...prev.slice(-99), { id: activityId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
       emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
@@ -1333,13 +1335,13 @@ function App() {
           ghOwner: ghOwner || CANONICAL_IDENTITY.owner,
           ghRepo: ghRepo || CANONICAL_IDENTITY.repository,
           signal: controller.signal,
-          onDeepSeekDispatch: (invocationId, dispatchedAt) => {
-            saveActiveDeepSeekRun({ invocationId, dispatchedAt, messageId: msgId, question })
+          onQwenDispatch: (invocationId, dispatchedAt) => {
+            saveActiveQwenRun({ invocationId, dispatchedAt, messageId: msgId, question })
           },
         })
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         const isError = output.startsWith('[TOOL ERROR]')
-        void recordLearning({ channel: 'tool', input: `ask_deepseek ${JSON.stringify(call.input)}`, result: output, outcome: outcomeFromToolOutput(output), toolName: call.name, actor: 'operator' })
+        void recordLearning({ channel: 'tool', input: `ask_qwen ${JSON.stringify(call.input)}`, result: output, outcome: outcomeFromToolOutput(output), toolName: call.name, actor: 'operator' })
         if (isError) logError(`tool:${call.name}`, output.slice(0, 300), JSON.stringify(call.input).slice(0, 200))
         setActivityLog(prev => prev.map(entry => entry.id === activityId
           ? { ...entry, output: output.slice(0, 300), status: isError ? 'error' : 'done' }
@@ -1349,22 +1351,22 @@ function App() {
         if (isError) emitForge({ type: 'TOOL_FAILURE', tool: call.name, failClass: classifyToolFailure(output) })
         else emitForge({ type: 'TOOL_SUCCESS', tool: call.name })
         emitForge(isError
-          ? { type: 'MISSION_BLOCKED', reason: 'Direct DeepSeek workflow dispatch failed' }
+          ? { type: 'MISSION_BLOCKED', reason: 'Direct Qwen workflow dispatch failed' }
           : { type: 'PHASE_CHANGE', phase: 'NEXT_ACTION' })
         setMessages(prev => prev.map(message => message.id === msgId
-          ? { ...message, content: output, streaming: false, provider: 'GitHub Actions', model: 'DeepSeek workflow dispatch (6.7B checkpoint)', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [{ toolCallId: call.id, name: call.name, output, isError }] }
+          ? { ...message, content: output, streaming: false, provider: 'GitHub Actions', model: 'Qwen workflow dispatch (6.7B checkpoint)', agentPhase: isError ? 'BLOCKED' : 'COMPLETE', toolResults: [{ toolCallId: call.id, name: call.name, output, isError }] }
           : message,
         ))
         setRequestStatus(isError ? 'blocked' : 'success')
         setLastRequestError(isError ? output : '')
         setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
-        clearActiveDeepSeekRun()
+        clearActiveQwenRun()
       } catch (error) {
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         const message = error instanceof Error ? error.message : String(error)
         setMessages(prev => prev.map(item => item.id === msgId ? { ...item, content: `[ERROR] ${message}`, streaming: false } : item))
         setRequestStatus('error')
-        clearActiveDeepSeekRun()
+        clearActiveQwenRun()
         setLastRequestError(message)
         setLastRequestLatencyMs(Math.round(performance.now() - startedAt))
       } finally {
@@ -1382,7 +1384,7 @@ function App() {
     // Only Claude and Kimi receive the picture itself; any other provider would answer without seeing it.
     // analyze_image reads the picture from here; it never travels in the prompt text.
     rememberAttachedImage(imageUrl)
-    // Claude and Kimi see the picture; DeepSeek has it analyzed on Actions (owner token). The corpus
+    // Claude and Kimi see the picture; Qwen has it analyzed on Actions (owner token). The corpus
     // model and free mode have no way to see it, so they say so instead of answering blind.
     if (imageUrl && !HOSTED_TOOL_PROVIDERS.has(activeProvider) && (activeProvider === 'corpus' || isPublicVisitor(ghToken || ''))) {
       setMessages(prev => [...prev, userMsg, {
@@ -1478,7 +1480,7 @@ function App() {
 
     setMessages(prev => [...prev, userMsg])
 
-    let source: 'local' | 'cloud' = isDeepSeekProvider(activeProvider) || activeProvider === 'local' ? 'local' : 'cloud'
+    let source: 'local' | 'cloud' = isQwenProvider(activeProvider) || activeProvider === 'local' ? 'local' : 'cloud'
     let cloudMsgId: string | null = null
     // Declared outside the try so a terminal failure can still attach the real
     // tool outcomes the run produced (Activity/Diagnostics must reflect reality).
@@ -1490,7 +1492,7 @@ function App() {
         // Filter out stale entries that don't share the current task's intent.
         // A corpus entry is only relevant if it shares at least 2 significant keywords
         // with the current prompt AND is less than 1 hour old.
-        // Prevents stale context (e.g. 18h-old SHA Q&A) from poisoning DeepSeek.
+        // Prevents stale context (e.g. 18h-old SHA Q&A) from poisoning Qwen.
         const ageMs = Date.now() - new Date(e.timestamp).getTime()
         if (Number.isNaN(ageMs) || ageMs >= 60 * 60 * 1000) return false
         const entryWords = new Set(e.prompt.toLowerCase().split(/\W+/).filter(w => w.length > 4))
@@ -1558,19 +1560,19 @@ function App() {
     // Keep ordinary chat free of the execution catalog; browser-local models
     // can emit code-token soup when a large tool protocol is injected for a
     // request that does not need tools.
-    const deepSeekDuoDefault = isDeepSeekProvider(activeProvider)
+    const qwenDuoDefault = isQwenProvider(activeProvider)
     // A hosted tool-calling model (Claude or Kimi) explicitly chosen: it is the reasoning engine, so
-    // don't route to DeepSeek, but still offer general tools. This used to check 'anthropic' only, so
-    // Kimi on any "analyze/review/debug" prompt was told to hand the task to the slow DeepSeek workflow
-    // and was given deepseek_reason on every coding task.
-    const isHostedReasoner = HOSTED_TOOL_PROVIDERS.has(activeProvider) && !deepSeekDuoDefault
-    const complexReasoningTask = !imageUrl && !isHostedReasoner && shouldDispatchComplexTaskToDeepSeek(promptText)
+    // don't route to Qwen, but still offer general tools. This used to check 'anthropic' only, so
+    // Kimi on any "analyze/review/debug" prompt was told to hand the task to the slow Qwen workflow
+    // and was given qwen_reason on every coding task.
+    const isHostedReasoner = HOSTED_TOOL_PROVIDERS.has(activeProvider) && !qwenDuoDefault
+    const complexReasoningTask = !imageUrl && !isHostedReasoner && shouldDispatchComplexTaskToQwen(promptText)
     const coreToolNames = (codingTask
-      ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'deepseek_reason', 'ask_deepseek']
-      : deepSeekDuoDefault || complexReasoningTask ? ['deepseek_reason'] : [])
-      // Claude and Kimi never delegate to the slow DeepSeek workflow, coding task or not.
-      .filter(name => !(isHostedReasoner && (name === 'deepseek_reason' || name === 'ask_deepseek')))
-    // Hosted reasoners get general tools (shell, repo state) but never deepseek_reason.
+      ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'qwen_reason', 'ask_qwen']
+      : qwenDuoDefault || complexReasoningTask ? ['qwen_reason'] : [])
+      // Claude and Kimi never delegate to the slow Qwen workflow, coding task or not.
+      .filter(name => !(isHostedReasoner && (name === 'qwen_reason' || name === 'ask_qwen')))
+    // Hosted reasoners get general tools (shell, repo state) but never qwen_reason.
     if (isHostedReasoner && !codingTask) {
       coreToolNames.push('github_repo_state', 'shell_exec', 'github_read_file', 'github_search_code')
     }
@@ -1597,19 +1599,19 @@ function App() {
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'This model has no native function calling. ForgeClaw supplies a compact manual protocol and routes every call through its existing dispatcher.'
-    const needsManualTools = codingTask || imageUrl !== undefined || relevantTools.length > 0 || complexReasoningTask || deepSeekDuoDefault
+    const needsManualTools = codingTask || imageUrl !== undefined || relevantTools.length > 0 || complexReasoningTask || qwenDuoDefault
     const primaryInstruction = imageUrl && isHostedReasoner
       ? `\n\nPRIMARY REASONING POLICY\n${VISION_POLICY}`
       : imageUrl
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
-      : deepSeekDuoDefault
-        ? '\n\nPRIMARY REASONING POLICY\nThe Qwen/Qwen3-8B GitHub Actions workflow (provider id \'deepseek\') is the only reasoning engine. Dispatch deepseek_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
+      : qwenDuoDefault
+        ? '\n\nPRIMARY REASONING POLICY\nThe Qwen/Qwen3-8B GitHub Actions workflow (provider id \'qwen\') is the only reasoning engine. Dispatch qwen_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
         ? `\n\nPRIMARY REASONING POLICY\nYou are the reasoning engine for this turn. Use the GitHub, shell and search tools to get real evidence before answering about the repository, its files, branches, commits or workflow runs, and quote what they return. Never claim a result you did not get from a tool in this conversation.\n${SHELL_EXEC_GUIDANCE}${relevantTools.some(t => t.name === 'github_publish_site') ? `\n${SITE_DEPLOY_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'deep_research') ? `\n${RESEARCH_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'browser_run') ? `\n${BROWSER_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'error_report') ? `\n${ERROR_PLAN_GUIDANCE}` : ''}${relevantTools.some(t => t.name === 'funds_propose') ? `\n${FUNDS_GUIDANCE}${ownerRulesPrompt()}` : ''}${relevantTools.some(t => t.name === 'sculpt_self') ? `\n${sculptUnlocked ? SELF_SCULPT_GUIDANCE : SELF_SCULPT_LOCKED_NOTICE}` : ''}`
       : needsManualTools
         ? complexReasoningTask
-          ? '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
-          : '\n\nPRIMARY REASONING POLICY\nUse deepseek_reason for tasks that require delegated reasoning, then formulate the final response from the tool result.'
+          ? '\n\nPRIMARY REASONING POLICY\nUse qwen_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
+          : '\n\nPRIMARY REASONING POLICY\nUse qwen_reason for tasks that require delegated reasoning, then formulate the final response from the tool result.'
         : '\n\nPRIMARY REASONING POLICY\nAnswer the user directly and clearly. Do not emit tool syntax, code, token IDs, or internal runtime instructions.'
     const ownerScaffold = isPublicVisitor(ghToken) ? '' : loadOwnerScaffold()
     const baseSystemPrompt = `${forgemindSystemPrompt(ownerScaffold)}\n\nCURRENT DATE\n${currentDateNote()}${needsCurrentInfo(promptText) && finalTools.some(t => t.name === 'deep_research') ? ' This question is about what is current: call deep_research first and answer from its sources.' : ''}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
@@ -1640,7 +1642,7 @@ function App() {
 
     // ── Runtime-owned repository identity ────────────────────────────────────
     // Do not pre-read or serialize HEAD/repository contents into the prompt. The
-    // runtime supplies a compact identity envelope and DeepSeek calls the GitHub read
+    // runtime supplies a compact identity envelope and Qwen calls the GitHub read
     // tool when evidence is required.
     let effectivePrompt = promptText
     const owner = (ghOwner || CANONICAL_IDENTITY.owner).trim()
@@ -1687,13 +1689,13 @@ function App() {
         guardianPosture,
         requestGuardianApproval,
         codingAgentState: compressedState,
-        // Persist a DeepSeek run the moment it is dispatched, as the direct /deepseek path does (above), so a page closed while this
-        // reply waits on the workflow re-attaches to the SAME run on reload (resumeOrphanedDeepSeekRun) instead of falling back to the
+        // Persist a Qwen run the moment it is dispatched, as the direct /qwen path does (above), so a page closed while this
+        // reply waits on the workflow re-attaches to the SAME run on reload (resumeOrphanedQwenRun) instead of falling back to the
         // whole-task resend, which would start a second 9-23 minute workflow. findInterruptedTask skips a reply that has a saved run
         // (skipReplyId), so the two recovery paths never both fire. One saved slot: if a turn dispatches several, the last one wins.
         // The run is cleared in the finally below when this reply ends (answered, failed or stopped).
-        onDeepSeekDispatch: (invocationId: string, dispatchedAt: number) => {
-          saveActiveDeepSeekRun({ invocationId, dispatchedAt, messageId: msgId, question: promptText })
+        onQwenDispatch: (invocationId: string, dispatchedAt: number) => {
+          saveActiveQwenRun({ invocationId, dispatchedAt, messageId: msgId, question: promptText })
         },
         spawnAgent: async (systemPrompt: string, task: string, tools?: string[]) =>
           runSubAgent(systemPrompt, task, tools, activeProvider, normalizedActiveModel, currentApiKey, ATTRIBUTED_TOOLS, {
@@ -1773,10 +1775,10 @@ function App() {
         ? extractExplicitShellCommand(promptText)
         : null
       const toolDetected = !directShellCommand && isExplicitToolRequest(promptText)
-      // Live-world questions ("any UFC fights tonight?") go straight to web_search on the DeepSeek
+      // Live-world questions ("any UFC fights tonight?") go straight to web_search on the Qwen
       // provider: its 16B CPU workflow takes 9-23 min per hop and has no live data. Other providers
       // can call tools themselves, so they are left alone.
-      const liveDataCall = !directShellCommand && !toolDetected && !imageUrl && isDeepSeekProvider(activeProvider)
+      const liveDataCall = !directShellCommand && !toolDetected && !imageUrl && isQwenProvider(activeProvider)
         ? routeLiveDataQuestion(promptText)
         : null
       const explicitTool = toolDetected ? extractExplicitToolCall(promptText) : liveDataCall
@@ -1800,7 +1802,7 @@ function App() {
         // Judge the tool's own output: the parser-note prefix must not hide a leading [TOOL ERROR] or ✗.
         const isError = isToolFailureOutput(rawOutput)
         // A web search gets an ANSWER, not the raw tool dump (owner, 2026-10-31 — any web search,
-        // live-data routed or hand-typed alike): one deepseek_reason hop reads the search hits and
+        // live-data routed or hand-typed alike): one qwen_reason hop reads the search hits and
         // answers — the same workflow execution path as every other Qwen answer in this app. A
         // live-data question is answered as asked; a hand-typed search is summarized from its
         // query. If the hop fails or comes back empty, the fallback is the hit list with the
@@ -1818,12 +1820,12 @@ function App() {
               : buildSearchSummaryTask(query, rawOutput)
             const synthCall: ToolCall = {
               id: `live-answer-${Date.now()}`,
-              name: 'deepseek_reason',
+              name: 'qwen_reason',
               input: { task, nexus_learn: false },
             }
             const synthOutput = await executeTool(synthCall, { ...toolCtx, actor: 'operator' })
             if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
-            const drafted = isToolFailureOutput(synthOutput) ? '' : extractDeepSeekAnswer(synthOutput)
+            const drafted = isToolFailureOutput(synthOutput) ? '' : extractQwenAnswer(synthOutput)
             // Grounding gate: a name the results never mention means the answer came from memory, not the web.
             const answer = groundedLiveAnswer(drafted, rawOutput)
             if (drafted && !answer) console.warn('[live-answer] withheld: names not in the search results:', unsupportedNames(drafted, rawOutput))
@@ -1966,7 +1968,7 @@ function App() {
       // Every reply text of this run, for the ledger: a section rendered beside a tool call still counts.
       const ledgerRounds: string[] = []
       let ledgerContinuations = 0
-      const ledgerReasks = ledgerContinuationLimit(isDeepSeekProvider(activeProvider))
+      const ledgerReasks = ledgerContinuationLimit(isQwenProvider(activeProvider))
       // Each call's arguments, so the ledger keys evidence by tool name and arguments (requestLedger.ts).
       const callInputs = new Map<string, Record<string, unknown>>()
 
@@ -1996,7 +1998,7 @@ function App() {
           model: currentModel,
           systemPrompt: activeSystemPrompt,
           // Claude and Kimi re-read the whole run on every step: older bulky results are cut (historyCompaction.ts).
-          // The DeepSeek router reads earlier results to pick its next step, so its messages stay whole.
+          // The Qwen router reads earlier results to pick its next step, so its messages stay whole.
           messages: isHostedReasoner ? compactToolHistory(conversationMessages) : conversationMessages,
           workspaceId: activeProvider === 'anthropic' ? (anthropicWorkspaceId.trim() || undefined) : undefined,
           responseLanguage: selectedLanguage,
@@ -2004,7 +2006,7 @@ function App() {
           signal: controller.signal,
           onToken: noMoreTools ? (token: string) => {
             streamBuffer += token
-            // DeepSeek has no native tool channel. Do not stream raw manual-tool
+            // Qwen has no native tool channel. Do not stream raw manual-tool
             // protocol text into the normal assistant renderer: until the full
             // response is parsed, even `github_repo_state();` is only model text.
             // Keep it diagnostic-only and show a neutral progress marker; the
@@ -2061,12 +2063,12 @@ function App() {
         setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'success', lastError: null, lastLatencyMs: latency }))
         const result = routerResult.response
         if (result.reasoningContent?.trim()) finalReasoning = result.reasoningContent.trim()
-        resolvedProvider = result.provider === 'deepseek' ? 'deepseek' : result.provider === 'qwen' ? 'qwen' : result.provider === 'corpus' ? 'corpus' : result.provider === 'moonshot' ? 'moonshot' : result.provider === 'muse' ? 'muse' : result.provider === 'openrouter' ? 'openrouter' : result.provider === 'local' ? 'local' : activeProvider
-        if (result.provider === 'deepseek' || result.provider === 'qwen') source = 'cloud'
+        resolvedProvider = result.provider === 'qwen' || result.provider === 'deepseek' ? 'qwen' : result.provider === 'corpus' ? 'corpus' : result.provider === 'moonshot' ? 'moonshot' : result.provider === 'muse' ? 'muse' : result.provider === 'openrouter' ? 'openrouter' : result.provider === 'local' ? 'local' : activeProvider
+        if (result.provider === 'qwen' || result.provider === 'deepseek') source = 'cloud'
         resolvedModel = result.model || currentModel
         const primaryDiagnostic = result.diagnostics?.primaryReasoning
         if (primaryDiagnostic) {
-          secondarySynthesisNotice = `PRIMARY REASONING: DeepSeek failed at ${primaryDiagnostic.stage}. No fallback model was invoked.\n${primaryDiagnostic.message}`
+          secondarySynthesisNotice = `PRIMARY REASONING: Qwen failed at ${primaryDiagnostic.stage}. No fallback model was invoked.\n${primaryDiagnostic.message}`
         }
         // No tool calls → final answer
         if (!result.toolCalls?.length) {
@@ -2240,19 +2242,19 @@ function App() {
       }
 
       if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
-      const deepSeekSucceeded = allToolResults.some(result => result.name === 'deepseek_reason' && !result.isError)
-      const deepSeekFailed = allToolResults.some(result => result.name === 'deepseek_reason' && result.isError)
-      const deepSeekSuccessOutput = allToolResults.find(result => result.name === 'deepseek_reason' && !result.isError)?.output || ''
-      const deepSeekCheckpoint = deepSeekSuccessOutput.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable'
-      if (deepSeekSucceeded) source = 'cloud'
-      if (deepSeekSucceeded) {
-        resolvedModel = `Qwen/Qwen3-8B Actions (${deepSeekCheckpoint})`
-      } else if (deepSeekFailed) {
+      const qwenSucceeded = allToolResults.some(result => result.name === 'qwen_reason' && !result.isError)
+      const qwenFailed = allToolResults.some(result => result.name === 'qwen_reason' && result.isError)
+      const qwenSuccessOutput = allToolResults.find(result => result.name === 'qwen_reason' && !result.isError)?.output || ''
+      const qwenCheckpoint = qwenSuccessOutput.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable'
+      if (qwenSucceeded) source = 'cloud'
+      if (qwenSucceeded) {
+        resolvedModel = `Qwen/Qwen3-8B Actions (${qwenCheckpoint})`
+      } else if (qwenFailed) {
         resolvedModel = `Qwen/Qwen3-8B Actions (workflow failed)`
       }
-      if (deepSeekFailed) {
-        const failedDeepSeekResult = allToolResults.find(result => result.name === 'deepseek_reason' && result.isError)
-        setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'error', lastError: failedDeepSeekResult?.output || 'DeepSeek primary reasoning failed.' }))
+      if (qwenFailed) {
+        const failedQwenResult = allToolResults.find(result => result.name === 'qwen_reason' && result.isError)
+        setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'error', lastError: failedQwenResult?.output || 'Qwen primary reasoning failed.' }))
       }
       setLastSource(source)
       const { cleanText, tagsFound, thinking, trace, answerText, plan, agentPhase, nextAction } = parseAndExecuteTags(finalText)
@@ -2298,7 +2300,7 @@ function App() {
           : ''
       // The outcome NEXUS records: a blocked run is not a completed one, and an answer that passed the evidence gate with
       // a successful tool result behind it is 'verified', which NEXUS lets converge into knowledge (nexusConvergence.ts).
-      // A model's own reasoning (deepseek_reason and the like) is not evidence; only real tool results make an answer 'verified'.
+      // A model's own reasoning (qwen_reason and the like) is not evidence; only real tool results make an answer 'verified'.
       const recordedOutcome = answerOutcome(completionPhase === 'BLOCKED', allToolResults)
       await logToCorpus(promptText, settledLedger?.text || cleanText || cleanOutput(answerText), `${resolvedProvider}:${resolvedModel}`, { outcome: recordedOutcome, lineage: answerLineage(resolvedProvider, allToolResults) })
       // Sync plan to ForgeOps + emit terminal event
@@ -2383,7 +2385,7 @@ function App() {
             content: safeContent ? `${safeContent}\n\n${msg}` : msg,
             streaming: false,
             // Keep the real execution record visible even when the run failed:
-            // a failed DeepSeek dispatch must not read as "0 TOOL CALLS".
+            // a failed Qwen dispatch must not read as "0 TOOL CALLS".
             agentPhase: 'BLOCKED' as const,
             toolResults: m.toolResults ?? failedToolResults,
           }
@@ -2401,10 +2403,10 @@ function App() {
       }
     } finally {
       if (learningRunRef.current === learningId) learningRunRef.current = ''
-      // This reply's saved DeepSeek run is over (answered, failed or stopped). Matched on the reply id and kept OUTSIDE the active-run guard
+      // This reply's saved Qwen run is over (answered, failed or stopped). Matched on the reply id and kept OUTSIDE the active-run guard
       // below: STOP nulls activeRunRef before this runs, and a leftover would re-attach to a finished run on the next load. A page that is
       // killed never reaches this line, which is exactly when the saved run is wanted.
-      if (cloudMsgId && loadActiveDeepSeekRun()?.messageId === cloudMsgId) clearActiveDeepSeekRun()
+      if (cloudMsgId && loadActiveQwenRun()?.messageId === cloudMsgId) clearActiveQwenRun()
       // "Reconnecting" must not outlive the run; the "back" confirmation clears itself.
       setConnectionNotice(prev => (prev === 'reconnecting' ? null : prev))
       if (activeRunRef.current?.id === runId) {
@@ -2444,7 +2446,7 @@ function App() {
       if (done || document.hidden) return
       done = true
       document.removeEventListener('visibilitychange', run)
-      // A re-attached DeepSeek run may hold the slot; the RESUME button on the reply is the way back then.
+      // A re-attached Qwen run may hold the slot; the RESUME button on the reply is the way back then.
       if (!resumeInterruptedTask(task, 'auto')) {
         setMessages(prev => prev.map(m => m.id === task.replyId ? { ...m, content: m.content.replace('Resuming it now that you are back.', 'Tap RESUME to run it again.') } : m))
       }
@@ -2793,7 +2795,7 @@ function App() {
     if (activeProvider === 'local') return <span style={{ color: localEndpoint ? '#6b6b6b' : '#ef4444' }}>{localEndpoint ? activeModelLabel : t('status.localEndpointMissing')}</span>
     const keyPresent = activeProvider === 'anthropic' ? !!anthropicApiKey : activeProvider === 'muse' ? !!metaApiKey : activeProvider === 'openrouter' ? !!openrouterApiKey : true
     if (!keyPresent) return <span style={{ color: '#ef4444' }}>{activeProvider === 'muse' ? t('status.metaNoKey') : activeProvider === 'openrouter' ? t('status.openrouterNoKey') : t('status.anthropicNoKey')}</span>
-    if (isDeepSeekProvider(activeProvider)) return <span style={{ color: '#6b6b6b' }}>Qwen/Qwen3-8B · GitHub Actions</span>
+    if (isQwenProvider(activeProvider)) return <span style={{ color: '#6b6b6b' }}>Qwen/Qwen3-8B · GitHub Actions</span>
     return <span style={{ color: lastSource === 'cloud' ? '#3b82f6' : '#6b6b6b', fontWeight: lastSource === 'cloud' ? 'bold' : 'normal' }}>{activeModelLabel}</span>
   }
 
@@ -2954,7 +2956,7 @@ function App() {
                   </details>
                 </div>
                 <div style={{ borderTop: '1px solid #292929', marginTop: '12px', paddingTop: '9px', color: '#777', fontSize: '10px', lineHeight: 1.5 }}>
-                  Hierarchy: Founder’s principles → Codex Anima / Guardian foundation → ForgeClaw / DeepSeek behavior. CORPUS may supply learning candidates, never authority over these principles.
+                  Hierarchy: Founder’s principles → Codex Anima / Guardian foundation → ForgeClaw / Qwen behavior. CORPUS may supply learning candidates, never authority over these principles.
                   <br />Canonical source: <a href="https://github.com/DeviousDevv303/forgeclaw/blob/main/docs/founder-principles.md" target="_blank" rel="noreferrer" style={{ color: '#f97316' }}>{FOUNDER_PRINCIPLES.sourcePath}</a>
                 </div>
               </section>
@@ -2964,8 +2966,8 @@ function App() {
               <div style={{ marginBottom: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.runtimeProvider')}</label>
                 <select
-                  // 'deepseek' and 'corpus' are the same Qwen/Qwen3-8B runtime; show it as the one Qwen option.
-                  value={activeProvider === 'deepseek' || activeProvider === 'qwen' ? 'corpus' : activeProvider}
+                  // 'qwen' and 'corpus' are the same Qwen/Qwen3-8B runtime; show it as the one Qwen option.
+                  value={activeProvider === 'qwen' ? 'corpus' : activeProvider}
                   onChange={e => setActiveProvider(e.target.value as ProviderId)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >
@@ -3006,7 +3008,7 @@ function App() {
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>{t('settings.openrouterDesc')}</span>
                 </div>
               )}
-              {isDeepSeekProvider(activeProvider) && (
+              {isQwenProvider(activeProvider) && (
                 <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Qwen/Qwen3-8B · GitHub Actions</span>
@@ -3165,12 +3167,12 @@ function App() {
                 </div>
               )}
 
-              {isDeepSeekProvider(activeProvider) && (
+              {isQwenProvider(activeProvider) && (
                 <div style={{ marginBottom: '14px' }}>
                   <div style={{ color: '#777', fontSize: '10px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('settings.corpusRecords', { records: corpusRepository.getInteractionCount(), approved: corpusRepository.getApprovedCount(), candidates: corpusRepository.getCandidateCount(), version: corpusRepository.getVersion() })}</div>
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #222' }}>
                     <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.corpusWebhook')}</label>
-                    <input type="url" placeholder="https://example.invalid/deepseek-sync" value={corpusWebhookUrl} onChange={e => setCorpusWebhookUrl(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
+                    <input type="url" placeholder="https://example.invalid/qwen-sync" value={corpusWebhookUrl} onChange={e => setCorpusWebhookUrl(e.target.value)} style={{ width: '100%', boxSizing: 'border-box', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }} />
                     <button onClick={syncCorpus} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{t('settings.syncPending')}</button>
                     {corpusSyncStatus && <div style={{ color: '#aaa', fontSize: '10px', marginTop: '6px', fontFamily: 'monospace' }}>{corpusSyncStatus}</div>}
                     <button onClick={exportNexusStore} style={{ width: '100%', marginTop: '8px', background: '#22c55e', color: '#000', border: 'none', borderRadius: '4px', padding: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>{t('settings.exportNexusStore')}</button>
@@ -3205,7 +3207,7 @@ function App() {
               <div style={{ marginTop: '8px', marginBottom: '14px', border: '1px solid #222', borderRadius: '6px', padding: '10px', background: '#080808' }}>
                 <div style={{ color: '#f97316', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', marginBottom: '8px' }}>{t('settings.operatorDiagnostics')}</div>
                 {[
-                  [t('diag.rowRuntimeProvider'), isDeepSeekProvider(activeProvider) ? 'Qwen/Qwen3-8B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : activeProvider === 'muse' ? 'Muse · Meta' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'],
+                  [t('diag.rowRuntimeProvider'), isQwenProvider(activeProvider) ? 'Qwen/Qwen3-8B GitHub Actions' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'local' ? 'Local Inference' : activeProvider === 'muse' ? 'Muse · Meta' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'],
                   [t('diag.rowRuntimeModel'), activeModelLabel],
                   [t('diag.rowLastRoute'), lastRuntimeRoute],
                   [t('diag.rowAuthState'), activeProvider === 'local' ? (localEndpoint ? t('diag.endpointConfigured') : t('diag.missingLower')) : activeProvider === 'anthropic' ? (anthropicApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'moonshot' ? (moonshotApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'muse' ? (metaApiKey ? t('diag.presentLower') : t('diag.missingLower')) : activeProvider === 'openrouter' ? (openrouterApiKey ? t('diag.presentLower') : t('diag.missingLower')) : safeGetItem('gh_token') ? t('diag.githubTokenPresent') : t('diag.githubTokenMissing')],
@@ -3447,12 +3449,12 @@ function App() {
 
                   {/* API / workflow credential */}
                   <div style={{ background: '#111', border: '1px solid #1a1a1a', borderRadius: '6px', padding: '12px' }}>
-                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{isDeepSeekProvider(activeProvider) ? t('diag.credentials') : t('diag.apiKey')}</div>
-                    <div style={{ color: isDeepSeekProvider(activeProvider) ? '#22c55e' : diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
-                      {isDeepSeekProvider(activeProvider) ? t('diag.githubWorkflowToken') : diagnostics.keyPresent ? t('diag.present') : t('diag.missing')}
+                    <div style={{ color: '#555', fontSize: '8px', letterSpacing: '2px', marginBottom: '6px' }}>{isQwenProvider(activeProvider) ? t('diag.credentials') : t('diag.apiKey')}</div>
+                    <div style={{ color: isQwenProvider(activeProvider) ? '#22c55e' : diagnostics.keyPresent ? '#22c55e' : '#ef4444', fontSize: '14px', fontWeight: 'bold' }}>
+                      {isQwenProvider(activeProvider) ? t('diag.githubWorkflowToken') : diagnostics.keyPresent ? t('diag.present') : t('diag.missing')}
                     </div>
                     <div style={{ color: '#333', fontSize: '9px', marginTop: '4px' }}>
-                      {isDeepSeekProvider(activeProvider) ? (safeGetItem('gh_token') ? t('diag.workflowTokenSaved') : t('diag.workflowTokenNeeded')) : diagnostics.keyPresent ? keyFormatHint() : t('diag.enterKeyAbove')}
+                      {isQwenProvider(activeProvider) ? (safeGetItem('gh_token') ? t('diag.workflowTokenSaved') : t('diag.workflowTokenNeeded')) : diagnostics.keyPresent ? keyFormatHint() : t('diag.enterKeyAbove')}
                     </div>
                   </div>
 
@@ -3583,7 +3585,7 @@ function App() {
                         {msg.streaming ? (
                           <>
                             <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}<span style={{ animation: 'pulse 1s infinite', opacity: 0.7 }}>▋</span></span>
-                            {msg.role === 'assistant' && <ElapsedNote since={msg.timestamp} deepSeek={isDeepSeekProvider(activeProvider)} />}
+                            {msg.role === 'assistant' && <ElapsedNote since={msg.timestamp} qwen={isQwenProvider(activeProvider)} />}
                           </>
                         ) : msg.role === 'assistant' ? (
                           <div>{renderMessageContent(withForgeClawSignature(msg.content), (code) => { setCopiedCode(code); setTimeout(() => setCopiedCode(null), 2000) }, copiedCode)}</div>
@@ -3952,13 +3954,13 @@ function App() {
                     }
                     // Provider-aware labels for reasoning tools
                     const getToolDisplayName = (toolName: string): string => {
-                      const provider = activeProvider || 'deepseek'
-                      if (toolName === 'deepseek_reason' || toolName === 'ask_deepseek') {
+                      const provider = activeProvider || 'qwen'
+                      if (toolName === 'qwen_reason' || toolName === 'ask_qwen') {
                         if (provider === 'moonshot') return 'Kimi Reason'
                         if (provider === 'anthropic') return 'Claude Reason'
                         if (provider === 'muse') return 'Muse Reason'
                         if (provider === 'openrouter') return 'OpenRouter Reason'
-                        return 'DeepSeek Reason'
+                        return 'Qwen Reason'
                       }
                       return toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
                     }

@@ -65,7 +65,7 @@ describe('direct tool detection', () => {
 
   it('leaves prose and unknown tools on the model path', () => {
     expect(route('Create a file called test-approval.txt with content "hello"')).toBeNull()
-    expect(route('/deepseek Use the github_write_file tool to create x')).toBeNull()
+    expect(route('/qwen Use the github_write_file tool to create x')).toBeNull()
     expect(route('shell_exec command="ls"')).toBeNull()
     expect(route('github_write_files path="x" content="y"')).toBeNull()
   })
@@ -259,7 +259,7 @@ describe('direct dispatch covers the operator tool set', () => {
   })
 
   it('still leaves excluded tools on their existing paths', () => {
-    for (const prompt of ['run_js code="1+1"', 'sculpt_self file_path="x"', 'spawn_agent task="x"', 'http_fetch url="https://x"', 'deepseek_reason task="x"']) {
+    for (const prompt of ['run_js code="1+1"', 'sculpt_self file_path="x"', 'spawn_agent task="x"', 'http_fetch url="https://x"', 'qwen_reason task="x"']) {
       expect(route(prompt)).toBeNull()
     }
   })

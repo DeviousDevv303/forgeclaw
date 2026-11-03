@@ -1,12 +1,12 @@
 // @vitest-environment node
-// The DeepSeek workflow trims the MIDDLE of an over-long prompt, and the supplied context sits in the middle. The NEXUS
+// The Qwen workflow trims the MIDDLE of an over-long prompt, and the supplied context sits in the middle. The NEXUS
 // guidance must never be what gets cut (owner's law: no stage strips it silently). This runs the REAL helper out of
-// .github/workflows/deepseek-16b.yml against the real deepseek_gguf.fit_text with a fake tokenizer (one token per 4 chars).
+// .github/workflows/qwen3-8b.yml against the real qwen_gguf.fit_text with a fake tokenizer (one token per 4 chars).
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const workflow = readFileSync('.github/workflows/deepseek-16b.yml', 'utf8')
+const workflow = readFileSync('.github/workflows/qwen3-8b.yml', 'utf8')
 const begin = workflow.indexOf('# --- NEXUS guidance protection (begin)')
 const end = workflow.indexOf('# --- NEXUS guidance protection (end)')
 const helper = workflow.slice(begin, end).split('\n').map(line => line.replace(/^ {10}/, '')).join('\n')
@@ -16,13 +16,13 @@ const GUIDANCE = `NEXUS GUIDANCE (what the owner has taught NEXUS)\n- say plainl
 function run(prompt: string, budget: number): { out: string; trimmed: boolean; guidance: string; tokens: number; legacy: string } {
   const py = `
 import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location('deepseek_gguf', '.github/scripts/deepseek_gguf.py')
-deepseek_gguf = importlib.util.module_from_spec(spec); spec.loader.exec_module(deepseek_gguf)
+spec = importlib.util.spec_from_file_location('qwen_gguf', '.github/scripts/qwen_gguf.py')
+qwen_gguf = importlib.util.module_from_spec(spec); spec.loader.exec_module(qwen_gguf)
 ${helper}
 data = json.load(sys.stdin)
 count = lambda text: (len(text) + 3) // 4
 out, trimmed, guidance = fit_keeping_guidance(data['prompt'], count, data['budget'])
-legacy, _ = deepseek_gguf.fit_text(data['prompt'], count, data['budget'])
+legacy, _ = qwen_gguf.fit_text(data['prompt'], count, data['budget'])
 print(json.dumps({'out': out, 'trimmed': trimmed, 'guidance': guidance, 'tokens': count(out), 'legacy': legacy}))
 `
   const r = spawnSync('python3', ['-I', '-B', '-c', py], { input: JSON.stringify({ prompt, budget }), encoding: 'utf8' })

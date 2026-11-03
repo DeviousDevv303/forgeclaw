@@ -30,7 +30,7 @@ tick after an answer is a no-op, and removing the loop loses no bookkeeping.
 
 Stage 1 makes **zero model calls** — the owner's token doctrine: no burning
 tokens for no reason. The frequent light passes belong to the cheap
-Qwen/DeepSeek Actions path (the "16B" canary), which becomes the execution
+Qwen/Qwen Actions path (the "16B" canary), which becomes the execution
 engine at Stage 2 after this channel reviews Stage 1. Everything Stage 1
 posts is assembled by `lib.mjs` from state fetched that run; nothing is
 remembered, inferred, or phrased by a model.

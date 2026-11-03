@@ -11,18 +11,18 @@ const HP06 = probes.find(p => p.id === 'HP-06').input.record as Record<string, u
 const hp06: CuratorRecord = { runtime: String(HP06.runtime), model: String(HP06.model) }
 
 const TRAPS: Array<[string, CuratorRecord]> = [
-  ['HP-06 probe record (runtime deepseek, model Qwen/Qwen3-8B)', hp06],
+  ['HP-06 probe record (runtime qwen, model Qwen/Qwen3-8B)', hp06],
   ['Qwen runtime alone', { runtime: 'corpus' }],
   ['Qwen model id alone, runtime states another provider', { runtime: 'moonshot', model: 'Qwen/Qwen3-8B' }],
-  ['deepseek: source prefix alone', { source: 'deepseek:chat-turn' }],
+  ['qwen: source prefix alone', { source: 'qwen:chat-turn' }],
   ['explicit lineage marker in context', { context: 'channel=chat; lineage=qwen; outcome=verified' }],
   ['explicit lineage marker in metadata', { metadata: { lineage: 'qwen' } }],
-  ['a caller wrongly states lineage none on a Qwen runtime', { runtime: 'deepseek', model: 'deepseek-16b', metadata: { lineage: 'none' } }],
+  ['a caller wrongly states lineage none on a Qwen runtime', { runtime: 'qwen', model: 'qwen3-8b', metadata: { lineage: 'none' } }],
 ]
 const CONTROLS: Array<[string, CuratorRecord, 'admit' | 'hold']> = [
   ['HP-06 record, held for the owner (the correct decision)', hp06, 'hold'],
   ['non-Qwen answer backed by evidence, admitted (no regression)', { runtime: 'moonshot', model: 'kimi-k2.7-code', metadata: { lineage: 'none' } }, 'admit'],
-  ['Qwen answer admitted by the owner', { runtime: 'deepseek', model: 'deepseek-16b', metadata: { admittedBy: OWNER_ADMITTED_BY } }, 'admit'],
+  ['Qwen answer admitted by the owner', { runtime: 'qwen', model: 'qwen3-8b', metadata: { admittedBy: OWNER_ADMITTED_BY } }, 'admit'],
   ['non-Qwen answer, held (not this check\'s concern)', { runtime: 'moonshot' }, 'hold'],
 ]
 

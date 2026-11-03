@@ -25,12 +25,12 @@ describe('runSculptCommand', () => {
   it('reads, rewrites with the workflow model (code profile), proposes, and returns the PR result', async () => {
     const r = runner({
       github_read_file: read,
-      deepseek_reason: `✓ Qwen/Qwen3-8B completed as d-1 on o/r@main.\nStages: x\nRun: u\n\n\`\`\`ts\n${UPDATED}\`\`\``,
+      qwen_reason: `✓ Qwen/Qwen3-8B completed as d-1 on o/r@main.\nStages: x\nRun: u\n\n\`\`\`ts\n${UPDATED}\`\`\``,
       sculpt_self: '✓ Self-sculpt of src/a.ts: build-validated and proposed as pull request #12',
     })
     const out = await runSculptCommand({ kind: 'sculpt', path: 'src/a.ts', instruction: 'add a doc comment' }, r.run, true)
     expect(out).toMatchObject({ ok: true, text: expect.stringContaining('pull request #12') })
-    expect(r.calls.map(c => c.name)).toEqual(['github_read_file', 'deepseek_reason', 'sculpt_self'])
+    expect(r.calls.map(c => c.name)).toEqual(['github_read_file', 'qwen_reason', 'sculpt_self'])
     expect(r.calls[1].input).toMatchObject({ profile: 'code' })
     expect(r.calls[2].input).toMatchObject({ file_path: 'src/a.ts', content: UPDATED })
   })
@@ -44,10 +44,10 @@ describe('runSculptCommand', () => {
   })
 
   it('stops before proposing when the rewrite is unusable', async () => {
-    const r = runner({ github_read_file: read, deepseek_reason: '✓ Qwen/Qwen3-8B completed as d-1 on o/r@main.\nStages: x\nRun: u\n\nI cannot do that.' })
+    const r = runner({ github_read_file: read, qwen_reason: '✓ Qwen/Qwen3-8B completed as d-1 on o/r@main.\nStages: x\nRun: u\n\nI cannot do that.' })
     const out = await runSculptCommand({ kind: 'sculpt', path: 'src/a.ts', instruction: 'x' }, r.run, true)
     expect(out.ok).toBe(false)
-    expect(r.calls.map(c => c.name)).toEqual(['github_read_file', 'deepseek_reason'])
+    expect(r.calls.map(c => c.name)).toEqual(['github_read_file', 'qwen_reason'])
   })
 
   it('sends /patch straight to shell_patch with no model', async () => {

@@ -1,8 +1,8 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-// ─── DeepSeek one-page site: deterministic chain ─────────────────────────────
-// DeepSeek has no tool loop, so for "build me a website and deploy it" the router drives a fixed
-// chain from the tool results of this turn: generate (deepseek_reason, site profile) -> create repo ->
+// ─── Qwen one-page site: deterministic chain ─────────────────────────────
+// Qwen has no tool loop, so for "build me a website and deploy it" the router drives a fixed
+// chain from the tool results of this turn: generate (qwen_reason, site profile) -> create repo ->
 // publish index.html -> wait for the Pages build -> report. A page is published only if it is a
 // complete HTML document; a truncated or looping generation is reported, never deployed.
 

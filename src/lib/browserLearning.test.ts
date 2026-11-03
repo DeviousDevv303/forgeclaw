@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { browserPlaybook, browserPlaybooksForPrompt, BROWSER_PLAYBOOK_SOURCE, describeAction, recordBrowserLearning } from './browserLearning'
 import { resetBrowserSessions, runBrowserRound, type BrowserAction } from './browserAgent'
-import { nexusGuidanceForDeepSeek } from './nexusGuidance'
+import { nexusGuidanceForQwen } from './nexusGuidance'
 import { failurePattern, summarizeLearning } from './nexusLearning'
 import { corpusRepository, type CorpusRecord } from './corpus'
 
@@ -66,8 +66,8 @@ describe('what it teaches', () => {
     expect(text).not.toContain('some other knowledge')
     expect(browserPlaybooksForPrompt('anything', () => [])).toBe('')
   })
-  it('DeepSeek is taught the same approved playbook when its task is about that site', () => {
-    const g = nexusGuidanceForDeepSeek('how do I find the first search result on example.com', { decisions: { approved: [], rejected: [] }, candidates: [], retrieve: () => [approved(playbook)] })
+  it('Qwen is taught the same approved playbook when its task is about that site', () => {
+    const g = nexusGuidanceForQwen('how do I find the first search result on example.com', { decisions: { approved: [], rejected: [] }, candidates: [], retrieve: () => [approved(playbook)] })
     expect(g.records).toBe(1)
     expect(g.text).toContain('Browser playbook for example.com')
     expect(g.text).toContain('click link "First result"')

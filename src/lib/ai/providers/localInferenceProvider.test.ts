@@ -26,10 +26,10 @@ async function localServerReachable(): Promise<boolean> {
 const reachable = await localServerReachable()
 
 describe('ForgeClaw Local Mode v0.1 smoke path', () => {
-  it('routes both routine and complex prompts to DeepSeek', () => {
+  it('routes both routine and complex prompts to Qwen', () => {
     expect(shouldUseLocalModel([{ role: 'user', content: 'pwd' }])).toBe(false)
-    expect(routeLocalTask([{ role: 'user', content: 'pwd' }])).toBe('deepseek')
-    expect(routeLocalTask([{ role: 'user', content: 'Design a robust migration plan for the repository and explain tradeoffs.' }])).toBe('deepseek')
+    expect(routeLocalTask([{ role: 'user', content: 'pwd' }])).toBe('qwen')
+    expect(routeLocalTask([{ role: 'user', content: 'Design a robust migration plan for the repository and explain tradeoffs.' }])).toBe('qwen')
   })
 
   it('skips NEXUS knowledge matching for complex tasks', () => {
@@ -110,12 +110,12 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
     }
   })
 
-  it('normalizes deepseekreason and nexuslearn aliases', async () => {
+  it('normalizes qwenreason and nexuslearn aliases', async () => {
     const originalFetch = globalThis.fetch
     globalThis.fetch = (async () => new Response(JSON.stringify({
       choices: [{
         message: {
-          content: '{"toolcalls":[{"id":"call1","type":"function","function":{"name":"deepseekreason","arguments":"{\\"task\\":\\"find capital of France\\",\\"context\\":\\"The user asked for the capital of France.\\",\\"nexuslearn\\":false,\\"ref\\":\\"main\\"}"}}]}',
+          content: '{"toolcalls":[{"id":"call1","type":"function","function":{"name":"qwenreason","arguments":"{\\"task\\":\\"find capital of France\\",\\"context\\":\\"The user asked for the capital of France.\\",\\"nexuslearn\\":false,\\"ref\\":\\"main\\"}"}}]}',
         },
         finish_reason: 'stop',
       }],
@@ -125,11 +125,11 @@ describe('ForgeClaw Local Mode v0.1 smoke path', () => {
         systemPrompt: 'system',
         messages: [{ role: 'user', content: 'What is the capital of France?' }],
         model: 'local-model',
-        tools: [{ name: 'deepseek_reason', description: 'Reason', parameters: { type: 'object' } }],
+        tools: [{ name: 'qwen_reason', description: 'Reason', parameters: { type: 'object' } }],
       }, 'http://127.0.0.1:8080/v1')
       expect(result.toolCalls).toEqual([{
         id: 'call1',
-        name: 'deepseek_reason',
+        name: 'qwen_reason',
         input: {
           task: 'find capital of France',
           context: 'The user asked for the capital of France.',

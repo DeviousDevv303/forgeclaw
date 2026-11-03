@@ -1,29 +1,29 @@
 // @vitest-environment jsdom
-// Thread B: a DeepSeek run dispatched from MAIN CHAT (deepseek_reason inside the agent loop) was never persisted, because the
-// main-chat tool context had no onDeepSeekDispatch (only the direct /deepseek path saved its run). If the page closed mid-run
+// Thread B: a Qwen run dispatched from MAIN CHAT (qwen_reason inside the agent loop) was never persisted, because the
+// main-chat tool context had no onQwenDispatch (only the direct /qwen path saved its run). If the page closed mid-run
 // the reply could not re-attach to the running workflow; it fell back to the whole-task resend, which starts a SECOND 9-23 minute
 // workflow. The fix persists the run on dispatch and clears it when the run ends. These tests pin both halves, including the
 // path the design depends on: a crash (no finally) followed by a reload re-attaches to the SAME run and does not dispatch again.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
-const RUN_KEY = 'forgeclaw_active_deepseek_run'
+const RUN_KEY = 'forgeclaw_active_qwen_run'
 const HISTORY_KEY = 'forgemind_history'
 const QUESTION = 'What causes rainbows to form after rain?'
 
 type Dispatch = { inputs: { invocation_id: string; task?: string } }
 let dispatches: Dispatch[]
 
-/** Mirrors the lib-level DeepSeek flow (dispatch -> run list -> completed run -> mirror text). `mode` decides how the run ends. */
+/** Mirrors the lib-level Qwen flow (dispatch -> run list -> completed run -> mirror text). `mode` decides how the run ends. */
 function installFetch(mode: 'never-finishes' | 'hangs-until-aborted' | 'completes', invocationOverride?: string): ReturnType<typeof vi.fn> {
   dispatches = []
   const fn = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
-    if (url.endsWith('/deepseek-16b.yml/dispatches') && init?.method === 'POST') {
+    if (url.endsWith('/qwen3-8b.yml/dispatches') && init?.method === 'POST') {
       dispatches.push(JSON.parse(String(init.body)))
       return Promise.resolve(new Response(null, { status: 204 }))
     }
-    if (url.includes('/deepseek-16b.yml/runs?')) {
+    if (url.includes('/qwen3-8b.yml/runs?')) {
       // never-finishes: the read hangs and ignores abort (a killed page gets no abort and no finally).
       if (mode === 'never-finishes') return new Promise<Response>(() => {})
       // hangs-until-aborted: like a real fetch, rejects when the app aborts it (STOP).
@@ -66,7 +66,7 @@ async function ask(): Promise<void> {
 }
 const savedRun = () => { const raw = localStorage.getItem(RUN_KEY); return raw ? JSON.parse(raw) as { invocationId: string; dispatchedAt: number; messageId: string; question: string } : null }
 
-describe('a DeepSeek run dispatched from main chat is persisted so a closed page can re-attach', { timeout: 30_000 }, () => {
+describe('a Qwen run dispatched from main chat is persisted so a closed page can re-attach', { timeout: 30_000 }, () => {
   it('saves the dispatched run (invocation id, reply id, question) as soon as the workflow is dispatched', async () => {
     installFetch('never-finishes')
     await ask()

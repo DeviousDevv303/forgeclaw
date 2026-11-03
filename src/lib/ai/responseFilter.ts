@@ -9,7 +9,7 @@
  * NOT a word blacklist. It removes:
  * 1. <think>...</think> blocks (DeepSeek-R1 style reasoning wrappers)
  * 2. Leading "Reasoning:"/"Analysis:" labeled blocks
- * 3. The deepseek_reason tool result header (✓ Qwen/Qwen3-8B completed...)
+ * 3. The qwen_reason tool result header (✓ Qwen/Qwen3-8B completed...)
  *
  * It does NOT strip English phrases like "I need to" or "Let me check" —
  * those appear in legitimate responses and must be preserved.
@@ -24,7 +24,7 @@ const APP_IDENTITY_FRAGMENT_RE = /^What's the state of the POLYMARKET\s*\[APPLIC
 // A lone envelope tag with no matching close. The model echoes it with its spaces removed
 // ([APPLICATION_IDENTITYapplication="ForgeClaw"...]), sometimes opened with "(" or as [END RUNTIME_STATE],
 // at the start or end of an answer. Strip only the tag so real answer text around it survives.
-// Seen in 29 of the stored DeepSeek results.
+// Seen in 29 of the stored Qwen results.
 const ENVELOPE_TAG_RE = /[[(](?:\/|END\s+)?(?:APPLICATION_?IDENTITY|RUNTIME_?STATE)[^\])\n]*[\])]?/gi;
 
 export function stripReasoningArtifacts(response: string): string {

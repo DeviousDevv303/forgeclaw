@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── Shared GitHub networking boundary ────────────────────────────────────────
-// All browser-side GitHub operations use this boundary: shell_exec, DeepSeek,
+// All browser-side GitHub operations use this boundary: shell_exec, Qwen,
 // repository tools, image workflows, run correlation, and artifact retrieval.
 // It bounds every request, retries only safe GitHub reads, uses no-store for API
 // reads, propagates STOP, and never logs tokens or request bodies.
@@ -9,7 +9,7 @@
 export const GITHUB_READ_RETRY_DELAYS_MS = [100, 250] as const
 export const GITHUB_READ_RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504])
 // 30s default: GitHub API reads that hang longer are unlikely to recover;
-// fail fast so the DeepSeek→Qwen fallback activates promptly instead of
+// fail fast so the Qwen→Qwen fallback activates promptly instead of
 // leaving the user on "Processing…" for a full minute per attempt.
 export const GITHUB_READ_TIMEOUT_MS = 30_000
 

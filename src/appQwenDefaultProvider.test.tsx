@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-// DEFAULT_PROVIDER is 'deepseek' (#124) while the settings selector stores 'corpus'. Both are the
-// Qwen/Qwen3-8B GitHub Actions runtime (provider id 'deepseek'), so an ordinary question must dispatch the workflow under
-// either id. Before this was fixed, 'deepseek' only offered the deepseek_reason tool for prompts
+// DEFAULT_PROVIDER is 'qwen' (#124) while the settings selector stores 'corpus'. Both are the
+// Qwen/Qwen3-8B GitHub Actions runtime (provider id 'qwen'), so an ordinary question must dispatch the workflow under
+// either id. Before this was fixed, 'qwen' only offered the qwen_reason tool for prompts
 // containing a complexity keyword; every other question failed without contacting GitHub.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -32,20 +32,20 @@ async function sendAndFindDispatch(): Promise<{ inputs?: { task?: string } }> {
   fireEvent.keyDown(box, { key: 'Enter' })
   let body: { inputs?: { task?: string } } = {}
   await waitFor(() => {
-    const call = fetchMock.mock.calls.find(([url, init]) => String(url).includes('deepseek-16b.yml/dispatches') && (init as RequestInit | undefined)?.method === 'POST')
+    const call = fetchMock.mock.calls.find(([url, init]) => String(url).includes('qwen3-8b.yml/dispatches') && (init as RequestInit | undefined)?.method === 'POST')
     expect(call).toBeTruthy()
     body = JSON.parse(String((call![1] as RequestInit).body))
   }, { timeout: 5000 })
   return body
 }
 
-describe('ordinary questions on the DeepSeek provider dispatch the workflow', () => {
-  it('with no saved provider (the default, deepseek)', async () => {
+describe('ordinary questions on the Qwen provider dispatch the workflow', () => {
+  it('with no saved provider (the default, qwen)', async () => {
     expect((await sendAndFindDispatch()).inputs?.task).toContain(ORDINARY_QUESTION)
   })
 
-  it('with the provider saved as deepseek', async () => {
-    localStorage.setItem('fm_provider', 'deepseek')
+  it('with the provider saved as qwen', async () => {
+    localStorage.setItem('fm_provider', 'qwen')
     expect((await sendAndFindDispatch()).inputs?.task).toContain(ORDINARY_QUESTION)
   })
 

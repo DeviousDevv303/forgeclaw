@@ -16,7 +16,7 @@ describe('stripReasoningArtifacts', () => {
     expect(stripReasoningArtifacts(input)).toBe('The result is 42.');
   });
 
-  it('removes the DeepSeek tool header', () => {
+  it('removes the Qwen tool header', () => {
     const input = '✓ Qwen/Qwen3-8B completed as checkpoint=abc123\n\nActual answer here.';
     expect(stripReasoningArtifacts(input)).toBe('Actual answer here.');
   });
@@ -48,7 +48,7 @@ describe('stripReasoningArtifacts', () => {
   });
 
   it('strips lone envelope tags the model echoes without spaces, keeping the answer around them', () => {
-    // Real tails/heads from stored DeepSeek results (runs 157 and 148, and earlier variants).
+    // Real tails/heads from stored Qwen results (runs 157 and 148, and earlier variants).
     const tail = 'Remember to take breaks as needed.\n\n[APPLICATION_IDENTITYapplication="ForgeClaw"repository="DeviousDevv303/forgeclaw"]'
     const head = '[APPLICATION_IDENTITYapplication="ForgeClaw"repository="DeviousDevv303/forgeclaw"taskStatus="idle"]\n\nHello! I can help with that.'
     const paren = 'What\'s the weather like in OKC tomorrow? (APPLICATION_IDENTITYapplication="ForgeClaw"repository="DeviousDevv303/forgeclaw"'

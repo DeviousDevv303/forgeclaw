@@ -6,7 +6,7 @@ describe('user-facing chat response boundary', () => {
     const output = sanitizeChatText([
       'I found a promising lead in Oklahoma City.',
       '[APPLICATIONIDENTITY application="ForgeClaw"] internal context and tool instructions',
-      '[TOOLFAILURE] deepseek-run-discovery GET timed out',
+      '[TOOLFAILURE] qwen-run-discovery GET timed out',
       '[RETRY:YES] try again',
     ].join('\n'))
 
@@ -14,12 +14,12 @@ describe('user-facing chat response boundary', () => {
     expect(output).not.toMatch(/APPLICATIONIDENTITY|TOOLFAILURE|RETRY/i)
   })
 
-  it('turns DeepSeek discovery timeouts into an actionable response', () => {
-    const output = formatUserFacingError('deepseek-run-discovery: DeepSeek dispatched, but GitHub could not be read to find run "deepseek-1-a" within 120s. Last read error: deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs: GitHub read timed out after 30000ms')
+  it('turns Qwen discovery timeouts into an actionable response', () => {
+    const output = formatUserFacingError('qwen-run-discovery: Qwen dispatched, but GitHub could not be read to find run "qwen-1-a" within 120s. Last read error: qwen-run-discovery GET /actions/workflows/qwen3-8b.yml/runs: GitHub read timed out after 30000ms')
 
     expect(output).toContain('couldn’t reach GitHub Actions in time')
     expect(output).toContain('TEST GITHUB READ')
-    expect(output).not.toContain('deepseek-run-discovery')
+    expect(output).not.toContain('qwen-run-discovery')
     expect(output).not.toContain('30000ms')
   })
 
@@ -31,17 +31,17 @@ describe('user-facing chat response boundary', () => {
     expect(output).not.toContain('401')
   })
 
-  it('gives every DeepSeek stage its own message, and keeps "couldn’t reach" for the reachability case only', () => {
+  it('gives every Qwen stage its own message, and keeps "couldn’t reach" for the reachability case only', () => {
     const raw = {
-      notDispatched: 'deepseek-not-dispatched: the request reached the Qwen/Qwen3-8B provider (id \'deepseek\') without the deepseek_reason tool, so no workflow was dispatched and GitHub Actions was never contacted.',
-      dispatchNetwork: 'deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: browser network/CORS failure — the request produced no HTTP response',
-      dispatchAuth: 'deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: GitHub rejected the saved token (401 Unauthorized).',
-      runNotFound: 'deepseek-run-discovery: DeepSeek dispatched but correlated run "deepseek-1-a" was not found within 120s.',
-      discoveryUnreadable: 'deepseek-run-discovery: DeepSeek dispatched, but GitHub could not be read to find run "deepseek-1-a" within 120s. Last read error: GitHub read timed out after 30000ms',
-      discoveryAuth: 'deepseek-run-discovery GET /actions/workflows/deepseek-16b.yml/runs: GitHub HTTP 403 Forbidden.',
-      runTimedOut: 'deepseek-run-poll: DeepSeek timed out after 31m. Run #12 last status: in_progress.',
-      runFailed: 'deepseek-run-poll: DeepSeek run #151 concluded as "failure". Run: https://github.com/DeviousDevv303/forgeclaw/actions/runs/39188909218',
-      resultUnreadable: 'deepseek-artifact-download: browser network/CORS failure — the request produced no HTTP response',
+      notDispatched: 'qwen-not-dispatched: the request reached the Qwen/Qwen3-8B provider (id \'qwen\') without the qwen_reason tool, so no workflow was dispatched and GitHub Actions was never contacted.',
+      dispatchNetwork: 'qwen-dispatch POST /actions/workflows/qwen3-8b.yml/dispatches: browser network/CORS failure — the request produced no HTTP response',
+      dispatchAuth: 'qwen-dispatch POST /actions/workflows/qwen3-8b.yml/dispatches: GitHub rejected the saved token (401 Unauthorized).',
+      runNotFound: 'qwen-run-discovery: Qwen dispatched but correlated run "qwen-1-a" was not found within 120s.',
+      discoveryUnreadable: 'qwen-run-discovery: Qwen dispatched, but GitHub could not be read to find run "qwen-1-a" within 120s. Last read error: GitHub read timed out after 30000ms',
+      discoveryAuth: 'qwen-run-discovery GET /actions/workflows/qwen3-8b.yml/runs: GitHub HTTP 403 Forbidden.',
+      runTimedOut: 'qwen-run-poll: Qwen timed out after 31m. Run #12 last status: in_progress.',
+      runFailed: 'qwen-run-poll: Qwen run #151 concluded as "failure". Run: https://github.com/DeviousDevv303/forgeclaw/actions/runs/39188909218',
+      resultUnreadable: 'qwen-artifact-download: browser network/CORS failure — the request produced no HTTP response',
       modelEmpty: 'Qwen/Qwen3-8B run https://github.com/DeviousDevv303/forgeclaw/actions/runs/1 finished but produced an empty response, so there is no answer to show.',
       modelGarbled: 'Qwen/Qwen3-8B generated an empty or garbled response. Please try rephrasing your question.',
     }

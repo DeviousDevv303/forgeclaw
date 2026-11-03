@@ -50,11 +50,11 @@ export interface LedgerToolResult {
 
 /** Model rounds may re-ask for owed sections at most this many times per run, so a model that never renders cannot loop. */
 export const MAX_LEDGER_CONTINUATIONS = 2
-/** DeepSeek's CPU workflow takes 9–23 min per model step; one re-ask keeps a free-mode report from doubling its worst case. */
-export const MAX_LEDGER_CONTINUATIONS_DEEPSEEK = 1
+/** Qwen's CPU workflow takes 9–23 min per model step; one re-ask keeps a free-mode report from doubling its worst case. */
+export const MAX_LEDGER_CONTINUATIONS_QWEN = 1
 
-export function ledgerContinuationLimit(deepSeek: boolean): number {
-  return deepSeek ? MAX_LEDGER_CONTINUATIONS_DEEPSEEK : MAX_LEDGER_CONTINUATIONS
+export function ledgerContinuationLimit(qwen: boolean): number {
+  return qwen ? MAX_LEDGER_CONTINUATIONS_QWEN : MAX_LEDGER_CONTINUATIONS
 }
 
 const ITEM_WORD = '(?:section|secci[oó]n|step|paso|item|punto)'

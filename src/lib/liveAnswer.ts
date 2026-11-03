@@ -7,7 +7,7 @@
  * A live-data question is routed straight to web_search (liveDataRouting.ts), and the raw tool
  * output — a plumbing header plus a hit list — used to BE the reply, stale top hit and all. The
  * user should see an ANSWER. The owner's ruling covers ANY web search shown in chat, so App.tsx
- * runs one deepseek_reason hop for every direct web_search reply, its task built here: read the
+ * runs one qwen_reason hop for every direct web_search reply, its task built here: read the
  * hits, state the verdict. If that hop fails, the fallback is the hit list with the plumbing
  * stripped (cleanSearchDisplay) — never the raw dump.
  *
@@ -42,7 +42,7 @@ export function liveAnswerDateLine(question: string, now: Date = new Date()): st
   return `Today's date is ${todayLabel(now)}.${asked && asked !== now ? ` The question asks about ${todayLabel(asked)}.` : asked ? ' The question asks about today.' : ''}`
 }
 
-/** The deepseek_reason task for the synthesis hop: instructions + the question + the raw hits. */
+/** The qwen_reason task for the synthesis hop: instructions + the question + the raw hits. */
 // 2026-11-01: this task carried no date, so "a result from before the day the question asks about" could not
 // be applied — the hop relabelled the September 19 card as last night's. The date now rides in the task.
 export function buildLiveAnswerTask(question: string, rawResults: string, now: Date = new Date()): string {
@@ -55,15 +55,15 @@ export function buildSearchSummaryTask(query: string, rawResults: string, now: D
 }
 
 /**
- * The answer text inside a deepseek_reason tool output. forgeTools formats a success as
+ * The answer text inside a qwen_reason tool output. forgeTools formats a success as
  * "✓ Qwen/Qwen3-8B completed as <id> on <owner>/<repo>@<ref>.\n<Stages>\nRun: <url>\n\n<result>"
  * — the answer is everything after the first blank line (the same split providerRouter uses).
  * Returns '' when there is no answer body.
  */
-const SIGN_OFF_LINE = /(^|\n)\s*—\s*(ForgeClaw|Nexus( Intelligence)?|Qwen[^\n]*|DeepSeek[^\n]*|Muse)\s*$/i
+const SIGN_OFF_LINE = /(^|\n)\s*—\s*(ForgeClaw|Nexus( Intelligence)?|Qwen[^\n]*|Qwen[^\n]*|Muse)\s*$/i
 const LEADING_HEDGE = /^(based on|according to) (the )?(provided information|information provided|search results|results|information below)[^,.:;]*[,.:;]\s*/i
 
-export function extractDeepSeekAnswer(toolOutput: string): string {
+export function extractQwenAnswer(toolOutput: string): string {
   const splitAt = toolOutput.indexOf('\n\n')
   const body = splitAt >= 0 ? toolOutput.slice(splitAt + 2) : toolOutput
   let answer = stripReasoningArtifacts(body).trim()

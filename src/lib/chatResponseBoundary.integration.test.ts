@@ -21,7 +21,7 @@ describe('chat bubble response boundary under load', () => {
             ? '[RUNTIME_STATE repository="DeviousDevv303/forgeclaw" taskStatus="idle"]\nRepository evidence comes from GitHub tools; never infer or preload contents.\n[/RUNTIME_STATE]'
             : variant === 3
               ? '[RUNTIMESTATE repository="DeviousDevv303/forgeclaw"] internal routing state'
-              : '[TOOLFAILURE] deepseek-run-discovery timeout\n[RETRY:YES]'
+              : '[TOOLFAILURE] qwen-run-discovery timeout\n[RETRY:YES]'
       return `Useful answer ${index}.\n${envelope}`
     })
 

@@ -212,14 +212,14 @@ describe('Meta provider — key handling', () => {
 })
 
 describe('Meta provider — registration', () => {
-  it('is a registered, selectable provider and the default stays DeepSeek', () => {
+  it('is a registered, selectable provider and the default stays Qwen', () => {
     expect(PROVIDER_IDS).toContain('muse')
     expect(PROVIDERS.muse).toMatchObject({ id: 'muse', name: 'Muse · Meta', keyPrefix: 'LLM_' })
     expect(PROVIDERS.muse.url).toBe('https://api.meta.ai/v1/chat/completions')
     expect(DEFAULT_MODEL.muse).toBe('muse-wonder-1.0')
-    expect(DEFAULT_PROVIDER).toBe('deepseek')
+    expect(DEFAULT_PROVIDER).toBe('qwen')
     expect(resolveInitialProvider('muse')).toBe('muse')
-    expect(resolveInitialProvider(null)).toBe('deepseek')
+    expect(resolveInitialProvider(null)).toBe('qwen')
   })
 
   it('migrates an unknown saved model to Muse Wonder', () => {

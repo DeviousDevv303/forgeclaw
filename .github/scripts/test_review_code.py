@@ -26,7 +26,7 @@ class Validate(unittest.TestCase):
 
 
 class Prompt(unittest.TestCase):
-    def test_uses_the_deepseek_coder_instruct_shape_and_fences_the_code(self):
+    def test_uses_the_qwen_coder_instruct_shape_and_fences_the_code(self):
         p = r.build_prompt("def f(): pass", "python")
         self.assertIn("### Instruction:\nReview this python code.", p)
         self.assertIn("```python\ndef f(): pass\n```", p)

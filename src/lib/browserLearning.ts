@@ -3,7 +3,7 @@
 // ─── NEXUS learns from browsing ─────────────────────────────────────────────────────────────────
 // Every browser round becomes a compact, secret-free PLAYBOOK record: the site, the goal, the steps that worked (or the
 // step that failed and why). It is an unapproved candidate like everything NEXUS records; when the owner approves it,
-// it is retained knowledge that (a) the browsing agent reads before its next browse and (b) DeepSeek receives through
+// it is retained knowledge that (a) the browsing agent reads before its next browse and (b) Qwen receives through
 // NEXUS guidance when a task is about the same site. Typed text is never stored (a typed value may be personal), and page
 // text is not stored at all: only the shape of what worked.
 

@@ -1,9 +1,9 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CorpusRepository, appendDeepSeekLearning, distinctiveWords, extractImagePatterns, integrityHash, recordRelevantToTask, suggestImprovedPrompt } from './corpus'
+import { CorpusRepository, appendQwenLearning, distinctiveWords, extractImagePatterns, integrityHash, recordRelevantToTask, suggestImprovedPrompt } from './corpus'
 import { authorizationPayload, RFC8032_TEST_KEY_ID, type CandidateAuthorization } from './corpusAdmissionAuth'
 import { corpusProvider } from './ai/providers/corpusProvider'
-import { buildDeepSeekTaskPayload } from './ai/deepseekContext'
+import { buildQwenTaskPayload } from './ai/qwenContext'
 import { requiresCoSign } from './guardianGate'
 
 class MemoryStorage implements Storage {
@@ -98,18 +98,18 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(repository.retrieve('recordId')).toHaveLength(0)
   })
 
-  it('captures a DeepSeek dispatch as an unapproved NEXUS learning candidate', async () => {
-    const result = await appendDeepSeekLearning('Explain routing', 'pending artifact', 'deepseek-test-1', 'private context')
+  it('captures a Qwen dispatch as an unapproved NEXUS learning candidate', async () => {
+    const result = await appendQwenLearning('Explain routing', 'pending artifact', 'qwen-test-1', 'private context')
     expect(result.candidate.admissionStatus).toBe('candidate')
     expect(result.candidate.runtime).toBe('github-actions')
-    // Defaults to the checkpoint the workflow actually runs (deepseekCheckpoints.ts, tied to the workflow by a test).
+    // Defaults to the checkpoint the workflow actually runs (qwenCheckpoints.ts, tied to the workflow by a test).
     expect(result.candidate.model).toBe('Qwen/Qwen3-8B')
-    expect(result.candidate.input).toContain('[DEEPSEEK_TASK] Explain routing')
-    expect(result.candidate.generatedResult).toContain('[DEEPSEEK_RESULT]')
+    expect(result.candidate.input).toContain('[QWEN_TASK] Explain routing')
+    expect(result.candidate.generatedResult).toContain('[QWEN_RESULT]')
   })
 
   it('records the checkpoint that actually answered when the caller knows it (e.g. the fallback)', async () => {
-    const result = await appendDeepSeekLearning('Explain routing', 'answer', 'deepseek-test-2', '', 'deepseek-ai/deepseek-coder-1.3b-instruct')
+    const result = await appendQwenLearning('Explain routing', 'answer', 'qwen-test-2', '', 'deepseek-ai/deepseek-coder-1.3b-instruct')
     expect(result.candidate.model).toBe('deepseek-ai/deepseek-coder-1.3b-instruct')
   })
 
@@ -259,14 +259,14 @@ describe('NEXUS / Corpus Local Mode', () => {
     expect(repository.retrieve('remote result')).toHaveLength(0)
   })
 
-  it('makes approved corpus context available to the DeepSeek workflow without local fallback', async () => {
+  it('makes approved corpus context available to the Qwen workflow without local fallback', async () => {
     const repository = new CorpusRepository({ mode: 'test' })
     const { candidate } = await repository.appendInteraction({ input: 'What is beta?', context: '', result: 'Beta is the second letter.', runtime: 'corpus', model: 'local-model' })
     await repository.admitCandidate(candidate.id, await testAuthorization(candidate))
-    const payload = buildDeepSeekTaskPayload('What is beta?')
+    const payload = buildQwenTaskPayload('What is beta?')
     expect(payload.context).toContain('Beta is the second letter.')
-    expect(corpusProvider.supportsTools('deepseek-16b')).toBe(false)
-    await expect(corpusProvider.send({ systemPrompt: 'system', messages: [{ role: 'user', content: 'What is beta?' }], model: 'deepseek-16b' }, '')).rejects.toThrow('GitHub Actions workflow dispatcher')
+    expect(corpusProvider.supportsTools('qwen3-8b')).toBe(false)
+    await expect(corpusProvider.send({ systemPrompt: 'system', messages: [{ role: 'user', content: 'What is beta?' }], model: 'qwen3-8b' }, '')).rejects.toThrow('GitHub Actions workflow dispatcher')
   })
 
   it('does not let corpus context bypass the existing Guardian co-sign boundary', () => {

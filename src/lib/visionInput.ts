@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-// ─── Picture analysis on GitHub Actions (DeepSeek provider) ──────────────────
-// The DeepSeek provider has no vision of its own. An attached picture is committed to the
+// ─── Picture analysis on GitHub Actions (Qwen provider) ──────────────────
+// The Qwen provider has no vision of its own. An attached picture is committed to the
 // vision-inputs branch, image-analyze.yml runs Qwen2-VL-2B on it, and the answer is read back from the
 // vision-results branch (artifact zips are not readable from the browser). The workflow's mirror job
 // removes the picture from vision-inputs once it has been analyzed.

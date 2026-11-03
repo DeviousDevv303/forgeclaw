@@ -61,14 +61,14 @@ describe('hosted tool-calling providers get read-only repo tools', () => {
     expect(body.system ?? '').toContain('github_search_code (seconds)')
   }, 15_000)
 
-  it('never hands Claude the slow DeepSeek workflow, even for "review"/"analyze" wording or a coding task', async () => {
+  it('never hands Claude the slow Qwen workflow, even for "review"/"analyze" wording or a coding task', async () => {
     for (const prompt of ['review and analyze the efficiency of my GitHub workflows', 'check the repo and fix the failing build-gate test']) {
       cleanup(); vi.resetModules(); fetchMock.mockClear()
       const body = await firstAnthropicBody('anthropic', prompt)
       const names = (body.tools ?? []).map(tool => tool.name)
-      expect(names, prompt).not.toContain('deepseek_reason')
-      expect(names, prompt).not.toContain('ask_deepseek')
-      expect(body.system ?? '', prompt).not.toMatch(/Use deepseek_reason/)
+      expect(names, prompt).not.toContain('qwen_reason')
+      expect(names, prompt).not.toContain('ask_qwen')
+      expect(body.system ?? '', prompt).not.toMatch(/Use qwen_reason/)
       expect(names, prompt).toContain('github_read_file')
       // Claude is told to use shell_exec; a coding task used to drop it (and web_search) entirely.
       expect(names, prompt).toContain('shell_exec')

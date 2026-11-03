@@ -25,7 +25,7 @@ describe('reactive core wiring in App', () => {
     const { default: App } = await import('./App')
     render(<App />)
     const box = screen.getByRole('textbox') as HTMLTextAreaElement
-    fireEvent.change(box, { target: { value: '/deepseek what is ForgeClaw?' } })
+    fireEvent.change(box, { target: { value: '/qwen what is ForgeClaw?' } })
     fireEvent.keyDown(box, { key: 'Enter' })
     await waitFor(() => expect(states.some(s => s.state === 'running')).toBe(true), { timeout: 5000 })
     // Typing the message emits an idle/anticipatory broadcast first; the agent's first real state is thinking.

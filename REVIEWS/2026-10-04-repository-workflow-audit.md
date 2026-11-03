@@ -8,7 +8,7 @@ Remaining: PR #31 requires normal review and merge decision; all Tier 2 proposal
 
 **Audit date:** 2026-10-04
 **Repository:** `DeviousDevv303/forgeclaw`
-**Base audited:** `main` at `6228c5a` (`fix: pass chat template inputs to DeepSeek`)
+**Base audited:** `main` at `6228c5a` (`fix: pass chat template inputs to Qwen`)
 **Working branch:** `audit/tier1-autonomous-fixes`
 **Scope:** application source, tests, GitHub Actions workflows, and the requested Guardian/Tier 2 surfaces.
 
@@ -92,7 +92,7 @@ These were verified but are not blocking defects for this PR:
 1. **Skipped tests:** 8 tests are skipped, including the live acceptance test and environment-dependent provider tests. Enabling them requires external runtime/service availability and should be handled as a separate test-environment decision.
 2. **Build performance:** Vite reports the generated `lib` chunk at approximately 6.0 MB / 2.16 MB gzip and the main chunk above 500 kB. Code-splitting is a valid follow-up performance task, but changing chunk boundaries is broader than the small same-day CI fix.
 3. **Tooling freshness:** the build reports Browserslist data is 7 months old. This is maintenance, not a production correctness failure; dependency updates should be separately reviewed and tested.
-4. **Workflow model cost:** `code-review.yml`, `deepseek-16b.yml`, and `image-analyze.yml` install large CPU model stacks on demand. This is an efficiency/cost concern, but changing model/runtime strategy needs an explicit resource target.
+4. **Workflow model cost:** `code-review.yml`, `qwen3-8b.yml`, and `image-analyze.yml` install large CPU model stacks on demand. This is an efficiency/cost concern, but changing model/runtime strategy needs an explicit resource target.
 
 ---
 

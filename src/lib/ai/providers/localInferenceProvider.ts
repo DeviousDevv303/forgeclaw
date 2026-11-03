@@ -7,7 +7,7 @@
 
 import type { AIProvider, AIRequest, AIResponse, AIToolCall, AIMessage } from '../types'
 import { checkNexusKnowledge } from '../../corpus'
-import { shouldDispatchComplexTaskToDeepSeek } from '../../deepseekCommand'
+import { shouldDispatchComplexTaskToQwen } from '../../qwenCommand'
 
 export const DEFAULT_LOCAL_ENDPOINT = 'http://127.0.0.1:8080/v1'
 export const DEFAULT_LOCAL_MODEL = 'local-model'
@@ -78,7 +78,7 @@ function toMessages(systemPrompt: string, messages: AIMessage[]): LocalMessage[]
 
 /**
  * Legacy Local Inference routing hook: this explicit adapter delegates to the
- * repository DeepSeek workflow rather than silently selecting NEXUS. The default
+ * repository Qwen workflow rather than silently selecting NEXUS. The default
  * NEXUS/CORPUS path has its own orchestration and memory/context responsibilities.
  */
 export function shouldUseLocalModel(messages: AIMessage[]): boolean {
@@ -86,12 +86,12 @@ export function shouldUseLocalModel(messages: AIMessage[]): boolean {
   return false
 }
 
-export function routeLocalTask(messages: AIMessage[]): 'local' | 'deepseek' {
-  return shouldUseLocalModel(messages) ? 'local' : 'deepseek'
+export function routeLocalTask(messages: AIMessage[]): 'local' | 'qwen' {
+  return shouldUseLocalModel(messages) ? 'local' : 'qwen'
 }
 
 export function shouldCheckNexusKnowledge(task: string, hasImage = false): boolean {
-  return !hasImage && !shouldDispatchComplexTaskToDeepSeek(task)
+  return !hasImage && !shouldDispatchComplexTaskToQwen(task)
 }
 
 function toTools(tools: NonNullable<AIRequest['tools']>) {
@@ -146,9 +146,9 @@ async function readStream(response: Response, onToken: (token: string) => void):
 }
 
 function normalizeToolCall(call: AIToolCall): AIToolCall {
-  const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'deepseekreason' ? 'deepseek_reason' : call.name
+  const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'qwenreason' ? 'qwen_reason' : call.name
   const input = { ...call.input }
-  if (name === 'deepseek_reason' && input.nexus_learn === undefined) {
+  if (name === 'qwen_reason' && input.nexus_learn === undefined) {
     if (input.nexuslearn !== undefined) input.nexus_learn = input.nexuslearn
     else if (input.nexusLearn !== undefined) input.nexus_learn = input.nexusLearn
   }
@@ -198,16 +198,16 @@ export const localInferenceProvider: AIProvider = {
     if (request.tools?.length) {
       body.tools = toTools(request.tools)
       const hasToolResult = request.messages.some(message => message.role === 'tool')
-      const hasDeepSeekTool = request.tools.some(tool => tool.name === 'deepseek_reason')
+      const hasQwenTool = request.tools.some(tool => tool.name === 'qwen_reason')
       const hasImageTool = request.tools.some(tool => tool.name === 'analyze_image')
       body.tool_choice = !hasToolResult && hasImages && hasImageTool
         ? { type: 'function', function: { name: 'analyze_image' } }
-        : !hasToolResult && hasDeepSeekTool
-          ? { type: 'function', function: { name: 'deepseek_reason' } }
+        : !hasToolResult && hasQwenTool
+          ? { type: 'function', function: { name: 'qwen_reason' } }
           : 'auto'
       const lastMessage = (body.messages as LocalMessage[])[(body.messages as LocalMessage[]).length - 1]
-      if (routeLocalTask(request.messages) === 'deepseek' && lastMessage?.role === 'user' && typeof lastMessage.content === 'string' && request.tools.some(tool => tool.name === 'deepseek_reason')) {
-        lastMessage.content += '\n\nThis is a complex task. Delegate primary reasoning to the deepseek_reason tool, then use its result to formulate the final response.'
+      if (routeLocalTask(request.messages) === 'qwen' && lastMessage?.role === 'user' && typeof lastMessage.content === 'string' && request.tools.some(tool => tool.name === 'qwen_reason')) {
+        lastMessage.content += '\n\nThis is a complex task. Delegate primary reasoning to the qwen_reason tool, then use its result to formulate the final response.'
       }
       // Force tool call format for small local models that don't reliably emit tool_calls
       const messages = body.messages as Array<{ role: string; content: string }>
