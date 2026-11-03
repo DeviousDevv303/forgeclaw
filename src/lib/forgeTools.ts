@@ -24,13 +24,13 @@ import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign, type GuardianPosture, DEFAULT_GUARDIAN_POSTURE, postureFromTier1Active } from './guardianGate'
 import { runDdgWorkflowSearch } from './ddgWorkflowSearch'
 import { explainShellRunMismatch, isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, SHELL_LOG_POLL_INTERVAL_MS, SHELL_LOG_RETRIEVAL_TIMEOUT_MS, SHELL_RUN_LIST_TIMEOUT_MS, type ShellWorkflowRun } from './shellCorrelation'
-import { appendDeepSeekLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
+import { appendQwenLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
 import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './imageArtifact'
 import { buildSimDispatchInputs, dispatchSim, findActiveSimRun, findSimRunByInvocation, formatSimResult, learnFromSim, readSimResult, SIM_CHAT_WAIT_MS, SIM_DEFAULT_CEILING_USD, SIM_MAX_CEILING_USD, SIM_WORKFLOW_ID, svgDataUrl, waitForSimRun, type SimRun } from './mirofishSim'
 import { tasteForImagePrompt } from './nexusTaste'
-import { DEEPSEEK_GITHUB_READ_TIMEOUT_MS, isEmptyDeepSeekResponse, waitForDeepSeekResult } from './deepseekArtifact'
+import { QWEN_GITHUB_READ_TIMEOUT_MS, isEmptyQwenResponse, waitForQwenResult } from './qwenArtifact'
 import { journalRecord, type RunJournal } from './runRollback'
 import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type GithubRequest, type PublishFile } from './githubPublish'
 import { buildAndPublishSite } from './siteBuild'
@@ -59,8 +59,8 @@ import { effectiveKalshiRelayUrl, loadKalshiCredentials } from './kalshiAuth'
 import { readKalshiBalanceBlock } from './kalshiBalanceDisplay'
 import { crowdSettleNote, formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
 import { autoApproveHoldNote, kalshiOrderPlacedJournalEntry, maybeAutoApprove, type KalshiExecutionDeps } from './kalshiExecution'
-import { joinNexusGuidance, nexusGuidanceForDeepSeek, splitNexusGuidance } from './nexusGuidance'
-import { splitAnswerFormInstructions } from './ai/deepseekContext'
+import { joinNexusGuidance, nexusGuidanceForQwen, splitNexusGuidance } from './nexusGuidance'
+import { splitAnswerFormInstructions } from './ai/qwenContext'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -205,8 +205,8 @@ export interface ToolContext {
   signal?: AbortSignal
   /** Records how to undo this run's changes (STOP uses it). Defaults to the active run's journal. */
   journal?: RunJournal
-  /** Called when a DeepSeek workflow is dispatched, with the invocation ID for resume. */
-  onDeepSeekDispatch?: (invocationId: string, dispatchedAt: number) => void
+  /** Called when a Qwen workflow is dispatched, with the invocation ID for resume. */
+  onQwenDispatch?: (invocationId: string, dispatchedAt: number) => void
   tier1Active?: boolean
   guardianPosture?: GuardianPosture
   /** 'operator' for commands the human typed directly; otherwise writes are attributed to the agent. */
@@ -311,8 +311,8 @@ export const FORGE_TOOLS: ToolDef[] = [
     },
   },
   {
-    name: 'deepseek_reason',
-    description: 'Primary complex-task reasoning via the repository-owned GitHub Actions workflow (provider id \'deepseek\'). The workflow runs Qwen/Qwen3-8B (4-bit GGUF, CPU) as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.',
+    name: 'qwen_reason',
+    description: 'Primary complex-task reasoning via the repository-owned GitHub Actions workflow (provider id \'qwen\'). The workflow runs Qwen/Qwen3-8B (4-bit GGUF, CPU) as primary and uses deepseek-ai/deepseek-coder-1.3b-instruct only if the primary cannot load or run. The request may be recorded as an unapproved learning candidate when enabled.',
     parameters: {
       type: 'object',
       properties: {
@@ -325,8 +325,8 @@ export const FORGE_TOOLS: ToolDef[] = [
     },
   },
   {
-    name: 'ask_deepseek',
-    description: 'Ask the existing Qwen/Qwen3-8B reasoning workflow directly (tool family name \'deepseek\' retained). No routing delay; Qwen/Qwen3-8B is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.',
+    name: 'ask_qwen',
+    description: 'Ask the existing Qwen/Qwen3-8B reasoning workflow directly. No routing delay; Qwen/Qwen3-8B is primary, with deepseek-ai/deepseek-coder-1.3b-instruct used only if the primary cannot load or run.',
     parameters: {
       type: 'object',
       properties: {
@@ -925,7 +925,7 @@ export function loadToolContext(): ToolContext {
 
 // ─── Executor ─────────────────────────────────────────────────────────────────
 // The hardened browser → api.github.com boundary lives in ./githubFetch so the
-// DeepSeek path shares exactly the same timeout, retry, cache and abort
+// Qwen path shares exactly the same timeout, retry, cache and abort
 // behaviour as every other GitHub tool. Re-exported here for existing callers.
 
 export { toolFetch } from './githubFetch'
@@ -968,12 +968,12 @@ export function autoApproveExecutionDeps(ctx: ToolContext): KalshiExecutionDeps 
 }
 
 /**
- * Format the user-visible deepseek_reason success output.
+ * Format the user-visible qwen_reason success output.
  * Internal bookkeeping (learning-persistence status) is reported in the
  * Stages line, which surfaces in the reasoning trace — it must never be
  * appended to the chat-visible answer.
  */
-export function formatDeepSeekResultText(
+export function formatQwenResultText(
   invocationId: string,
   owner: string,
   repo: string,
@@ -1018,14 +1018,18 @@ export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<str
   return output
 }
 
-async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string> {
-  const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'deepseekreason' || call.name === 'ask_deepseek' ? 'deepseek_reason' : call.name
+/** Names the Qwen tools had before the rename (saved conversations and model output can still carry them). */
+export const LEGACY_TOOL_NAMES: Readonly<Record<string, string>> = { deepseek_reason: 'qwen_reason', ask_deepseek: 'ask_qwen', deepseekreason: 'qwenreason' }
+
+async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<string> {
+  const call = LEGACY_TOOL_NAMES[rawCall.name] ? { ...rawCall, name: LEGACY_TOOL_NAMES[rawCall.name] } : rawCall
+  const name = call.name === 'generateimage' ? 'generate_image' : call.name === 'qwenreason' || call.name === 'ask_qwen' ? 'qwen_reason' : call.name
   const input = { ...call.input }
-  if (call.name === 'ask_deepseek') {
+  if (call.name === 'ask_qwen') {
     input.task = typeof input.question === 'string' ? input.question : ''
     input.nexus_learn = false
   }
-  if (name === 'deepseek_reason' && input.nexus_learn === undefined) {
+  if (name === 'qwen_reason' && input.nexus_learn === undefined) {
     if (input.nexuslearn !== undefined) input.nexus_learn = input.nexuslearn
     else if (input.nexusLearn !== undefined) input.nexus_learn = input.nexusLearn
   }
@@ -1308,8 +1312,8 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         return `✓ Triggered ${workflow} on ${ref} in ${owner}/${repo}`
       }
 
-      // ── DeepSeek: repository-owned primary reasoning ────────────────────────
-      case 'deepseek_reason': {
+      // ── Qwen: repository-owned primary reasoning ────────────────────────
+      case 'qwen_reason': {
         let task = typeof input.task === 'string' ? input.task.trim() : ''
         let context = typeof input.context === 'string' ? input.context : ''
         const ref = typeof input.ref === 'string' && input.ref.trim() ? input.ref.trim() : 'main'
@@ -1323,26 +1327,26 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           const resumeDispatchedAt = typeof input.resume_dispatched_at === 'number'
             ? input.resume_dispatched_at
             : Date.now() - 5 * 60_000 // conservative: assume dispatched 5 min ago
-          const completed = await waitForDeepSeekResult(ctx, owner, repo, resumeInvocationId, resumeDispatchedAt)
-          if (isEmptyDeepSeekResponse(completed.result)) {
+          const completed = await waitForQwenResult(ctx, owner, repo, resumeInvocationId, resumeDispatchedAt)
+          if (isEmptyQwenResponse(completed.result)) {
             return `[TOOL ERROR] Qwen/Qwen3-8B run ${completed.run.html_url} finished but produced an empty response.`
           }
-          return formatDeepSeekResultText(resumeInvocationId, owner, repo, ref, 'Resumed after app background', completed.run.html_url, completed.result)
+          return formatQwenResultText(resumeInvocationId, owner, repo, ref, 'Resumed after app background', completed.run.html_url, completed.result)
         }
-        if (!task) throw new Error('DeepSeek task is required.')
+        if (!task) throw new Error('Qwen task is required.')
         // GitHub workflow_dispatch inputs have size limits (~64KB total).
         // Base64 image data (data:image/...) blows past this with a 422.
-        // Strip it before dispatch — the DeepSeek workflow can't process images.
+        // Strip it before dispatch — the Qwen workflow can't process images.
         const IMAGE_DATA_PATTERN = /data:image\/[a-zA-Z]+;base64,[A-Za-z0-9+/=]+/g
-        const stripImages = (text: string) => text.replace(IMAGE_DATA_PATTERN, '[image omitted: not supported via DeepSeek workflow dispatch]')
+        const stripImages = (text: string) => text.replace(IMAGE_DATA_PATTERN, '[image omitted: not supported via Qwen workflow dispatch]')
         task = stripImages(task)
         context = stripImages(context)
         // Public visitor (no token in this browser, relay configured for this build): the owner's relay runs
         // the chat model; the owner's token, tools and NEXUS are never involved.
         if (!token && ctx.publicRelayUrl) {
           const answer = await runPublicReasoning(task, { context, relayUrl: ctx.publicRelayUrl, signal: ctx.signal })
-          if (isEmptyDeepSeekResponse(answer.result)) return `[TOOL ERROR] The public model run ${answer.invocationId} produced an empty response.`
-          return formatDeepSeekResultText(answer.invocationId, owner, repo, 'main', `Stages: dispatch=public-relay; result-retrieval=relay-artifact; checkpoint=${answer.model || 'unknown'}`, '(public relay run)', answer.result)
+          if (isEmptyQwenResponse(answer.result)) return `[TOOL ERROR] The public model run ${answer.invocationId} produced an empty response.`
+          return formatQwenResultText(answer.invocationId, owner, repo, 'main', `Stages: dispatch=public-relay; result-retrieval=relay-artifact; checkpoint=${answer.model || 'unknown'}`, '(public relay run)', answer.result)
         }
         if (!token) throw new Error('No GitHub token configured.')
         // The NEXUS guidance block is the owner's teaching, not task-matched context: it is set aside here, exempt from
@@ -1357,16 +1361,16 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // The dispatch is the one place every path passes, so it attaches the owner's teaching itself: Nexus rides every
         // path. The long-output profiles hold a whole page or file in an 8K window, so they get the small block.
         if (!nexusGuidance.guidance) {
-          nexusGuidance.guidance = nexusGuidanceForDeepSeek(task, input.profile === 'site' || input.profile === 'code' ? { maxChars: 600 } : {}).text
+          nexusGuidance.guidance = nexusGuidanceForQwen(task, input.profile === 'site' || input.profile === 'code' ? { maxChars: 600 } : {}).text
         }
         // Defense-in-depth: drop context that shares no significant words with the task.
-        // Stale context (e.g. 18h-old SHA Q&A) confuses DeepSeek into answering the wrong question.
+        // Stale context (e.g. 18h-old SHA Q&A) confuses Qwen into answering the wrong question.
         if (context && task) {
           const taskWords = new Set(task.toLowerCase().split(/\W+/).filter(w => w.length > 4))
           const contextWords = new Set(context.toLowerCase().split(/\W+/).filter(w => w.length > 4))
           const overlap = [...taskWords].filter(w => contextWords.has(w)).length
           if (overlap === 0) {
-            console.warn('[deepseek_reason] Dropping stale context with zero keyword overlap to task')
+            console.warn('[qwen_reason] Dropping stale context with zero keyword overlap to task')
             context = ''
           }
         }
@@ -1375,7 +1379,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {
           throw new Error('Invalid workflow ref.')
         }
-        const invocationId = `deepseek-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const invocationId = `qwen-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const dispatchedAt = Date.now()
         const headers = {
           Authorization: `token ${token}`,
@@ -1392,28 +1396,28 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
               context,
               nexus_learning: nexusLearn ? 'true' : 'false',
               invocation_id: invocationId,
-              // 'site' (one HTML page) / 'code' (one edited source file): long-output profiles of deepseek-16b.yml.
+              // 'site' (one HTML page) / 'code' (one edited source file): long-output profiles of qwen3-8b.yml.
               ...(input.profile === 'site' || input.profile === 'code' ? { profile: input.profile } : {}),
             },
           }),
         } as const
         let dispatch: Response
         try {
-          dispatch = await toolFetch({ ...ctx, timeoutMs: DEEPSEEK_GITHUB_READ_TIMEOUT_MS }, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/deepseek-16b.yml/dispatches`, dispatchRequest)
+          dispatch = await toolFetch({ ...ctx, timeoutMs: QWEN_GITHUB_READ_TIMEOUT_MS }, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/qwen3-8b.yml/dispatches`, dispatchRequest)
         } catch (dispatchError) {
-          throw new Error(describeGithubTransportFailure('deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches', dispatchError))
+          throw new Error(describeGithubTransportFailure('qwen-dispatch POST /actions/workflows/qwen3-8b.yml/dispatches', dispatchError))
         }
         if (!dispatch.ok) {
           // Reuse the proven dispatch classifier so a 401/403/404 reads the same
           // way here as it does in shell_exec, then keep GitHub's own message.
           const detail = await dispatch.text().catch(() => '')
           const explanation = describeGithubDispatchFailure(dispatch.status, dispatch.statusText)
-          throw new Error(`deepseek-dispatch POST /actions/workflows/deepseek-16b.yml/dispatches: ${explanation}${detail ? ` DeepSeek dispatch response: ${detail.slice(0, 300)}` : ''}`)
+          throw new Error(`qwen-dispatch POST /actions/workflows/qwen3-8b.yml/dispatches: ${explanation}${detail ? ` Qwen dispatch response: ${detail.slice(0, 300)}` : ''}`)
         }
-        journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'deepseek-16b.yml', needle: invocationId, since: dispatchedAt, label: 'deepseek_reason' })
-        try { ctx.onDeepSeekDispatch?.(invocationId, dispatchedAt) } catch { /* persistence is best-effort */ }
-        const completed = await waitForDeepSeekResult(ctx, owner, repo, invocationId, dispatchedAt)
-        if (isEmptyDeepSeekResponse(completed.result)) {
+        journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'qwen3-8b.yml', needle: invocationId, since: dispatchedAt, label: 'qwen_reason' })
+        try { ctx.onQwenDispatch?.(invocationId, dispatchedAt) } catch { /* persistence is best-effort */ }
+        const completed = await waitForQwenResult(ctx, owner, repo, invocationId, dispatchedAt)
+        if (isEmptyQwenResponse(completed.result)) {
           return `[TOOL ERROR] Qwen/Qwen3-8B run ${completed.run.html_url} finished but produced an empty response, so there is no answer to show. Nothing was recorded for learning. Try again or rephrase.`
         }
         let learningStatus = 'not requested'
@@ -1422,7 +1426,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
           // is reported in the Stages line (surfaced in the reasoning trace),
           // never appended to the user-visible answer.
           try {
-            await appendDeepSeekLearning(
+            await appendQwenLearning(
               task,
             completed.result,
               invocationId,
@@ -1438,7 +1442,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         // The workflow cut the prompt to fit the window: say so, and say what happened to the NEXUS guidance (never silent).
         const trim = completed.promptTrimmed ? `; prompt-trimmed=true; nexus-guidance=${completed.nexusGuidance || 'unknown'}` : ''
         const stages = `Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=${completed.source}; result-extraction=complete; checkpoint=${checkpoint}${role}${trim}; learning-persistence=${learningStatus}.`
-        return formatDeepSeekResultText(invocationId, owner, repo, ref, stages, completed.run.html_url, completed.result)
+        return formatQwenResultText(invocationId, owner, repo, ref, stages, completed.run.html_url, completed.result)
       }
 
       // ── Self-sculpt: branch + pull request proposal ──────────────────────────
@@ -1496,7 +1500,7 @@ async function executeToolCore(call: ToolCall, ctx: ToolContext): Promise<string
         return await runBrowserRound((url, init) => toolFetch(ctx, url, init), {
           owner, repo, token, actions: input.actions, sessionId: typeof input.session_id === 'string' && input.session_id ? input.session_id : undefined,
           goal: typeof input.goal === 'string' ? input.goal.trim().slice(0, 200) : undefined, signal: ctx.signal,
-          // NEXUS keeps what worked as an unapproved playbook; approved ones teach the browsing agent and DeepSeek.
+          // NEXUS keeps what worked as an unapproved playbook; approved ones teach the browsing agent and Qwen.
           onRound: facts => { void recordBrowserLearning(facts, { runtime: 'browser-agent', model: 'chromium' }) },
         })
       }

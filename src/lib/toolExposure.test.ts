@@ -175,9 +175,9 @@ describe('read-only money baseline', () => {
     const writes = ['funds_propose', 'funds_settle', 'github_write_file', 'github_merge_pr', 'shell_exec']
     expect(baselineToolNames('moonshot').filter(name => writes.includes(name))).toEqual([])
   })
-  it('local and DeepSeek models get no baseline', () => {
+  it('local and Qwen models get no baseline', () => {
     expect(baselineToolNames('local')).toEqual([])
-    expect(baselineToolNames('deepseek')).toEqual([])
+    expect(baselineToolNames('qwen')).toEqual([])
   })
 })
 

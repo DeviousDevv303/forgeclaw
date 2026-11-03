@@ -5,7 +5,7 @@
 export const FORGECLAW_SIGNATURE = '— ForgeClaw'
 
 /**
- * Appended in code rather than asked of the model: DeepSeek answers never see ForgeClaw's system
+ * Appended in code rather than asked of the model: Qwen answers never see ForgeClaw's system
  * prompt, and a prompt rule can be ignored. A reply the model already signed is left as is.
  */
 export function withForgeClawSignature(text: string): string {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { decodeBase64Utf8, formatFileRead, READ_PAGE_CHARS } from './fileRead'
-import { readFileBody } from './ai/deepseekSculpt'
+import { readFileBody } from './ai/qwenSculpt'
 
 const b64 = (text: string) => btoa(String.fromCharCode(...new TextEncoder().encode(text)))
 
@@ -36,13 +36,13 @@ describe('github_read_file decodes UTF-8 and pages large files', () => {
     expect(pages.join('\n')).toBe(text)
   })
 
-  it('a page is never mistaken for the whole file by the DeepSeek and /sculpt chains', () => {
+  it('a page is never mistaken for the whole file by the Qwen and /sculpt chains', () => {
     const text = Array.from({ length: 3000 }, (_, i) => `line ${i}`).join('\n')
     expect(readFileBody(formatFileRead('src/big.ts', undefined, text))).toHaveProperty('error')
     expect(readFileBody(formatFileRead('src/big.ts', undefined, text, 2900))).toHaveProperty('error')
   })
 
-  it('DeepSeek still refuses a whole file over 8,000 characters, though reads now return up to 20,000', () => {
+  it('Qwen still refuses a whole file over 8,000 characters, though reads now return up to 20,000', () => {
     const text = 'x'.repeat(12_000)
     expect(readFileBody(formatFileRead('src/mid.ts', undefined, text))).toMatchObject({ error: expect.stringMatching(/larger than 8,000/) })
   })

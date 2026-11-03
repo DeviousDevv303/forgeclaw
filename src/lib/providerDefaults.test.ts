@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_PROVIDER, PROVIDER_IDS, resolveInitialProvider } from './providerDefaults'
 
 describe('canonical provider defaults', () => {
-  it('selects Qwen/Qwen3-8B (provider id deepseek) when there is no saved provider', () => {
-    expect(DEFAULT_PROVIDER).toBe('deepseek')
-    expect(resolveInitialProvider(null)).toBe('deepseek')
-    expect(resolveInitialProvider('')).toBe('deepseek')
-    expect(resolveInitialProvider('unknown')).toBe('deepseek')
+  it('selects Qwen/Qwen3-8B (provider id qwen) when there is no saved provider', () => {
+    expect(DEFAULT_PROVIDER).toBe('qwen')
+    expect(resolveInitialProvider(null)).toBe('qwen')
+    expect(resolveInitialProvider('')).toBe('qwen')
+    expect(resolveInitialProvider('unknown')).toBe('qwen')
   })
 
   it('preserves an explicitly saved valid provider selection across initialization', () => {

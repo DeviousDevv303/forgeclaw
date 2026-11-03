@@ -95,7 +95,7 @@ export const SITE_DEPLOY_GUIDANCE =
 export const MAX_REPO_CREATIONS_PER_RUN = 2
 
 /** Dispatcher aliases (executeTool normalizes these) that count as the offered tool. */
-const TOOL_ALIASES: Readonly<Record<string, string>> = { generateimage: 'generate_image', deepseekreason: 'deepseek_reason' }
+const TOOL_ALIASES: Readonly<Record<string, string>> = { generateimage: 'generate_image', qwenreason: 'qwen_reason' }
 
 /** True when the router itself issued the calls (deterministic bootstraps), not the model. */
 export function isRouterIssued(stopReason: string | undefined): boolean {

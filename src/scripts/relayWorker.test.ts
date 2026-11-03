@@ -1,6 +1,6 @@
 // @vitest-environment node
 // relay/worker.js holds a token that can dispatch the model workflow. These tests pin what it may do:
-// only the allowed origins, only deepseek-16b.yml with learning and the mirror branch off, bounded
+// only the allowed origins, only qwen3-8b.yml with learning and the mirror branch off, bounded
 // input, per-IP and concurrency limits, and results read from the run's own artifact.
 import JSZip from 'jszip'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -34,7 +34,7 @@ describe('relay worker', () => {
     expect(pre.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN)
   })
 
-  it('dispatches deepseek-16b.yml with learning and the public mirror off', async () => {
+  it('dispatches qwen3-8b.yml with learning and the public mirror off', async () => {
     const calls: Array<{ url: string; body?: Record<string, unknown> }> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
@@ -46,7 +46,7 @@ describe('relay worker', () => {
     const { invocation_id } = await res.json() as { invocation_id: string }
     expect(invocation_id).toMatch(/^public-[a-z0-9]+-[a-z0-9]{10}$/)
     const dispatch = calls.find(c => c.url.endsWith('/dispatches'))!
-    expect(dispatch.url).toBe(`${API}/actions/workflows/deepseek-16b.yml/dispatches`)
+    expect(dispatch.url).toBe(`${API}/actions/workflows/qwen3-8b.yml/dispatches`)
     expect(dispatch.body).toEqual({ ref: 'main', inputs: { task: 'Explain recursion simply', context: '', nexus_learning: 'false', invocation_id, mirror: 'false' } })
     expect(calls.filter(c => c.url.endsWith('/dispatches'))).toHaveLength(1)
   })
@@ -74,7 +74,7 @@ describe('relay worker', () => {
     let state = 'in_progress'
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/runs?event=')) return Response.json({ workflow_runs: [{ id: 7, display_title: `Qwen/Qwen3-8B ${id}`, status: state, conclusion: state === 'completed' ? 'success' : null }] })
-      if (url.endsWith('/actions/runs/7/artifacts?per_page=20')) return Response.json({ artifacts: [{ id: 99, name: `deepseek-${id}`, expired: false }] })
+      if (url.endsWith('/actions/runs/7/artifacts?per_page=20')) return Response.json({ artifacts: [{ id: 99, name: `qwen-${id}`, expired: false }] })
       if (url.endsWith('/actions/artifacts/99/zip')) return new Response(archive)
       return new Response('{}', { status: 404 })
     }))
@@ -82,7 +82,7 @@ describe('relay worker', () => {
     state = 'completed'
     expect(await (await worker.fetch(req(`/v1/reason/${id}`), env())).json()).toEqual({ status: 'done', result: 'Recursion is a function calling itself.', model: 'Qwen/Qwen3-8B' })
     expect((await worker.fetch(req('/v1/reason/../../etc'), env())).status).toBe(404)
-    expect((await worker.fetch(req('/v1/reason/deepseek-owner-run'), env())).status).toBe(404)  // only public ids
+    expect((await worker.fetch(req('/v1/reason/qwen-owner-run'), env())).status).toBe(404)  // only public ids
   })
 
   it('passes gathered evidence as a separate, bounded context', async () => {
@@ -169,7 +169,7 @@ describe('relay worker', () => {
       if (url.includes('/runs?status=')) return Response.json({ workflow_runs: [] })
       if (url.endsWith('/dispatches')) return new Response(null, { status: 204 })
       if (url.includes('/runs?event=')) return Response.json({ workflow_runs: [{ id: 7, display_title: `Qwen/Qwen3-8B ${id}`, status: 'completed', conclusion: 'success' }] })
-      if (url.endsWith('/actions/runs/7/artifacts?per_page=20')) return Response.json({ artifacts: [{ id: 99, name: `deepseek-${id}`, expired: false }] })
+      if (url.endsWith('/actions/runs/7/artifacts?per_page=20')) return Response.json({ artifacts: [{ id: 99, name: `qwen-${id}`, expired: false }] })
       if (url.endsWith('/actions/artifacts/99/zip')) return new Response(archive.slice(0))
       return new Response('{}', { status: 404 })
     }))
@@ -195,7 +195,7 @@ describe('relay worker', () => {
         if (url.includes('/runs?status=')) return Response.json({ workflow_runs: [] })
         if (url.endsWith('/dispatches')) return new Response(null, { status: 204 })
         if (url.includes('/runs?event=')) return Response.json({ workflow_runs: ids.map((id, i) => ({ id: 100 + i, display_title: `Qwen/Qwen3-8B ${id}`, status: 'completed', conclusion: opts.conclusion ?? 'success' })) })
-        if (/\/actions\/runs\/\d+\/artifacts/.test(url)) { const i = Number(/runs\/(\d+)\//.exec(url)![1]) - 100; return Response.json({ artifacts: [{ id: 900 + i, name: `deepseek-${ids[i]}`, expired: false }] }) }
+        if (/\/actions\/runs\/\d+\/artifacts/.test(url)) { const i = Number(/runs\/(\d+)\//.exec(url)![1]) - 100; return Response.json({ artifacts: [{ id: 900 + i, name: `qwen-${ids[i]}`, expired: false }] }) }
         if (/\/actions\/artifacts\/\d+\/zip/.test(url)) return new Response(archive.slice(0))
         return new Response('{}', { status: 404 })
       }))
@@ -215,7 +215,7 @@ describe('relay worker', () => {
       await h.ask('What is NEXUS?')
       const records = await h.exported()
       expect(records).toHaveLength(1)
-      expect(records[0]).toMatchObject({ v: 2, tool: 'deepseek_reason', outcome: 'completed', task: 'What is NEXUS?', flags: [] })
+      expect(records[0]).toMatchObject({ v: 2, tool: 'qwen_reason', outcome: 'completed', task: 'What is NEXUS?', flags: [] })
       expect((await verifyVisitorRecords(records, 'owner-secret')).valid).toHaveLength(1)
       const altered = { ...records[0], result: 'NEXUS says the owner is wrong.' }
       const forged = { ...records[0], id: 'public-forged-0000000000', sig: 'a'.repeat(64) }

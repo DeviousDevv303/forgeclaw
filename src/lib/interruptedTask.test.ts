@@ -21,7 +21,7 @@ describe('findInterruptedTask', () => {
     const messages = [...pair(), { id: 'u2', role: 'user', content: 'hi', timestamp: now }, { id: 'a2', role: 'assistant', content: 'hello', timestamp: now }]
     expect(findInterruptedTask(messages, { now, isCommand: notCommand })).toBeNull()
   })
-  it('leaves a re-attached DeepSeek run alone', () => {
+  it('leaves a re-attached Qwen run alone', () => {
     expect(findInterruptedTask(pair(), { now, skipReplyId: 'a1', isCommand: notCommand })).toBeNull()
   })
   it('never re-runs a resume by itself (no loop when the resume is killed too)', () => {

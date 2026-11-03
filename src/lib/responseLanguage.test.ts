@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { RESPONSE_LANGUAGE_INSTRUCTIONS, withResponseLanguage } from './responseLanguage'
 import { LANGUAGES } from './i18n'
 
-describe('reply language for DeepSeek tasks', () => {
+describe('reply language for Qwen tasks', () => {
   it('has an instruction for every language the header selector offers', () => {
     for (const lang of LANGUAGES) expect(RESPONSE_LANGUAGE_INSTRUCTIONS[lang]).toBeTruthy()
   })

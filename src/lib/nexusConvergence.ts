@@ -4,7 +4,7 @@
 // NEXUS learns on the owner's five-phase scaffolding (Assumptions → Heuristics → First Principles → Extension →
 // Convergence; the owner keeps the full framework private). The last phase is where the loop closes. Until 2026-10-21 it closed only
 // by hand: a record became knowledge solely through a signed admission that no key in the app could sign, so approved
-// knowledge stayed at zero, browser playbooks never reached a prompt, and DeepSeek's "approved knowledge" was always
+// knowledge stayed at zero, browser playbooks never reached a prompt, and Qwen's "approved knowledge" was always
 // empty. The owner asked for NEXUS to learn without manual approval. What converges, with no one approving it:
 //   • First Principles: the owner's own task answered with evidence (a final answer that passed ForgeClaw's evidence
 //     gate with at least one successful tool result, recorded as outcome "verified");
@@ -72,9 +72,9 @@ export function convergencePhase(input: CorpusInteractionInput): Extract<NexusPh
 }
 
 /** Tools whose output is Qwen's own text (the Qwen/Qwen3-8B workflow). */
-export const QWEN_LINEAGE_TOOLS: ReadonlySet<string> = new Set(['deepseek_reason', 'ask_deepseek'])
-/** Provider ids that answer through the Qwen workflow (providerRouter.isDeepSeekProvider). */
-const QWEN_RUNTIMES: ReadonlySet<string> = new Set(['deepseek', 'corpus'])
+export const QWEN_LINEAGE_TOOLS: ReadonlySet<string> = new Set(['qwen_reason', 'ask_qwen', 'deepseek_reason', 'ask_deepseek'])  // the last two: the names in conversations and records saved before the rename
+/** Provider ids that answer through the Qwen workflow (providerRouter.isQwenProvider). */
+const QWEN_RUNTIMES: ReadonlySet<string> = new Set(['qwen', 'deepseek', 'corpus'])  // 'deepseek': the id stored records carry
 
 /** 'qwen' when a turn's answer may carry Qwen's own text: the Qwen provider answered, or a Qwen tool ran in the turn. */
 export function answerLineage(provider: string, results: ReadonlyArray<{ name: string }>): 'qwen' | 'none' {
@@ -83,7 +83,7 @@ export function answerLineage(provider: string, results: ReadonlyArray<{ name: s
 
 /**
  * Whether a record (a new interaction, or one stored before the lineage marker existed) carries Qwen lineage: the explicit
- * marker, a Qwen runtime, a DeepSeek/Qwen model id, or the deepseek learning source. Errs toward "yes": the cost of a false
+ * marker, a Qwen runtime, a DeepSeek/Qwen model id, or the qwen (or older deepseek) learning source. Errs toward "yes": the cost of a false
  * yes is that a record waits for the owner instead of admitting itself.
  */
 export function hasQwenLineage(record: { source?: string; runtime?: string; model?: string; context?: string; metadata?: Record<string, string> }): boolean {
@@ -91,7 +91,7 @@ export function hasQwenLineage(record: { source?: string; runtime?: string; mode
   const marker = metadata.lineage ?? new RegExp('(?:^|; )lineage=([^;]+)').exec(record.context || '')?.[1]
   const runtime = record.runtime ?? metadata.runtime ?? ''
   const model = record.model ?? metadata.model ?? ''
-  return marker === 'qwen' || QWEN_RUNTIMES.has(runtime) || /deepseek|qwen/i.test(model) || (record.source ?? '').startsWith('deepseek:')
+  return marker === 'qwen' || QWEN_RUNTIMES.has(runtime) || /deepseek|qwen/i.test(model) || ['qwen:', 'deepseek:'].some(prefix => (record.source ?? '').startsWith(prefix))
 }
 
 /** Before this date, chat answers given while the provider was "corpus" were admitted with no signature or review (a8276fa, removed by #61). */
@@ -108,12 +108,12 @@ export function knowledgeOrigin(record: { timestamp: string; metadata: Record<st
 
 /**
  * Tools whose result is a model's own output or the app's own bookkeeping, not evidence about the world. On 2026-10-22 a
- * DeepSeek answer that admitted "the context does not provide details about PR #223" still claimed "there are no pending
- * PRs"; because its deepseek_reason call had succeeded, the answer counted as tool-backed and could converge as First
+ * Qwen answer that admitted "the context does not provide details about PR #223" still claimed "there are no pending
+ * PRs"; because its qwen_reason call had succeeded, the answer counted as tool-backed and could converge as First
  * Principles knowledge. A model's reasoning, review or vision reading is not evidence of a fact.
  */
 export const NOT_EVIDENCE_TOOLS: ReadonlySet<string> = new Set([
-  'deepseek_reason', 'ask_deepseek', 'review_code', 'spawn_agent', 'analyze_image',
+  'qwen_reason', 'ask_qwen', 'review_code', 'spawn_agent', 'analyze_image',
   'coding_task_update', 'memory_write', 'memory_read', 'memory_list',
   // The funds ledger is the app's own record, not evidence about the world (funds_settle reads Kalshi and is).
   'funds_status', 'funds_propose',

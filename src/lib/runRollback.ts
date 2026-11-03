@@ -85,7 +85,7 @@ export async function rollbackRun(entries: readonly JournalEntry[], deps: Rollba
   const sleep = deps.sleep ?? (ms => new Promise<void>(resolve => setTimeout(resolve, ms)))
   const forceAfter = deps.forceCancelAfterMs ?? 10_000
   // GitHub can take a minute or more to finish cancelling a run that is in the middle of a long step
-  // (observed live: ~90s for a DeepSeek run). Waiting too briefly reports a false failure.
+  // (observed live: ~90s for a Qwen run). Waiting too briefly reports a false failure.
   const settleTimeout = deps.settleTimeoutMs ?? 150_000
   const base = `https://api.github.com/repos/${deps.owner}/${deps.repo}`
   const headers = { Authorization: `token ${deps.token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }

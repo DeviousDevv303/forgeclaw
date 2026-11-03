@@ -1,10 +1,10 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
-// ─── NEXUS guides DeepSeek ──────────────────────────────────────────────────────────────────
-// Kimi and Claude already read NEXUS lessons and the owner's heuristics in their system prompt. DeepSeek (Qwen3-8B on
+// ─── NEXUS guides Qwen ──────────────────────────────────────────────────────────────────
+// Kimi and Claude already read NEXUS lessons and the owner's heuristics in their system prompt. Qwen (Qwen3-8B on
 // Actions) got none of it: its context carried only approved records fresher than an hour, so what NEXUS had learned
 // never reached it. This builds a small, bounded guidance block from what the owner has actually taught NEXUS, and
-// deepseekContext.ts puts it in the context of every DeepSeek chat dispatch.
+// qwenContext.ts puts it in the context of every Qwen chat dispatch.
 //
 // What goes in (and why it is safe to give a model):
 //   • the owner's ACTIVE heuristics (the owner's own rules, mined from what the owner typed; removable on the NEXUS page);
@@ -49,7 +49,7 @@ export function joinNexusGuidance(guidance: string, rest: string): string {
 }
 
 export interface GuidanceDeps {
-  /** Overall cap on the block, end marker included; the DeepSeek chains with a whole file in the prompt pass a small one. */
+  /** Overall cap on the block, end marker included; the Qwen chains with a whole file in the prompt pass a small one. */
   maxChars?: number
   decisions?: HeuristicDecisions
   candidates?: ReturnType<typeof corpusRepository.listCandidates>
@@ -63,11 +63,11 @@ export interface NexusGuidance {
   records: number
 }
 
-export function nexusGuidanceForDeepSeek(task: string, deps: GuidanceDeps = {}): NexusGuidance {
+export function nexusGuidanceForQwen(task: string, deps: GuidanceDeps = {}): NexusGuidance {
   const empty: NexusGuidance = { text: '', heuristics: 0, lessons: 0, records: 0 }
   if (!task.trim()) return empty
   const heuristics = heuristicsForPrompt(deps.decisions ?? loadDecisions(), deps.candidates ?? corpusRepository.listCandidates(500))
-  const lessons = lessonsForPrompt(summarizeLearning(deps.candidates ?? corpusRepository.listCandidates(500)), ['deepseek_reason', 'github_repo_state', 'github_read_file', 'github_search_code', 'shell_exec', 'web_search', 'browser_run', 'browser_playbook'], 3)
+  const lessons = lessonsForPrompt(summarizeLearning(deps.candidates ?? corpusRepository.listCandidates(500)), ['qwen_reason', 'github_repo_state', 'github_read_file', 'github_search_code', 'shell_exec', 'web_search', 'browser_run', 'browser_playbook'], 3)
 
   const retrieve = deps.retrieve ?? ((q, n) => corpusRepository.retrieve(q, n))
   const relevant = retrieve(task, 6)

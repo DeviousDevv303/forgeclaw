@@ -28,9 +28,9 @@ describe('questions about what is current', () => {
     expect(note).toContain('say plainly that your information may be outdated')
   })
 
-  it("routes \"what's the latest in tech\" on DeepSeek through deep research before the model answers", async () => {
-    const tools = ['deepseek_reason', 'deep_research'].map(name => ({ name, description: name, parameters: {} }))
-    const r = await sendViaRouter({ model: 'deepseek-16b', systemPrompt: '', tools, messages: [{ role: 'user', content: "what's the latest in tech" }] }, '', 'deepseek')
+  it("routes \"what's the latest in tech\" on Qwen through deep research before the model answers", async () => {
+    const tools = ['qwen_reason', 'deep_research'].map(name => ({ name, description: name, parameters: {} }))
+    const r = await sendViaRouter({ model: 'qwen3-8b', systemPrompt: '', tools, messages: [{ role: 'user', content: "what's the latest in tech" }] }, '', 'qwen')
     expect(r).toMatchObject({ success: true, response: { stopReason: 'deterministic-deep-research' } })
     if (r.success) expect(r.response.toolCalls?.[0]).toMatchObject({ name: 'deep_research', input: { question: "what's the latest in tech" } })
   })

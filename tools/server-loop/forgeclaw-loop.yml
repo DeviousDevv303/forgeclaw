@@ -11,7 +11,7 @@ name: ForgeClaw Loop
 #
 # Stage 1 is deterministic on purpose: the runner makes zero model calls
 # (the owner's token doctrine — no burning tokens for no reason). The
-# Qwen/DeepSeek Actions path becomes the canary engine at Stage 2.
+# Qwen/Qwen Actions path becomes the canary engine at Stage 2.
 #
 # Silence is the healthy state: a quiet board posts nothing.
 #

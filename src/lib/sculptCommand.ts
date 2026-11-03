@@ -4,11 +4,11 @@
 //   /sculpt <file> <what to change>   read -> rewrite with the free workflow model (Qwen3-8B, code
 //                                     profile) -> sculpt_self (build-validated pull request)
 //   /patch <one-line reason>          followed by a unified diff on the next lines -> shell_patch
-// Neither uses the selected chat provider, so both work with Kimi, Claude, DeepSeek or no provider key
+// Neither uses the selected chat provider, so both work with Kimi, Claude, Qwen or no provider key
 // at all. Every step still goes through executeTool (Guardian, co-sign, journal) and the self-sculpt
 // key; nothing is merged automatically.
 
-import { extractRewrittenFile, readFileBody, sculptTask } from './ai/deepseekSculpt'
+import { extractRewrittenFile, readFileBody, sculptTask } from './ai/qwenSculpt'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE } from './sculptKey'
 import type { ToolCall } from './forgeTools'
 
@@ -55,7 +55,7 @@ export async function runSculptCommand(command: SculptCommand, run: (call: ToolC
   const read = await step('github_read_file', { path: command.path })
   const file = readFileBody(read)
   if ('error' in file) return { ok: false, text: `Self-sculpt of ${command.path} stopped before any change: ${file.error}`, steps }
-  const rewrite = await step('deepseek_reason', { task: sculptTask(command.instruction, command.path, file.content), profile: 'code', nexus_learn: true })
+  const rewrite = await step('qwen_reason', { task: sculptTask(command.instruction, command.path, file.content), profile: 'code', nexus_learn: true })
   if (failed(rewrite) || !rewrite.startsWith('✓ Qwen/Qwen3-8B completed as ')) return { ok: false, text: `The workflow model could not rewrite ${command.path}, so nothing was proposed. ${rewrite.slice(0, 300)}`, steps }
   const next = extractRewrittenFile(rewrite.split('\n\n').slice(1).join('\n\n'), file.content)
   if ('error' in next) return { ok: false, text: `${next.error}, so nothing was proposed for ${command.path}.`, steps }

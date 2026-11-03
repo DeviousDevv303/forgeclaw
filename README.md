@@ -31,7 +31,7 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 
 | Provider | Models | Runs where | Needs |
 | --- | --- | --- | --- |
-| **Qwen/Qwen3-8B** (default; provider id `deepseek`, formerly labelled "DeepSeek 16B") | **Qwen/Qwen3-8B**, 4-bit GGUF (Q4_K_M), 8K context, via llama.cpp (`llama-cpp-python` 0.3.36); labelled `deepseek-coder-1.3b` fallback only if it cannot run | `deepseek-16b.yml` on a free CPU runner; opt-in GPU runner | A GitHub token |
+| **Qwen/Qwen3-8B** (default; provider id `qwen`, formerly labelled "DeepSeek 16B", which it never was) | **Qwen/Qwen3-8B**, 4-bit GGUF (Q4_K_M), 8K context, via llama.cpp (`llama-cpp-python` 0.3.36); labelled `deepseek-coder-1.3b` fallback only if it cannot run | `qwen3-8b.yml` on a free CPU runner; opt-in GPU runner | A GitHub token |
 | Moonshot · Kimi | Kimi K2.6, K2.7 Code (+ Highspeed), K3 | Moonshot API | A Moonshot key |
 | Anthropic · Claude | Claude Haiku / Sonnet / Opus 5.5 | Anthropic API | An Anthropic key |
 | OpenRouter | Any tool-capable OpenRouter model (the Settings field lists the live catalogue with prices); default Claude Haiku 5.5 | OpenRouter API | An OpenRouter key (`sk-or-`) |
@@ -41,7 +41,7 @@ Qwen3-8B was chosen by benchmark on the runner's 4 CPU threads (2026-10-20). The
 
 **How a turn runs:**
 - **Claude and Kimi** are tool-calling reasoners. They read the repository, run shell commands, research, build and deploy sites, and propose self-sculpt changes through ForgeTools, quoting real tool results.
-- **DeepSeek (Qwen)** has no tool loop of its own. The router runs fixed chains for it: picture → analysis; research question → sources → answer; website → generate → repo → publish → verify; "improve <file>" → read → rewrite → pull request.
+- **Qwen** has no tool loop of its own. The router runs fixed chains for it: picture → analysis; research question → sources → answer; website → generate → repo → publish → verify; "improve <file>" → read → rewrite → pull request.
 - Every model is told today's date. Questions about recent events go through live web research first.
 - Every side effect goes through ForgeTools and Guardian.
 
@@ -67,7 +67,7 @@ The GitHub integration supports repository metadata, file reads and writes, tree
 
 ### Pictures
 
-Claude and Kimi receive the attached picture directly. With DeepSeek, the picture is analyzed on Actions by Qwen2-VL-2B (`image-analyze.yml`). The picture is removed from the `vision-inputs` branch tip after analysis; it stays in that branch's history until the branch is deleted. Free mode says it can't read pictures yet.
+Claude and Kimi receive the attached picture directly. With Qwen, the picture is analyzed on Actions by Qwen2-VL-2B (`image-analyze.yml`). The picture is removed from the `vision-inputs` branch tip after analysis; it stays in that branch's history until the branch is deleted. Free mode says it can't read pictures yet.
 
 ### Self-sculpt
 
@@ -104,14 +104,14 @@ Updated 2026-10-20. "Works" means it ran successfully end to end on GitHub Actio
 
 | Capability | Tool / workflow | Status |
 | --- | --- | --- |
-| Reasoning (default) | `deepseek_reason` / `deepseek-16b.yml` | **Works:** Qwen3-8B, run 39439006131 (43 s, cached model). GPU runner not tested. |
+| Reasoning (default) | `qwen_reason` / `qwen3-8b.yml` | **Works:** Qwen3-8B, run 39439006131 (43 s, cached model). GPU runner not tested. |
 | Live web research | `deep_research` / `deep-research.yml` | **Works:** runs 39439011635 (5 sources) and 39449600771 (8 sources, all 2026). |
 | Kimi / Claude tool loops | hosted providers | Unit- and app-tested. The live acceptance test (`docs/live-acceptance-test-2026-10-20.md`) is pending. |
 | Self-sculpt / shell repair | `sculpt_self`, `shell_patch` | **Works:** runs 39362448179 and 39362463489 opened the intended pull requests. Key gate and `/sculpt` are not verified live. |
 | Website deploy | `github_create_repo`, `github_publish_site`, `github_pages_status` | Not verified live (acceptance step C). |
 | Build-step sites | `github_build_site` / `site-build.yml` | Not verified live (acceptance step D). |
 | Pictures: Claude / Kimi | native image input | **Works with Kimi K2.7 Code** (verified live 2026-10-20: it described an uploaded screenshot correctly). Claude not yet run live. |
-| Pictures: DeepSeek | `analyze_image` / `image-analyze.yml` | The Qwen2-VL model ran on main (run 39319037899, URL input). The attached-picture path is not verified live. |
+| Pictures: Qwen | `analyze_image` / `image-analyze.yml` | The Qwen2-VL model ran on main (run 39319037899, URL input). The attached-picture path is not verified live. |
 | Free mode (visitors) | `relay/` | Needs the relay deployed or redeployed (`relay/README.md`). Not verified live. |
 | Error reports to owner | `relay/` `/v1/errors` + Resend | Needs the relay and a Resend key. Not verified live. |
 | Web search | `web_search` / `ddg_search.yml` (or Brave with a key) | Works (15 of 15 on 2026-10-19). |
@@ -121,7 +121,7 @@ Updated 2026-10-20. "Works" means it ran successfully end to end on GitHub Actio
 | Code search proxy | `search-proxy.yml` | Works: run 39465089415, all 10 results scoped to DeviousDevv303/forgeclaw. |
 | Code review | `review_code` / `code-review.yml` | Returns the review to the chat (mirror branch). The workflow ran on main (run 39505268990); the review text and the app path end to end are not verified live. |
 | Browser automation | `browser-automation.yml` | Fixed 2026-10-19, not verified live. Not a chat tool. |
-| Click and browse (cloud browser) | `browser_run` / `browser-agent.yml` | **New, not run live yet.** Free: it uses only GitHub Actions minutes (unlimited on a public repository, your monthly quota on a private one; a round takes a few minutes and a session is capped at 10 rounds) and no paid service. The runner is tested in a real Chromium (browse, click, type, follow links; refuses internal addresses, password fields, downloads); the workflow has never been dispatched. Clicking and typing need your co-sign. NEXUS keeps what worked as a playbook (typed text is never stored); once you approve it, it teaches the browsing agent and DeepSeek. Kimi/Claude only. |
+| Click and browse (cloud browser) | `browser_run` / `browser-agent.yml` | **New, not run live yet.** Free: it uses only GitHub Actions minutes (unlimited on a public repository, your monthly quota on a private one; a round takes a few minutes and a session is capped at 10 rounds) and no paid service. The runner is tested in a real Chromium (browse, click, type, follow links; refuses internal addresses, password fields, downloads); the workflow has never been dispatched. Clicking and typing need your co-sign. NEXUS keeps what worked as a playbook (typed text is never stored); once you approve it, it teaches the browsing agent and Qwen. Kimi/Claude only. |
 | Gmail, Calendar, WhatsApp | `gmail_*`, `calendar_*`, `send_whatsapp` | Need your own OAuth/API credentials in Settings; not verified here. |
 | `http_fetch`, `run_js` | browser-side | Work within browser limits (`http_fetch` is subject to CORS). |
 

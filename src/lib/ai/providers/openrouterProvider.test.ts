@@ -176,13 +176,13 @@ describe('OpenRouter provider: key and models', () => {
 })
 
 describe('OpenRouter provider: registration', () => {
-  it('is a registered, selectable provider, a saved choice survives a reload, and the default stays DeepSeek', () => {
+  it('is a registered, selectable provider, a saved choice survives a reload, and the default stays Qwen', () => {
     expect(PROVIDER_IDS).toContain('openrouter')
     expect(providers.openrouter).toBe(openrouterProvider)
     expect(PROVIDERS.openrouter).toMatchObject({ id: 'openrouter', name: 'OpenRouter', keyPrefix: 'sk-or-', url: OPENROUTER_CHAT_URL })
     expect(DEFAULT_MODEL.openrouter).toBe(DEFAULT_OPENROUTER_MODEL)
     expect(resolveInitialProvider('openrouter')).toBe('openrouter')
-    expect(DEFAULT_PROVIDER).toBe('deepseek')
+    expect(DEFAULT_PROVIDER).toBe('qwen')
   })
 
   it('gets the read-only baseline tools like the other hosted providers', () => {

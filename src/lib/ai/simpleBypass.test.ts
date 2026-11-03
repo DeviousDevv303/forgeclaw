@@ -8,10 +8,10 @@ import type { AIRequest } from './types';
 
 function makeRequest(text: string, lang = 'en'): AIRequest {
   return {
-    model: 'deepseek-16b',
+    model: 'qwen3-8b',
     systemPrompt: 'You are helpful.',
     messages: [{ role: 'user', content: text }],
-    tools: [{ name: 'deepseek_reason', description: 'reason', parameters: {} }],
+    tools: [{ name: 'qwen_reason', description: 'reason', parameters: {} }],
     responseLanguage: lang,
   };
 }
@@ -19,7 +19,7 @@ function makeRequest(text: string, lang = 'en'): AIRequest {
 describe('simple message bypass', () => {
   it('answers "hi" directly without GitHub Actions', async () => {
     vi.stubGlobal('fetch', vi.fn(() => { throw new Error('should not fetch'); }));
-    const result = await sendViaRouter(makeRequest('hi'), '', 'deepseek');
+    const result = await sendViaRouter(makeRequest('hi'), '', 'qwen');
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.response.text).toContain('help');
@@ -29,7 +29,7 @@ describe('simple message bypass', () => {
 
   it('answers "hola" in Spanish', async () => {
     vi.stubGlobal('fetch', vi.fn(() => { throw new Error('should not fetch'); }));
-    const result = await sendViaRouter(makeRequest('hola', 'es'), '', 'deepseek');
+    const result = await sendViaRouter(makeRequest('hola', 'es'), '', 'qwen');
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.response.text).toContain('Hola');
@@ -38,20 +38,20 @@ describe('simple message bypass', () => {
 
   it('answers "thanks" directly', async () => {
     vi.stubGlobal('fetch', vi.fn(() => { throw new Error('should not fetch'); }));
-    const result = await sendViaRouter(makeRequest('thanks'), '', 'deepseek');
+    const result = await sendViaRouter(makeRequest('thanks'), '', 'qwen');
     expect(result.success).toBe(true);
   });
 
-  it('still uses DeepSeek for real questions', async () => {
+  it('still uses Qwen for real questions', async () => {
     // A real question should NOT get the simple-greeting response
     // (it will fail without mocked GitHub, but not with simple-greeting)
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
     const result = await sendViaRouter(
       makeRequest('Explain how neural networks work in detail'),
       '',
-      'deepseek'
+      'qwen'
     );
-    // Should attempt DeepSeek (not return simple greeting)
+    // Should attempt Qwen (not return simple greeting)
     if (result.success) {
       expect(result.response.stopReason).not.toBe('simple-greeting');
     }

@@ -136,7 +136,7 @@ describe('evidence is keyed by tool name and arguments', () => {
 })
 
 describe('continuation limit', () => {
-  it('hosted models get two re-asks, DeepSeek one', () => {
+  it('hosted models get two re-asks, Qwen one', () => {
     expect(ledgerContinuationLimit(false)).toBe(2)
     expect(ledgerContinuationLimit(true)).toBe(1)
   })

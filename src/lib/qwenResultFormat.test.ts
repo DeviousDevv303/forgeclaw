@@ -1,0 +1,42 @@
+// Regression test: qwen_reason's user-visible output must never leak
+// internal corpus-learning bookkeeping into the chat bubble.
+// The learning-persistence status belongs in the Stages line (reasoning trace).
+import { describe, expect, it } from 'vitest'
+import { formatQwenResultText } from './forgeTools'
+
+describe('qwen_reason user-visible output', () => {
+  const stages =
+    'Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; ' +
+    'result-retrieval=mirror; result-extraction=complete; checkpoint=deepseek-ai/deepseek-llm-7b-chat; ' +
+    'learning-persistence=unapproved candidate recorded.'
+
+  it('keeps the workflow result and run metadata, with no learning suffix', () => {
+    const out = formatQwenResultText(
+      'qwen-1791324489222-tc7ush',
+      'DeviousDevv303',
+      'forgeclaw',
+      'main',
+      stages,
+      'https://github.com/DeviousDevv303/forgeclaw/actions/runs/1',
+      'The answer text.',
+    )
+    expect(out).toContain('✓ Qwen/Qwen3-8B completed as qwen-1791324489222-tc7ush on DeviousDevv303/forgeclaw@main.')
+    expect(out).toContain('The answer text.')
+    expect(out).toContain('learning-persistence=unapproved candidate recorded.')
+  })
+
+  it('never appends internal learning bookkeeping to the chat-visible answer', () => {
+    const out = formatQwenResultText(
+      'qwen-1',
+      'o',
+      'r',
+      'main',
+      stages,
+      'https://example.invalid/run',
+      'The answer text.',
+    )
+    expect(out).not.toContain('Learning candidate recorded as unapproved.')
+    expect(out).not.toContain('Learning persistence warning')
+    expect(out).not.toMatch(/unapproved\.\s*$/)
+  })
+})

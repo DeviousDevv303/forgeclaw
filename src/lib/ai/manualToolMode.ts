@@ -205,9 +205,9 @@ export function parseManualToolCalls(text: string): ManualToolAction[] {
           try {
             const params = JSON.parse(args) as unknown
             if (params && typeof params === 'object' && !Array.isArray(params)) {
-              const canonicalName = name === 'generateimage' ? 'generate_image' : name === 'deepseekreason' ? 'deepseek_reason' : name
+              const canonicalName = name === 'generateimage' ? 'generate_image' : name === 'qwenreason' || name === 'deepseekreason' || name === 'deepseek_reason' ? 'qwen_reason' : name
               const canonicalParams = params as Record<string, unknown>
-              if (canonicalName === 'deepseek_reason' && canonicalParams.nexus_learn === undefined && canonicalParams.nexuslearn !== undefined) canonicalParams.nexus_learn = canonicalParams.nexuslearn
+              if (canonicalName === 'qwen_reason' && canonicalParams.nexus_learn === undefined && canonicalParams.nexuslearn !== undefined) canonicalParams.nexus_learn = canonicalParams.nexuslearn
               actions.push({ toolName: canonicalName, params: canonicalParams, rawOutput: rawJson })
             }
           } catch { /* skip malformed envelope member */ }

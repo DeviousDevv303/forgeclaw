@@ -1,0 +1,29 @@
+{
+  "dispatch": {
+    "url": "https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/qwen3-8b.yml/dispatches",
+    "ref": "main",
+    "inputs": {
+      "task": "What is 17 times 23? Answer in one short sentence.\n\nToday's date is Tuesday, November 3, 2026. Your built-in knowledge stops at your training cutoff and may be ",
+      "context": "Answer form (owner rules — these govern how the reply reads):\n- Give the response itself. Never restate, describe, or frame the task or the request (no \"The tas",
+      "nexus_learning": "true",
+      "invocation_id": "qwen-1793732065557-mkt2pp"
+    }
+  },
+  "runListUrls": [
+    "https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/qwen3-8b.yml/runs?event=workflow_dispatch&per_page=20"
+  ],
+  "mirrorUrls": [
+    "HEAD /DeviousDevv303/forgeclaw/qwen-results/qwen-results/qwen-1793732065557-mkt2pp.txt",
+    "GET /DeviousDevv303/forgeclaw/qwen-results/qwen-results/qwen-1793732065557-mkt2pp.txt",
+    "GET /DeviousDevv303/forgeclaw/qwen-results/qwen-results/qwen-1793732065557-mkt2pp.meta.txt"
+  ],
+  "otherGithub": [
+    "GET /repos/DeviousDevv303/forgeclaw/contents/war-room",
+    "GET /repos/DeviousDevv303/forgeclaw/issues/235/comments?per_page=100&page=1"
+  ],
+  "invocationId": "qwen-1793732065557-mkt2pp",
+  "answerShownInChat": true,
+  "pageErrors": [],
+  "visibleProviderLabelHasQwen": true,
+  "visibleHasDeepSeek": false
+}

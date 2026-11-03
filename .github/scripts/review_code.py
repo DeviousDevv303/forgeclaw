@@ -2,7 +2,7 @@
 
 The workflow used to load CodeLlama-7B as float32 on the CPU runner: ~28 GB of weights on a 16 GB
 machine, so the runner was killed (live run 39311383660 was cancelled after 2m12s). This runs a 4-bit
-GGUF of DeepSeek-Coder-6.7B-Instruct with llama.cpp instead (about 4 GB, same engine as deepseek-16b.yml).
+GGUF of DeepSeek-Coder-6.7B-Instruct with llama.cpp instead (about 4 GB, same engine as qwen3-8b.yml).
 The model therefore changes from CodeLlama to DeepSeek-Coder; review_meta.txt records exactly what ran.
 
 Importing this module needs no llama_cpp, so validation and prompt building are unit-tested without it.
@@ -15,7 +15,7 @@ import re
 import sys
 import time
 
-import deepseek_gguf as g
+import qwen_gguf as g
 
 REPO = "TheBloke/deepseek-coder-6.7B-instruct-GGUF"
 QUANT = "q4_k_m"

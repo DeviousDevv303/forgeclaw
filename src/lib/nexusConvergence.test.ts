@@ -114,13 +114,13 @@ describe('knowledge: listed, labelled by origin, removable', () => {
 })
 
 describe('only real evidence makes an answer "verified"', () => {
-  // 2026-10-22: DeepSeek answered "there are no pending PRs" (PR #223 was open) with only its own reasoning call behind it.
+  // 2026-10-22: Qwen answered "there are no pending PRs" (PR #223 was open) with only its own reasoning call behind it.
   it('a model\'s own reasoning is not evidence', () => {
-    expect(answerOutcome(false, [{ name: 'deepseek_reason' }])).toBe('completed')
-    expect(answerOutcome(false, [{ name: 'ask_deepseek' }, { name: 'review_code' }, { name: 'coding_task_update' }])).toBe('completed')
+    expect(answerOutcome(false, [{ name: 'qwen_reason' }])).toBe('completed')
+    expect(answerOutcome(false, [{ name: 'ask_qwen' }, { name: 'review_code' }, { name: 'coding_task_update' }])).toBe('completed')
   })
   it('a real tool result is, even alongside reasoning', () => {
-    expect(answerOutcome(false, [{ name: 'deepseek_reason' }, { name: 'github_list_prs' }])).toBe('verified')
+    expect(answerOutcome(false, [{ name: 'qwen_reason' }, { name: 'github_list_prs' }])).toBe('verified')
     expect(answerOutcome(false, [{ name: 'shell_exec' }])).toBe('verified')
   })
   it('a failed evidence tool does not count, and a blocked run is blocked', () => {

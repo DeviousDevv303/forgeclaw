@@ -42,12 +42,12 @@ function installFetch(mode: 'completes' | 'qwen-fails'): ReturnType<typeof vi.fn
     if (url.endsWith('/actions/jobs/91/logs')) {
       return Promise.resolve(new Response(`log line\n${DDG_LINE}\n`, { status: 200 }))
     }
-    if (url.endsWith('/deepseek-16b.yml/dispatches') && init?.method === 'POST') {
+    if (url.endsWith('/qwen3-8b.yml/dispatches') && init?.method === 'POST') {
       if (mode === 'qwen-fails') return Promise.resolve(new Response('nope', { status: 500 }))
       qwenDispatches.push(JSON.parse(String(init.body)))
       return Promise.resolve(new Response(null, { status: 204 }))
     }
-    if (url.includes('/deepseek-16b.yml/runs?')) {
+    if (url.includes('/qwen3-8b.yml/runs?')) {
       const id = qwenDispatches.at(-1)?.inputs.invocation_id
       return Promise.resolve(Response.json({ workflow_runs: [{ id: 84, name: `Qwen/Qwen3-8B ${id}`, display_title: `Qwen/Qwen3-8B ${id}`, event: 'workflow_dispatch', status: 'completed', conclusion: 'success', created_at: new Date().toISOString(), head_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/84', run_number: 84 }] }))
     }

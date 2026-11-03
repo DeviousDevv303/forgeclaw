@@ -45,8 +45,8 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
  * verification precede writes, which is also the safe sequence for a change.
  */
 export const CODING_TOOL_ORDER: readonly string[] = [
-  'deepseek_reason',
-  'ask_deepseek',
+  'qwen_reason',
+  'ask_qwen',
   'github_repo_state',
   'github_read_file',
   'github_list_files',

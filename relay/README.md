@@ -1,10 +1,10 @@
 # ForgeClaw public relay
 
-Lets visitors of the public ForgeClaw site use the hosted model (Qwen3-8B in `deepseek-16b.yml`)
+Lets visitors of the public ForgeClaw site use the hosted model (Qwen3-8B in `qwen3-8b.yml`)
 **without your credentials and without anything from your own session**. It is a ~250-line
 Cloudflare Worker (`worker.js`, free tier is enough). The model and research routes:
 
-- `POST /v1/reason {task, context?}`: dispatch `deepseek-16b.yml` with NEXUS learning **off** and the
+- `POST /v1/reason {task, context?}`: dispatch `qwen3-8b.yml` with NEXUS learning **off** and the
   browsable results mirror **off**. `context` carries gathered web evidence.
 - `GET /v1/reason/<id>`: read that run's result from its artifact.
 - `POST /v1/research {question}`: dispatch `deep-research.yml` (live web search and page reading,
@@ -108,7 +108,7 @@ Friends and family need **nothing**: no account, no key, no setup. They open the
 
 ## Check it
 
-- In a **private window** (no token there), open the site and ask something with the DeepSeek
+- In a **private window** (no token there), open the site and ask something with the Qwen
   provider selected. You should see the yellow "Public mode" note, then an answer in a few minutes.
 - In **your normal browser** (token present) nothing changes. The relay is never used there.
 - `curl -i -X POST https://forgeclaw-relay.<you>.workers.dev/v1/reason -H 'Origin: https://evil.example'` must return `403`.

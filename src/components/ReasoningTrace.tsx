@@ -1,6 +1,7 @@
 // ForgeClaw - Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import { useI18n } from '../lib/i18n'
+import { tracePreview } from '../lib/tracePreview'
 
 interface ReasoningTraceProps {
   trace: string
@@ -22,7 +23,7 @@ function splitTraceLine(line: string): { label?: string; value: string } {
 export function ReasoningTrace({ trace, isOpen, onToggle }: ReasoningTraceProps) {
   const { t } = useI18n()
   const lines = trace.split('\n').map(line => line.trimEnd()).filter(Boolean)
-  const firstLine = lines[0] ?? t('trace.ready')
+  const firstLine = tracePreview(lines, n => t('trace.lines', { n }), t('trace.ready'))
 
   return (
     <div style={{ width: '100%', maxWidth: '90%', marginTop: '8px' }}>

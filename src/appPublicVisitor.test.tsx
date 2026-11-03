@@ -74,7 +74,7 @@ describe('public visitor mode', () => {
     await ask('explain recursion to a ten year old')
     expect(screen.queryByRole('note')).toBeNull()
     expect(screen.getByRole('button', { name: /^NEXUS$/ })).toBeTruthy()
-    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/deepseek-16b.yml/dispatches'))).toBe(true), { timeout: 8000 })
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/qwen3-8b.yml/dispatches'))).toBe(true), { timeout: 8000 })
     expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith(RELAY))).toBe(false)
   }, 20_000)
 })

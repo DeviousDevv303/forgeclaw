@@ -110,7 +110,7 @@ describe('shell_patch gating and exposure', () => {
     expect(requiresCoSign({ id: '1', name: 'github_run_workflow', input: {} }, 'operator-shell')).toBe(true)
   })
 
-  // 2026-10-20, Cristian Nunez: "self sculpt 100% operational via deepseek shell commands and all providers".
+  // 2026-10-20, Cristian Nunez: "self sculpt 100% operational via qwen shell commands and all providers".
   // shell_patch and sculpt_self are now granted to the write-capable coding capability; they stay out of
   // read-only agents, still need co-sign under every posture but 'autonomous', and only ever open a PR.
   it('is granted to the coding capability only, never to read-only agents', () => {

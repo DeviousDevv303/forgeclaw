@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildLearningEvent, MAX_LEARNING_FIELD_CHARS, outcomeFromToolOutput, recordLearningEvent, type LearningRecorder } from './learningEvents'
 
-const base = { channel: 'tool' as const, input: 'memory_read key="a"', result: 'ok', outcome: 'completed' as const, runtime: 'corpus', model: 'deepseek' }
+const base = { channel: 'tool' as const, input: 'memory_read key="a"', result: 'ok', outcome: 'completed' as const, runtime: 'corpus', model: 'qwen' }
 
 describe('outcomeFromToolOutput', () => {
   it('treats normal output as completed, never verified', () => expect(outcomeFromToolOutput('listing…')).toBe('completed'))

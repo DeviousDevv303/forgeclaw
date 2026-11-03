@@ -9,7 +9,7 @@
  * a scheduled workflow reads the channel (issue #235), finds unanswered calls,
  * and acts on ONE of them per run. Stage 1 is deterministic on purpose — it
  * makes zero model calls (the owner's token doctrine: no burning tokens for
- * no reason). The Qwen/DeepSeek Actions path becomes the canary engine at
+ * no reason). The Qwen/Qwen Actions path becomes the canary engine at
  * Stage 2, after this channel reviews Stage 1.
  *
  * Everything in this file is pure: no network, no clock, no filesystem. The

@@ -31,16 +31,16 @@ describe('rollbackRun', () => {
   it('cancels a matching active run and ignores unrelated runs', async () => {
     const { fetchImpl, calls } = fakeGitHub([
       repoInfo,
-      [/^GET \/actions\/workflows\/deepseek-16b\.yml\/runs/, () => json({ workflow_runs: [
-        { id: 1, run_number: 7, status: 'in_progress', display_title: 'Qwen/Qwen3-8B deepseek-111-abc' },
-        { id: 2, run_number: 8, status: 'in_progress', display_title: 'Qwen/Qwen3-8B deepseek-OTHER' },
+      [/^GET \/actions\/workflows\/qwen3-8b\.yml\/runs/, () => json({ workflow_runs: [
+        { id: 1, run_number: 7, status: 'in_progress', display_title: 'Qwen/Qwen3-8B qwen-111-abc' },
+        { id: 2, run_number: 8, status: 'in_progress', display_title: 'Qwen/Qwen3-8B qwen-OTHER' },
       ] })],
       [/^POST \/actions\/runs\/1\/cancel/, () => json({}, 202)],
       [/^GET \/actions\/runs\/1$/, () => json({ status: 'completed' })],
     ])
-    const entries: JournalEntry[] = [{ kind: 'workflow_dispatch', workflow: 'deepseek-16b.yml', needle: 'deepseek-111-abc', since: 0, label: 'deepseek_reason' }]
+    const entries: JournalEntry[] = [{ kind: 'workflow_dispatch', workflow: 'qwen3-8b.yml', needle: 'qwen-111-abc', since: 0, label: 'qwen_reason' }]
     const report = await rollbackRun(entries, deps(fetchImpl))
-    expect(report.reverted).toEqual(['deepseek_reason: cancelled run 1'])
+    expect(report.reverted).toEqual(['qwen_reason: cancelled run 1'])
     expect(calls).not.toContain('POST /actions/runs/2/cancel')
     expect(report.failed).toEqual([])
   })
@@ -68,14 +68,14 @@ describe('rollbackRun', () => {
     let polls = 0
     const { fetchImpl } = fakeGitHub([
       repoInfo,
-      [/^GET \/actions\/workflows\/deepseek-16b\.yml\/runs/, () => json({ workflow_runs: [{ id: 9, status: 'in_progress', display_title: 'Qwen/Qwen3-8B deepseek-slow' }] })],
+      [/^GET \/actions\/workflows\/qwen3-8b\.yml\/runs/, () => json({ workflow_runs: [{ id: 9, status: 'in_progress', display_title: 'Qwen/Qwen3-8B qwen-slow' }] })],
       [/^POST \/actions\/runs\/9\/(?:force-)?cancel/, () => json({}, 202)],
       [/^GET \/actions\/runs\/9$/, () => json({ status: (polls += 1) > 60 ? 'completed' : 'in_progress' })],
     ])
-    const entries: JournalEntry[] = [{ kind: 'workflow_dispatch', workflow: 'deepseek-16b.yml', needle: 'deepseek-slow', since: 0, label: 'deepseek_reason' }]
+    const entries: JournalEntry[] = [{ kind: 'workflow_dispatch', workflow: 'qwen3-8b.yml', needle: 'qwen-slow', since: 0, label: 'qwen_reason' }]
     const report = await rollbackRun(entries, { owner: 'o', repo: 'r', token: 't', fetchImpl, sleep: async () => {}, forceCancelAfterMs: 0 })
     expect(report.failed).toEqual([])
-    expect(report.reverted).toEqual(['deepseek_reason: cancelled run 9'])
+    expect(report.reverted).toEqual(['qwen_reason: cancelled run 9'])
   })
 
   it('deletes a branch this run created and closes its open PR', async () => {

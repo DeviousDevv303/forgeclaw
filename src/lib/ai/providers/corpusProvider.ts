@@ -1,4 +1,4 @@
-// ForgeClaw — Qwen/Qwen3-8B GitHub Actions provider contract (provider id 'corpus'/'deepseek'; the workflow runs Qwen3-8B).
+// ForgeClaw — Qwen/Qwen3-8B GitHub Actions provider contract (provider id 'corpus'/'qwen'; the workflow runs Qwen3-8B).
 import type { AIProvider } from '../types'
 
 export const corpusProvider: AIProvider = {
@@ -6,7 +6,7 @@ export const corpusProvider: AIProvider = {
   label: 'Qwen/Qwen3-8B (GitHub Actions)',
   requiresKey: false,
   models: [{
-    id: 'deepseek-16b',
+    id: 'qwen3-8b',
     label: 'Qwen/Qwen3-8B · GitHub Actions',
     contextK: 32,
     note: 'Repository-owned workflow; no browser-local model fallback',
