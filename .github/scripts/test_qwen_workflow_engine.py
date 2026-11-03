@@ -141,11 +141,18 @@ class LazyFallbackLibraries(unittest.TestCase):
         self.assertIn("DEGRADED", result)
         self.assertEqual(files["torch_imported"], "yes")
 
-    def test_the_install_step_no_longer_installs_the_fallback_stack_up_front(self):
+    def test_the_install_no_longer_installs_the_fallback_stack_up_front(self):
         text = WORKFLOW.read_text(encoding="utf-8")
-        install = text.split("- name: Install inference dependencies", 1)[1].split("- name: Run Qwen", 1)[0]
+        install = text.split("- name: Start inference dependency install (background)", 1)[1].split("- name: Restore GGUF model cache", 1)[0]
         self.assertNotRegex(install, r"(?m)^\s*pip install (torch|transformers)")
         self.assertIn("pip install huggingface_hub", install)
+
+    def test_the_install_overlaps_the_cache_restore_and_is_joined_before_the_run(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        order = [text.index(n) for n in ("- name: Start inference dependency install (background)", "- name: Restore GGUF model cache",
+                                         "- name: Wait for the dependency install", "- name: Run Qwen")]
+        self.assertEqual(order, sorted(order), "start, restore, wait, run must come in that order")
+        self.assertIn("kill -0", text, "the wait step must detect a background install that did not survive the step boundary")
 
 
 class EngineSelection(unittest.TestCase):

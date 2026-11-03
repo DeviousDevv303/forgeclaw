@@ -76,13 +76,40 @@ jobs:
     runs-on: ${{ vars.FORGECLAW_GPU_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
+      # Only the scripts are needed (about 10 s of checkout become about 3 s).
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      # The pip install (about 15 s) runs in the background while the 5 GB model cache restores (about 60 s); the wait step below joins them.
+      # If the background process did not survive the step boundary, the wait step runs the same install itself, so this is never slower than before.
+      - name: Start inference dependency install (background)
+        env:
+          GPU_RUNNER: ${{ vars.FORGECLAW_GPU_RUNNER }}
+        run: |
+          cat > "$RUNNER_TEMP/install-deps.sh" <<'SH'
+          set -u
+          # torch, transformers and accelerate are only for the slow fallback engine, so they are NOT installed here: the script installs them
+          # itself if it ever reaches the fallback (ensure_hf_stack). huggingface_hub is what the GGUF download needs.
+          pip install huggingface_hub || exit 1
+          # Prebuilt CPU wheel (no compiling). If it is unavailable the run continues on the slow engine.
+          # Same pinned version; the CUDA 12.4 build when a GPU runner is configured.
+          WHEELS=cpu; if [ -n "$GPU_RUNNER" ]; then WHEELS=cu124; fi
+          pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url "https://abetlen.github.io/llama-cpp-python/whl/$WHEELS" \
+            || echo "::warning::llama-cpp-python wheel unavailable; the small fallback model will answer (marked DEGRADED)"
+          exit 0
+          SH
+          rm -f "$RUNNER_TEMP/install-deps.status" "$RUNNER_TEMP/install-deps.pid"
+          nohup bash -c "bash '$RUNNER_TEMP/install-deps.sh' > '$RUNNER_TEMP/install-deps.log' 2>&1; echo \$? > '$RUNNER_TEMP/install-deps.status'" > /dev/null 2>&1 &
+          echo $! > "$RUNNER_TEMP/install-deps.pid"
+          echo "started"
 
       # Engine: the official 4-bit GGUF of Qwen/Qwen3-8B (about 5 GB, Apache-2.0), run by llama.cpp
       # (see .github/scripts/qwen_gguf.py for the 2026-10-20 benchmark behind the upgrade).
@@ -96,19 +123,28 @@ jobs:
           path: ~/.cache/forgeclaw-gguf
           key: deepseek-gguf-v2-qwen3-8b-${{ runner.os }}
 
-      - name: Install inference dependencies
+      - name: Say so when the model cache missed
+        if: ${{ steps.gguf_cache.outputs.cache-hit != 'true' }}
+        run: |
+          echo "::warning::GGUF model cache missed (evicted after 7 days unused?) - the 5 GB model downloads now, which takes several minutes. qwen-cache-keepwarm.yml exists to prevent this."
+
+      - name: Wait for the dependency install
         env:
           GPU_RUNNER: ${{ vars.FORGECLAW_GPU_RUNNER }}
         run: |
-          # torch, transformers and accelerate are only for the slow fallback engine (about 44 s of pip on a normal run), so they are
-          # NOT installed here: the script installs them itself if it ever reaches the fallback (ensure_hf_stack). huggingface_hub is what
-          # the GGUF download needs; it used to arrive as a dependency of transformers.
-          pip install huggingface_hub
-          # Prebuilt CPU wheel (no compiling). If it is unavailable the run continues on the slow engine.
-          # Same pinned version; the CUDA 12.4 build when a GPU runner is configured.
-          WHEELS=cpu; if [ -n "$GPU_RUNNER" ]; then WHEELS=cu124; fi
-          pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url "https://abetlen.github.io/llama-cpp-python/whl/$WHEELS" \
-            || echo "::warning::llama-cpp-python wheel unavailable; the small fallback model will answer (marked DEGRADED)"
+          for i in $(seq 1 240); do
+            [ -f "$RUNNER_TEMP/install-deps.status" ] && break
+            # no status and the background process is gone (or never started): the step boundary killed it, so install here
+            pid=$(cat "$RUNNER_TEMP/install-deps.pid" 2>/dev/null || echo 0)
+            if [ ! -f "$RUNNER_TEMP/install-deps.status" ] && { [ "$pid" = 0 ] || ! kill -0 "$pid" 2>/dev/null; }; then
+              echo "background install not running; installing here"
+              bash "$RUNNER_TEMP/install-deps.sh"; echo $? > "$RUNNER_TEMP/install-deps.status"; break
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/install-deps.log" 2>/dev/null || true
+          status=$(cat "$RUNNER_TEMP/install-deps.status" 2>/dev/null || echo 1)
+          if [ "$status" != "0" ]; then echo "dependency install failed (status $status)"; exit 1; fi
 
       - name: Run Qwen
         env:
@@ -683,13 +719,13 @@ jobs:
           set -euo pipefail
           git config user.name 'ForgeClaw Qwen Runner'
           git config user.email 'forgeclaw-qwen@local'
-          git fetch origin main qwen-results || true
+          git fetch --depth 1 origin qwen-results || true
           rm -rf /tmp/qwen-results-worktree
           if git show-ref --verify --quiet refs/remotes/origin/qwen-results; then
             git worktree add /tmp/qwen-results-worktree origin/qwen-results
             git -C /tmp/qwen-results-worktree checkout -B qwen-results
           else
-            git worktree add --detach /tmp/qwen-results-worktree origin/main
+            git worktree add --detach /tmp/qwen-results-worktree HEAD
             git -C /tmp/qwen-results-worktree checkout --orphan qwen-results
             git -C /tmp/qwen-results-worktree rm -rf . || true
           fi
@@ -708,7 +744,7 @@ jobs:
           for attempt in 1 2 3 4; do
             if git -C /tmp/qwen-results-worktree push origin HEAD:qwen-results; then break; fi
             if [ "$attempt" = 4 ]; then echo "::warning::mirror push failed after 4 attempts; the artifact remains the fallback"; exit 1; fi
-            git -C /tmp/qwen-results-worktree fetch origin qwen-results
+            git -C /tmp/qwen-results-worktree fetch origin qwen-results   # a full fetch here: the rebase needs real history
             git -C /tmp/qwen-results-worktree rebase origin/qwen-results
             sleep $((attempt * 2))
           done
