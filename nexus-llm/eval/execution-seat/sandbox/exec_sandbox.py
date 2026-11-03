@@ -134,7 +134,8 @@ class Dispatch:
         rec = {"argv": argv, "exit_code": code, "termination": reason, "elapsed_s": round(elapsed, 3),
                "stdout_bytes": counts.get("out", 0), "stderr_bytes": counts.get("err", 0),
                "stdout_truncated": counts.get("out", 0) > c["out_bytes"], "stderr_truncated": counts.get("err", 0) > c["out_bytes"],
-               "stdout_sha256": sha256_bytes(bytes(out)), "stderr_sha256": sha256_bytes(bytes(err))}
+               "stdout_sha256": sha256_bytes(bytes(out)), "stderr_sha256": sha256_bytes(bytes(err)),
+               "work_sha256_after": tree_hash(self.host_work)}  # lets a check tell whether a verification ran after the last edit
         self.commands.append({"rec": rec, "stdout": bytes(out), "stderr": bytes(err)})
         return rec, bytes(out), bytes(err)
 

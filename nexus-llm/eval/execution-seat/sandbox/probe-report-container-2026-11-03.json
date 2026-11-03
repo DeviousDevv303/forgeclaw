@@ -55,13 +55,13 @@
   },
   "EX-S5 wall clock": {
    "broken_variant": {
-    "elapsed_s": 8.058,
+    "elapsed_s": 8.066,
     "ok": false,
     "termination": "exit"
    },
    "proves_it_can_fail": true,
    "real": {
-    "elapsed_s": 2.074,
+    "elapsed_s": 2.063,
     "ok": true,
     "termination": "timeout"
    }
