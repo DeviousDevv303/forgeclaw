@@ -100,8 +100,10 @@ jobs:
         env:
           GPU_RUNNER: ${{ vars.FORGECLAW_GPU_RUNNER }}
         run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install transformers accelerate
+          # torch, transformers and accelerate are only for the slow fallback engine (about 44 s of pip on a normal run), so they are
+          # NOT installed here: the script installs them itself if it ever reaches the fallback (ensure_hf_stack). huggingface_hub is what
+          # the GGUF download needs; it used to arrive as a dependency of transformers.
+          pip install huggingface_hub
           # Prebuilt CPU wheel (no compiling). If it is unavailable the run continues on the slow engine.
           # Same pinned version; the CUDA 12.4 build when a GPU runner is configured.
           WHEELS=cpu; if [ -n "$GPU_RUNNER" ]; then WHEELS=cu124; fi
@@ -131,12 +133,34 @@ jobs:
           import re
           import sys
           import time
-          import torch
           # Stops the model narrating results for a tool call it only requested.
           sys.path.insert(0, '.github/scripts')
           from qwen_tool_calls import normalize_tool_call_output
           import qwen_gguf
-          from transformers import AutoModelForCausalLM, AutoTokenizer
+
+          # The slow fallback engine's libraries are loaded (and installed, if the workflow did not) only when that engine is needed.
+          torch = None
+          AutoModelForCausalLM = None
+          AutoTokenizer = None
+
+          def ensure_hf_stack():
+              global torch, AutoModelForCausalLM, AutoTokenizer
+              if torch is not None:
+                  return
+              try:
+                  import torch as _torch
+                  from transformers import AutoModelForCausalLM as _model_cls, AutoTokenizer as _tokenizer_cls
+              except ImportError:
+                  import importlib
+                  import subprocess
+                  print('Fallback engine needs torch and transformers; installing them now.')
+                  subprocess.run([sys.executable, '-m', 'pip', 'install', 'torch', '--index-url', 'https://download.pytorch.org/whl/cpu'], check=True)
+                  subprocess.run([sys.executable, '-m', 'pip', 'install', 'transformers', 'accelerate'], check=True)
+                  importlib.invalidate_caches()
+                  import torch as _torch
+                  from transformers import AutoModelForCausalLM as _model_cls, AutoTokenizer as _tokenizer_cls
+              torch, AutoModelForCausalLM, AutoTokenizer = _torch, _model_cls, _tokenizer_cls
+              torch.set_num_threads(min(4, os.cpu_count() or 1))
 
           # Primary: Qwen3-8B as a 4-bit GGUF in llama.cpp (2026-10-20 upgrade from deepseek-llm-7b-chat,
           # which failed a two-step reasoning check and looped on HTML; see qwen_gguf.py). The
@@ -184,8 +208,6 @@ jobs:
 
           def sha_hex(text):
               return hashlib.sha256(text.encode('utf-8')).hexdigest()
-
-          torch.set_num_threads(min(4, os.cpu_count() or 1))
 
           def is_presentation_task(task_text):
               return 'presentation' in task_text.casefold()
@@ -430,6 +452,7 @@ jobs:
                   # The primary's float16 weights (16 GB) do not fit this 16 GB runner, so there is no
                   # transformers path for it; raising hands the request to the labelled fallback model.
                   raise RuntimeError(f'{PRIMARY_MODEL} needs the GGUF engine and it is unavailable: {fast["error"] or "not attempted"}')
+              ensure_hf_stack()
               loaded = loaded_models.get(model_id)
               if loaded is None:
                   tokenizer = AutoTokenizer.from_pretrained(model_id)
