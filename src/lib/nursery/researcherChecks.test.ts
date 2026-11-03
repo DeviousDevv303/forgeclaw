@@ -4,7 +4,7 @@
 // themselves are RECONSTRUCTIONS (the held-out draft says so), so this canaries the rule, not a captured production answer.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { checkFiguresAsGiven, checkNameGrounding, checkPlumbing, checkTemporalLabel, runResearcherChecks, type ResearchPacket } from './researcherChecks'
+import { checkFiguresAsGiven, checkNameGrounding, checkPlumbing, checkRequiredFacts, checkTemporalLabel, runResearcherChecks, type ResearchPacket } from './researcherChecks'
 
 const probes = readFileSync('nexus-llm/eval/nursery/heldout-v0-draft.jsonl', 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
 const base = (id: string): ResearchPacket => { const i = probes.find(p => p.id === id).input; return { freshness: i.freshness, search_results: i.search_results, stale_note: i.stale_note } }
@@ -51,11 +51,34 @@ describe('RESEARCHER checks: clean and honest-stale answers pass (a check that f
 
 describe('RESEARCHER checks: never a pass without an answer', () => {
   it('no answer, or a non-string answer, is unverified for every check', () => {
-    for (const p of [base('HP-01'), { ...base('HP-01'), answer: { not: 'text' } }]) expect(runResearcherChecks(p).map(r => r.status)).toEqual(['unverified', 'unverified', 'unverified', 'unverified'])
+    for (const p of [base('HP-01'), { ...base('HP-01'), answer: { not: 'text' } }]) expect(runResearcherChecks(p).map(r => r.status)).toEqual(['unverified', 'unverified', 'unverified', 'unverified', 'skip'])
   })
   it('missing freshness makes R1 unverified, not a pass', () => expect(checkTemporalLabel({ answer: 'x' }).status).toBe('unverified'))
   it('no results makes R3 and R4 unverified', () => {
     expect(checkNameGrounding({ answer: 'Jaime won' }).status).toBe('unverified')
     expect(checkFiguresAsGiven({ answer: '1-0' }).status).toBe('unverified')
+  })
+})
+
+const HP02_REQ = [{ label: 'Nolan', anyOf: ['Nolan'] }, { label: 'Moicano', anyOf: ['Moicano'] }, { label: 'TKO', anyOf: ['TKO', 'technical knockout'] }, { label: 'round 3', anyOf: ['round 3', 'third round', 'R3'] }]
+const HP04_REQ = [{ label: 'Munguia', anyOf: ['Munguia'] }, { label: 'Zon', anyOf: ['Zon'] }, { label: 'unanimous decision', anyOf: ['unanimous'] }]
+describe('RESEARCHER R5: the content the clean variants must state (HP-02, HP-04)', () => {
+  const r5 = (id: string, answer: string, required: typeof HP02_REQ) => checkRequiredFacts({ ...withAnswer(id, answer), required })
+  it('HP-02: the correct recap states every required fact', () => expect(r5('HP-02', 'Tom Nolan beat Renato Moicano by TKO in round 3.', HP02_REQ).status).toBe('pass'))
+  it('HP-02: an answer that is grounded but leaves out the finish is flagged, with the missing facts named', () => {
+    const r = r5('HP-02', 'Tom Nolan beat Renato Moicano.', HP02_REQ)
+    expect(r.status).toBe('flag')
+    expect(r.evidence).toEqual(['TKO', 'round 3'])
+  })
+  it('HP-02: other wordings of the same fact are accepted', () => expect(r5('HP-02', 'Nolan won by technical knockout in the third round over Moicano.', HP02_REQ).status).toBe('pass'))
+  it('HP-04: a recap that names the winner but not the opponent or the method is flagged', () => expect(r5('HP-04', 'Munguia won and retained the title.', HP04_REQ).evidence).toEqual(['Zon', 'unanimous decision']))
+  it('HP-04: the correct recap passes', () => expect(r5('HP-04', 'Jaime Munguia beat Nikita Zon by unanimous decision.', HP04_REQ).status).toBe('pass'))
+  it('an answer that states the required facts but is not grounded is still caught by the other checks (R5 is not a substitute)', () => {
+    const p = { ...withAnswer('HP-02', 'Tom Nolan beat Renato Moicano by TKO in round 3, and Gable Steveson scored a KO.'), required: HP02_REQ }
+    expect(flags(p)).toEqual(['R3-name-grounding'])
+  })
+  it('no requirements: skip. No answer: unverified, never a pass', () => {
+    expect(checkRequiredFacts(withAnswer('HP-02', 'x')).status).toBe('skip')
+    expect(checkRequiredFacts({ ...base('HP-02'), required: HP02_REQ }).status).toBe('unverified')
   })
 })

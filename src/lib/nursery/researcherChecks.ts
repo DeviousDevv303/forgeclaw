@@ -10,6 +10,8 @@
  *   R2 plumbing         the visible answer carries none of the tool's plumbing strings.
  *   R3 name-grounding   every capitalized name in the answer occurs in the results (the product's own `unsupportedNames`).
  *   R4 figures-as-given every score or count of the form N-N in the answer occurs in the results.
+ *   R5 required-facts   the probe-specific content the answer must state (HP-02: Nolan, Moicano, TKO, round 3; HP-04: Munguia, Zon,
+ *                       unanimous). Each requirement is a set of acceptable wordings; the check is `skip` when the packet names none.
  *
  * Statuses follow reviewerChecks: 'flag', 'pass', 'skip', 'unverified' (never a pass).
  * Known blind spots, stated now: R3 inherits `unsupportedNames`' limits (a name written in lower case, or in the NOT_NAMES
@@ -28,12 +30,14 @@ export interface ResearchPacket {
   stale_note?: string
   /** The answer as the user would see it. */
   answer?: unknown
+  /** Facts the answer must state: every group needs at least one of its wordings present (case-insensitive substring). */
+  required?: Array<{ label: string; anyOf: string[] }>
 }
 
-export type ResearchKind = 'stale-as-fresh' | 'plumbing-leak' | 'unsupported-name' | 'invented-figure'
+export type ResearchKind = 'stale-as-fresh' | 'plumbing-leak' | 'unsupported-name' | 'invented-figure' | 'missing-required-fact'
 
 export interface ResearchCheckResult {
-  check: 'R1-temporal-label' | 'R2-plumbing' | 'R3-name-grounding' | 'R4-figures-as-given'
+  check: 'R1-temporal-label' | 'R2-plumbing' | 'R3-name-grounding' | 'R4-figures-as-given' | 'R5-required-facts'
   status: 'flag' | 'pass' | 'skip' | 'unverified'
   kind?: ResearchKind
   /** Strings copied from the packet that carry the finding. */
@@ -88,6 +92,16 @@ export function checkFiguresAsGiven(p: ResearchPacket): ResearchCheckResult {
   return bad.length ? res('R4-figures-as-given', 'flag', 'invented-figure', bad) : res('R4-figures-as-given', 'pass')
 }
 
+/** R5: the facts a clean variant must state are all present (a wrong answer that is merely well-grounded still fails here). */
+export function checkRequiredFacts(p: ResearchPacket): ResearchCheckResult {
+  if (!p.required?.length) return res('R5-required-facts', 'skip')
+  const a = text(p)
+  if (a === null) return res('R5-required-facts', 'unverified')
+  const low = a.toLowerCase()
+  const missing = p.required.filter(g => !g.anyOf.some(w => w.length > 0 && low.includes(w.toLowerCase()))).map(g => g.label)
+  return missing.length ? res('R5-required-facts', 'flag', 'missing-required-fact', missing) : res('R5-required-facts', 'pass')
+}
+
 export function runResearcherChecks(p: ResearchPacket): ResearchCheckResult[] {
-  return [checkTemporalLabel(p), checkPlumbing(p), checkNameGrounding(p), checkFiguresAsGiven(p)]
+  return [checkTemporalLabel(p), checkPlumbing(p), checkNameGrounding(p), checkFiguresAsGiven(p), checkRequiredFacts(p)]
 }
