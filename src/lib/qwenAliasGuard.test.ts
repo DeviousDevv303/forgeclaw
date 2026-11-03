@@ -3,7 +3,7 @@
 // saved sessions, saved conversations, model output) must still be read as Qwen. A reader that forgot the old name would treat a Qwen answer as a
 // stranger and could let it self-admit.
 import { describe, expect, it } from 'vitest'
-import { answerLineage, hasQwenLineage, QWEN_LINEAGE_TOOLS } from './nexusConvergence'
+import { answerLineage, answerOutcome, hasQwenLineage, NOT_EVIDENCE_TOOLS, QWEN_LINEAGE_TOOLS } from './nexusConvergence'
 import { isQwenProvider } from './ai/providerRouter'
 import { resolveInitialProvider, DEFAULT_PROVIDER } from './providerDefaults'
 import { LEGACY_TOOL_NAMES } from './forgeTools'
@@ -27,6 +27,13 @@ describe('legacy deepseek names are still read as Qwen', () => {
     expect(DEFAULT_PROVIDER).toBe('qwen')
     expect(resolveInitialProvider('deepseek')).toBe('qwen')
     expect(resolveInitialProvider('moonshot')).toBe('moonshot')
+  })
+  it("a Qwen answer is never evidence, under the new tool names or the old ones (Route C)", () => {
+    for (const name of ['qwen_reason', 'ask_qwen', 'deepseek_reason', 'ask_deepseek']) {
+      expect(NOT_EVIDENCE_TOOLS.has(name), name).toBe(true)
+      expect(answerOutcome(false, [{ name, isError: false }]), name).toBe('completed')
+    }
+    expect(answerOutcome(false, [{ name: 'github_read_file', isError: false }])).toBe('verified')
   })
   it('every legacy tool name maps to a current one', () => {
     expect(LEGACY_TOOL_NAMES).toEqual({ deepseek_reason: 'qwen_reason', ask_deepseek: 'ask_qwen', deepseekreason: 'qwenreason' })
