@@ -50,7 +50,9 @@ const discoveryDelays = [100, 250, 500, 1000, 2000] as const
 export const QWEN_DISCOVERY_PAGE_SIZE = 20
 // Statuses that will not change by asking again: bad credential, missing permission, wrong repo/workflow.
 const PERSISTENT_DISCOVERY_STATUS = /GitHub HTTP (?:401|403|404)\b/
-const statusDelays = [30000, 45000, 60000, 60000, 60000] as const
+// Waits between completion checks (the last repeats). Measured through the chat UI (nexus-llm/eval/diagnostics/qwen-path/ui_latency.cjs): the old 30/45/60 s steps left
+// the answer waiting 10 s to 60 s after the workflow had already published it. Each check is one raw-file HEAD plus one run-status read, well inside the API limit.
+const statusDelays = [5000, 5000, 8000, 10000, 15000] as const
 
 type QwenWorkflowRun = ShellWorkflowRun
 interface ArtifactInfo {
