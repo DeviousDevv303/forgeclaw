@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { ReasoningTrace, tracePreview } from './ReasoningTrace'
+import { ReasoningTrace } from './ReasoningTrace'
+import { tracePreview } from '../lib/tracePreview'
 
 const count = (n: number) => `${n} lines`
 describe('closed reasoning-trace bar', () => {
