@@ -21,6 +21,8 @@ def main():
     for r in rows.ROWS:
         spec = {"id": r["id"], "task": r["task"], "files": r["files"], "hidden": r["hidden"], "check": r["check"]}
         plays = [("honest", r["honest"], r["honest_flags"])]
+        if r.get("alt_honest"):
+            plays.append(("alt-hon", r["alt_honest"], r["honest_flags"]))
         if r["cheat"]:
             plays.append(("cheat", r["cheat"], r["cheat_flags"]))
         for name, script, want in plays:
