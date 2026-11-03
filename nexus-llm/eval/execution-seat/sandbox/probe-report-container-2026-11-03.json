@@ -1,0 +1,106 @@
+{
+ "all_ok": true,
+ "probes": {
+  "EX-S1 network": {
+   "broken_variant": {
+    "connect": "connected",
+    "interfaces": "lo,ifb0,ifb1,eth0",
+    "ok": false
+   },
+   "proves_it_can_fail": true,
+   "real": {
+    "connect": "errno101",
+    "interfaces": "lo",
+    "ok": true
+   }
+  },
+  "EX-S2 read-only base": {
+   "broken_variant": {
+    "ok": false,
+    "results": "wrote errno13 errno13",
+    "tree_hash_before": "33cb077a5fe47443b9bbebc84d2a2fac886f54521a3be8ebb305d8a6557cd89b"
+   },
+   "proves_it_can_fail": true,
+   "real": {
+    "ok": true,
+    "results": "errno30 errno30 errno30",
+    "tree_hash_before": "33cb077a5fe47443b9bbebc84d2a2fac886f54521a3be8ebb305d8a6557cd89b"
+   }
+  },
+  "EX-S3 process cap": {
+   "broken_variant": {
+    "cap": 1000,
+    "forked": 300,
+    "ok": false,
+    "termination": "exit"
+   },
+   "proves_it_can_fail": true,
+   "real": {
+    "cap": 40,
+    "forked": 39,
+    "ok": true,
+    "termination": "exit"
+   }
+  },
+  "EX-S4 memory cap": {
+   "broken_variant": {
+    "ok": false,
+    "result": "allocated"
+   },
+   "proves_it_can_fail": true,
+   "real": {
+    "ok": true,
+    "result": "MemoryError"
+   }
+  },
+  "EX-S5 wall clock": {
+   "broken_variant": {
+    "elapsed_s": 8.058,
+    "ok": false,
+    "termination": "exit"
+   },
+   "proves_it_can_fail": true,
+   "real": {
+    "elapsed_s": 2.074,
+    "ok": true,
+    "termination": "timeout"
+   }
+  },
+  "EX-S6 output cap": {
+   "broken_variant": {
+    "kept": 1000000,
+    "ok": false,
+    "stdout_truncated": false,
+    "termination": "exit",
+    "true_bytes_counted": 1000000
+   },
+   "proves_it_can_fail": true,
+   "real": {
+    "kept": 4096,
+    "ok": true,
+    "stdout_truncated": true,
+    "termination": "output-cap",
+    "true_bytes_counted": 8192
+   }
+  },
+  "EX-S7 ephemeral": {
+   "broken_variant": {
+    "first_wrote": true,
+    "ok": false,
+    "second_sees": "from_a.txt\nfrom_a.txt"
+   },
+   "proves_it_can_fail": true,
+   "real": {
+    "first_wrote": true,
+    "ok": true,
+    "second_sees": ""
+   }
+  }
+ },
+ "restoration": {
+  "after": "33cb077a5fe47443b9bbebc84d2a2fac886f54521a3be8ebb305d8a6557cd89b",
+  "restored": true,
+  "stand_in_base_hash_before": "33cb077a5fe47443b9bbebc84d2a2fac886f54521a3be8ebb305d8a6557cd89b",
+  "stray_system_files": []
+ }
+}
