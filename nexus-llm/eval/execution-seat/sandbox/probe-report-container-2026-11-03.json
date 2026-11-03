@@ -55,13 +55,13 @@
   },
   "EX-S5 wall clock": {
    "broken_variant": {
-    "elapsed_s": 8.066,
+    "elapsed_s": 8.07,
     "ok": false,
     "termination": "exit"
    },
    "proves_it_can_fail": true,
    "real": {
-    "elapsed_s": 2.063,
+    "elapsed_s": 2.059,
     "ok": true,
     "termination": "timeout"
    }
@@ -87,13 +87,28 @@
    "broken_variant": {
     "first_wrote": true,
     "ok": false,
-    "second_sees": "from_a.txt\nfrom_a.txt"
+    "second_sees": "from_a.txt\nls: cannot access '/opt/sbx-probe-persist': No such file or directory"
    },
    "proves_it_can_fail": true,
    "real": {
     "first_wrote": true,
     "ok": true,
-    "second_sees": ""
+    "second_sees": "ls: cannot access '/opt/sbx-probe-persist': No such file or directory"
+   }
+  },
+  "EX-S8 hidden test unreachable": {
+   "broken_variant": {
+    "markers_found": "4",
+    "ok": false,
+    "root_listing": "bin,bin.usr-is-merged,boot,container_info.json,dev,etc,home,lib,lib.usr-is-merged,lib64,lost+found,media,mnt,nix,old_root,opt,proc,root,run,sbin,sbxwork,srv,sys,tmp,usr,var",
+    "termination": "exit"
+   },
+   "proves_it_can_fail": true,
+   "real": {
+    "markers_found": "0",
+    "ok": true,
+    "root_listing": "bin,dev,etc,lib,lib64,proc,sbin,srv,usr",
+    "termination": "exit"
    }
   }
  },

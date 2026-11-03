@@ -18,6 +18,7 @@ Properties the owner named, made testable:
 | Bounded time | Hard wall limit per command and per dispatch; `SIGKILL` after a grace | Probe EX-S5 above; the kill reason is captured. |
 | Full output capture | Everything the model's commands print or write is the artifact; truncation is always marked, never silent | Probe EX-S6: flood past the cap and check the artifact carries `truncated: true` plus the true byte count. |
 | Ephemeral | A fresh sandbox per dispatch; nothing persists between dispatches | Probe EX-S7: dispatch A writes a file, dispatch B must not see it. |
+| Hidden tests unreachable | The model sees only an allow-list root (read-only /usr, /etc, libraries, a minimal /dev, /proc, its workdir); not the repo checkout, /tmp, /home or earlier artifacts | Probe EX-S8: planted markers at the repo path, /tmp, /home and /opt must not exist inside; the root lists only allowed directories. (A read-only base alone leaked the hidden tests; found 2026-11-03.) |
 
 **Unverified assumptions (to probe before anyone relies on them):** that the Actions runner offers a network namespace (`unshare -n`), a read-only bind mount and per-process limits (`prlimit`, `ulimit`, possibly cgroups) without extra installs; whether a tool such as `bwrap` is available or must be installed *before* the no-network phase. None of this has been tested. Each probe above is also the acceptance test for the sandbox itself, and a sandbox that fails any of them blocks everything downstream.
 
