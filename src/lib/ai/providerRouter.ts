@@ -21,10 +21,12 @@ import { extractSiteHtml, isSiteDeployRequest, parseCreatedRepo, parsePublishedC
 
 /** True for providers that run Qwen/Qwen3-8B via GitHub Actions (provider ids 'corpus'/'deepseek'). */
 export function isDeepSeekProvider(providerId: string): boolean {
-  return providerId === 'corpus' || providerId === 'deepseek';
+  return providerId === 'corpus' || providerId === 'deepseek' || providerId === 'qwen';
 }
+/** Same predicate under the real name (stage 1 of docs/migrations/DEEPSEEK-TO-QWEN-PLAN.md); the old name stays until nothing reads it. */
+export const isQwenProvider = isDeepSeekProvider
 
-export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, deepseek: corpusProvider, anthropic: anthropicProvider, muse: metaProvider, openrouter: openrouterProvider, local: localInferenceProvider, nexus: corpusProvider } as const
+export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, deepseek: corpusProvider, qwen: corpusProvider, anthropic: anthropicProvider, muse: metaProvider, openrouter: openrouterProvider, local: localInferenceProvider, nexus: corpusProvider } as const
 export type ProviderId = keyof typeof providers
 export interface ProviderChoice { providerId: ProviderId; model: string; level: 1 | 2 | 3 | 4 }
 export const LOCAL_PROVIDER_TIMEOUT_MS = 4_000

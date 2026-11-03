@@ -833,7 +833,7 @@ function App() {
     ? lastRuntimeMessage.provider === 'GitHub Actions'
       ? 'Level 1 · direct DeepSeek dispatch'
       // D-016: 'corpus' and 'deepseek' are the same Qwen workflow (providerRouter.isDeepSeekProvider) — one route label for both ids.
-      : lastRuntimeMessage.provider === 'corpus' || lastRuntimeMessage.provider === 'deepseek'
+      : lastRuntimeMessage.provider === 'corpus' || lastRuntimeMessage.provider === 'deepseek' || lastRuntimeMessage.provider === 'qwen'
         ? 'Level 1 · Qwen/Qwen3-8B GitHub Actions'
       : lastRuntimeMessage.provider === 'moonshot'
             ? `Level 1 · Moonshot/Kimi (${lastRuntimeMessage.model})`
@@ -2061,8 +2061,8 @@ function App() {
         setDiagnostics(prev => ({ ...prev, lastRequestStatus: 'success', lastError: null, lastLatencyMs: latency }))
         const result = routerResult.response
         if (result.reasoningContent?.trim()) finalReasoning = result.reasoningContent.trim()
-        resolvedProvider = result.provider === 'deepseek' ? 'deepseek' : result.provider === 'corpus' ? 'corpus' : result.provider === 'moonshot' ? 'moonshot' : result.provider === 'muse' ? 'muse' : result.provider === 'openrouter' ? 'openrouter' : result.provider === 'local' ? 'local' : activeProvider
-        if (result.provider === 'deepseek') source = 'cloud'
+        resolvedProvider = result.provider === 'deepseek' ? 'deepseek' : result.provider === 'qwen' ? 'qwen' : result.provider === 'corpus' ? 'corpus' : result.provider === 'moonshot' ? 'moonshot' : result.provider === 'muse' ? 'muse' : result.provider === 'openrouter' ? 'openrouter' : result.provider === 'local' ? 'local' : activeProvider
+        if (result.provider === 'deepseek' || result.provider === 'qwen') source = 'cloud'
         resolvedModel = result.model || currentModel
         const primaryDiagnostic = result.diagnostics?.primaryReasoning
         if (primaryDiagnostic) {
@@ -2965,7 +2965,7 @@ function App() {
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.runtimeProvider')}</label>
                 <select
                   // 'deepseek' and 'corpus' are the same Qwen/Qwen3-8B runtime; show it as the one Qwen option.
-                  value={activeProvider === 'deepseek' ? 'corpus' : activeProvider}
+                  value={activeProvider === 'deepseek' || activeProvider === 'qwen' ? 'corpus' : activeProvider}
                   onChange={e => setActiveProvider(e.target.value as ProviderId)}
                   style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: '1px solid #222', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none' }}
                 >

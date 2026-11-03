@@ -72,9 +72,9 @@ export function convergencePhase(input: CorpusInteractionInput): Extract<NexusPh
 }
 
 /** Tools whose output is Qwen's own text (the Qwen/Qwen3-8B workflow). */
-export const QWEN_LINEAGE_TOOLS: ReadonlySet<string> = new Set(['deepseek_reason', 'ask_deepseek'])
+export const QWEN_LINEAGE_TOOLS: ReadonlySet<string> = new Set(['deepseek_reason', 'ask_deepseek', 'qwen_reason', 'ask_qwen'])
 /** Provider ids that answer through the Qwen workflow (providerRouter.isDeepSeekProvider). */
-const QWEN_RUNTIMES: ReadonlySet<string> = new Set(['deepseek', 'corpus'])
+const QWEN_RUNTIMES: ReadonlySet<string> = new Set(['deepseek', 'qwen', 'corpus'])
 
 /** 'qwen' when a turn's answer may carry Qwen's own text: the Qwen provider answered, or a Qwen tool ran in the turn. */
 export function answerLineage(provider: string, results: ReadonlyArray<{ name: string }>): 'qwen' | 'none' {
@@ -91,7 +91,7 @@ export function hasQwenLineage(record: { source?: string; runtime?: string; mode
   const marker = metadata.lineage ?? new RegExp('(?:^|; )lineage=([^;]+)').exec(record.context || '')?.[1]
   const runtime = record.runtime ?? metadata.runtime ?? ''
   const model = record.model ?? metadata.model ?? ''
-  return marker === 'qwen' || QWEN_RUNTIMES.has(runtime) || /deepseek|qwen/i.test(model) || (record.source ?? '').startsWith('deepseek:')
+  return marker === 'qwen' || QWEN_RUNTIMES.has(runtime) || /deepseek|qwen/i.test(model) || ['deepseek:', 'qwen:'].some(prefix => (record.source ?? '').startsWith(prefix))
 }
 
 /** Before this date, chat answers given while the provider was "corpus" were admitted with no signature or review (a8276fa, removed by #61). */
