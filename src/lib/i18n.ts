@@ -310,6 +310,7 @@ export const EN = {
 
   'trace.title': 'Reasoning Trace',
   'trace.ready': 'Operational trace ready',
+  'trace.lines': '{n} lines — tap to open',
   'chain.steps': '{n} steps',
   'chain.done': ' · done',
   'chain.waiting': 'Waiting for steps...',
@@ -784,6 +785,7 @@ const ES: Record<Key, string> = {
 
   'trace.title': 'Traza de razonamiento',
   'trace.ready': 'Traza operativa lista',
+  'trace.lines': '{n} líneas — toca para abrir',
   'chain.steps': '{n} pasos',
   'chain.done': ' · listo',
   'chain.waiting': 'Esperando pasos...',

@@ -19,10 +19,19 @@ function splitTraceLine(line: string): { label?: string; value: string } {
   return { label: match[1], value: match[2] }
 }
 
+/** Labels the app itself writes into a trace (phase, plan, tools, scaffold sections). A line that starts with one is safe to show on the closed bar. */
+const SYSTEM_TRACE_LABELS = /^(?:Phase|Plan|Tools|Execution steps|Objective|Constraints|Next action|Execution|Verification):/
+
+/** What the closed bar shows. A provider's own reasoning text (Kimi reasoning_content, often cut mid-sentence) must not leak into the chat as a preview. */
+export function tracePreview(lines: string[], lineCount: (n: number) => string, ready: string): string {
+  if (!lines.length) return ready
+  return SYSTEM_TRACE_LABELS.test(lines[0].trim()) ? lines[0] : lineCount(lines.length)
+}
+
 export function ReasoningTrace({ trace, isOpen, onToggle }: ReasoningTraceProps) {
   const { t } = useI18n()
   const lines = trace.split('\n').map(line => line.trimEnd()).filter(Boolean)
-  const firstLine = lines[0] ?? t('trace.ready')
+  const firstLine = tracePreview(lines, n => t('trace.lines', { n }), t('trace.ready'))
 
   return (
     <div style={{ width: '100%', maxWidth: '90%', marginTop: '8px' }}>
