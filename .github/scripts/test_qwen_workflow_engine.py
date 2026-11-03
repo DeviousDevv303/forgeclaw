@@ -117,6 +117,37 @@ def run_with_files(extra_env=None, drop_stubs=(), names=("prompt_final.txt",)):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+MARKER_TORCH = STUBS["torch.py"] + "\nopen('torch_imported', 'w').write('yes')\n"
+
+
+class LazyFallbackLibraries(unittest.TestCase):
+    """torch and transformers are for the slow fallback only: the workflow no longer installs them up front (about 44 s per run), so the
+    script must not import them on the normal GGUF path, and must still reach them when the fallback is needed."""
+
+    def test_the_gguf_path_never_imports_torch(self):
+        from unittest import mock
+        with mock.patch.dict(STUBS, {"torch.py": MARKER_TORCH}):
+            proc, result, _meta, files = run_with_files(names=("torch_imported",))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(result, "FAST ANSWER")
+        self.assertIsNone(files["torch_imported"], "torch was imported on the normal GGUF path")
+
+    def test_the_fallback_path_loads_them_when_needed(self):
+        from unittest import mock
+        with mock.patch.dict(STUBS, {"torch.py": MARKER_TORCH}):
+            proc, result, _meta, files = run_with_files(extra_env={"QWEN_ENGINE": "hf"}, names=("torch_imported",))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("SLOW ANSWER", result)
+        self.assertIn("DEGRADED", result)
+        self.assertEqual(files["torch_imported"], "yes")
+
+    def test_the_install_step_no_longer_installs_the_fallback_stack_up_front(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        install = text.split("- name: Install inference dependencies", 1)[1].split("- name: Run Qwen", 1)[0]
+        self.assertNotRegex(install, r"(?m)^\s*pip install (torch|transformers)")
+        self.assertIn("pip install huggingface_hub", install)
+
+
 class EngineSelection(unittest.TestCase):
     def test_fast_engine_answers_and_metadata_says_so(self):
         proc, result, meta = run()
