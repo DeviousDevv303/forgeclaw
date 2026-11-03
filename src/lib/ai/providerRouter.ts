@@ -17,6 +17,7 @@ import { withResponseLanguage } from '../responseLanguage'
 import { currentDateNote, needsCurrentInfo } from '../currentInfo'
 import { nexusGuidanceForQwen } from '../nexusGuidance'
 import { extractRewrittenFile, readFileBody, sculptTarget, sculptTask } from './qwenSculpt'
+import { qwenRunLabel } from '../qwenCheckpoints'
 import { extractSiteHtml, isSiteDeployRequest, parseCreatedRepo, parsePublishedCommit, siteGenerationTask, siteRepoName } from './qwenSite'
 
 /** True for providers that run Qwen/Qwen3-8B via GitHub Actions (provider ids 'corpus'/'qwen'; legacy 'deepseek'). */
@@ -294,7 +295,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
       const trimNote = promptTrimNote(latest.content)
       // D-016: attribute the SELECTED provider id, as every dispatch step above does — hardcoding 'qwen' here
       // made one session's answers flip between 'corpus' and 'qwen' attributions for the same Qwen workflow.
-      if (answer) return success({ text: trimNote ? `${answer}\n\n${trimNote}` : answer, provider: selected, model: `Qwen/Qwen3-8B Actions (${qwenCheckpointLabel(latest.content)})`, stopReason: 'qwen-synthesis-complete' })
+      if (answer) return success({ text: trimNote ? `${answer}\n\n${trimNote}` : answer, provider: selected, model: qwenRunLabel(qwenCheckpointLabel(latest.content)), stopReason: 'qwen-synthesis-complete' })
     }
     if (isQwenProvider(selected)) return { success: false, error: classifyError(new Error('qwen-not-dispatched: the request reached the Qwen/Qwen3-8B provider (provider id \'qwen\') without the qwen_reason tool, so no workflow was dispatched and GitHub Actions was never contacted.'), selected) }
     return success(selected === 'local' ? await sendLocalWithTimeout(request, apiKey) : await provider.send(request, apiKey))

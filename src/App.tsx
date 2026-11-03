@@ -234,6 +234,7 @@ import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsF
 import { withForgeClawSignature } from './lib/signature'
 import { compactToolHistory } from './lib/historyCompaction'
 import { clearKeyVerified, isKeyRejection, isKeyVerified, markKeyVerified } from './lib/keyVerification'
+import { qwenRunLabel } from './lib/qwenCheckpoints'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
 const TRUNCATED_ATTEMPT = '[truncated-arguments]'
@@ -2248,7 +2249,7 @@ function App() {
       const qwenCheckpoint = qwenSuccessOutput.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable'
       if (qwenSucceeded) source = 'cloud'
       if (qwenSucceeded) {
-        resolvedModel = `Qwen/Qwen3-8B Actions (${qwenCheckpoint})`
+        resolvedModel = qwenRunLabel(qwenCheckpoint)
       } else if (qwenFailed) {
         resolvedModel = `Qwen/Qwen3-8B Actions (workflow failed)`
       }
