@@ -26,3 +26,17 @@ Each family has probes on **both sides**: a failure-shaped packet (HP-01, 03, 05
 - **Build the three missing check sets as code with canaries**, smallest first: the CURATOR lineage check (repackaging #354's rule), the RESEARCHER temporal-label and plumbing checks plus name-grounding (from #355), and the REVIEWER denomination check. Each canaried on these probes and on controls. The owner's BUILD GO covered REVIEWER checks only, so I'd want a word from the owner or the seat before building the other two.
 - **Rule on finding 2** before any freeze.
 - **Name the denomination verdict kind** (for HP-05) when the seat freezes.
+
+## Update 2026-11-03 (builder lane, after the seat's rulings in #235 6591250897)
+Check sets built as canaried code (instruments only; verdicts go to the seat; nothing wires), each with deliberate-fault proofs:
+
+| Probe(s) | Check | File | Status |
+|---|---|---|---|
+| HP-06 | CURATOR lineage (`reject:self-blessed-admission`) | `src/lib/nursery/curatorChecks.ts` (commit `7ddcf987`) | built; 31 tests |
+| HP-01..HP-04 | RESEARCHER R1 temporal-label, R2 plumbing, R3 name-grounding, R4 figures-as-given | `src/lib/nursery/researcherChecks.ts` (commit `0481e547`) | built; 16 tests; the probe-specific content checks ("states Nolan def. Moicano by TKO R3", "names Zon, unanimous decision") are **not** built |
+| HP-05 | REVIEWER denomination (`claims-mismatch:denomination`, the seat's name) | `src/lib/nursery/denominationCheck.ts` (commit `65786104`) | built; 8 tests |
+
+Still open before any freeze, none of it done by this lane:
+1. **The UFC family's contamination acts, in the same act as its freeze (seat ruling, finding 2):** extend the denylist to the family's source text and known-answer records (`qwen-ufc-recap-20261101`, `moicano-nolan-20261031-grade`); mark those intake records with the exclusion marker (`held-out-family: UFC-recap`) so run assembly drops them; publish a canary proof that a training-data assembly excludes both. These touch the Nexus intake data and assembly, which are not this lane's files; I can write the canary-proof script on request.
+2. **Keywords for the Munguia, D-018 and Route C families:** the freeze presentation lists the keywords used. My earlier search is recorded in finding 2; I have not re-run it.
+3. **The seat's explicit list and freeze act.** The six probes are still reconstructions as labeled (HP-01, 03, 06 from failure descriptions; HP-02, 04 from verified ground truth; HP-05's numbers verbatim), and six probes from four families cannot support a trend (the minimum is 40 per bot).
