@@ -428,7 +428,8 @@ describe('existing systems are untouched', () => {
     expect(modelSupportsTools('nexus', 'qwen')).toBe(false)
     expect(modelSupportsTools('local', 'qwen2.5:1.5b')).toBe(true)
     expect(modelSupportsTools('deepseek', 'deepseek-16b')).toBe(true)
-    expect(Object.keys(PROVIDERS).length).toBe(8)
+    expect(modelSupportsTools('qwen', 'deepseek-16b')).toBe(true)
+    expect(Object.keys(PROVIDERS).length).toBe(9)
   })
 
   it('keeps every pre-existing tool name in the registry', () => {
