@@ -1,0 +1,43 @@
+```json
+{
+ "seat": "CONTRARIAN",
+ "round": 2,
+ "status": "ok",
+ "challenges": [
+ {
+ "challenge_id": "SWM-02-CONTRARIAN-STATE",
+ "target_seat": "STATE",
+ "target_claim": "Dvalishvili may be unprepared or not in optimal condition for the fight.",
+ "refs": ["Dvalishvili's own comments, low weight"],
+ "attack": {
+ "assumption": "The packet indicates that Dvalishvili admitted to a quick rematch turnaround being a mistake, suggesting potential unpreparedness.",
+ "heuristic": "This admission may indicate that Dvalishvili is not fully recovered from the prior fight or has not adequately prepared for this trilogy match.",
+ "first_principles": "A fighter's readiness and condition are critical factors in performance; any indication of suboptimal preparation can impact outcomes.",
+ "extension": "If Dvalishvili is unprepared, it could lead to a weaker performance against Yan's counter-striking strategy.",
+ "convergence": "The packet supports the claim that Dvalishvili may be unprepared, which challenges the assumption that he will perform at his best."
+ }
+ },
+ {
+ "challenge_id": "SWM-02-CONTRARIAN-STYLES",
+ "target_seat": "STYLES",
+ "target_claim": "Yan's primary path to victory is counter-striking, while Dvalishvili's is takedowns.",
+ "refs": ["signature_weapons", "technique_tendency.favorite_counters"],
+ "attack": {
+ "assumption": "The packet indicates that Yan has neutralized Dvalishvili's takedown attempts in prior fights.",
+ "heuristic": "If Yan can continue to neutralize Dvalishvili's takedowns, it may limit Dvalishvili's ability to dictate the fight's pace and location.",
+ "first_principles": "A fighter's ability to neutralize an opponent's primary strategy is a significant advantage in determining outcomes.",
+ "extension": "If Yan can maintain his defensive wrestling and counter-striking effectiveness, it may lead to a decision victory rather than a takedown-based win for Dvalishvili.",
+ "convergence": "The packet supports the claim that Yan has neutralized Dvalishvili's takedowns, which challenges the assumption that Dvalishvili can dictate the fight."
+ }
+ },
+ {
+ "challenge_id": "SWM-02-CONTRARIAN-TAPE",
+ "target_seat": "TAPE",
+ "target_claim": "Petr Yan leads in striking volume and accuracy, while Merab Dvalishvili lands more takedowns per 15 minutes.",
+ "refs": ["slpm", "str_acc_pct", "td_per_15"],
+ "attack": {
+ "assumption": "The packet indicates that Yan has a higher strike accuracy (54% vs. 41%) and better defense (59% vs. 54%).",
+ "heuristic": "Higher strike accuracy and defensive capabilities can translate to more effective striking output, even if the volume is lower.",
+ "first_principles": "Striking effectiveness is not solely dependent on volume but also on accuracy and defensive efficiency.",
+ "extension": "If Yan's higher accuracy and defense are maintained, it may lead to a decision victory despite Dvalishvili's takedown attempts.",
+ "convergence": "The packet supports the claim that Yan has
