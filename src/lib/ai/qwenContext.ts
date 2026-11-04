@@ -1,4 +1,4 @@
-import { corpusRepository, formatCorpusContext, recordRelevantToTask } from '../corpus'
+import { corpusRepository, distinctiveWords, formatCorpusContext, recordRelevantToTask, type CorpusRecord } from '../corpus'
 import { nexusGuidanceForQwen } from '../nexusGuidance'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { QWEN_FALLBACK_CHECKPOINT, QWEN_PRIMARY_CHECKPOINT } from '../qwenCheckpoints'
@@ -119,6 +119,23 @@ export function splitConversationSection(context: string): { conversation: strin
   }
 }
 
+/** The line that closes the conversation section whenever history rides: the current task is the one to answer. */
+export const CONVERSATION_TOPIC_GUARD = 'Topic guard: the conversation above is background for resolving references only. Answer the user\'s CURRENT message below; never answer an earlier question from this history.'
+
+const FOLLOW_UP_WORDS = /\b(that|this|those|these|it|its|they|them|their|he|him|his|she|her|why|how come|the (?:last|previous|first|second|other|same) one|rematch|again|elaborate|go on|continue|expand|more on|what about|and the|you said|earlier|above)\b/i
+
+/**
+ * Does the current task refer back to the conversation? (Muse fix directive, #235 comment 6637531549.) Before this gate the last six
+ * messages rode on EVERY Qwen dispatch, ungated, and a fresh question ("run a simulation of Makhachev vs Khabib") was answered with a
+ * weeks-old trading Q&A from the history. History now rides only for a genuine follow-up: a short or anaphoric message ("why?",
+ * "that one", "and the rematch?"), or one that shares real distinctive words with the thread — the same test that gates corpus records.
+ */
+export function conversationRelevantToTask(task: string, conversation: string): boolean {
+  if (!conversation.trim()) return false
+  if (distinctiveWords(task).size <= 2 || FOLLOW_UP_WORDS.test(task)) return true
+  return recordRelevantToTask(task, { content: conversation, metadata: {} as CorpusRecord['metadata'] })
+}
+
 /** Extract only the user's textual objective, excluding appended runtime/image payloads. */
 export function extractOriginalQwenTask(rawTask: string): string {
   const { task } = separateRuntimeEnvelope(rawTask)
@@ -148,7 +165,8 @@ export function buildQwenTaskPayload(rawTask: string, verifiedToolResults = '', 
   if (guidance) sections.push(guidance)
 
   // Before the envelope: the size budget cuts from the end, so a long envelope is what gets trimmed, never the thread.
-  if (conversation.trim()) sections.push(`${CONVERSATION_OPEN}\nThe conversation so far, oldest first. The user's current message may refer back to it ("that", "it", "the last one"); resolve such references from here, not from the runtime envelope:\n${conversation.trim().split(CONVERSATION_OPEN).join('').split(CONVERSATION_CLOSE).join('')}\n${CONVERSATION_CLOSE}`)
+  // Gated (fix directive 6637531549): a fresh-topic task dispatches with no conversation section at all.
+  if (conversationRelevantToTask(task, conversation)) sections.push(`${CONVERSATION_OPEN}\nThe conversation so far, oldest first. The user's current message may refer back to it ("that", "it", "the last one"); resolve such references from here, not from the runtime envelope:\n${conversation.trim().split(CONVERSATION_OPEN).join('').split(CONVERSATION_CLOSE).join('')}\n${CONVERSATION_TOPIC_GUARD}\n${CONVERSATION_CLOSE}`)
 
   if (asksAboutForgeClawArchitecture(task)) sections.push(FORGECLAW_ARCHITECTURE_CONTEXT)
   if (runtimeContext) sections.push(`ForgeClaw runtime envelope (identity/routing hints only; not repository evidence):\n${runtimeContext}`)
