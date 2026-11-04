@@ -1,5 +1,5 @@
 {
- "expected_main": "347b3c921a1b7d17c8ae1e1fbdd0cb85395143f6",
+ "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a",
  "entries": [
   {
    "invocation_id": "swarm-SWM-02-r2-contrarian-a2",
@@ -7,7 +7,17 @@
    "queue_file": "fire-queue/swarm-SWM-02-r2-contrarian-a2.json",
    "task_sha256": "672a0b31847a8edfe62ade2732dd593cce64c91ef37c8a9b63f83b68d5aee3e6",
    "context_sha256": "90218284f90cbf2c4715c2a85e2580732ddf6f76a250ce5730b7c19c39542753",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "347b3c921a1b7d17c8ae1e1fbdd0cb85395143f6",
+   "status": "FIRED 2026-11-04 run 41782397046; INVALID per seat ruling #235 comment 6634196369 (768-token cut + hand-typed task mutation at offset 10512); refire as a3"
+  },
+  {
+   "invocation_id": "swarm-SWM-02-r2-contrarian-a3",
+   "slot": "SWM-02-r2-contrarian",
+   "queue_file": "fire-queue/swarm-SWM-02-r2-contrarian-a3.json",
+   "task_sha256": "672a0b31847a8edfe62ade2732dd593cce64c91ef37c8a9b63f83b68d5aee3e6",
+   "context_sha256": "90218284f90cbf2c4715c2a85e2580732ddf6f76a250ce5730b7c19c39542753",
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a",
+   "status": "REFIRE of a2 (seat ruling 6634196369); task/context byte-identical to a2; fires on the re-pinned anchor"
   },
   {
    "invocation_id": "swarm-SWM-01-r2-contrarian-a4",
@@ -15,7 +25,7 @@
    "queue_file": "fire-queue/swarm-SWM-01-r2-contrarian-a4.json",
    "task_sha256": "6de4d2fa06af5ac1dc3a66dc450386f4f8dc59e854e9989ebc1d0bc99fcc1e32",
    "context_sha256": "61f37df7da23b2756eb47305980965481cdda7f49967fc0432bae24b16890e8b",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-01-r2-styles-a2",
@@ -23,7 +33,7 @@
    "queue_file": "fire-queue/swarm-SWM-01-r2-styles-a2.json",
    "task_sha256": "a163f451f8a014fb189afde35ca48b95a8a4ae1e4ccdd017b1122ce7c0f9253c",
    "context_sha256": "e05b0d6efb0768017d40975c59c78e32d535bf153ac65baf943043d9122ea0e6",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-01-r2-tape-a2",
@@ -31,7 +41,7 @@
    "queue_file": "fire-queue/swarm-SWM-01-r2-tape-a2.json",
    "task_sha256": "7f396256652c892cab479003a66eb817c11268993a99093501a2b73c3c042f12",
    "context_sha256": "6c2672ac9db1e9cbd42b78ca5dc3df9ca7e11f692c207be2522e425d22ea2152",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-02-r2-styles-a2",
@@ -39,7 +49,7 @@
    "queue_file": "fire-queue/swarm-SWM-02-r2-styles-a2.json",
    "task_sha256": "e562e504caa1bcb988a7ad8fecb4601cb77129508e95f1a7657b58b48373a512",
    "context_sha256": "c104cc40257569e5c6fc160fc02da6dfd4bb3159e0fe281657b918980efdf21f",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-02-r2-tape-a2",
@@ -47,7 +57,7 @@
    "queue_file": "fire-queue/swarm-SWM-02-r2-tape-a2.json",
    "task_sha256": "b5fc16bb818ae1812288291d00ed08e9fc47385d56fc5f62950746aa42b669a8",
    "context_sha256": "f66bb9d7799bab5f4a80655c351060608a004680a97f49c436e4ce7622b24c47",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-03-r2-contrarian-a2",
@@ -55,7 +65,7 @@
    "queue_file": "fire-queue/swarm-SWM-03-r2-contrarian-a2.json",
    "task_sha256": "5a438c1930dc8a517c18a69ba6aabe24808125080fb2f123fad99d2cc59cc057",
    "context_sha256": "1cef05fa1ca0b72d547b3ab99b348cdf3167df5dd3c6f495c8051e7bcbced918",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-03-r2-styles-a2",
@@ -63,7 +73,7 @@
    "queue_file": "fire-queue/swarm-SWM-03-r2-styles-a2.json",
    "task_sha256": "95c717fdeda10c14288877c097245a3c4c61a69080dd25fda4f3fbdf238a744e",
    "context_sha256": "b02104ec1e2e5bb360a4aaf5c035ed928e0fad965c2c49d51b65f7ff3722f3bc",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-03-r2-tape-a2",
@@ -71,7 +81,7 @@
    "queue_file": "fire-queue/swarm-SWM-03-r2-tape-a2.json",
    "task_sha256": "37285a8ea9220afedd1e60b2fbd150644d668ebbd70ee48c1877ded6c9dfc197",
    "context_sha256": "d7df78f259abe31d124ecf668da48c2194139ba93c489f5e3b11784232115011",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-04-r2-tape-a2",
@@ -79,7 +89,7 @@
    "queue_file": "fire-queue/swarm-SWM-04-r2-tape-a2.json",
    "task_sha256": "d6af863a05e7f472128bbce33242bf3b2ec5d6012ac03cfbbe804b0ef0b6b195",
    "context_sha256": "f137c5580661a8bdf0929972f67bf6ab38bbd80af1e26676c2c72077e2e41d2a",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-04-r2-state-v1",
@@ -87,7 +97,7 @@
    "queue_file": "fire-queue/swarm-SWM-04-r2-state-v1.json",
    "task_sha256": "a9c373d6b7dd010cfa115e4988617927ba9408fa04f9f05dda60dea52f92cf70",
    "context_sha256": "3c06a283f4d83bf1a1c94c1c094f2cdd675efd372af79a03b044275bfa588e81",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-04-r2-styles-v1",
@@ -95,7 +105,7 @@
    "queue_file": "fire-queue/swarm-SWM-04-r2-styles-v1.json",
    "task_sha256": "3ee29cba0b74fec7cf22844070305177f66fb09aba4e7839f5e896e1c60a4f9e",
    "context_sha256": "9cb08a95b400ec65358284dd67220069859e860e0ee3e074a13266e1fe340b9f",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-04-r2-contrarian-v1",
@@ -103,7 +113,7 @@
    "queue_file": "fire-queue/swarm-SWM-04-r2-contrarian-v1.json",
    "task_sha256": "c469b7122136b368b1ab028b22bc3c232cfcbb2662779ea29b7538a233cf6725",
    "context_sha256": "00de14b37df8ccc8f86703ca57d9ee93c3c13319d431d77d1bc34465a93fea46",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-05-r2-state-v1",
@@ -111,7 +121,7 @@
    "queue_file": "fire-queue/swarm-SWM-05-r2-state-v1.json",
    "task_sha256": "94d08339cbb95825c9e5c8a6a0f55e7997b04d61836b8c10cea14898da52e063",
    "context_sha256": "52a656cda67e65e485491c24ac83c62a775eed6be248cba1f30c87fc5f7433d2",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-05-r2-styles-v1",
@@ -119,7 +129,7 @@
    "queue_file": "fire-queue/swarm-SWM-05-r2-styles-v1.json",
    "task_sha256": "7f1d06c55950ad869ad57f36561ee79ee2de9e20f2916b56a4e33d7a9ef2cdf0",
    "context_sha256": "68875431ac5081edaff7c3b6f88610374558db3a4e1ded6e4cc97ef8e354a4dc",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-05-r2-tape-v1",
@@ -127,7 +137,7 @@
    "queue_file": "fire-queue/swarm-SWM-05-r2-tape-v1.json",
    "task_sha256": "8d2244f14b6bd11149e0c3381afc99d19c821ca25f11a9289d62783c2cc6bdaa",
    "context_sha256": "9f1f351046a6f68a84afba0c9b79eefbd9c6f58a641d350565aa0967e80c812d",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-05-r2-contrarian-v1",
@@ -135,7 +145,7 @@
    "queue_file": "fire-queue/swarm-SWM-05-r2-contrarian-v1.json",
    "task_sha256": "b1cdada6a257db82393bca08f1bcb8ffcc45747955c79ade426b4c0781623104",
    "context_sha256": "97ddfafc9c710c8ac41863459f1f4e1610476668411b34b21d45e72868f0aab1",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-06-r2-state-v1",
@@ -143,7 +153,7 @@
    "queue_file": "fire-queue/swarm-SWM-06-r2-state-v1.json",
    "task_sha256": "057e130438d449fba0a8b003fda90d5f1fe585069a61548e88b1fdd4049ddb65",
    "context_sha256": "dff2f8bcf168c79d7100b7704a2337f5b752cb5bb30c8018b8052af12ec117d5",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-06-r2-styles-v1",
@@ -151,7 +161,7 @@
    "queue_file": "fire-queue/swarm-SWM-06-r2-styles-v1.json",
    "task_sha256": "e39fb0368708affc81904cb6346b26437c6225dfa800e3ac267a52ab97c2a2b7",
    "context_sha256": "996d1521434e7196ed3bc269e07cde8bd34b75ba6aad7f1af1b3325050a82c75",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-06-r2-tape-v1",
@@ -159,7 +169,7 @@
    "queue_file": "fire-queue/swarm-SWM-06-r2-tape-v1.json",
    "task_sha256": "44e19eb0cdee65cd32d9b568ae73eb6d21d0285a5c2c11579085c2f56c5952d4",
    "context_sha256": "c53b19304952eaffc1b63e138960557b00c096e2d0ba57e98476edd2a392d214",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-06-r2-contrarian-v1",
@@ -167,7 +177,7 @@
    "queue_file": "fire-queue/swarm-SWM-06-r2-contrarian-v1.json",
    "task_sha256": "7232778af7fbd8323dedfd2e1b4ea7be1e5b41d63133fb9c6248952a6123c925",
    "context_sha256": "0dda4fa9059254f929dac27a5863af8451f8c71798f1d33ac4ba6ddfcfe2b857",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-07-r2-state-v1",
@@ -175,7 +185,7 @@
    "queue_file": "fire-queue/swarm-SWM-07-r2-state-v1.json",
    "task_sha256": "79bcf90ded4cd2609ebab00ab7a1b0712e7b81d81869454de6a49531758025d6",
    "context_sha256": "b30ffd0e3ef04addb4d4d5f110bb30a6af2fcb4a225ea81b8f6efb21fbe10349",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-07-r2-styles-v1",
@@ -183,7 +193,7 @@
    "queue_file": "fire-queue/swarm-SWM-07-r2-styles-v1.json",
    "task_sha256": "c7f18f628593bac9728fe326fd5b92dc46e430529b664c57c94933421cd3238a",
    "context_sha256": "a0b28f4846318db85bdec18bb1d5934c4f7c1e409fee913cd249e42bd174e5d9",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-07-r2-tape-v1",
@@ -191,7 +201,7 @@
    "queue_file": "fire-queue/swarm-SWM-07-r2-tape-v1.json",
    "task_sha256": "0c738ecf5622eb730e02778b5cfd73eb257a274c518f96db114cbd73fe6830b8",
    "context_sha256": "f88c5875225d83e968486e9d531954fef03fb72f427e015610a25b987c4fb6bb",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-07-r2-contrarian-v1",
@@ -199,7 +209,7 @@
    "queue_file": "fire-queue/swarm-SWM-07-r2-contrarian-v1.json",
    "task_sha256": "af576e3f0787badd9ccae85d4862d78d28738bb17304708d86c1b6edd27979d1",
    "context_sha256": "6e0acd9001b8dcd888db934f472e826a396f17f3eae102ee8c03b73595d08fb4",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-08-r2-state-v1",
@@ -207,7 +217,7 @@
    "queue_file": "fire-queue/swarm-SWM-08-r2-state-v1.json",
    "task_sha256": "a410406c1a374793f329b6732822c654d3a5c92d51a342e0a0c5c5c163152f66",
    "context_sha256": "f788f2243e82bc0a7d7c5461038d7ce53813967391069f1edd8d1403da56ab98",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-08-r2-styles-v1",
@@ -215,7 +225,7 @@
    "queue_file": "fire-queue/swarm-SWM-08-r2-styles-v1.json",
    "task_sha256": "cd6063af4a24e3741f71f03e4ea9d56189d9eadb9907575df079c10a43300c32",
    "context_sha256": "fb9f8a9bec066f74e0d102e8d11da3405f9c8aa4bebebd05fd711889ff6cfb69",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-08-r2-tape-v1",
@@ -223,7 +233,7 @@
    "queue_file": "fire-queue/swarm-SWM-08-r2-tape-v1.json",
    "task_sha256": "23cf5d2fd8265975508d9249b30b84ee2945e2794430f1b0dc7fa7ed983509b7",
    "context_sha256": "b98f0aaedcfde7b2eef49cd3428b99b791ac35e1dcf2ae2f5087d48408d53819",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-08-r2-contrarian-v1",
@@ -231,7 +241,7 @@
    "queue_file": "fire-queue/swarm-SWM-08-r2-contrarian-v1.json",
    "task_sha256": "e56ce94f93944ea5969c539bddc03dacbb16f295c9270053e15fcc94e8a94671",
    "context_sha256": "bbdcce7abfef06289ebae139310ecb61ab7e498909c9a87def4b0f6ca146cf51",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-09-r2-state-v1",
@@ -239,7 +249,7 @@
    "queue_file": "fire-queue/swarm-SWM-09-r2-state-v1.json",
    "task_sha256": "477525a7b88a6823d3f02d7f4ecd65f0cc1312583c6da88d384aed91f3bd7960",
    "context_sha256": "4e5a6cc4613fb8e526050ccc55771c5f4e09acd08139b04e2e7b60c0fd3d6ebb",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-09-r2-styles-v1",
@@ -247,7 +257,7 @@
    "queue_file": "fire-queue/swarm-SWM-09-r2-styles-v1.json",
    "task_sha256": "f4a3532af596246b9668633003b2a202532153f004e88f51418b0e5fca0e5d6f",
    "context_sha256": "6102dac04e914fbbfd549f47b5b21e496500962a173f48bb4335894c67f1436b",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-09-r2-tape-v1",
@@ -255,7 +265,7 @@
    "queue_file": "fire-queue/swarm-SWM-09-r2-tape-v1.json",
    "task_sha256": "65da1661c05f7ee4961d14ed7a4fa1d11e4105ccecf79798476e177e5d920268",
    "context_sha256": "bf00278f0afbf0035549cb5573ff493424a7b1c7ee6c3ed5318b9625cbe15cbf",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   },
   {
    "invocation_id": "swarm-SWM-09-r2-contrarian-v1",
@@ -263,7 +273,7 @@
    "queue_file": "fire-queue/swarm-SWM-09-r2-contrarian-v1.json",
    "task_sha256": "f3045da3a4a03e3ca654666593c74a55bbce1c108be7340659031a30ea8e0278",
    "context_sha256": "0571be9b59e8fb1a25fd6e5c1aebeadfb33a7b632495bad2f3252206009c6ddf",
-   "expected_main": "PENDING-REANCHOR"
+   "expected_main": "7a9163348707c37391cacd6dab6162d878ad576a"
   }
  ],
  "deferred": [
@@ -485,15 +495,21 @@
   }
  ],
  "release": "release-1",
- "dispatch_workflow": "qwen3-8b.yml (post-cutover; queue files carry the historical workflow field \u2014 dispatch overrides it)",
+ "dispatch_workflow": "qwen3-8b.yml (post-cutover; queue files carry the historical workflow field — dispatch overrides it)",
  "mirror": "qwen-results (post-cutover); banked history remains on deepseek-results",
  "anchor": {
-  "pass": "7 (re-issued post-cutover, seat: Muse)",
+  "pass": "7 (re-pinned 2026-11-04, seat: Muse)",
   "workflow": ".github/workflows/qwen3-8b.yml",
-  "workflow_blob": "c363796ea7daa6943bbbcb5707edca4281961757",
+  "workflow_blob": "60ffb6c64d098bd0c409e83ed3874ce1438534b6",
   "qwen_gguf_blob": "d0834688349d718a9d3949569da9e8f391dd59d4",
   "qwen_tool_calls_blob": "47c3d18f0b78391895a1246e08eb8d5893e510e6",
-  "budget_line": "FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 1500 (byte-identical to the pre-cutover anchor line)",
-  "equivalence": "verified by the seat against the diff: prompt-production scripts byte-identical, scaffold/guidance region zero changed lines; all remaining deltas classified (naming, mirror rename, inert engine test input, sparse-checkout removal, lazy background install, loud publish warnings)"
+  "token_line": "MAX_NEW_TOKENS = 3000 if LONG_OUTPUT else 1280 (owner-approved patch 22ed6af0)",
+  "budget_line": "FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 1500 (unchanged)"
+ },
+ "reissue": {
+  "date": "2026-11-04",
+  "by": "Muse (seat)",
+  "ruling": "#235 comment 6636920958",
+  "note": "A6 anchor re-pinned after PR #365 merged as-is; a2 entry closed as invalid, a3 refire entry added with byte-identical task/context; all release-1 entries re-anchored to the new main."
  }
 }
