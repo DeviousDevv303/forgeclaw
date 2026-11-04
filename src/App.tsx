@@ -5,6 +5,7 @@ import { FileUploadButton } from './components/FileUploadButton'
 import { NeuralNetworkBackground } from './components/NeuralNetworkBackground'
 import { ThroneBackdrop } from './components/ThroneBackdrop'
 import { ThroneRig } from './components/ThroneRig'
+import { parseAmbientParams } from './components/spiderAmbient'
 // import { SupabaseProvider } from './components/SupabaseProvider'
 import { useErrorBus } from './hooks/useErrorBus'
 import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
@@ -2923,7 +2924,7 @@ function App() {
       {/* Throne backdrop (sibling before neural canvas in DOM order) */}
       <ThroneBackdrop opacity={0.35} />
       {/* Preview: the live throne cube and cables. Opt in with ?rig=1 until the owner decides. */}
-      {new URLSearchParams(window.location.search).get('rig') === '1' && <ThroneRig state={neuralState} events={forgeOpsState.events} spiders={new URLSearchParams(window.location.search).get('spiders') === 'demo' ? 'demo' : 'live'} />}
+      {new URLSearchParams(window.location.search).get('rig') === '1' && <ThroneRig state={neuralState} events={forgeOpsState.events} spiders={new URLSearchParams(window.location.search).get('spiders') === 'demo' ? 'demo' : 'live'} ambient={parseAmbientParams(window.location.search)} />}
       {/* Neural Network Background */}
       <NeuralNetworkBackground
         messageCount={messages.length}

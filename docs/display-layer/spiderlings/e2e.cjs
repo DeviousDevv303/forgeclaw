@@ -11,7 +11,7 @@ const OUT = process.argv[2] || __dirname
 const BASE = process.env.BASE_URL || 'http://localhost:4173/'
 const REAL = path.join(__dirname, '../../../nexus-llm/eval/diagnostics/qwen-path')
 const resultTxt = fs.readFileSync(path.join(REAL, 'result.txt'), 'utf8'), resultMeta = fs.readFileSync(path.join(REAL, 'result_meta.txt'), 'utf8')
-const only = (process.env.ONLY || 'L0,L1,L2,L3,D1').split(',')
+const only = (process.env.ONLY || 'L0,L1,L2,L3,D1,A1,A2,A3,X1').split(',')
 const viewports = (process.env.VIEWPORTS || '1100x900,443x853').split(',')
 const report = { base: BASE, scenarios: [] }
 const ok = (vp, name, pass, detail = {}) => { report.scenarios.push({ viewport: vp, name, pass, ...detail }); console.log(pass ? 'PASS' : 'FAIL', `[${vp}]`, name, JSON.stringify(detail).slice(0, 200)) }
@@ -36,7 +36,7 @@ async function standIn(ctx, state) {
 }
 const num = (page, id) => page.$eval(`[data-testid=${id}]`, e => Number(e.textContent))
 const counters = async page => ({ inflight: await num(page, 'spider-inflight'), returned: await num(page, 'spider-returned'), flagged: await num(page, 'spider-flagged'), unknown: await num(page, 'spider-unknown') })
-const drawn = page => page.$eval('canvas[aria-hidden=true]', c => ({ n: Number(c.dataset.spidersDrawn || 0), phases: JSON.parse(c.dataset.spiderPhases || '{}') }))
+const drawn = page => page.$eval('canvas[aria-hidden=true]', c => ({ n: Number(c.dataset.spidersDrawn || 0), phases: JSON.parse(c.dataset.spiderPhases || '{}'), ambient: Number(c.dataset.ambientDrawn || 0), sig: c.dataset.ambientSig || '' }))
 const lines = async page => { if ((await page.getAttribute('[data-testid=spider-toggle]', 'aria-expanded')) !== 'true') await page.click('[data-testid=spider-toggle]'); return page.$$eval('[data-testid=spider-lines] li', ls => ls.map(l => l.textContent)) }
 const until = async (page, fn, arg, ms = 60000) => { try { await page.waitForFunction(fn, arg, { timeout: ms, polling: 80 }); return true } catch { return false } }
 const ask = async (page, text) => { const box = page.getByRole('textbox').first(); await box.fill(text); await box.press('Enter') }
@@ -61,7 +61,8 @@ const canvasHas = (phase) => ([p]) => { const c = document.querySelector('canvas
     // L1: idle live rig: every surface reads idle, nothing drawn, not flagged as demo
     if (only.includes('L1')) { const { ctx, page, errs } = await open('?rig=1'); await page.waitForSelector('[data-testid=spider-panel]'); await page.waitForTimeout(1200)
       const c = await counters(page), d = await drawn(page), l = await lines(page), demo = await page.$('[data-testid=spider-demo-flag]'), src = await page.getAttribute('[data-testid=spider-panel]', 'data-source')
-      ok(tag, 'L1 idle: counters 0, nothing drawn, empty ledger, source live, no DEMO flag', c.inflight + c.returned + c.flagged + c.unknown === 0 && d.n === 0 && l.length === 1 && /nothing is out of the throne/.test(l[0]) && demo === null && src === 'live' && !errs.length, { counters: c, drawn: d, lines: l, source: src })
+      const note = await page.$eval('[data-testid=spider-ambient]', e => e.textContent).catch(() => null)
+      ok(tag, 'L1 idle: counters 0, no event spider drawn, empty ledger, source live, no DEMO flag; ambient life is drawn and labelled not counted', c.inflight + c.returned + c.flagged + c.unknown === 0 && d.n === 0 && d.ambient >= 1 && /not tool events, not counted/.test(note || '') && l.length === 1 && /nothing is out of the throne/.test(l[0]) && demo === null && src === 'live' && !errs.length, { counters: c, drawn: d, lines: l, source: src, ambientNote: note })
       await shot(page, '1-idle'); await ctx.close() }
 
     // L2: live success through a real chat turn (stand-in GitHub holds the run in flight, then releases it)
@@ -106,6 +107,37 @@ const canvasHas = (phase) => ([p]) => { const c = document.querySelector('canvas
       const fin = await counters(page), ls = await lines(page); await shot(page, '8-demo-final')
       ok(tag, 'D1 end state: returned 2, flagged 1, unknown 1, in flight 0; only the UNKNOWN spider is left; the ledger lists 4 out lines, the returns, and the unknown line (all traceable)', fin.returned === 2 && fin.flagged === 1 && fin.unknown === 1 && fin.inflight === 0 && ls.filter(x => /out of the throne/.test(x)).length === 4 && ls.filter(x => /returned from|flagged at/.test(x)).length === 3 && ls.some(x => /unknown at sandbox · shell_patch · no end event since/.test(x)) && !errs.length, { counters: fin, lines: ls, pageErrors: errs })
       await ctx.close() }
+    // A1: ambient is seeded: a named (seed, frozen time) gives the same scene on every load; another seed gives another; counters never move
+    if (only.includes('A1')) {
+      const frames = [[11, 2500], [11, 11000], [11, 19500], [12, 11000]], sigs = {}
+      let countersStill = true, eventSpiders = 0
+      for (const [seed, t] of frames) {
+        const runs = []
+        for (let k = 0; k < 2; k++) { const { ctx, page } = await open(`?rig=1&spiderSeed=${seed}&spiderFreeze=${t}`); await page.waitForSelector('[data-testid=spider-panel]'); await page.waitForTimeout(700)
+          const d = await drawn(page), c = await counters(page); runs.push(d.sig); eventSpiders += d.n; if (c.inflight + c.returned + c.flagged + c.unknown) countersStill = false
+          if (k === 0) await shot(page, `9-ambient-seed${seed}-t${t}`); await ctx.close() }
+        sigs[`${seed}@${t}`] = runs
+      }
+      const same = Object.values(sigs).every(([a, b]) => a && a === b)
+      ok(tag, 'A1 ambient is reproducible: each named seed+time gives the same scene on two loads; seed 12 differs from seed 11 at the same time; no event spider and no counter moves', same && sigs['11@11000'][0] !== sigs['12@11000'][0] && countersStill && eventSpiders === 0, { signatures: Object.fromEntries(Object.entries(sigs).map(([k, v]) => [k, v[0]])) })
+    }
+    // A2: prefers-reduced-motion turns ambient off (event spiders are information, they stay)
+    if (only.includes('A2')) { const ctx = await browser.newContext({ viewport: { width: vw, height: vh }, isMobile: vw < 600, hasTouch: vw < 600, reducedMotion: 'reduce' })
+      const page = await ctx.newPage(); await page.goto(BASE + '?rig=1', { waitUntil: 'load' }); await page.waitForSelector('[data-testid=spider-panel]'); await page.waitForTimeout(800)
+      const d = await drawn(page), note = await page.$('[data-testid=spider-ambient]')
+      ok(tag, 'A2 prefers-reduced-motion: no ambient spiders and no ambient note', d.ambient === 0 && note === null, { drawn: d }); await ctx.close() }
+    // A3: ?ambient=0 switches ambient off
+    if (only.includes('A3')) { const { ctx, page } = await open('?rig=1&ambient=0'); await page.waitForSelector('[data-testid=spider-panel]'); await page.waitForTimeout(800)
+      const d = await drawn(page); ok(tag, 'A3 ?ambient=0: no ambient spiders', d.ambient === 0, { drawn: d }); await ctx.close() }
+    // X1: the look, close up (3x), after the owner's reference (Phidippus carneus): seed 11 at 2.5 s, a hopper mid-jump and the wall spider
+    if (only.includes('X1') && tag === 'desktop') {
+      const ctx = await browser.newContext({ viewport: { width: vw, height: vh }, deviceScaleFactor: 3 }); await ctx.addInitScript(() => { localStorage.setItem('gh_token', 'test-token') })
+      const page = await ctx.newPage(); await page.goto(BASE + '?rig=1&spiderSeed=11&spiderFreeze=2500', { waitUntil: 'load' }); await page.waitForSelector('[data-testid=spider-panel]'); await page.waitForTimeout(800)
+      const k = Math.max(vw / 1536, vh / 1024), ox = (vw - 1536 * k) / 2, oy = (vh - 1024 * k) / 2, sig = (await drawn(page)).sig
+      const at = id => { const m = sig.match(new RegExp(`${id}:[a-z]+@(\\d+),(\\d+)\\^(\\d+)`)); return m ? { x: ox + Number(m[1]) * k, y: oy + (Number(m[2]) - Number(m[3])) * k } : null }
+      for (const [id, name] of [['hopper-2', '10-anatomy-hopper'], ['climber', '11-anatomy-wall'], ['hopper-1', '12-anatomy-face']]) { const p = at(id); if (p) await page.screenshot({ path: path.join(OUT, `${name}-desktop.png`), clip: { x: Math.max(0, p.x - 70), y: Math.max(0, p.y - (id === 'hopper-1' ? 80 : 60)), width: 140, height: 120 } }) }
+      ok(tag, 'X1 close-ups captured at seed 11, t 2.5 s (3x): a hopper mid-jump (from above), the wall spider, and a resting spider facing the viewer', !!at('hopper-2') && !!at('climber') && /hopper-1:idle/.test(sig), { sig }); await ctx.close()
+    }
   }
   await browser.close(); fs.writeFileSync(path.join(OUT, 'e2e-results.json'), JSON.stringify(report, null, 2))
   const failed = report.scenarios.filter(s => !s.pass).length; console.log(`\n${report.scenarios.length - failed} of ${report.scenarios.length} checks pass`); process.exit(failed ? 1 : 0)

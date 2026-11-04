@@ -1,4 +1,4 @@
-# Spiderlings on the throne rig (v1)
+# Spiderlings on the throne rig (v1, with the amended brief)
 
 Built by the Claude lane at the owner's directive (2026-11-04). Spiders live on the existing `ThroneRig` (`?rig=1`), painted onto the
 backdrop. They leave the chair, run the painted cables to their task cubes, and climb back to the circle at the throne's chest when the
@@ -9,6 +9,29 @@ tool answers. App path only: nothing under `.github/`, no workflow, no file the 
 - `?rig=1&spiders=demo`: a **scripted demo**, labelled `DEMO · simulated events · not live` on the panel and `data-source=demo`.
   It feeds its own ledger and never reads, or mixes into, the live one.
 - No `?rig=1`: the app is unchanged (no canvas, no panel).
+
+## Two kinds of spider (claim-to-diff)
+| Kind | Code | Reads | Counted | Look |
+|---|---|---|---|---|
+| **Event spider** | `drawSpiders` (`spiderDraw.ts`) from the ledger (`src/lib/spiderlings.ts`) | the ForgeOps tool events only | yes: every counter traces to a ledger line | coloured halo = state (working blue, returned green, flagged red, unknown grey and dashed) |
+| **Ambient spider** | `drawAmbient` from `spiderAmbient.ts` | nothing but (seed, time) — a test asserts the module imports no event or ledger code | never | no halo, no tag; labelled on the panel "ambient life · seed N · not tool events, not counted" |
+
+The canvas publishes them separately: `data-spiders-drawn` (event spiders, compared with the ledger by the browser tests) and
+`data-ambient-drawn` / `data-ambient-sig` (ambient).
+
+**Look** (after the owner's reference photo, *Phidippus carneus*): big bright-red abdomen with a white front band, white chevron spots and
+dark speckle; black, shaded, squarish head with a broad white band; long, thick black legs banded white, the front pair held forward;
+fine bristles in a fixed (hashed, never random) pattern, so the fur does not flicker; big forward eyes; iridescent blue-green chelicerae;
+no outline stroke. **At rest it turns to face the viewer** (`drawSpiderFront`): two huge glossy forward eyes with catchlights, smaller laterals, a white fringe under the eyes, blue-green chelicerae, fuzzy white-tipped palps, the red abdomen rising behind the head, legs planted wide in an alert stance — the face is what makes it a character; travelling, it is drawn from above. **Silk** is not a neural line: thin, pale, slight sag, normal compositing, no glow, no pulse.
+
+**Ambient behaviour** is a seeded, weighted behaviour tree per 7 s epoch (idle, groom, hop to another painted node, build a web), with a
+counter-based hash of (seed, actor, epoch), never a running RNG, plus one wall spider on the chair's left rail that climbs, slips,
+catches itself on a line of silk, and comes back down. The scene is a pure function of (seed, time).
+- `?spiderSeed=N` names the seed (default **11**); `?spiderFreeze=MS` freezes the ambient clock (a reproducible frame);
+  `?ambient=0` turns ambient off; `prefers-reduced-motion` turns it off too.
+- **Screenshots `9-ambient-seed11-t2500`, `-t11000`, `-t19500` and `9-ambient-seed12-t11000` are captured under those exact
+  parameters**: load `?rig=1&spiderSeed=11&spiderFreeze=2500` and the ambient scene is the same (the A1 check compares the scene
+  signature across two loads). Close-ups `10-anatomy-hopper` (from above, mid-jump), `11-anatomy-wall` and `12-anatomy-face` (at rest, facing the viewer) are seed 11 at 2.5 s, 3x.
 
 ## What a spider is
 | Ledger line | Comes from (already emitted, `src/types/forgeOps.ts`) | On screen |
@@ -44,8 +67,8 @@ the far one. Return: up the thigh-light (580,548 / 955,548) to the chest circle 
 - Muse-runner feeds (grading, training) are v2; there is no event for them in the app.
 
 ## Tests
-- Unit: `src/lib/spiderlings.test.ts` (ledger, counters, staleness, invariants), `src/components/spiderRoutes.test.ts` (anchors, paths, poses),
-  `src/components/spiderPanel.test.tsx` (panel and rig wiring, idle canary, DEMO flag).
+- Unit: `src/lib/spiderlings.test.ts` (ledger, counters, staleness, invariants), `src/components/spiderRoutes.test.ts` (anchors, paths, poses), `src/components/spiderAmbient.test.ts` (seeded determinism, behaviour tree, wall spider, silk sag, webs, the import boundary),
+  `src/components/spiderPanel.test.tsx` (panel and rig wiring, idle canary, DEMO flag, ambient note, reduced motion).
 - Browser: `e2e.cjs` here, against the production build, desktop 1100×900 and phone 443×853, GitHub stubbed with the real runner result
-  files; results in `e2e-results.json`, screenshots next to it (`1-idle` … `8-demo-final`, `-desktop` / `-phone`).
+  files; results in `e2e-results.json`, screenshots next to it (`1-idle` … `8-demo-final`, `9-ambient-*`, `-desktop` / `-phone`; close-ups `10-`, `11-` desktop).
   `node docs/display-layer/spiderlings/e2e.cjs docs/display-layer/spiderlings` after `vite build && vite preview --port 4173`.

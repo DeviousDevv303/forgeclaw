@@ -63,6 +63,31 @@ describe('SpiderPanel', () => {
   })
 })
 
+describe('ambient life is labelled and never counted', () => {
+  it('the panel says ambient spiders are not tool events and not counted, names the seed, and the counters stay 0', () => {
+    render(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} ambient={{ seed: 11, freezeMs: 2500 }} />)
+    expect(screen.getByTestId('spider-ambient').textContent).toBe('ambient life · seed 11 · frozen at 2.5 s · not tool events, not counted')
+    expect(['spider-inflight', 'spider-returned', 'spider-flagged', 'spider-unknown'].map(num)).toEqual([0, 0, 0, 0])
+  })
+  it('no ambient note when ambient is off', () => {
+    render(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} ambient={null} />)
+    expect(screen.queryByTestId('spider-ambient')).toBeNull()
+  })
+  it('a rig with ambient on shows the note; ?ambient=0 and prefers-reduced-motion both remove it', () => {
+    HTMLCanvasElement.prototype.getContext = (() => null) as unknown as typeof HTMLCanvasElement.prototype.getContext
+    const { unmount } = render(<ThroneRig state={IDLE_NEURAL_STATE} events={[]} ambient={{ enabled: true, seed: 5 }} />)
+    expect(screen.getByTestId('spider-ambient').textContent).toMatch(/seed 5/); unmount()
+    render(<ThroneRig state={IDLE_NEURAL_STATE} events={[]} ambient={{ enabled: false, seed: 5 }} />)
+    expect(screen.queryByTestId('spider-ambient')).toBeNull(); cleanup()
+    const real = window.matchMedia
+    window.matchMedia = ((q: string) => ({ matches: /reduce/.test(q), media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {}, onchange: null, dispatchEvent: () => false })) as typeof window.matchMedia
+    try {
+      render(<ThroneRig state={IDLE_NEURAL_STATE} events={[]} ambient={{ enabled: true, seed: 5 }} />)
+      expect(screen.queryByTestId('spider-ambient')).toBeNull()
+    } finally { window.matchMedia = real }
+  })
+})
+
 describe('ThroneRig feeds the ledger from the ForgeOps events it is given', () => {
   it('the panel follows the events prop; a live rig is never labelled demo; a demo rig is', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'Date'] }); vi.setSystemTime(T0 + 6_000)

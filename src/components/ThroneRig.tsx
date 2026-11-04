@@ -14,7 +14,8 @@ import { solveProgress, turnMode } from './cubeMotion'
 import type { NeuralState } from '../hooks/useNeuralState'
 import type { AgentEvent } from '../types/forgeOps'
 import { useNow, useSpiderDemoEvents, useSpiderlings } from '../hooks/useSpiderlings'
-import { drawSpiders } from './spiderDraw'
+import { drawAmbient, drawSpiders } from './spiderDraw'
+import { AMBIENT_NODES, DEFAULT_AMBIENT_SEED, ambientScene, ambientSignature, type AmbientConfig } from './spiderAmbient'
 import { chooseAnchors, type AnchorSet, type Pt } from './spiderRoutes'
 import { SpiderPanel } from './SpiderPanel'
 
@@ -40,9 +41,11 @@ interface Props {
   events?: readonly AgentEvent[]
   /** 'demo' feeds scripted events through the same ledger and labels everything DEMO; never live data. */
   spiders?: 'live' | 'demo'
+  /** Ambient life (hops, silk, webs, the wall spider): seeded, no counters, never reads the ledger. Off for reduced motion. */
+  ambient?: AmbientConfig
 }
 
-export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9, events = [], spiders = 'live' }) => {
+export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9, events = [], spiders = 'live', ambient = { enabled: true, seed: DEFAULT_AMBIENT_SEED } }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state }, [state])
@@ -51,12 +54,18 @@ export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9, events = [], 
   const ledgerRef = useRef(ledger)
   useEffect(() => { ledgerRef.current = ledger }, [ledger])
   const now = useNow()
+  const ambientRef = useRef(ambient)
+  useEffect(() => { ambientRef.current = ambient }, [ambient])
+  const reducedMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  const reducedRef = useRef(reducedMotion)
+  useEffect(() => { reducedRef.current = reducedMotion }, [reducedMotion])
 
   useEffect(() => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
     const runner = newRubikRunner(11)
+    const mountedAt = Date.now()
     let w = 0, h = 0, dpr = 1, raf = 0
     const resize = () => {
       dpr = Math.min(window.devicePixelRatio || 1, 2)
@@ -132,6 +141,13 @@ export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9, events = [], 
       const drawn = drawSpiders(ctx, ledgerRef.current.runs, Date.now(), anchors, P, k, t, { w, h })
       // What was drawn this frame, readable from outside the canvas: the browser tests compare it with the ledger, and so can anyone.
       canvas.dataset.spidersDrawn = String(drawn.drawn); canvas.dataset.spiderPhases = JSON.stringify(drawn.byPhase)
+
+      // Ambient life: a pure function of (seed, time); never reads the ledger, never counted. Its own attributes, so a test can tell the two apart.
+      const amb = ambientRef.current
+      if (amb.enabled && !reducedRef.current) {
+        const scene = ambientScene(amb.seed, amb.freezeMs ?? Date.now() - mountedAt, AMBIENT_NODES.filter(visible))
+        canvas.dataset.ambientDrawn = String(drawAmbient(ctx, scene, P, k, t)); canvas.dataset.ambientSeed = String(amb.seed); canvas.dataset.ambientSig = ambientSignature(scene)
+      } else { canvas.dataset.ambientDrawn = '0'; canvas.dataset.ambientSeed = String(amb.seed); canvas.dataset.ambientSig = '' }
     }
     raf = requestAnimationFrame(frame)
     return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize) }
@@ -140,7 +156,7 @@ export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9, events = [], 
   return (
     <>
       <canvas ref={canvasRef} aria-hidden="true" style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity }} />
-      <SpiderPanel ledger={ledger} now={now} />
+      <SpiderPanel ledger={ledger} now={now} ambient={ambient.enabled && !reducedMotion ? { seed: ambient.seed, freezeMs: ambient.freezeMs } : null} />
     </>
   )
 }

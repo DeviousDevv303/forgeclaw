@@ -14,7 +14,7 @@ const TONE_COLOR = { out: '#8fd0ff', ok: '#6bffb0', flag: '#ff6670', unknown: '#
 const SHOWN = 12
 const GLYPH = { out: '↗', ok: '↙', flag: '⚑', unknown: '?' } as const
 
-export const SpiderPanel: React.FC<{ ledger: SpiderLedger; now: number }> = ({ ledger, now }) => {
+export const SpiderPanel: React.FC<{ ledger: SpiderLedger; now: number; ambient?: { seed: number; freezeMs?: number } | null }> = ({ ledger, now, ambient = null }) => {
   const [open, setOpen] = useState(false)
   const c = spiderCounters(ledger, now)
   const all = panelLines(ledger, now, Infinity)
@@ -52,6 +52,11 @@ export const SpiderPanel: React.FC<{ ledger: SpiderLedger; now: number }> = ({ l
       <div data-testid="spider-asof" style={{ opacity: 0.7 }}>
         as of {formatClock(now)} · counting since {formatClock(ledger.since)}{demo ? ' (demo feed)' : ' (this session)'}
       </div>
+      {ambient && (
+        <div data-testid="spider-ambient" style={{ opacity: 0.6 }}>
+          ambient life · seed {ambient.seed}{ambient.freezeMs !== undefined ? ` · frozen at ${(ambient.freezeMs / 1000).toFixed(1)} s` : ''} · not tool events, not counted
+        </div>
+      )}
       {open && (
         <ol data-testid="spider-lines" style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, maxHeight: '38vh', overflowY: 'auto' }}>
           {lines.length === 0 && <li data-testid="spider-empty" style={{ opacity: 0.7 }}>no tool events yet: nothing is out of the throne</li>}
