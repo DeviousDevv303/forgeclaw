@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildRuntimeRequestContext } from './codingAgentRuntime'
-import { buildQwenTaskPayload, formatQwenConversation, splitConversationSection } from './ai/qwenContext'
+import { buildQwenTaskPayload, conversationRelevantToTask, CONVERSATION_TOPIC_GUARD, formatQwenConversation, splitConversationSection } from './ai/qwenContext'
 import { sendViaRouter } from './ai/providerRouter'
 import type { AIMessage } from './ai/types'
 import { executeTool, loadToolContext } from './forgeTools'
@@ -125,5 +125,38 @@ describe('every message reaches the model, opening or follow-up', () => {
       expect(result, text).toMatchObject({ success: true, response: { stopReason: 'deterministic-qwen-reasoning' } })
       if (result.success) expect((result.response.toolCalls?.[0]?.input as { context?: string }).context, text).toContain(ANSWER)
     }
+  })
+})
+
+// Fix directive (#235 comment 6637531549, Muse): the live repro — the owner asked for a Makhachev vs Khabib simulation and got a
+// weeks-old trading answer, because the last six messages rode on every dispatch with no relevance gate.
+describe('conversation relevance gate', () => {
+  const TRADING = formatQwenConversation([
+    { role: 'user', content: asSentByApp('When is the best time to trade Bitcoin contracts on Kalshi?') },
+    { role: 'assistant', content: 'The best time to trade is during periods of high liquidity and volatility, usually around the US market open.' },
+  ])
+  const FIGHT = formatQwenConversation([
+    { role: 'user', content: asSentByApp('Run a simulation of Islam Makhachev vs Khabib Nurmagomedov') },
+    { role: 'assistant', content: 'Simulated over five rounds: Khabib wins a unanimous decision on takedowns and top control against Makhachev.' },
+  ])
+  it('a fresh-topic task dispatches with NO conversation section: the old trading turn never reaches the prompt', () => {
+    const payload = buildQwenTaskPayload(asSentByApp('Run a simulation of Islam Makhachev vs Khabib Nurmagomedov'), '', TRADING)
+    expect(payload.task).toBe('Run a simulation of Islam Makhachev vs Khabib Nurmagomedov')
+    expect(payload.context ?? '').not.toContain('[CONVERSATION_SO_FAR]')
+    expect(payload.context ?? '').not.toMatch(/liquidity|volatility|Kalshi/)
+  })
+  it('a genuine follow-up keeps the thread, closed by the topic guard', () => {
+    for (const followUp of ['Who takes the rematch?', 'why?', 'And what about a rematch at featherweight?']) {
+      const ctx = buildQwenTaskPayload(asSentByApp(followUp), '', FIGHT).context ?? ''
+      expect(ctx, followUp).toContain('[CONVERSATION_SO_FAR]')
+      expect(ctx, followUp).toContain('Khabib wins a unanimous decision')
+      expect(ctx, followUp).toContain(CONVERSATION_TOPIC_GUARD)
+      expect(ctx.indexOf(CONVERSATION_TOPIC_GUARD), followUp).toBeLessThan(ctx.indexOf('[/CONVERSATION_SO_FAR]'))
+    }
+  })
+  it('a task that shares real topic words with the thread keeps it, without any pronoun', () => {
+    expect(conversationRelevantToTask('Simulate Makhachev against Khabib Nurmagomedov at lightweight with five rounds', FIGHT)).toBe(true)
+    expect(conversationRelevantToTask('Simulate Makhachev against Khabib Nurmagomedov at lightweight with five rounds', TRADING)).toBe(false)
+    expect(conversationRelevantToTask('anything', '')).toBe(false)
   })
 })
