@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""REVIEWER v1 diagnostic 2x2 (not an exam run): {workflow scaffold, neutral prompt} x {non-thinking, thinking}.
+"""NOTE (2026-11-04): frozen history. It drives the workflow and scripts as they were at the commit named below; deepseek-16b.yml and deepseek_*.py were removed from main when the workflow became qwen3-8b.yml, so run it from a checkout of that commit.
+REVIEWER v1 diagnostic 2x2 (not an exam run): {workflow scaffold, neutral prompt} x {non-thinking, thinking}.
 Runs the REAL embedded script of deepseek-16b.yml @ 4382e09 against the REAL Qwen3-8B Q4_K_M GGUF locally (CPU),
 with only these patches, each asserted to apply exactly once:
   all cells : MAX_NEW_TOKENS -> 3000, FAST_TIME_BUDGET_S -> 1800 (equal budget in every cell; run 1 hit neither cap)
