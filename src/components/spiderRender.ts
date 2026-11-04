@@ -86,7 +86,7 @@ function furEllipse(b: Buckets, seed: number, cx: number, cy: number, rx: number
 }
 
 // ---- static body (cached) -------------------------------------------------------------------------------------------------------
-interface BodyCache { draw: (ctx: CanvasRenderingContext2D, glint: string) => void }
+interface BodyCache { draw: (ctx: CanvasRenderingContext2D, glint: string, headTurn: number) => void }
 const bodyCache = new Map<string, BodyCache>()
 
 /** Abdomen behind (−x), cephalothorax in front; both centred on the spider's own axis, size s = body length. */
@@ -96,11 +96,12 @@ function body(morph: Morph, s: number): BodyCache {
   const P = PAL[morph]
   const AX = -s * 0.5, ARX = s * 0.44, ARY = s * 0.34 // abdomen
   const CX = s * 0.16, CRX = s * 0.34, CRY = s * 0.3 // cephalothorax
-  const abdFur: Buckets = new Map(), cephFur: Buckets = new Map(), marks: Buckets = new Map(), rimFur: Buckets = new Map()
+  // abdomen and cephalothorax are kept apart so the head can turn on its own (a jumping spider's head tilt)
+  const abdFur: Buckets = new Map(), cephFur: Buckets = new Map(), marks: Buckets = new Map(), cephMarks: Buckets = new Map(), rimFur: Buckets = new Map(), cephRim: Buckets = new Map()
   furEllipse(abdFur, 11, AX, 0, ARX, ARY, s, 170, 0, P.abdHair, P.rim)
   furEllipse(rimFur, 13, AX, 0, ARX, ARY, s, 0, 70, P.abdHair, P.rim)
   furEllipse(cephFur, 21, CX, 0, CRX, CRY, s, 130, 0, P.cephHair, P.rim)
-  furEllipse(rimFur, 23, CX, 0, CRX, CRY, s, 0, 56, P.cephHair, P.rim)
+  furEllipse(cephRim, 23, CX, 0, CRX, CRY, s, 0, 56, P.cephHair, P.rim)
   const dense = Math.min(5, Math.max(1, s / 40))
   if (morph !== 'red') {
     // the fuzzy white band across the abdomen's front, and the white spots (each a tuft of strands)
@@ -121,10 +122,10 @@ function body(morph: Morph, s: number): BodyCache {
       const side = j % 2 ? 1 : -1, u = hh(51, j), a = side * (Math.PI * 0.55 + u * Math.PI * 0.35)
       const x = CX + Math.cos(a) * CRX * 0.9, y = Math.sin(a) * CRY * 0.9, len = s * (0.03 + hh(52, j) * 0.03)
       const d = a + Math.PI + (hh(53, j) - 0.5) * 0.7
-      strand(marks, css(P.mark, 0.88), x, y, Math.cos(d) * len, Math.sin(d) * len)
+      strand(cephMarks, css(P.mark, 0.88), x, y, Math.cos(d) * len, Math.sin(d) * len)
     }
   }
-  const draw = (ctx: CanvasRenderingContext2D, glint: string) => {
+  const draw = (ctx: CanvasRenderingContext2D, glint: string, headTurn: number) => {
     // abdomen: shaded round
     const ag = ctx.createRadialGradient(AX + s * 0.08, -s * 0.12, s * 0.03, AX, 0, ARX * 1.05)
     ag.addColorStop(0, css(P.abdHi)); ag.addColorStop(0.45, css(P.abd)); ag.addColorStop(1, css(P.abdLo))
@@ -137,6 +138,10 @@ function body(morph: Morph, s: number): BodyCache {
       for (const [sx, sy] of [[-0.56, -0.08], [-0.56, 0.08], [-0.72, -0.13], [-0.72, 0.13], [-0.85, -0.05], [-0.85, 0.05]] as const) { ctx.beginPath(); ctx.ellipse(s * sx, s * sy, s * 0.03, s * 0.022, 0, 0, Math.PI * 2); ctx.fill() }
     }
     strokeBuckets(ctx, abdFur, Math.max(0.35, s * 0.0045))
+    strokeBuckets(ctx, marks, Math.max(0.4, s * 0.0055))
+    strokeBuckets(ctx, rimFur, Math.max(0.35, s * 0.0045))
+    // the head turns on the pedicel, independent of the body
+    ctx.save(); const px = CX - CRX * 0.8; ctx.translate(px, 0); ctx.rotate(headTurn); ctx.translate(-px, 0)
     // cephalothorax: velvet, shaded
     const cg = ctx.createRadialGradient(CX + s * 0.05, -s * 0.1, s * 0.02, CX, 0, CRX * 1.05)
     cg.addColorStop(0, css(P.cephHi)); cg.addColorStop(0.5, css(P.ceph)); cg.addColorStop(1, css(P.cephLo))
@@ -147,8 +152,8 @@ function body(morph: Morph, s: number): BodyCache {
       ctx.beginPath(); ctx.ellipse(CX, 0, CRX * 0.86, CRY * 0.86, 0, Math.PI * 0.55, Math.PI * 1.45); ctx.stroke(); ctx.restore()
     }
     strokeBuckets(ctx, cephFur, Math.max(0.35, s * 0.0045))
-    strokeBuckets(ctx, marks, Math.max(0.4, s * 0.0055))
-    strokeBuckets(ctx, rimFur, Math.max(0.35, s * 0.0045))
+    strokeBuckets(ctx, cephMarks, Math.max(0.4, s * 0.0055))
+    strokeBuckets(ctx, cephRim, Math.max(0.35, s * 0.0045))
     // eyes along the front edge, seen from above: two big anterior medians, laterals at the corners, posteriors behind
     const eye = (ex: number, ey: number, r: number) => {
       const g = ctx.createRadialGradient(ex + r * 0.25, ey - r * 0.25, r * 0.05, ex, ey, r)
@@ -165,6 +170,7 @@ function body(morph: Morph, s: number): BodyCache {
       ig.addColorStop(0, 'rgb(34,96,170)'); ig.addColorStop(0.5, 'rgb(52,170,150)'); ig.addColorStop(1, 'rgb(36,74,170)')
       ctx.fillStyle = ig; ctx.globalAlpha *= 0.55; ctx.beginPath(); ctx.ellipse(CX + s * 0.33, -s * 0.045, s * 0.028, s * 0.024, 0, 0, Math.PI * 2); ctx.ellipse(CX + s * 0.33, s * 0.045, s * 0.028, s * 0.024, 0, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha /= 0.55
     }
+    ctx.restore()
   }
   const out = { draw }
   if (bodyCache.size > 64) bodyCache.clear()
@@ -226,6 +232,12 @@ export interface RenderLook {
   tilt?: number
   /** What it stands on: the contact shadow conforms (flat on the floor; offset and tight on a vertical face). */
   surface?: 'floor' | 'chair' | 'wall'
+  /** The head turned on its own, relative to the body (radians, small): the jumping spider's head tilt. */
+  headTurn?: number
+  /** Weight shifted to one side, -1..1: the legs on that side flex, the far side extends, the feet stay planted. */
+  lean?: number
+  /** 0..1: sunk low, legs gathered, knees high — before a jump, or watching. */
+  crouch?: number
 }
 /** A contact shadow that lies on the surface under it: a wide flat pool on the floor, a tight offset shape on a vertical face. */
 function contactShadow(ctx: CanvasRenderingContext2D, s: number, surface: RenderLook['surface'], cx: number, cy: number) {
@@ -243,7 +255,8 @@ function contactShadow(ctx: CanvasRenderingContext2D, s: number, surface: Render
  */
 export function renderJumperTop(ctx: CanvasRenderingContext2D, s: number, look: RenderLook) {
   const morph = look.morph ?? 'carneus', P = PAL[morph]
-  const pitch = look.pitch ?? 0, squash = look.squash ?? 0
+  const pitch = look.pitch ?? 0, squash = look.squash ?? 0, lean = look.lean ?? 0, crouch = look.crouch ?? 0, headTurn = look.headTurn ?? 0
+  const shift = lean * s * 0.13 // the body's weight moves toward the side it leans to
   contactShadow(ctx, s, look.surface, -s * 0.15, s * 0.05)
   ctx.save()
   // climbing: foreshortened along its length; landing: squashed flat and wide; breathing: the faintest swell
@@ -253,10 +266,12 @@ export function renderJumperTop(ctx: CanvasRenderingContext2D, s: number, look: 
   // legs, rear pair first so the front pair sits on top
   for (const i of [3, 2, 1, 0]) for (const side of [-1, 1]) {
     const phase = look.moving ? Math.sin(look.gait * 1.6 + (i % 2 ? Math.PI : 0) + (side > 0 ? Math.PI : 0)) : 0
-    const rootX = s * [0.28, 0.17, 0.06, -0.04][i], rootY = side * s * 0.2
+    const rootX = s * [0.28, 0.17, 0.06, -0.04][i], rootY = side * s * 0.2 + shift
+    // leaning: the near legs fold, the far legs reach; crouching: every leg gathers wider and lower
+    const flex = (1 - 0.38 * Math.max(0, lean * side) + 0.22 * Math.max(0, -lean * side)) * (1 + 0.32 * crouch)
     // climbing: pair I swings forward to reach over the edge, pair IV back to push; landing: every leg splays to take the load
     const ang = [0.62, 1.05, 1.95, 2.45][i] + phase * 0.1 - (i === 0 ? pitch * 0.35 : i === 3 ? -pitch * 0.25 : 0) + squash * (i < 2 ? 0.12 : -0.12)
-    const femur = s * [0.3, 0.24, 0.24, 0.3][i] * (i === 0 ? 1 + pitch * 0.7 : i === 3 ? 1 + pitch * 0.3 : 1) // short from above: it points up out of the body
+    const femur = s * [0.3, 0.24, 0.24, 0.3][i] * (i === 0 ? 1 + pitch * 0.7 : i === 3 ? 1 + pitch * 0.3 : 1) * flex // short from above: it points up out of the body
     const tibia = s * [0.36, 0.28, 0.3, 0.38][i], tarsus = s * [0.16, 0.12, 0.13, 0.16][i]
     const kx = rootX + Math.cos(ang) * femur, ky = rootY + side * Math.sin(ang) * femur
     const a2 = ang + (i < 2 ? -0.22 : 0.18) - (i === 0 ? 0.18 : 0)
@@ -279,11 +294,15 @@ export function renderJumperTop(ctx: CanvasRenderingContext2D, s: number, look: 
   strokeBuckets(ctx, hair, Math.max(0.35, s * 0.0045))
   // palps: short, furry, pale-tipped; always a slow wave, faster when it grooms
   const tw = look.groom ? Math.sin(look.gait * 2) * s * 0.03 : Math.sin(look.gait * 0.6) * s * 0.012
+  ctx.save(); ctx.translate(0, shift); ctx.scale(1 - crouch * 0.09, 1 - crouch * 0.09) // sunk low between the gathered legs
+  ctx.save(); ctx.translate(-s * 0.112, 0); ctx.rotate(headTurn); ctx.translate(s * 0.112, 0) // the palps turn with the head
   for (const side of [-1, 1]) {
     limb(ctx, P, s * 0.42, side * s * 0.1, s * 0.56, side * s * 0.12 + tw * side, s * 0.07, s * 0.08)
     ctx.fillStyle = css(P.legHair[2], 0.9); ctx.beginPath(); ctx.arc(s * 0.57, side * s * 0.12 + tw * side, s * 0.035, 0, Math.PI * 2); ctx.fill()
   }
-  body(morph, s).draw(ctx, look.glint ?? 'rgba(255,255,255,0.9)')
+  ctx.restore()
+  body(morph, s).draw(ctx, look.glint ?? 'rgba(255,255,255,0.9)', headTurn)
+  ctx.restore()
   ctx.restore()
 }
 
@@ -299,10 +318,13 @@ export function renderJumperFront(ctx: CanvasRenderingContext2D, s: number, look
   const sg = ctx.createRadialGradient(0, 0, s * 0.1, 0, 0, s * 1.1)
   sg.addColorStop(0, 'rgba(0,0,0,0.5)'); sg.addColorStop(1, 'rgba(0,0,0,0)')
   ctx.fillStyle = sg; ctx.beginPath(); ctx.ellipse(0, 0, s * 1.1, s * 0.2, 0, 0, Math.PI * 2); ctx.fill()
+  const crouch = look.crouch ?? 0, lean = look.lean ?? 0
+  const turn = (look.tilt ?? 0) + (look.headTurn ?? 0) // the head turns toward what it watches, on its own
+  const leanDx = lean * s * 0.17 // weight over one side
   ctx.save()
-  ctx.rotate(look.tilt ?? 0) // the head turns toward what it watches
   ctx.scale(1 + squash * 0.12, 1 - squash * 0.18) // a landing settles it low
-  const headY = -s * 0.36 + breathe
+  const headY = -s * 0.36 * (1 - crouch * 0.3) + breathe // a crouch sinks the body toward the ground
+  ctx.save(); ctx.translate(leanDx, 0)
   // abdomen behind, rising over the head
   const ab: Buckets = new Map()
   furEllipse(ab, 61, 0, headY - s * 0.3, s * 0.4, s * 0.24, s, 90, 40, P.abdHair, P.rim, 0.9, -Math.PI / 2)
@@ -310,16 +332,20 @@ export function renderJumperFront(ctx: CanvasRenderingContext2D, s: number, look
   ag.addColorStop(0, css(P.abdHi)); ag.addColorStop(0.5, css(P.abd)); ag.addColorStop(1, css(P.abdLo))
   ctx.fillStyle = ag; ctx.beginPath(); ctx.ellipse(0, headY - s * 0.3, s * 0.4, s * 0.24, 0, 0, Math.PI * 2); ctx.fill()
   strokeBuckets(ctx, ab, Math.max(0.35, s * 0.0045))
-  // legs: knee high, foot on the ground further out; pair I raised in front
+  ctx.restore()
+  // legs: knee high, foot on the ground further out; pair I raised in front; the feet stay planted when it leans
   const hair: Buckets = new Map()
   for (const i of [3, 2, 1, 0]) for (const side of [-1, 1]) {
-    const root = { x: side * s * (0.24 + i * 0.03), y: headY + s * (-0.02 + i * 0.07) }
-    const rise = [65, 58, 52, 46][i] * Math.PI / 180 // the femur's angle above the ground
+    const root0 = { x: side * s * (0.24 + i * 0.03), y: headY + s * (-0.02 + i * 0.07) }
+    const rise = ([65, 58, 52, 46][i] + crouch * 10) * Math.PI / 180 // the femur's angle above the ground; a crouch raises the knees
     const femur = s * [0.4, 0.42, 0.46, 0.5][i]
-    const knee = { x: root.x + side * Math.cos(rise) * femur, y: root.y - Math.sin(rise) * femur }
+    const knee0 = { x: root0.x + side * Math.cos(rise) * femur, y: root0.y - Math.sin(rise) * femur }
+    const root = { x: root0.x + leanDx, y: root0.y }
+    const near = lean * side > 0 // leaning toward this side: its legs fold (knee up), the far side extends (knee down)
+    const knee = { x: knee0.x + leanDx * 0.5, y: knee0.y + (near ? -1 : 1) * Math.abs(lean) * s * 0.06 }
     const foot = i === 0
       ? { x: knee.x + side * s * 0.08, y: knee.y - s * 0.12 } // pair I held up and forward
-      : { x: knee.x + side * s * (0.1 + i * 0.1), y: -s * 0.02 }
+      : { x: knee0.x + side * s * (0.1 + i * 0.1), y: -s * 0.02 } // planted: where it was before it leaned
     const tip = i === 0 ? { x: foot.x + side * s * 0.04, y: foot.y - s * 0.06 } : { x: foot.x + side * s * 0.05, y: 0 }
     const w = s * [0.2, 0.16, 0.16, 0.16][i]
     limb(ctx, P, root.x, root.y, knee.x, knee.y, w, w * 1.04)
@@ -332,7 +358,8 @@ export function renderJumperFront(ctx: CanvasRenderingContext2D, s: number, look
     limbHair(hair, P, seed + 40, knee.x, knee.y, foot.x, foot.y, w * 0.95, w * 0.6, s, 7, [0.55, 0.72])
   }
   strokeBuckets(ctx, hair, Math.max(0.35, s * 0.0045))
-  // the face
+  // the face: leaned with the body, and turned on its own
+  ctx.save(); ctx.translate(leanDx, headY); ctx.rotate(turn); ctx.translate(0, -headY)
   const face: Buckets = new Map()
   furEllipse(face, 71, 0, headY, s * 0.36, s * 0.3, s, 120, 60, P.cephHair, P.rim, 0.9, Math.PI / 2)
   const hg = ctx.createRadialGradient(-s * 0.08, headY - s * 0.12, s * 0.02, 0, headY, s * 0.4)
@@ -373,5 +400,6 @@ export function renderJumperFront(ctx: CanvasRenderingContext2D, s: number, look
       ctx.fillStyle = css(P.legHair[2], 0.9); ctx.beginPath(); ctx.arc(side * s * 0.2, headY + s * 0.35 + tw * side, s * 0.035, 0, Math.PI * 2); ctx.fill()
     }
   }
+  ctx.restore()
   ctx.restore()
 }

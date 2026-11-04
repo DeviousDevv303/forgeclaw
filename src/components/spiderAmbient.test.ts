@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { AMBIENT_NODES, DEFAULT_AMBIENT_SEED, EPOCH_MS, ESCAPE_MS, HOP_MS, WALL, ambientScene, ambientSignature, parseAmbientParams, rnd, sagLine, webSegments } from './spiderAmbient'
+import { AMBIENT_NODES, DEFAULT_AMBIENT_SEED, EPOCH_MS, ESCAPE_MS, HOP_MS, WALL, ambientScene, leanAt, scanHead, ambientSignature, parseAmbientParams, rnd, sagLine, webSegments } from './spiderAmbient'
 
 const SECONDS = (n: number) => n * 1000
 
@@ -119,7 +119,7 @@ describe('ambient never claims state', () => {
     expect(src).not.toMatch(/spiderlings|forgeOps|useSpiderlings|AgentEvent|SpiderLedger/)
   })
   it('the spiders it returns carry no tone, tool or run: nothing a counter could count', () => {
-    for (const s of ambientScene(11, 12_345).spiders) expect(Object.keys(s).sort()).toEqual(['action', 'groom', 'heading', 'id', 'kind', 'lift', 'moving', 'squash', 'x', 'y'])
+    for (const s of ambientScene(11, 12_345).spiders) expect(Object.keys(s).sort()).toEqual(['action', 'crouch', 'groom', 'headTurn', 'heading', 'id', 'kind', 'lean', 'lift', 'moving', 'squash', 'x', 'y'])
   })
 })
 
@@ -160,5 +160,34 @@ describe('realism and stealth (owner passes, 2026-11-04)', () => {
     expect(ambientScene(11, t0 + ESCAPE_MS + 10, AMBIENT_NODES, [t0]).spiders.some(s => s.action === 'escape')).toBe(false)
     expect(ambientSignature(ambientScene(11, t0 + 2000, AMBIENT_NODES, [t0]))).toBe(ambientSignature(hang))
     expect(ambientSignature(ambientScene(11, t0 - 10, AMBIENT_NODES, [t0]))).toBe(ambientSignature(ambientScene(11, t0 - 10))) // a future startle changes nothing
+  })
+})
+
+describe('head tilt, lean and crouch (owner, 2026-11-04: "everything realistic")', () => {
+  it('the head scans in snaps: it holds an angle, then turns to the next within ~90 ms, never a slow sweep', () => {
+    const at = (t: number) => scanHead(11, 1, t)
+    expect(at(650 * 4 + 200)).toBeCloseTo(at(650 * 4 + 600), 10) // held
+    expect(Math.abs(at(650 * 5 + 95) - at(650 * 5 - 5))).toBeGreaterThan(0) // snapped at the step
+    for (let t = 0; t < 60_000; t += 37) expect(Math.abs(at(t))).toBeLessThanOrEqual(0.35 + 1e-9)
+  })
+  it('the weight shifts side to side within bounds, and both ways over time', () => {
+    const vals = Array.from({ length: 200 }, (_, i) => leanAt(11, 1, i * 1000))
+    expect(Math.max(...vals)).toBeGreaterThan(0.2); expect(Math.min(...vals)).toBeLessThan(-0.2); expect(vals.every(v => Math.abs(v) <= 0.7)).toBe(true)
+  })
+  it('it gathers into a crouch before it jumps, and travels with its head forward and weight centred', () => {
+    for (let e = 0; e < 300; e++) {
+      const at = (o: number) => ambientScene(11, e * EPOCH_MS + o).spiders.find(s => s.id === 'hopper-1')!
+      if (at(100).action !== 'hop') continue
+      let first = -1; for (let o = 0; o < EPOCH_MS; o += 10) if (at(o).lift > 0) { first = o; break }
+      expect(at(first - 20).crouch).toBeGreaterThan(0.8)
+      expect([at(first + 100).headTurn, at(first + 100).lean]).toEqual([0, 0])
+      return
+    }
+    throw new Error('no hop found')
+  })
+  it('watching spiders sometimes sit in a crouch, and turn their heads', () => {
+    const idle = Array.from({ length: 400 }, (_, e) => ambientScene(11, e * EPOCH_MS + 3000).spiders.find(s => s.id === 'hopper-1')!).filter(s => s.action === 'idle')
+    expect(idle.some(s => s.crouch > 0)).toBe(true); expect(idle.some(s => s.crouch === 0)).toBe(true)
+    expect(new Set(idle.map(s => s.headTurn.toFixed(3))).size).toBeGreaterThan(10)
   })
 })

@@ -45,7 +45,11 @@ catches itself on a line of silk, and comes back down. The scene is a pure funct
 - **Attention:** a resting spider turns its head toward the owner's pointer while it moves, otherwise toward the turning cube.
 - **Life at rest:** statue-still is the resting state (idle is weighted far above hopping); palps wave slowly, groom now and then; the
   abdomen breathes; eyeshine catchlights take the scene's light colour (the same tone as the cube and cables).
-- Pose sheet: `docs/spiderlings/v4-poses.png` (standing, climbing, landing, attending).
+- **Head tilt, lean, crouch (owner, 2026-11-04):** the head turns on its own at the neck, holding an angle and snapping to the next
+  (a jumping spider's scan), forward while it travels; the weight shifts side to side (near legs fold, far legs reach, feet planted);
+  it gathers into a deep crouch before every jump and sometimes sits in a watching crouch. Outbound event spiders stalk crouched and
+  scan with their heads in each freeze. All seeded and pure (`scanHead`, `leanAt`).
+- Pose sheets: `docs/spiderlings/v4-poses.png` (standing, climbing, landing, attending) and `v4-poses-head-lean-crouch.png`.
 - **Not built (said plainly):** leg-by-leg inverse kinematics over real ledge geometry (feet at different heights on the armrest and
   platform) and hiding behind a cube edge. The painting carries no depth map, so v4 classifies surfaces by region and pitches the body;
   per-foot terrain contact needs ledge geometry traced on the painting first.

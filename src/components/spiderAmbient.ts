@@ -74,7 +74,7 @@ function steps(seed: number, actor: number, nodes: readonly Pt[], epoch: number)
   return list
 }
 
-export interface AmbientSpider { id: string; kind: 'hopper' | 'climber'; x: number; y: number; heading: number; lift: number; moving: boolean; groom: boolean; action: string; /** Takeoff crouch and landing compression, 0..1. */ squash: number }
+export interface AmbientSpider { id: string; kind: 'hopper' | 'climber'; x: number; y: number; heading: number; lift: number; moving: boolean; groom: boolean; action: string; /** Takeoff crouch and landing compression, 0..1. */ squash: number; /** Head turned on its own (radians). */ headTurn: number; /** Weight to one side, -1..1. */ lean: number; /** Sunk low, 0..1. */ crouch: number }
 export interface Silk { pts: Pt[]; alpha: number }
 export interface AmbientScene { spiders: AmbientSpider[]; silk: Silk[] }
 
@@ -98,6 +98,26 @@ export function webSegments(c: Pt, seed: number, epoch: number): Pt[][] {
   return segs
 }
 
+/**
+ * The head scan of a watching jumping spider: it holds an angle, then SNAPS to the next (90 ms), never a slow sweep. Pure in
+ * (seed, key, t). Exported so the event spiders scan the same way when they freeze.
+ */
+export function scanHead(seed: number, key: number, t: number, range = 0.7): number {
+  const STEP = 650, step = Math.floor(t / STEP), into = t - step * STEP
+  const at = (k: number) => (rnd(seed, key * 97 + 1, k) - 0.5) * range
+  return at(step - 1) + (at(step) - at(step - 1)) * ease(into / 90)
+}
+/** A slow shift of weight from side to side (-0.7..0.7), easing over 400 ms between holds. Pure. */
+export function leanAt(seed: number, key: number, t: number): number {
+  const STEP = 2300, step = Math.floor(t / STEP), into = t - step * STEP
+  const at = (k: number) => (rnd(seed, key * 53 + 2, k) - 0.5) * 1.4
+  return at(step - 1) + (at(step) - at(step - 1)) * ease(into / 400)
+}
+/** Whether it is sitting in a watching crouch over this stretch (about two in five stretches). Pure. */
+function watchCrouch(seed: number, key: number, t: number): number {
+  return rnd(seed, key * 7 + 3, Math.floor(t / 2300)) < 0.4 ? 0.35 : 0
+}
+
 function hopper(seed: number, actor: number, nodes: readonly Pt[], t: number, scene: AmbientScene) {
   const epoch = Math.max(0, Math.floor(t / EPOCH_MS)), o = t - epoch * EPOCH_MS
   const list = steps(seed, actor, nodes, epoch)
@@ -109,15 +129,16 @@ function hopper(seed: number, actor: number, nodes: readonly Pt[], t: number, sc
     if (fade > 0 && p.action === 'hop') scene.silk.push({ pts: sagLine(nodes[p.node], nodes[p.to]), alpha: 0.75 * fade })
     if (fade > 0 && p.action === 'web') for (const seg of webSegments(nodes[p.node], seed, epoch - 1)) scene.silk.push({ pts: seg, alpha: 0.7 * fade })
   }
-  const base: AmbientSpider = { id, kind: 'hopper', x: here.x, y: here.y, heading: rnd(seed, actor * 13 + 7, epoch) * Math.PI * 2, lift: 0, moving: false, groom: false, action: s.action, squash: 0 }
+  const base: AmbientSpider = { id, kind: 'hopper', x: here.x, y: here.y, heading: rnd(seed, actor * 13 + 7, epoch) * Math.PI * 2, lift: 0, moving: false, groom: false, action: s.action, squash: 0, headTurn: scanHead(seed, actor, t), lean: leanAt(seed, actor, t), crouch: watchCrouch(seed, actor, t) }
   if (s.action === 'groom') base.groom = true
   if (s.action === 'hop') {
     const start = 600 + rnd(seed, actor * 17 + 9, epoch) * 2600, to = nodes[s.to], dist = Math.hypot(to.x - here.x, to.y - here.y)
-    if (o < start) { scene.spiders.push({ ...base, heading: Math.atan2(to.y - here.y, to.x - here.x), squash: o > start - 180 ? ((o - (start - 180)) / 180) * 0.6 : 0 }); return } // the crouch before it commits
+    const gather = o > start - 500 ? ease((o - (start - 500)) / 500) : 0 // it sinks and gathers before it commits
+    if (o < start) { scene.spiders.push({ ...base, heading: Math.atan2(to.y - here.y, to.x - here.x), squash: o > start - 180 ? ((o - (start - 180)) / 180) * 0.6 : 0, crouch: Math.max(base.crouch, gather), headTurn: base.headTurn * (1 - gather), lean: base.lean * (1 - gather) }); return }
     const u = Math.min(1, (o - start) / HOP_MS), p = lerp(here, to, ease(u)), heading = Math.atan2(to.y - here.y, to.x - here.x)
     const fresh = o - start
     scene.silk.push({ pts: sagLine(here, to), alpha: Math.min(0.85, fresh / 200) * (1 - ease((o - start - 2500) / 4000)) })
-    if (u < 1) { scene.spiders.push({ ...base, x: p.x, y: p.y, heading, lift: Math.sin(Math.PI * u) * (22 + dist * 0.1), moving: true }); return }
+    if (u < 1) { scene.spiders.push({ ...base, x: p.x, y: p.y, heading, lift: Math.sin(Math.PI * u) * (22 + dist * 0.1), moving: true, headTurn: 0, lean: 0, crouch: 0 }); return }
     const landed = o - start - HOP_MS // legs absorb the impact, the body squashes and settles
     scene.spiders.push({ ...base, x: to.x, y: to.y, heading, squash: landed < 320 ? 1 - ease(landed / 320) : 0 })
     return
@@ -154,7 +175,7 @@ function climber(seed: number, t: number, scene: AmbientScene) {
     scene.silk.push({ pts: sagLine(before, after, 0.02, 4), alpha: 0.85 * (1 - ease((o - slipAt - 800) / 1800)) })
   }
   const slipping = slips && o >= slipAt && o < slipAt + SLIP_MS
-  scene.spiders.push({ id: 'climber', kind: 'climber', x: pos.x, y: pos.y, heading: slipping ? heading + 0.5 : heading, lift: 0, moving: moving && !slipping, groom: false, action: slipping ? 'slip' : moving ? (heading < 0 ? 'climb' : 'descend') : 'rest', squash: 0 })
+  scene.spiders.push({ id: 'climber', kind: 'climber', x: pos.x, y: pos.y, heading: slipping ? heading + 0.5 : heading, lift: 0, moving: moving && !slipping, groom: false, action: slipping ? 'slip' : moving ? (heading < 0 ? 'climb' : 'descend') : 'rest', squash: 0, headTurn: moving ? 0 : scanHead(seed, 9, t, 0.5), lean: 0, crouch: 0 })
 }
 
 /** How long the escape reflex lasts: drop on the dragline, hang motionless, then a cautious climb back. */
@@ -182,7 +203,7 @@ export function ambientScene(seed: number, tMs: number, nodes: readonly Pt[] = A
   const scene: AmbientScene = { spiders: [], silk: [] }
   for (const sp of at.spiders) {
     const anchor = { x: sp.x, y: sp.y }, depth = (sp.kind === 'climber' ? 0.6 : 1) * ESCAPE_DROP * drop
-    scene.spiders.push({ ...sp, y: sp.y + depth, lift: 0, moving: since >= 4500, groom: false, action: 'escape', squash: 0, heading: -Math.PI / 2 })
+    scene.spiders.push({ ...sp, y: sp.y + depth, lift: 0, moving: since >= 4500, groom: false, action: 'escape', squash: 0, heading: -Math.PI / 2, headTurn: 0, lean: 0, crouch: 0 })
     scene.silk.push({ pts: [anchor, { x: sp.x, y: sp.y + depth }], alpha: 0.85 })
   }
   return scene
