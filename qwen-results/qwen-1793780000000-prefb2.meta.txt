@@ -1,0 +1,17 @@
+invocation_id=qwen-1793780000000-prefb2
+model=deepseek-ai/deepseek-coder-1.3b-instruct
+role=fallback checkpoint after primary failure: RuntimeError
+degraded=true
+creative_retry_attempted=false
+creative_retry_succeeded=false
+output_cleanup_applied=true
+tool_call_tail_dropped=false
+elapsed_seconds=283.0
+engine=transformers float16 (slow fallback: deepseek-ai/deepseek-coder-1.3b-instruct)
+fast_engine_error=not attempted
+context_sha256=5bcd4d85587df35116d5fb0914a877c71eeb52137858e5ff7617744ba885013d
+context_sha256_basis=joined_messages
+prompt_calls=0
+workflow_commit=717e88d650ef4d2ac01a9a2e4974f5df61a47813
+sampling_seed=1228274232
+sampling_seed_applied=false
