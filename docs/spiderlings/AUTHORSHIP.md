@@ -13,14 +13,17 @@ next to the code that implements them. Directives are quoted from the owner's ch
 | 2026-11-04 09:29 | main chat (#235 6634700554) | A mind of their own: seeded procedural behaviour trees, weighted choices, deterministic seeds, never pure RNG; occasional web-building; strategic unpredictability. |
 | 2026-11-04 | Claude session chat | Reference photos sent ("They need to look like this"); corrections: drop the outline stroke, thicken the legs, hair; "the face and the fuzz"; final: realistic, not cartoony; stocky compact hairy body, short thick tapering legs, crouched posture with legs angled ~45-65° and the front pair raised; rendered texture, rim light on fur, no white outline. |
 | 2026-11-04 | Claude session chat | Owner IP statement (above); preserve directives, briefs and dated decisions on the object. |
+| 2026-11-04 | Owner ruling (via #235 paste) | Reference photos served their purpose: remove both JPEGs from `docs/spiderlings/reference/`; they do not merge. |
 | 2026-11-04 | Claude session chat | Terrain reactivity (spiders obey the scene's geometry; climbing shows the climb; every pose reads the terrain), realism pass (saccadic locomotion, landing compression, dragline on every jump, attention tilt, eyeshine, idle micro-motion, conforming contact shadows, outcome-encoded movement) and stealth pass (stalk, freeze, prefer edges, statue stillness, escape reflex). |
 
-## Visual targets (committed in-repo, 2026-11-04)
-- `reference/7511.jpg` — *Phidippus carneus*: black, red abdomen with white spots, white bands (sha256 `b7d233c3284388fc363eed2b9af4d547bd58dce592f3dafdf93e9574e943b63a`).
-- `reference/7509.jpg` — the red-cephalothorax morph: red cephalothorax and abdomen, blue-black legs (sha256 `b5479c2c869ce5665acdf91ee2f22fb7e808b07488ea6b12084492a0a96002d8`).
-Provenance: supplied by the owner as design targets. They are third-party photographs (7511 carries a BigAppleHerp.com mark) and are
-kept here as **reference only**: the app draws its spiders procedurally (`src/components/spiderRender.ts`) and ships no photo pixels.
-If the repository is or becomes public, the owner may prefer to hold these two files privately.
+## Visual targets (removed from the repo 2026-11-04, owner ruling)
+The two owner-supplied reference photographs guided the v4 render and have served their purpose. By owner ruling (2026-11-04)
+they were removed and do not merge, together with `v4-vs-reference.png`, which embedded them side by side. They are recorded here
+by hash only, so the provenance survives without the third-party pixels:
+- `7511.jpg` — *Phidippus carneus*: black, red abdomen with white spots, white bands (sha256 `b7d233c3284388fc363eed2b9af4d547bd58dce592f3dafdf93e9574e943b63a`; carried a BigAppleHerp.com mark).
+- `7509.jpg` — the red-cephalothorax morph: red cephalothorax and abdomen, blue-black legs (sha256 `b5479c2c869ce5665acdf91ee2f22fb7e808b07488ea6b12084492a0a96002d8`).
+The app draws its spiders procedurally (`src/components/spiderRender.ts`) and never shipped photo pixels. The files remain in the
+PR branch's history until the PR is squash-merged; a squash merge leaves them out of main entirely.
 
 ## Design decisions (Claude lane, dated)
 - 2026-11-04 v1: event ledger, staleness, "as of", demo flagged, anchors on the painting (PR #366, `69b46dde`).
