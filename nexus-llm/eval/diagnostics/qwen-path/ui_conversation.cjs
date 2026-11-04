@@ -39,7 +39,7 @@ const scripted = [ANSWER_1, ANSWER_2, ANSWER_3, ANSWER_4, ANSWER_5]
     return route.fulfill({ status: 200, contentType: 'text/plain', body: url.endsWith('.meta.txt') ? meta.replace(/invocation_id=.*/, `invocation_id=${dispatches[idx].invocation_id}`) : scripted[idx] })
   })
   const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(String(e)))
-  await page.goto('http://localhost:4173/', { waitUntil: 'load' })
+  await page.goto(process.env.BASE_URL || 'http://localhost:4173/', { waitUntil: 'load' })
   const ask = async text => { const box = page.getByRole('textbox').first(); await box.fill(text); await box.press('Enter') }
   const waitText = async (src, ms = 60000) => { try { await page.waitForFunction(s => new RegExp(s, 'i').test(document.body.innerText), src, { timeout: ms }); return true } catch { return false } }
 

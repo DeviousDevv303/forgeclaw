@@ -12,6 +12,12 @@ import { drawRubik3D } from './cube3d'
 import { newRubikRunner, rubikTurning, stepRubik } from './rubikTurns'
 import { solveProgress, turnMode } from './cubeMotion'
 import type { NeuralState } from '../hooks/useNeuralState'
+import type { AgentEvent } from '../types/forgeOps'
+import { useNow, useSpiderDemoEvents, useSpiderlings } from '../hooks/useSpiderlings'
+import { drawAmbient, drawSpiders } from './spiderDraw'
+import { AMBIENT_NODES, DEFAULT_AMBIENT_SEED, ambientScene, ambientSignature, type AmbientConfig } from './spiderAmbient'
+import { chooseAnchors, type AnchorSet, type Pt } from './spiderRoutes'
+import { SpiderPanel } from './SpiderPanel'
 
 /** The backdrop is 1536×1024; every anchor below is in that image's pixels. */
 const IMG_W = 1536
@@ -28,18 +34,44 @@ const AMBER: RGB = [255, 190, 70]
 const RED: RGB = [255, 60, 70]
 const GREEN: RGB = [60, 255, 150]
 
-interface Props { state: NeuralState; opacity?: number }
+interface Props {
+  state: NeuralState
+  opacity?: number
+  /** The ForgeOps event stream: the spiders are drawn from TOOL_START / TOOL_SUCCESS / TOOL_FAILURE and nothing else. */
+  events?: readonly AgentEvent[]
+  /** 'demo' feeds scripted events through the same ledger and labels everything DEMO; never live data. */
+  spiders?: 'live' | 'demo'
+  /** Ambient life (hops, silk, webs, the wall spider): seeded, no counters, never reads the ledger. Off for reduced motion. */
+  ambient?: AmbientConfig
+}
 
-export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9 }) => {
+export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9, events = [], spiders = 'live', ambient = { enabled: true, seed: DEFAULT_AMBIENT_SEED } }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state }, [state])
+  const demoEvents = useSpiderDemoEvents(spiders === 'demo')
+  const ledger = useSpiderlings(spiders === 'demo' ? demoEvents : events, spiders)
+  const feedRef = useRef<readonly AgentEvent[]>([])
+  useEffect(() => { feedRef.current = spiders === 'demo' ? demoEvents : events }, [spiders, demoEvents, events])
+  const ledgerRef = useRef(ledger)
+  useEffect(() => { ledgerRef.current = ledger }, [ledger])
+  const now = useNow()
+  const ambientRef = useRef(ambient)
+  useEffect(() => { ambientRef.current = ambient }, [ambient])
+  const reducedMotion = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  const reducedRef = useRef(reducedMotion)
+  useEffect(() => { reducedRef.current = reducedMotion }, [reducedMotion])
 
   useEffect(() => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
     const runner = newRubikRunner(11)
+    const mountedAt = Date.now()
+    // where the owner's pointer is: a resting spider turns toward it while it moves, then back to the cube
+    let pointer: { x: number; y: number; at: number } | null = null
+    const onPointer = (e: PointerEvent) => { pointer = { x: e.clientX, y: e.clientY, at: Date.now() } }
+    window.addEventListener('pointermove', onPointer)
     let w = 0, h = 0, dpr = 1, raf = 0
     const resize = () => {
       dpr = Math.min(window.devicePixelRatio || 1, 2)
@@ -108,12 +140,36 @@ export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9 }) => {
       const veil = ctx.createRadialGradient(c.x, c.y, size * 0.1, c.x, c.y, size * 0.75)
       veil.addColorStop(0, 'rgba(8,8,16,0.28)'); veil.addColorStop(1, 'rgba(8,8,16,0.5)')
       ctx.fillStyle = veil; ctx.beginPath(); ctx.arc(c.x, c.y, size * 0.75, 0, Math.PI * 2); ctx.fill()
+
+      // Spiderlings: one per unanswered tool start in the ledger, on anchors that are on screen (a phone's crop hides the outer cubes).
+      const visible = (p: Pt) => { const q = P(p); return q.x > 24 && q.x < w - 24 && q.y > 24 && q.y < h - 24 }
+      const anchors: AnchorSet = chooseAnchors(visible)
+      // eyeshine matches the scene's light: the same tone the cube and cables are lit with
+      const glint = `rgba(${Math.round(200 + tone[0] * 0.2)},${Math.round(200 + tone[1] * 0.2)},${Math.round(200 + tone[2] * 0.2)},0.95)`
+      const drawn = drawSpiders(ctx, ledgerRef.current.runs, Date.now(), anchors, P, k, t, { w, h }, glint)
+      // What was drawn this frame, readable from outside the canvas: the browser tests compare it with the ledger, and so can anyone.
+      canvas.dataset.spidersDrawn = String(drawn.drawn); canvas.dataset.spiderPhases = JSON.stringify(drawn.byPhase)
+
+      // Ambient life: a pure function of (seed, time); never reads the ledger, never counted. Its own attributes, so a test can tell the two apart.
+      const amb = ambientRef.current
+      if (amb.enabled && !reducedRef.current) {
+        // big state changes startle them (escape reflex): only their times are passed, never what they were
+        const startles = feedRef.current.filter(e => e.type === 'OBJECTIVE_RECEIVED' || e.type === 'MISSION_COMPLETE' || e.type === 'MISSION_BLOCKED' || e.type === 'RESET' || e.type === 'TOOL_FAILURE').map(e => e.timestamp - mountedAt)
+        const scene = ambientScene(amb.seed, amb.freezeMs ?? Date.now() - mountedAt, AMBIENT_NODES.filter(visible), amb.freezeMs === undefined ? startles : [])
+        const attend = pointer && Date.now() - pointer.at < 4000 ? { x: (pointer.x - ox) / k, y: (pointer.y - oy) / k } : CUBE
+        canvas.dataset.ambientDrawn = String(drawAmbient(ctx, scene, P, k, t, glint, attend)); canvas.dataset.ambientSeed = String(amb.seed); canvas.dataset.ambientSig = ambientSignature(scene)
+      } else { canvas.dataset.ambientDrawn = '0'; canvas.dataset.ambientSeed = String(amb.seed); canvas.dataset.ambientSig = '' }
     }
     raf = requestAnimationFrame(frame)
-    return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize) }
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); window.removeEventListener('pointermove', onPointer) }
   }, [])
 
-  return <canvas ref={canvasRef} aria-hidden="true" style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity }} />
+  return (
+    <>
+      <canvas ref={canvasRef} aria-hidden="true" style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity }} />
+      <SpiderPanel ledger={ledger} now={now} ambient={ambient.enabled && !reducedMotion ? { seed: ambient.seed, freezeMs: ambient.freezeMs } : null} />
+    </>
+  )
 }
 
 export default ThroneRig

@@ -1,0 +1,335 @@
+{
+  "base": "http://localhost:4173/",
+  "scenarios": [
+    {
+      "viewport": "desktop",
+      "name": "L0 without ?rig=1 there is no spider panel and no rig canvas",
+      "pass": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "name": "L1 idle: counters 0, no event spider drawn, empty ledger, source live, no DEMO flag; ambient life is drawn and labelled not counted",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "drawn": {
+        "n": 0,
+        "phases": {},
+        "ambient": 3,
+        "sig": "hopper-1:idle@1104,660^0|hopper-2:hop@548,690^0|climber:climb@653,435^0#0"
+      },
+      "lines": [
+        "no tool events yet: nothing is out of the throne"
+      ],
+      "source": "live",
+      "ambientNote": "ambient life · seed 11 · not tool events, not counted"
+    },
+    {
+      "viewport": "desktop",
+      "name": "L2 a real tool start puts exactly one spider in flight, drawn at its node, and the ledger line says so",
+      "pass": true,
+      "counters": {
+        "inflight": 1,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "drawn": {
+        "n": 1,
+        "phases": {
+          "working": 1
+        },
+        "ambient": 3,
+        "sig": "hopper-1:escape@1104,694^0|hopper-2:escape@548,724^0|climber:escape@653,460^0#3"
+      }
+    },
+    {
+      "viewport": "desktop",
+      "name": "L2 on TOOL_SUCCESS the spider climbs back, docks at the chest, and is gone; returned = 1, in flight = 0, traced to two ledger lines",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 1,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "lines": [
+        "16:57:39↙returned from network · qwen_reason",
+        "16:57:34↗out of the throne → network · qwen_reason"
+      ],
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "name": "L3 on TOOL_FAILURE the spider returns flagged: flagged = 1, returned = 0, in flight = 0, and the line names the failure",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 0,
+        "flagged": 1,
+        "unknown": 0
+      },
+      "lines": [
+        "16:57:50⚑flagged at network · qwen_reason · TOOL_FAILURE",
+        "16:57:45↗out of the throne → network · qwen_reason"
+      ],
+      "sawReturn": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "name": "D1 the demo says DEMO · simulated events · not live on the panel and carries data-source=demo",
+      "pass": true,
+      "flag": "DEMO · simulated events · not live",
+      "source": "demo"
+    },
+    {
+      "viewport": "desktop",
+      "name": "D1 three spiders out at once (browser, sandbox, network) plus one UNKNOWN past its timeout; the canvas draws all four",
+      "pass": true,
+      "counters": {
+        "inflight": 3,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 1
+      },
+      "drawn": {
+        "n": 4,
+        "phases": {
+          "unknown": 1,
+          "working": 3
+        },
+        "ambient": 3,
+        "sig": "hopper-1:idle@1104,660^0|hopper-2:hop@440,655^0|climber:climb@654,367^0#1"
+      }
+    },
+    {
+      "viewport": "desktop",
+      "name": "D1 end state: returned 2, flagged 1, unknown 1, in flight 0; only the UNKNOWN spider is left; the ledger lists 4 out lines, the returns, and the unknown line (all traceable)",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 2,
+        "flagged": 1,
+        "unknown": 1
+      },
+      "lines": [
+        "16:58:10↙returned from network · qwen_reason",
+        "16:58:07⚑flagged at sandbox · shell_exec · TOOL_FAILURE",
+        "16:58:04↙returned from browser · browser_run",
+        "16:57:57↗out of the throne → network · qwen_reason",
+        "16:57:56↗out of the throne → sandbox · shell_exec",
+        "16:57:55↗out of the throne → browser · browser_run",
+        "16:49:55?unknown at sandbox · shell_patch · no end event since 16:37:55 (timeout 12 min)",
+        "16:37:55↗out of the throne → sandbox · shell_patch"
+      ],
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "name": "A1 ambient is reproducible: each named seed+time gives the same scene on two loads; seed 12 differs from seed 11 at the same time; no event spider and no counter moves",
+      "pass": true,
+      "signatures": {
+        "11@2500": "hopper-1:idle@1104,660^0|hopper-2:hop@499,674^33|climber:climb@653,427^0#1",
+        "11@11000": "hopper-1:hop@865,768^0|hopper-2:idle@440,655^0|climber:climb@655,300^0#1",
+        "11@19500": "hopper-1:web@865,754^0|hopper-2:web@440,641^0|climber:descend@655,273^0#40",
+        "12@11000": "hopper-1:idle@865,768^0|hopper-2:idle@1335,548^0|climber:climb@655,294^0#1"
+      }
+    },
+    {
+      "viewport": "desktop",
+      "name": "A2 prefers-reduced-motion: no ambient spiders and no ambient note",
+      "pass": true,
+      "drawn": {
+        "n": 0,
+        "phases": {},
+        "ambient": 0,
+        "sig": ""
+      }
+    },
+    {
+      "viewport": "desktop",
+      "name": "A3 ?ambient=0: no ambient spiders",
+      "pass": true,
+      "drawn": {
+        "n": 0,
+        "phases": {},
+        "ambient": 0,
+        "sig": ""
+      }
+    },
+    {
+      "viewport": "desktop",
+      "name": "X1 close-ups captured at seed 11, t 2.5 s (3x): a hopper mid-jump (from above), the wall spider, and a resting spider facing the viewer",
+      "pass": true,
+      "sig": "hopper-1:idle@1104,660^0|hopper-2:hop@499,674^33|climber:climb@653,427^0#1"
+    },
+    {
+      "viewport": "phone",
+      "name": "L0 without ?rig=1 there is no spider panel and no rig canvas",
+      "pass": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": "phone",
+      "name": "L1 idle: counters 0, no event spider drawn, empty ledger, source live, no DEMO flag; ambient life is drawn and labelled not counted",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "drawn": {
+        "n": 0,
+        "phases": {},
+        "ambient": 3,
+        "sig": "hopper-1:idle@996,692^0|hopper-2:hop@548,690^0|climber:climb@653,435^0#0"
+      },
+      "lines": [
+        "no tool events yet: nothing is out of the throne"
+      ],
+      "source": "live",
+      "ambientNote": "ambient life · seed 11 · not tool events, not counted"
+    },
+    {
+      "viewport": "phone",
+      "name": "L2 a real tool start puts exactly one spider in flight, drawn at its node, and the ledger line says so",
+      "pass": true,
+      "counters": {
+        "inflight": 1,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "drawn": {
+        "n": 1,
+        "phases": {
+          "working": 1
+        },
+        "ambient": 3,
+        "sig": "hopper-1:escape@996,726^0|hopper-2:escape@548,724^0|climber:escape@653,460^0#3"
+      }
+    },
+    {
+      "viewport": "phone",
+      "name": "L2 on TOOL_SUCCESS the spider climbs back, docks at the chest, and is gone; returned = 1, in flight = 0, traced to two ledger lines",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 1,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "lines": [
+        "16:58:45↙returned from network · qwen_reason",
+        "16:58:40↗out of the throne → network · qwen_reason"
+      ],
+      "pageErrors": []
+    },
+    {
+      "viewport": "phone",
+      "name": "L3 on TOOL_FAILURE the spider returns flagged: flagged = 1, returned = 0, in flight = 0, and the line names the failure",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 0,
+        "flagged": 1,
+        "unknown": 0
+      },
+      "lines": [
+        "16:58:56⚑flagged at network · qwen_reason · TOOL_FAILURE",
+        "16:58:51↗out of the throne → network · qwen_reason"
+      ],
+      "sawReturn": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": "phone",
+      "name": "D1 the demo says DEMO · simulated events · not live on the panel and carries data-source=demo",
+      "pass": true,
+      "flag": "DEMO · simulated events · not live",
+      "source": "demo"
+    },
+    {
+      "viewport": "phone",
+      "name": "D1 three spiders out at once (browser, sandbox, network) plus one UNKNOWN past its timeout; the canvas draws all four",
+      "pass": true,
+      "counters": {
+        "inflight": 3,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 1
+      },
+      "drawn": {
+        "n": 4,
+        "phases": {
+          "unknown": 1,
+          "working": 3
+        },
+        "ambient": 3,
+        "sig": "hopper-1:idle@996,692^0|hopper-2:hop@680,770^0|climber:climb@654,366^0#1"
+      }
+    },
+    {
+      "viewport": "phone",
+      "name": "D1 end state: returned 2, flagged 1, unknown 1, in flight 0; only the UNKNOWN spider is left; the ledger lists 4 out lines, the returns, and the unknown line (all traceable)",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 2,
+        "flagged": 1,
+        "unknown": 1
+      },
+      "lines": [
+        "16:59:15↙returned from network · qwen_reason",
+        "16:59:12⚑flagged at sandbox · shell_exec · TOOL_FAILURE",
+        "16:59:09↙returned from browser · browser_run",
+        "16:59:02↗out of the throne → network · qwen_reason",
+        "16:59:01↗out of the throne → sandbox · shell_exec",
+        "16:59:01↗out of the throne → browser · browser_run",
+        "16:51:00?unknown at sandbox · shell_patch · no end event since 16:39:00 (timeout 12 min)",
+        "16:39:00↗out of the throne → sandbox · shell_patch"
+      ],
+      "pageErrors": []
+    },
+    {
+      "viewport": "phone",
+      "name": "A1 ambient is reproducible: each named seed+time gives the same scene on two loads; seed 12 differs from seed 11 at the same time; no event spider and no counter moves",
+      "pass": true,
+      "signatures": {
+        "11@2500": "hopper-1:idle@996,692^0|hopper-2:hop@608,726^37|climber:climb@653,427^0#1",
+        "11@11000": "hopper-1:hop@680,770^0|hopper-2:idle@680,770^0|climber:climb@655,300^0#1",
+        "11@19500": "hopper-1:web@680,756^0|hopper-2:web@680,756^0|climber:descend@655,273^0#40",
+        "12@11000": "hopper-1:idle@865,768^0|hopper-2:idle@996,692^0|climber:climb@655,294^0#1"
+      }
+    },
+    {
+      "viewport": "phone",
+      "name": "A2 prefers-reduced-motion: no ambient spiders and no ambient note",
+      "pass": true,
+      "drawn": {
+        "n": 0,
+        "phases": {},
+        "ambient": 0,
+        "sig": ""
+      }
+    },
+    {
+      "viewport": "phone",
+      "name": "A3 ?ambient=0: no ambient spiders",
+      "pass": true,
+      "drawn": {
+        "n": 0,
+        "phases": {},
+        "ambient": 0,
+        "sig": ""
+      }
+    }
+  ]
+}
