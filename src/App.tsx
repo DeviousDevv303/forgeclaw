@@ -2923,7 +2923,7 @@ function App() {
       {/* Throne backdrop (sibling before neural canvas in DOM order) */}
       <ThroneBackdrop opacity={0.35} />
       {/* Preview: the live throne cube and cables. Opt in with ?rig=1 until the owner decides. */}
-      {new URLSearchParams(window.location.search).get('rig') === '1' && <ThroneRig state={neuralState} />}
+      {new URLSearchParams(window.location.search).get('rig') === '1' && <ThroneRig state={neuralState} events={forgeOpsState.events} spiders={new URLSearchParams(window.location.search).get('spiders') === 'demo' ? 'demo' : 'live'} />}
       {/* Neural Network Background */}
       <NeuralNetworkBackground
         messageCount={messages.length}

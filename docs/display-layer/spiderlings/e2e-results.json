@@ -1,0 +1,249 @@
+{
+  "base": "http://localhost:4173/",
+  "scenarios": [
+    {
+      "viewport": "desktop",
+      "name": "L0 without ?rig=1 there is no spider panel and no rig canvas",
+      "pass": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "name": "L1 idle: counters 0, nothing drawn, empty ledger, source live, no DEMO flag",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "drawn": {
+        "n": 0,
+        "phases": {}
+      },
+      "lines": [
+        "no tool events yet: nothing is out of the throne"
+      ],
+      "source": "live"
+    },
+    {
+      "viewport": "desktop",
+      "name": "L2 a real tool start puts exactly one spider in flight, drawn at its node, and the ledger line says so",
+      "pass": true,
+      "counters": {
+        "inflight": 1,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "drawn": {
+        "n": 1,
+        "phases": {
+          "working": 1
+        }
+      }
+    },
+    {
+      "viewport": "desktop",
+      "name": "L2 on TOOL_SUCCESS the spider climbs back, docks at the chest, and is gone; returned = 1, in flight = 0, traced to two ledger lines",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 1,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "lines": [
+        "15:41:23↙returned from network · qwen_reason",
+        "15:41:17↗out of the throne → network · qwen_reason"
+      ],
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "name": "L3 on TOOL_FAILURE the spider returns flagged: flagged = 1, returned = 0, in flight = 0, and the line names the failure",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 0,
+        "flagged": 1,
+        "unknown": 0
+      },
+      "lines": [
+        "15:41:33⚑flagged at network · qwen_reason · TOOL_FAILURE",
+        "15:41:28↗out of the throne → network · qwen_reason"
+      ],
+      "sawReturn": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": "desktop",
+      "name": "D1 the demo says DEMO · simulated events · not live on the panel and carries data-source=demo",
+      "pass": true,
+      "flag": "DEMO · simulated events · not live",
+      "source": "demo"
+    },
+    {
+      "viewport": "desktop",
+      "name": "D1 three spiders out at once (browser, sandbox, network) plus one UNKNOWN past its timeout; the canvas draws all four",
+      "pass": true,
+      "counters": {
+        "inflight": 3,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 1
+      },
+      "drawn": {
+        "n": 4,
+        "phases": {
+          "unknown": 1,
+          "working": 3
+        }
+      }
+    },
+    {
+      "viewport": "desktop",
+      "name": "D1 end state: returned 2, flagged 1, unknown 1, in flight 0; only the UNKNOWN spider is left; the ledger lists 4 out lines, the returns, and the unknown line (all traceable)",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 2,
+        "flagged": 1,
+        "unknown": 1
+      },
+      "lines": [
+        "15:41:54↙returned from network · qwen_reason",
+        "15:41:51⚑flagged at sandbox · shell_exec · TOOL_FAILURE",
+        "15:41:48↙returned from browser · browser_run",
+        "15:41:41↗out of the throne → network · qwen_reason",
+        "15:41:40↗out of the throne → sandbox · shell_exec",
+        "15:41:39↗out of the throne → browser · browser_run",
+        "15:33:38?unknown at sandbox · shell_patch · no end event since 15:21:38 (timeout 12 min)",
+        "15:21:38↗out of the throne → sandbox · shell_patch"
+      ],
+      "pageErrors": []
+    },
+    {
+      "viewport": "phone",
+      "name": "L0 without ?rig=1 there is no spider panel and no rig canvas",
+      "pass": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": "phone",
+      "name": "L1 idle: counters 0, nothing drawn, empty ledger, source live, no DEMO flag",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "drawn": {
+        "n": 0,
+        "phases": {}
+      },
+      "lines": [
+        "no tool events yet: nothing is out of the throne"
+      ],
+      "source": "live"
+    },
+    {
+      "viewport": "phone",
+      "name": "L2 a real tool start puts exactly one spider in flight, drawn at its node, and the ledger line says so",
+      "pass": true,
+      "counters": {
+        "inflight": 1,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "drawn": {
+        "n": 1,
+        "phases": {
+          "working": 1
+        }
+      }
+    },
+    {
+      "viewport": "phone",
+      "name": "L2 on TOOL_SUCCESS the spider climbs back, docks at the chest, and is gone; returned = 1, in flight = 0, traced to two ledger lines",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 1,
+        "flagged": 0,
+        "unknown": 0
+      },
+      "lines": [
+        "15:42:09↙returned from network · qwen_reason",
+        "15:42:04↗out of the throne → network · qwen_reason"
+      ],
+      "pageErrors": []
+    },
+    {
+      "viewport": "phone",
+      "name": "L3 on TOOL_FAILURE the spider returns flagged: flagged = 1, returned = 0, in flight = 0, and the line names the failure",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 0,
+        "flagged": 1,
+        "unknown": 0
+      },
+      "lines": [
+        "15:42:19⚑flagged at network · qwen_reason · TOOL_FAILURE",
+        "15:42:14↗out of the throne → network · qwen_reason"
+      ],
+      "sawReturn": true,
+      "pageErrors": []
+    },
+    {
+      "viewport": "phone",
+      "name": "D1 the demo says DEMO · simulated events · not live on the panel and carries data-source=demo",
+      "pass": true,
+      "flag": "DEMO · simulated events · not live",
+      "source": "demo"
+    },
+    {
+      "viewport": "phone",
+      "name": "D1 three spiders out at once (browser, sandbox, network) plus one UNKNOWN past its timeout; the canvas draws all four",
+      "pass": true,
+      "counters": {
+        "inflight": 3,
+        "returned": 0,
+        "flagged": 0,
+        "unknown": 1
+      },
+      "drawn": {
+        "n": 4,
+        "phases": {
+          "unknown": 1,
+          "working": 3
+        }
+      }
+    },
+    {
+      "viewport": "phone",
+      "name": "D1 end state: returned 2, flagged 1, unknown 1, in flight 0; only the UNKNOWN spider is left; the ledger lists 4 out lines, the returns, and the unknown line (all traceable)",
+      "pass": true,
+      "counters": {
+        "inflight": 0,
+        "returned": 2,
+        "flagged": 1,
+        "unknown": 1
+      },
+      "lines": [
+        "15:42:40↙returned from network · qwen_reason",
+        "15:42:37⚑flagged at sandbox · shell_exec · TOOL_FAILURE",
+        "15:42:34↙returned from browser · browser_run",
+        "15:42:27↗out of the throne → network · qwen_reason",
+        "15:42:26↗out of the throne → sandbox · shell_exec",
+        "15:42:25↗out of the throne → browser · browser_run",
+        "15:34:25?unknown at sandbox · shell_patch · no end event since 15:22:25 (timeout 12 min)",
+        "15:22:25↗out of the throne → sandbox · shell_patch"
+      ],
+      "pageErrors": []
+    }
+  ]
+}

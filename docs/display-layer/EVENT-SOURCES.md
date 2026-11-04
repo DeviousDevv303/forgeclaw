@@ -40,3 +40,7 @@ I said the display layer had "no journal entry" for browser, sandbox and trainin
 1. Owner: where do the surfaces sit (new anchors on the painting, or an overlay)?
 2. Seat: will Muse's runner emit start, checkpoint and end lines for training and grading, and in what form?
 3. Seat: build slot and acceptance bar for the display layer.
+
+
+## 7. Status update (2026-11-04): v1 built
+The spiders are built on `ThroneRig` from the events in section 2 (no new event infrastructure), with the ledger, staleness rule, DEMO flag and tests described in `docs/display-layer/spiderlings/README.md`. Section 4 items 1 (run id), 2 (persisted log) and 4 (runner feeds) remain v2.

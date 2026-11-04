@@ -12,6 +12,11 @@ import { drawRubik3D } from './cube3d'
 import { newRubikRunner, rubikTurning, stepRubik } from './rubikTurns'
 import { solveProgress, turnMode } from './cubeMotion'
 import type { NeuralState } from '../hooks/useNeuralState'
+import type { AgentEvent } from '../types/forgeOps'
+import { useNow, useSpiderDemoEvents, useSpiderlings } from '../hooks/useSpiderlings'
+import { drawSpiders } from './spiderDraw'
+import { chooseAnchors, type AnchorSet, type Pt } from './spiderRoutes'
+import { SpiderPanel } from './SpiderPanel'
 
 /** The backdrop is 1536×1024; every anchor below is in that image's pixels. */
 const IMG_W = 1536
@@ -28,12 +33,24 @@ const AMBER: RGB = [255, 190, 70]
 const RED: RGB = [255, 60, 70]
 const GREEN: RGB = [60, 255, 150]
 
-interface Props { state: NeuralState; opacity?: number }
+interface Props {
+  state: NeuralState
+  opacity?: number
+  /** The ForgeOps event stream: the spiders are drawn from TOOL_START / TOOL_SUCCESS / TOOL_FAILURE and nothing else. */
+  events?: readonly AgentEvent[]
+  /** 'demo' feeds scripted events through the same ledger and labels everything DEMO; never live data. */
+  spiders?: 'live' | 'demo'
+}
 
-export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9 }) => {
+export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9, events = [], spiders = 'live' }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const stateRef = useRef(state)
   useEffect(() => { stateRef.current = state }, [state])
+  const demoEvents = useSpiderDemoEvents(spiders === 'demo')
+  const ledger = useSpiderlings(spiders === 'demo' ? demoEvents : events, spiders)
+  const ledgerRef = useRef(ledger)
+  useEffect(() => { ledgerRef.current = ledger }, [ledger])
+  const now = useNow()
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -108,12 +125,24 @@ export const ThroneRig: React.FC<Props> = ({ state, opacity = 0.9 }) => {
       const veil = ctx.createRadialGradient(c.x, c.y, size * 0.1, c.x, c.y, size * 0.75)
       veil.addColorStop(0, 'rgba(8,8,16,0.28)'); veil.addColorStop(1, 'rgba(8,8,16,0.5)')
       ctx.fillStyle = veil; ctx.beginPath(); ctx.arc(c.x, c.y, size * 0.75, 0, Math.PI * 2); ctx.fill()
+
+      // Spiderlings: one per unanswered tool start in the ledger, on anchors that are on screen (a phone's crop hides the outer cubes).
+      const visible = (p: Pt) => { const q = P(p); return q.x > 24 && q.x < w - 24 && q.y > 24 && q.y < h - 24 }
+      const anchors: AnchorSet = chooseAnchors(visible)
+      const drawn = drawSpiders(ctx, ledgerRef.current.runs, Date.now(), anchors, P, k, t, { w, h })
+      // What was drawn this frame, readable from outside the canvas: the browser tests compare it with the ledger, and so can anyone.
+      canvas.dataset.spidersDrawn = String(drawn.drawn); canvas.dataset.spiderPhases = JSON.stringify(drawn.byPhase)
     }
     raf = requestAnimationFrame(frame)
     return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize) }
   }, [])
 
-  return <canvas ref={canvasRef} aria-hidden="true" style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity }} />
+  return (
+    <>
+      <canvas ref={canvasRef} aria-hidden="true" style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', zIndex: 0, pointerEvents: 'none', opacity }} />
+      <SpiderPanel ledger={ledger} now={now} />
+    </>
+  )
 }
 
 export default ThroneRig
