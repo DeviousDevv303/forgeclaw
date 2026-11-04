@@ -59,6 +59,11 @@ on:
         required: false
         default: ''
         type: string
+      engine:
+        description: "Operator test only: 'hf' forces the slow fallback engine, which also exercises the on-demand torch install. Empty (default) = the normal GGUF engine."
+        required: false
+        default: ''
+        type: string
       exam_leak_canary:
         description: "Swarm exam dry run only: plants a marked guidance block in the context so the leak check can be shown to trip. Must be empty for every exam payload."
         required: false
@@ -154,6 +159,7 @@ jobs:
           PROFILE: ${{ inputs.profile }}
           EXAM_FORBIDDEN: ${{ inputs.exam_forbidden }}
           EXAM_LEAK_CANARY: ${{ inputs.exam_leak_canary }}
+          QWEN_ENGINE: ${{ inputs.engine }}
           # -1 offloads every layer when a GPU runner is configured; 0 keeps the CPU path.
           QWEN_GPU_LAYERS: ${{ vars.FORGECLAW_GPU_RUNNER && '-1' || '0' }}
         run: |
