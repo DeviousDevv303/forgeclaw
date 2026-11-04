@@ -40,6 +40,8 @@ def mirror_show(inv, ext):
     return ''
 
 def verify(manifest, out):
+    if not manifest.get('cells'):
+        print('manifest has no cells: nothing to verify, nothing to fire'); return 1
     seen, onmirror, rows, payloads = set(), mirror_ids(), [], []
     for c in manifest['cells']:
         why = []
@@ -73,6 +75,8 @@ def verify(manifest, out):
     return 0 if not bad else 1
 
 def check(manifest, pin):
+    if not manifest.get('cells'):
+        print('manifest has no cells'); return 1
     rows, on = [], mirror_ids()
     for c in manifest['cells']:
         inv = c['invocation_id']
