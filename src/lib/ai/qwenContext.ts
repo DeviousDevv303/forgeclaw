@@ -79,6 +79,16 @@ function separateRuntimeEnvelope(rawTask: string): { task: string; runtimeContex
   return { task, runtimeContext: rawTask.slice(envelopeStart, end + closing.length).trim() }
 }
 
+/**
+ * Chat history older than this never reaches the Qwen workflow. The chat is saved in the browser with no expiry, so a
+ * message from weeks ago was still "the conversation so far" and a model told to resolve references from it answered the
+ * old question instead of the new one (2026-11-04). A day is long enough to continue a thread the next morning.
+ */
+export const QWEN_HISTORY_MAX_AGE_MS = 24 * 3600_000
+export function isFreshHistoryTurn(timestamp: number | undefined, now: number): boolean {
+  return typeof timestamp === 'number' && Number.isFinite(timestamp) && now - timestamp <= QWEN_HISTORY_MAX_AGE_MS
+}
+
 /** Words that point back at the thread instead of naming a topic: "why?", "what do you attribute that to?", "try again". */
 const REFERENCE_CUE = /\b(?:that|it|this|those|them|these|they|he|she|him|her|again|same|previous|earlier|above|last one|why|how come|what about|continue|resume|retry|go ahead|keep going|proceed)\b|^(?:ok(?:ay)?|yes|yeah|yep|sure|and|but|so|also|now|next)\b/i
 const MAX_FOLLOW_UP_CHARS = 160

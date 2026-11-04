@@ -131,6 +131,7 @@ import type { ProviderId } from './lib/modelProviders'
 import { RESPONSE_LANGUAGE_INSTRUCTIONS, withResponseLanguage } from './lib/responseLanguage'
 import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
 import type { AIMessage } from './lib/ai/types'
+import { isFreshHistoryTurn } from './lib/ai/qwenContext'
 import { sendViaRouter, isQwenProvider, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, metaProvider, openrouterProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { diagKeyFormat } from './lib/diagKeyFormat'
@@ -1926,7 +1927,9 @@ function App() {
         return
       }
 
-      const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
+      // Qwen only: a saved chat has no expiry, and weeks-old turns were being sent as "the conversation so far".
+      const historyNow = Date.now()
+      const historyMessages: AIMessage[] = messages.slice(-6).filter(m => !isQwenProvider(activeProvider) || isFreshHistoryTurn(m.timestamp, historyNow)).flatMap(m =>
         m.role === 'user' || m.role === 'assistant'
           ? [{ role: m.role, content: m.content, ...(m.role === 'user' && isSendableImage(m.imageUrl) ? { image_url: m.imageUrl } : {}) }]
           : []
