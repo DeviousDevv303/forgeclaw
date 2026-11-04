@@ -1,4 +1,4 @@
-import { corpusRepository, formatCorpusContext, recordRelevantToTask } from '../corpus'
+import { corpusRepository, distinctiveWords, formatCorpusContext, recordRelevantToTask } from '../corpus'
 import { nexusGuidanceForQwen } from '../nexusGuidance'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { QWEN_FALLBACK_CHECKPOINT, QWEN_PRIMARY_CHECKPOINT } from '../qwenCheckpoints'
@@ -79,19 +79,43 @@ function separateRuntimeEnvelope(rawTask: string): { task: string; runtimeContex
   return { task, runtimeContext: rawTask.slice(envelopeStart, end + closing.length).trim() }
 }
 
+/** Words that point back at the thread instead of naming a topic: "why?", "what do you attribute that to?", "try again". */
+const REFERENCE_CUE = /\b(?:that|it|this|those|them|these|they|he|she|him|her|again|same|previous|earlier|above|last one|why|how come|what about|continue|resume|retry|go ahead|keep going|proceed)\b|^(?:ok(?:ay)?|yes|yeah|yep|sure|and|but|so|also|now|next)\b/i
+const MAX_FOLLOW_UP_CHARS = 160
+
+/**
+ * Which earlier turns may ride along with the current message. The thread is only context for a message that depends on it.
+ * A message that names its own topic ("Run a simulation of Makachev vs Nurmagomedov") is standalone: earlier turns reach
+ * the model only if they share a topic word with it. Before this gate every dispatch carried the last six messages and told
+ * the 8B model to "resolve references from here", so an old unanswered trading question beat the fight sim the owner had
+ * just asked for (2026-11-04). A short reference ("why?", "try again", "what do you attribute that to?") keeps the whole thread.
+ */
+export function historyGate(currentTask: string): ((turnText: string) => boolean) | null {
+  const text = extractOriginalQwenTask(currentTask)
+  const topic = distinctiveWords(text)
+  const dependsOnThread = topic.size < 2 || (text.length <= MAX_FOLLOW_UP_CHARS && REFERENCE_CUE.test(text.trim()))
+  if (dependsOnThread) return null
+  return turnText => {
+    for (const word of distinctiveWords(turnText)) if (topic.has(word)) return true
+    return false
+  }
+}
+
 /**
  * The conversation so far, for a follow-up like "what do you attribute that to?". The workflow receives one task string and never
  * sees request.messages, so before this section existed the model got only the newest message, lost the thread after one exchange,
  * and filled the gap from the runtime envelope (bankroll, ledger). Envelopes and image payloads are stripped from user turns; tool
  * traffic is left out; the newest turns win the budget, oldest first in the output.
  */
-export function formatQwenConversation(prior: ReadonlyArray<{ role: string; content: string }>): string {
+export function formatQwenConversation(prior: ReadonlyArray<{ role: string; content: string }>, currentTask = ''): string {
   const turns: string[] = []
+  const gate = currentTask ? historyGate(currentTask) : null
   for (const m of prior.slice(-MAX_CONVERSATION_MESSAGES).reverse()) {
     if (m.role !== 'user' && m.role !== 'assistant') continue
     // The app signs every reply "— ForgeClaw"; the answer-form law forbids the model that sign-off, so it is not fed back as history.
     const raw = m.role === 'user' ? extractOriginalQwenTask(m.content) : m.content.replace(/\s*[—–-]+\s*ForgeClaw\s*$/i, '').trim()
     if (!raw) continue
+    if (gate && !gate(raw)) continue
     const text = raw.length > MAX_CONVERSATION_MESSAGE_CHARS ? `${raw.slice(0, MAX_CONVERSATION_MESSAGE_CHARS)} […]` : raw
     const line = `${m.role === 'user' ? 'User' : 'Assistant'}: ${text}`
     if (turns.reduce((n, t) => n + t.length + 2, 0) + line.length > MAX_CONVERSATION_CHARS) break

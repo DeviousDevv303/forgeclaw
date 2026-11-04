@@ -221,7 +221,7 @@ function buildQwenToolInput(request: AIRequest): { task: string; context?: strin
   // The workflow never sees request.systemPrompt, so the selected UI language rides in the task.
   // Earlier turns (everything before this turn's user message) ride in the context; the workflow never sees request.messages.
   const turnStart = request.messages.length - turn.length
-  const payload = buildQwenTaskPayload(task, verified, formatQwenConversation(request.messages.slice(0, turnStart)))
+  const payload = buildQwenTaskPayload(task, verified, formatQwenConversation(request.messages.slice(0, turnStart), task))
   // The date rides in the task too, so the model knows how old its own knowledge is.
   return { ...payload, task: `${withResponseLanguage(payload.task, request.responseLanguage)}\n\n${currentDateNote()}` }
 }

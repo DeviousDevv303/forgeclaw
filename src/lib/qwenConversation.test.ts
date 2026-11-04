@@ -44,6 +44,31 @@ describe('formatQwenConversation', () => {
   })
 })
 
+describe('formatQwenConversation gate: a new topic does not inherit an old thread', () => {
+  const trading = [
+    { role: 'user', content: 'What is the best time to trade?' },
+    { role: 'assistant', content: 'The best time to trade is during high liquidity and volatility, around major market events.' },
+  ]
+  const FIGHT = 'Run a simulation of Islam Makachev vs Khabib Nurmagomedov'
+
+  it('drops an unrelated earlier thread when the message names its own topic (2026-11-04 fight-sim incident)', () => {
+    expect(formatQwenConversation(trading, asSentByApp(FIGHT))).toBe('')
+  })
+  it('keeps an earlier turn that shares a topic word with the new message', () => {
+    const text = formatQwenConversation([...trading, { role: 'user', content: 'Who has the better wrestling, Makachev or Khabib?' }], asSentByApp(FIGHT))
+    expect(text).toContain('wrestling')
+    expect(text).not.toContain('trade')
+  })
+  it('keeps the whole thread for a short reference to it', () => {
+    for (const text of ['why?', 'and why?', 'try again', 'What do you attribute that phenomenon to?']) {
+      expect(formatQwenConversation(trading, asSentByApp(text)), text).toContain('best time to trade')
+    }
+  })
+  it('without a current task, behaves as before', () => {
+    expect(formatQwenConversation(trading)).toContain('best time to trade')
+  })
+})
+
 describe('buildQwenTaskPayload with a conversation', () => {
   it('puts the thread ahead of the envelope, so a long envelope is what gets trimmed', () => {
     const convo = formatQwenConversation([{ role: 'user', content: 'Teach me something new' }, { role: 'assistant', content: ANSWER }])
