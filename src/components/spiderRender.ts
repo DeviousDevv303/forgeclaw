@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // The spiderlings, their look and the throne visual language are the owner's design; the visual targets are the reference
-// photos (removed from the repo by owner ruling; hashes in docs/spiderlings/AUTHORSHIP.md) (7511.jpg: Phidippus carneus; 7509.jpg: the red-cephalothorax morph).
+// photos (since removed by owner ruling): 7511, Phidippus carneus; 7509, the red-cephalothorax morph.
 
 /**
  * Jumping-spider renderer (v4), built to the owner's reference photos, not to an icon:

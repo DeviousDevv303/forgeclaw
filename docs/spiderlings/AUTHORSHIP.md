@@ -16,19 +16,10 @@ next to the code that implements them. Directives are quoted from the owner's ch
 | 2026-11-04 | Owner ruling (via #235 paste) | Reference photos served their purpose: remove both JPEGs from `docs/spiderlings/reference/`; they do not merge. |
 | 2026-11-04 | Claude session chat | Terrain reactivity (spiders obey the scene's geometry; climbing shows the climb; every pose reads the terrain), realism pass (saccadic locomotion, landing compression, dragline on every jump, attention tilt, eyeshine, idle micro-motion, conforming contact shadows, outcome-encoded movement) and stealth pass (stalk, freeze, prefer edges, statue stillness, escape reflex). |
 
-## Visual targets (removed from the repo 2026-11-04, owner ruling)
-The two owner-supplied reference photographs guided the v4 render and have served their purpose. By owner ruling (2026-11-04)
-they were removed and do not merge, together with `v4-vs-reference.png`, which embedded them side by side. They are recorded here
-by hash only, so the provenance survives without the third-party pixels:
-- `7511.jpg` — *Phidippus carneus*: black, red abdomen with white spots, white bands (sha256 `b7d233c3284388fc363eed2b9af4d547bd58dce592f3dafdf93e9574e943b63a`; carried a BigAppleHerp.com mark).
-- `7509.jpg` — the red-cephalothorax morph: red cephalothorax and abdomen, blue-black legs (sha256 `b5479c2c869ce5665acdf91ee2f22fb7e808b07488ea6b12084492a0a96002d8`).
-The app draws its spiders procedurally (`src/components/spiderRender.ts`) and never shipped photo pixels. The files remain in the
-PR branch's history until the PR is squash-merged; a squash merge leaves them out of main entirely.
-
 ## Design decisions (Claude lane, dated)
 - 2026-11-04 v1: event ledger, staleness, "as of", demo flagged, anchors on the painting (PR #366, `69b46dde`).
 - 2026-11-04 v1.1: ambient life, seeded behaviour tree, silk distinct from neural, face at rest (`96d0fad1`).
 - 2026-11-04 v4 render: rebuilt as a creature to the two photos (filled tapered crouched legs, fur strands with rim light, no outline,
-  glossy eyes; two morphs: carneus and red). Judged side by side with the photos at specimen scale.
+  glossy eyes; two morphs: carneus and red). Judged side by side with the owner's reference photos at specimen scale (photos since removed by owner ruling).
 - 2026-11-04 behaviour passes: saccadic stalk, outcome-encoded returns, climb pitch by surface, landing squash, escape reflex on
   startles, attention tilt to pointer/cube, eyeshine matched to scene light. Per-foot terrain IK left for a ledge-geometry trace.
