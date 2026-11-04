@@ -31,8 +31,11 @@ export const NODES: Record<SpiderChannel, { far: Pt; near: Pt }> = {
 const HIP = { left: { x: 580, y: 548 } as Pt, right: { x: 955, y: 548 } as Pt }
 const LOWER_CHEST: Pt = { x: 764, y: 372 }
 
-export const OUT_MS = 2200
+/** Outbound is a stalk: a slow, low creep in bursts with statue freezes between them (owner's stealth pass), not a confident line. */
+export const OUT_MS = 3600
 export const BACK_MS = 2600
+/** A flagged spider comes back fast and erratic (outcome-encoded movement); a clean one calm and direct over BACK_MS. */
+export const FLAG_BACK_MS = Math.round(BACK_MS * 0.6)
 export const DOCK_MS = 1700
 /** An unresolved marker (the mission ended with no end event) fades over this long. */
 export const UNRESOLVED_FADE_MS = 20_000
@@ -94,6 +97,26 @@ export function backPath(from: Pt): Path {
 
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2)
 
+export type Surface = 'floor' | 'chair' | 'wall'
+/** What a spider is standing on, from where it is on the painting: the throne's front faces, or the floor of the network. */
+export function surfaceAt(p: Pt): Surface {
+  return p.x > 470 && p.x < 1070 && p.y > 150 && p.y < 640 ? 'chair' : 'floor'
+}
+
+/**
+ * Saccadic progress: `bursts` segments, each a freeze (it holds still and scans) then a burst (it moves). Pure, monotonic,
+ * exact at both ends; `moving` is false while it freezes so the legs stop too. Never constant speed.
+ */
+export function saccade(x: number, bursts: number, freezeFrac = 0.45): { u: number; moving: boolean } {
+  const c = Math.min(1, Math.max(0, x))
+  if (c >= 1) return { u: 1, moving: false }
+  const k = Math.floor(c * bursts), f = c * bursts - k
+  if (f < freezeFrac) return { u: k / bursts, moving: false }
+  return { u: (k + ease((f - freezeFrac) / (1 - freezeFrac))) / bursts, moving: true }
+}
+/** A stable 0..1 number per run id, so each spider has its own rhythm. */
+const runHash = (id: string) => { let h = 2166136261; for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 16777619); return (h >>> 0) / 4294967296 }
+
 export type PosePhase = 'out' | 'working' | 'back' | 'dock' | 'unknown'
 export type PoseTone = 'work' | 'ok' | 'flag' | 'unknown'
 export interface Pose extends Pt {
@@ -105,40 +128,62 @@ export interface Pose extends Pt {
   alpha: number
   /** Silk thread behind the spider, oldest first. */
   thread: Pt[]
+  /** False while it freezes mid-journey (saccadic stop) or works in place: the legs stop with it. */
+  moving: boolean
+  /** Body pitch while hauling up (or down) a face of the throne; 0 on the floor. */
+  pitch: number
+  surface: Surface
 }
 
 /** Where a spider is at `now`, or null when it has finished docking (its lines stay in the ledger). */
 export function poseOf(run: SpiderRun, now: number, anchors: AnchorSet): Pose | null {
   const out = outPath(run.channel, anchors)
   const node = anchors[run.channel]
-  const outU = (at: number) => ease(Math.min(1, Math.max(0, (at - run.startedAt) / OUT_MS)))
+  const h = runHash(run.id)
+  const bursts = 3 + Math.floor(h * 3)
+  const outAt = (at: number) => saccade((at - run.startedAt) / OUT_MS, bursts)
+  const terrain = (p: Pt & { heading: number }, moving: boolean) => {
+    const surface = surfaceAt(p)
+    // climbing a face of the throne: the body pitches as it hauls up (or lets itself down), legs reaching over the edge
+    const pitch = surface === 'chair' && Math.abs(Math.sin(p.heading)) > 0.6 ? 0.55 : 0
+    return { surface, pitch, moving }
+  }
 
   if (run.endedAt === undefined) {
-    if (now - run.startedAt > run.timeoutMs) return { ...node, phase: 'unknown', tone: 'unknown', heading: 0, progress: 0, alpha: 0.9, thread: pathSlice(out, 0, 1, 0.05) }
+    if (now - run.startedAt > run.timeoutMs) return { ...node, heading: 0, phase: 'unknown', tone: 'unknown', progress: 0, alpha: 0.9, thread: pathSlice(out, 0, 1, 0.05), ...terrain({ ...node, heading: 0 }, false) }
     const t = now - run.startedAt
     if (t < OUT_MS) {
-      const u = outU(now), p = pathAt(out, u)
-      return { ...p, phase: 'out', tone: 'work', progress: u, alpha: 1, thread: pathSlice(out, 0, u) }
+      const { u, moving } = outAt(now), p = pathAt(out, u)
+      return { ...p, phase: 'out', tone: 'work', progress: u, alpha: 1, thread: pathSlice(out, 0, u), ...terrain(p, moving) }
     }
-    return { ...node, heading: 0, phase: 'working', tone: 'work', progress: ((t - OUT_MS) % 2400) / 2400, alpha: 1, thread: pathSlice(out, 0, 1, 0.05) }
+    return { ...node, heading: 0, phase: 'working', tone: 'work', progress: ((t - OUT_MS) % 2400) / 2400, alpha: 1, thread: pathSlice(out, 0, 1, 0.05), ...terrain({ ...node, heading: 0 }, true) }
   }
 
   const sinceEnd = now - run.endedAt
-  const u0 = outU(run.endedAt)
+  const u0 = outAt(run.endedAt).u
   const here = pathAt(out, u0)
   if (run.outcome === 'unresolved') {
     if (sinceEnd > UNRESOLVED_FADE_MS) return null
-    return { ...here, phase: 'unknown', tone: 'unknown', progress: 0, alpha: 0.9 * (1 - sinceEnd / UNRESOLVED_FADE_MS), thread: pathSlice(out, 0, u0, 0.05) }
+    return { ...here, phase: 'unknown', tone: 'unknown', progress: 0, alpha: 0.9 * (1 - sinceEnd / UNRESOLVED_FADE_MS), thread: pathSlice(out, 0, u0, 0.05), ...terrain(here, false) }
   }
-  const tone: PoseTone = run.outcome === 'failed' ? 'flag' : 'ok'
+  const flagged = run.outcome === 'failed'
+  const tone: PoseTone = flagged ? 'flag' : 'ok'
   const back = backPath(here)
-  if (sinceEnd < BACK_MS) {
-    const u = ease(sinceEnd / BACK_MS), p = pathAt(back, u)
-    return { ...p, phase: 'back', tone, progress: u, alpha: 1, thread: pathSlice(back, Math.max(0, u - 0.4), u) }
+  const backMs = flagged ? FLAG_BACK_MS : BACK_MS
+  if (sinceEnd < backMs) {
+    if (!flagged) { // clean: calm and direct
+      const u = ease(sinceEnd / BACK_MS), p = pathAt(back, u)
+      return { ...p, phase: 'back', tone, progress: u, alpha: 1, thread: pathSlice(back, Math.max(0, u - 0.4), u), ...terrain(p, true) }
+    }
+    // flagged: fast, short jerky bursts, and an erratic weave across the line
+    const { u, moving } = saccade(sinceEnd / FLAG_BACK_MS, 5, 0.18), p = pathAt(back, u)
+    const wobble = Math.sin(sinceEnd / 45 + h * 20) * 7 * (1 - u)
+    const q = { x: p.x - Math.sin(p.heading) * wobble, y: p.y + Math.cos(p.heading) * wobble, heading: p.heading + Math.sin(sinceEnd / 60 + h * 9) * 0.5 }
+    return { ...q, phase: 'back', tone, progress: u, alpha: 1, thread: pathSlice(back, Math.max(0, u - 0.4), u), ...terrain(q, moving) }
   }
-  if (sinceEnd < BACK_MS + DOCK_MS) {
-    const d = (sinceEnd - BACK_MS) / DOCK_MS
-    return { ...CHEST, heading: -Math.PI / 2, phase: 'dock', tone, progress: d, alpha: 1 - Math.max(0, d - 0.55) / 0.45, thread: pathSlice(back, 0.6, 1) }
+  if (sinceEnd < backMs + DOCK_MS) {
+    const d = (sinceEnd - backMs) / DOCK_MS
+    return { ...CHEST, heading: -Math.PI / 2, phase: 'dock', tone, progress: d, alpha: 1 - Math.max(0, d - 0.55) / 0.45, thread: pathSlice(back, 0.6, 1), surface: 'chair', pitch: 0, moving: false }
   }
   return null
 }

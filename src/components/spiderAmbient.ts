@@ -37,8 +37,9 @@ export function rnd(seed: number, a: number, b = 0): number {
 export type AmbientAction = 'idle' | 'groom' | 'hop' | 'web'
 const ACTIONS: AmbientAction[] = ['idle', 'groom', 'hop', 'web']
 /** Weights per previous action: after a web, no web; after a hop, less hopping; idle is the resting state. */
+// Stealth is the resting state: long statue-still stretches; a hop is the exception, spent only when it commits to a jump.
 const WEIGHTS: Record<AmbientAction | 'start', number[]> = {
-  start: [3, 1, 3, 1], idle: [2, 2, 4, 1.5], groom: [3, 0.5, 4, 1.5], hop: [4, 1.5, 1.5, 2], web: [4, 2, 3, 0],
+  start: [5, 1, 2, 1], idle: [5, 2, 2.2, 1.2], groom: [5, 0.5, 2.2, 1.2], hop: [6, 1.5, 1, 1.5], web: [6, 2, 2, 0],
 }
 
 function pickAction(seed: number, actor: number, epoch: number, prev: AmbientAction | 'start'): AmbientAction {
@@ -73,7 +74,7 @@ function steps(seed: number, actor: number, nodes: readonly Pt[], epoch: number)
   return list
 }
 
-export interface AmbientSpider { id: string; kind: 'hopper' | 'climber'; x: number; y: number; heading: number; lift: number; moving: boolean; groom: boolean; action: string }
+export interface AmbientSpider { id: string; kind: 'hopper' | 'climber'; x: number; y: number; heading: number; lift: number; moving: boolean; groom: boolean; action: string; /** Takeoff crouch and landing compression, 0..1. */ squash: number }
 export interface Silk { pts: Pt[]; alpha: number }
 export interface AmbientScene { spiders: AmbientSpider[]; silk: Silk[] }
 
@@ -108,16 +109,17 @@ function hopper(seed: number, actor: number, nodes: readonly Pt[], t: number, sc
     if (fade > 0 && p.action === 'hop') scene.silk.push({ pts: sagLine(nodes[p.node], nodes[p.to]), alpha: 0.75 * fade })
     if (fade > 0 && p.action === 'web') for (const seg of webSegments(nodes[p.node], seed, epoch - 1)) scene.silk.push({ pts: seg, alpha: 0.7 * fade })
   }
-  const base: AmbientSpider = { id, kind: 'hopper', x: here.x, y: here.y, heading: rnd(seed, actor * 13 + 7, epoch) * Math.PI * 2, lift: 0, moving: false, groom: false, action: s.action }
+  const base: AmbientSpider = { id, kind: 'hopper', x: here.x, y: here.y, heading: rnd(seed, actor * 13 + 7, epoch) * Math.PI * 2, lift: 0, moving: false, groom: false, action: s.action, squash: 0 }
   if (s.action === 'groom') base.groom = true
   if (s.action === 'hop') {
     const start = 600 + rnd(seed, actor * 17 + 9, epoch) * 2600, to = nodes[s.to], dist = Math.hypot(to.x - here.x, to.y - here.y)
-    if (o < start) { scene.spiders.push({ ...base, heading: Math.atan2(to.y - here.y, to.x - here.x) }); return }
+    if (o < start) { scene.spiders.push({ ...base, heading: Math.atan2(to.y - here.y, to.x - here.x), squash: o > start - 180 ? ((o - (start - 180)) / 180) * 0.6 : 0 }); return } // the crouch before it commits
     const u = Math.min(1, (o - start) / HOP_MS), p = lerp(here, to, ease(u)), heading = Math.atan2(to.y - here.y, to.x - here.x)
     const fresh = o - start
     scene.silk.push({ pts: sagLine(here, to), alpha: Math.min(0.85, fresh / 200) * (1 - ease((o - start - 2500) / 4000)) })
     if (u < 1) { scene.spiders.push({ ...base, x: p.x, y: p.y, heading, lift: Math.sin(Math.PI * u) * (22 + dist * 0.1), moving: true }); return }
-    scene.spiders.push({ ...base, x: to.x, y: to.y, heading })
+    const landed = o - start - HOP_MS // legs absorb the impact, the body squashes and settles
+    scene.spiders.push({ ...base, x: to.x, y: to.y, heading, squash: landed < 320 ? 1 - ease(landed / 320) : 0 })
     return
   }
   if (s.action === 'web') {
@@ -152,15 +154,37 @@ function climber(seed: number, t: number, scene: AmbientScene) {
     scene.silk.push({ pts: sagLine(before, after, 0.02, 4), alpha: 0.85 * (1 - ease((o - slipAt - 800) / 1800)) })
   }
   const slipping = slips && o >= slipAt && o < slipAt + SLIP_MS
-  scene.spiders.push({ id: 'climber', kind: 'climber', x: pos.x, y: pos.y, heading: slipping ? heading + 0.5 : heading, lift: 0, moving: moving && !slipping, groom: false, action: slipping ? 'slip' : moving ? (heading < 0 ? 'climb' : 'descend') : 'rest' })
+  scene.spiders.push({ id: 'climber', kind: 'climber', x: pos.x, y: pos.y, heading: slipping ? heading + 0.5 : heading, lift: 0, moving: moving && !slipping, groom: false, action: slipping ? 'slip' : moving ? (heading < 0 ? 'climb' : 'descend') : 'rest', squash: 0 })
 }
 
-/** The whole ambient scene at time `tMs` (since the rig mounted, or a frozen frame) for a seed. Pure. */
-export function ambientScene(seed: number, tMs: number, nodes: readonly Pt[] = AMBIENT_NODES): AmbientScene {
-  const scene: AmbientScene = { spiders: [], silk: [] }
+/** How long the escape reflex lasts: drop on the dragline, hang motionless, then a cautious climb back. */
+export const ESCAPE_MS = 6000
+const ESCAPE_DROP = 34
+
+/**
+ * The whole ambient scene at time `tMs` (since the rig mounted, or a frozen frame) for a seed. Pure.
+ * `startles` are the times (same clock) of big state changes; within ESCAPE_MS of one, every spider takes the escape reflex.
+ * They are times only: ambient never learns what the event was, and still claims nothing.
+ */
+export function ambientScene(seed: number, tMs: number, nodes: readonly Pt[] = AMBIENT_NODES, startles: readonly number[] = []): AmbientScene {
   const t = Math.max(0, tMs)
-  if (nodes.length >= 2) { hopper(seed, 1, nodes, t, scene); hopper(seed, 2, nodes, t, scene) }
-  climber(seed, t, scene)
+  const startle = startles.filter(x => x <= t && t - x < ESCAPE_MS).reduce((a, b) => Math.max(a, b), -Infinity)
+  const calm = (at: number) => {
+    const scene: AmbientScene = { spiders: [], silk: [] }
+    if (nodes.length >= 2) { hopper(seed, 1, nodes, at, scene); hopper(seed, 2, nodes, at, scene) }
+    climber(seed, at, scene)
+    return scene
+  }
+  if (startle === -Infinity) return calm(t)
+  // the escape reflex: from where each spider was when it was startled, it drops on its dragline and hangs, then climbs back
+  const at = calm(startle), since = t - startle
+  const drop = since < 400 ? ease(since / 400) : since < 4500 ? 1 : 1 - ease((since - 4500) / 1500)
+  const scene: AmbientScene = { spiders: [], silk: [] }
+  for (const sp of at.spiders) {
+    const anchor = { x: sp.x, y: sp.y }, depth = (sp.kind === 'climber' ? 0.6 : 1) * ESCAPE_DROP * drop
+    scene.spiders.push({ ...sp, y: sp.y + depth, lift: 0, moving: since >= 4500, groom: false, action: 'escape', squash: 0, heading: -Math.PI / 2 })
+    scene.silk.push({ pts: [anchor, { x: sp.x, y: sp.y + depth }], alpha: 0.85 })
+  }
   return scene
 }
 

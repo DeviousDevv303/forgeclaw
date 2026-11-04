@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { AMBIENT_NODES, DEFAULT_AMBIENT_SEED, EPOCH_MS, HOP_MS, WALL, ambientScene, ambientSignature, parseAmbientParams, rnd, sagLine, webSegments } from './spiderAmbient'
+import { AMBIENT_NODES, DEFAULT_AMBIENT_SEED, EPOCH_MS, ESCAPE_MS, HOP_MS, WALL, ambientScene, ambientSignature, parseAmbientParams, rnd, sagLine, webSegments } from './spiderAmbient'
 
 const SECONDS = (n: number) => n * 1000
 
@@ -119,7 +119,7 @@ describe('ambient never claims state', () => {
     expect(src).not.toMatch(/spiderlings|forgeOps|useSpiderlings|AgentEvent|SpiderLedger/)
   })
   it('the spiders it returns carry no tone, tool or run: nothing a counter could count', () => {
-    for (const s of ambientScene(11, 12_345).spiders) expect(Object.keys(s).sort()).toEqual(['action', 'groom', 'heading', 'id', 'kind', 'lift', 'moving', 'x', 'y'])
+    for (const s of ambientScene(11, 12_345).spiders) expect(Object.keys(s).sort()).toEqual(['action', 'groom', 'heading', 'id', 'kind', 'lift', 'moving', 'squash', 'x', 'y'])
   })
 })
 
@@ -129,5 +129,36 @@ describe('parseAmbientParams', () => {
     expect(parseAmbientParams('?rig=1&spiderSeed=7&spiderFreeze=2500')).toEqual({ enabled: true, seed: 7, freezeMs: 2500 })
     expect(parseAmbientParams('?ambient=0').enabled).toBe(false)
     expect(parseAmbientParams('?spiderSeed=abc&spiderFreeze=-5')).toEqual({ enabled: true, seed: 11 })
+  })
+})
+
+describe('realism and stealth (owner passes, 2026-11-04)', () => {
+  it('statue-still is the resting state: idle outweighs every other action by a wide margin', () => {
+    const list = Array.from({ length: 400 }, (_, e) => ambientScene(11, e * EPOCH_MS + 100).spiders.find(s => s.id === 'hopper-1')!.action)
+    const share = (a: string) => list.filter(x => x === a).length / list.length
+    expect(share('idle')).toBeGreaterThan(0.4); expect(share('hop')).toBeLessThan(share('idle'))
+  })
+  it('a jump is a crouch, a flight, and a landing that compresses and settles', () => {
+    for (let e = 0; e < 300; e++) {
+      const at = (o: number) => ambientScene(11, e * EPOCH_MS + o).spiders.find(s => s.id === 'hopper-1')!
+      if (at(100).action !== 'hop') continue
+      let first = -1; for (let o = 0; o < EPOCH_MS; o += 10) if (at(o).lift > 0) { first = o; break }
+      expect(at(first - 60).squash).toBeGreaterThan(0) // crouched just before takeoff
+      let land = -1; for (let o = first; o < EPOCH_MS; o += 10) if (at(o).lift === 0) { land = o; break }
+      expect(at(land + 40).squash).toBeGreaterThan(0.5); expect(at(land + 600).squash).toBe(0) // squashed on landing, settled after
+      return
+    }
+    throw new Error('no hop found')
+  })
+  it('escape reflex: on a startle every spider drops on its dragline, hangs motionless, then climbs back; pure in (seed, time, startles)', () => {
+    const t0 = 50_000, calm = ambientScene(11, t0)
+    const hang = ambientScene(11, t0 + 2000, AMBIENT_NODES, [t0])
+    expect(hang.spiders.every(s => s.action === 'escape' && !s.moving)).toBe(true)
+    for (const s of hang.spiders) { const before = calm.spiders.find(c => c.id === s.id)!; expect(s.y).toBeGreaterThan(before.y + 10); expect(Math.abs(s.x - before.x)).toBeLessThan(0.01) }
+    expect(hang.silk.length).toBe(hang.spiders.length) // each hangs on its own line
+    expect(ambientScene(11, t0 + 5200, AMBIENT_NODES, [t0]).spiders.every(s => s.moving)).toBe(true) // the cautious climb back
+    expect(ambientScene(11, t0 + ESCAPE_MS + 10, AMBIENT_NODES, [t0]).spiders.some(s => s.action === 'escape')).toBe(false)
+    expect(ambientSignature(ambientScene(11, t0 + 2000, AMBIENT_NODES, [t0]))).toBe(ambientSignature(hang))
+    expect(ambientSignature(ambientScene(11, t0 - 10, AMBIENT_NODES, [t0]))).toBe(ambientSignature(ambientScene(11, t0 - 10))) // a future startle changes nothing
   })
 })

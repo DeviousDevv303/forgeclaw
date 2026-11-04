@@ -14,7 +14,7 @@
 import { isStale, type SpiderChannel, type SpiderRun } from '../lib/spiderlings'
 import type { AmbientScene } from './spiderAmbient'
 import { renderJumperFront, renderJumperTop, type Morph } from './spiderRender'
-import { CHEST, poseOf, type AnchorSet, type Pose, type PoseTone, type Pt } from './spiderRoutes'
+import { CHEST, poseOf, type AnchorSet, type Pose, type PoseTone, type Pt, type Surface } from './spiderRoutes'
 
 type RGB = [number, number, number]
 const TONE: Record<PoseTone, RGB> = { work: [120, 200, 255], ok: [90, 255, 170], flag: [255, 70, 80], unknown: [170, 170, 185] }
@@ -32,6 +32,13 @@ export interface SpiderLook {
   groom?: boolean
   /** carneus (7511, black with a red abdomen) or red (7509, red cephalothorax and abdomen). */
   morph?: Morph
+  pitch?: number
+  squash?: number
+  surface?: Surface
+  /** Eyeshine colour, matched to the scene's light. */
+  glint?: string
+  /** Front view: the head turned toward what it watches. */
+  tilt?: number
 }
 
 /** A jumping spider at (x, y) on the ground, facing `heading`, `size` px long, seen from above (renderer: spiderRender.ts). */
@@ -49,7 +56,7 @@ export function drawSpider(ctx: CanvasRenderingContext2D, x: number, y: number, 
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y - lift, s * 1.6, 0, Math.PI * 2); ctx.fill()
   }
   ctx.translate(x, y - lift); ctx.rotate(heading)
-  renderJumperTop(ctx, s, { gait: look.gait, moving: look.moving, groom: look.groom, morph: unknown ? 'ghost' : look.morph })
+  renderJumperTop(ctx, s, { gait: look.gait, moving: look.moving, groom: look.groom, morph: unknown ? 'ghost' : look.morph, pitch: look.pitch, squash: look.squash, surface: look.surface, glint: look.glint })
   ctx.restore()
 }
 
@@ -62,7 +69,7 @@ export function drawSpiderFront(ctx: CanvasRenderingContext2D, x: number, y: num
     g.addColorStop(0, rgba(c, 0.4)); g.addColorStop(1, rgba(c, 0)); ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y - size * 0.4, size * 1.5, 0, Math.PI * 2); ctx.fill()
   }
   ctx.translate(x, y)
-  renderJumperFront(ctx, size, { gait: look.gait, moving: false, groom: look.groom, morph: unknown ? 'ghost' : look.morph })
+  renderJumperFront(ctx, size, { gait: look.gait, moving: false, groom: look.groom, morph: unknown ? 'ghost' : look.morph, squash: look.squash, glint: look.glint, tilt: look.tilt })
   ctx.restore()
 }
 
@@ -90,7 +97,7 @@ function dockRing(ctx: CanvasRenderingContext2D, pose: Pose, P: (p: Pt) => Pt, k
 export interface DrawStats { drawn: number; byPhase: Record<string, number> }
 
 /** Draw every ledger spider of `runs` at `now`. Returns what was drawn so a test (or the panel) can compare it to the ledger. */
-export function drawSpiders(ctx: CanvasRenderingContext2D, runs: readonly SpiderRun[], now: number, anchors: AnchorSet, P: (p: Pt) => Pt, k: number, t: number, view: { w: number; h: number }): DrawStats {
+export function drawSpiders(ctx: CanvasRenderingContext2D, runs: readonly SpiderRun[], now: number, anchors: AnchorSet, P: (p: Pt) => Pt, k: number, t: number, view: { w: number; h: number }, glint = 'rgba(255,255,255,0.9)'): DrawStats {
   const stats: DrawStats = { drawn: 0, byPhase: {} }
   const open = new Map<SpiderChannel, { fresh: number; unknown: number }>()
   for (const run of runs) {
@@ -111,16 +118,16 @@ export function drawSpiders(ctx: CanvasRenderingContext2D, runs: readonly Spider
       const a = pose.progress * Math.PI * 2, orbit = 15 * k
       ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.strokeStyle = rgba(TONE.work, 0.25 + 0.2 * Math.sin(a)); ctx.lineWidth = Math.max(1, 1.5 * k)
       ctx.beginPath(); ctx.arc(q.x, q.y, (16 + 4 * Math.sin(a)) * k, 0, Math.PI * 2); ctx.stroke(); ctx.restore()
-      drawSpider(ctx, q.x + Math.cos(a) * orbit, q.y + Math.sin(a) * orbit * 0.6, a + Math.PI / 2, size, { tone: pose.tone, gait: t / 90, alpha: pose.alpha, moving: true })
+      drawSpider(ctx, q.x + Math.cos(a) * orbit, q.y + Math.sin(a) * orbit * 0.6, a + Math.PI / 2, size, { tone: pose.tone, gait: t / 90, alpha: pose.alpha, moving: true, surface: pose.surface, glint })
       continue
     }
     if (pose.phase === 'unknown') { // unknown: a dim spider, still, ringed by a dashed line that does not pulse
       ctx.save(); ctx.strokeStyle = rgba(TONE.unknown, 0.5 * pose.alpha); ctx.setLineDash([3, 3]); ctx.lineWidth = Math.max(1, 1.3 * k)
       ctx.beginPath(); ctx.arc(q.x, q.y, 17 * k, 0, Math.PI * 2); ctx.stroke(); ctx.restore()
     }
-    const travelling = pose.phase === 'out' || pose.phase === 'back'
+    // stalking is low and silent: no bob; a freeze stops the legs; a climb pitches the body
     drawSpider(ctx, q.x, q.y, pose.phase === 'dock' ? -Math.PI / 2 : pose.heading, pose.phase === 'dock' ? size * (1 - pose.progress * 0.5) : size, {
-      tone: pose.tone, gait: t / 70, alpha: pose.alpha, moving: travelling, lift: travelling ? Math.abs(Math.sin(t / 150)) * 3.5 * k : 0,
+      tone: pose.tone, gait: t / (pose.tone === 'flag' ? 45 : 70), alpha: pose.alpha, moving: pose.moving, pitch: pose.pitch, surface: pose.surface, glint,
     })
   }
   // Node tags: only for a channel with an unanswered run, so an idle painting carries no text at all.
@@ -137,12 +144,15 @@ export function drawSpiders(ctx: CanvasRenderingContext2D, runs: readonly Spider
 }
 
 /** Ambient life: hoppers, webs, the wall spider. No halo, no tag, no ledger: it claims nothing. Returns how many spiders were drawn. */
-export function drawAmbient(ctx: CanvasRenderingContext2D, scene: AmbientScene, P: (p: Pt) => Pt, k: number, t: number): number {
+export function drawAmbient(ctx: CanvasRenderingContext2D, scene: AmbientScene, P: (p: Pt) => Pt, k: number, t: number, glint = 'rgba(255,255,255,0.9)', attend: Pt | null = null): number {
   for (const s of scene.silk) drawSilk(ctx, s.pts, P, k, s.alpha)
   const size = 21 * k + 7
   for (const sp of scene.spiders) {
     const q = P(sp)
-    const look: SpiderLook = { gait: t / 80, alpha: 0.97, moving: sp.moving, lift: sp.lift * k, groom: sp.groom, morph: sp.id === 'hopper-2' ? 'red' : 'carneus' }
+    // attention: a resting spider turns its head toward what it is watching (the cursor if it moved lately, else the turning cube)
+    const tilt = attend ? Math.max(-0.32, Math.min(0.32, (attend.x - sp.x) / 600)) : 0
+    const surface: Surface = sp.kind === 'climber' ? 'wall' : 'floor'
+    const look: SpiderLook = { gait: t / 80, alpha: 0.97, moving: sp.moving, lift: sp.lift * k, groom: sp.groom, morph: sp.id === 'hopper-2' ? 'red' : 'carneus', squash: sp.squash, surface, glint, tilt, pitch: sp.kind === 'climber' && sp.moving ? 0.5 : 0 }
     // At rest it turns to look back at the viewer (the face is what makes it a character); travelling, it is seen from above.
     if (!sp.moving && sp.lift <= 0 && (sp.action === 'idle' || sp.action === 'groom' || sp.action === 'rest')) drawSpiderFront(ctx, q.x, q.y, size * 1.15, look)
     else drawSpider(ctx, q.x, q.y, sp.heading, sp.kind === 'climber' ? size * 1.1 : size, look)

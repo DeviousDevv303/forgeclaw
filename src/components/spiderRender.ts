@@ -86,7 +86,7 @@ function furEllipse(b: Buckets, seed: number, cx: number, cy: number, rx: number
 }
 
 // ---- static body (cached) -------------------------------------------------------------------------------------------------------
-interface BodyCache { draw: (ctx: CanvasRenderingContext2D) => void }
+interface BodyCache { draw: (ctx: CanvasRenderingContext2D, glint: string) => void }
 const bodyCache = new Map<string, BodyCache>()
 
 /** Abdomen behind (−x), cephalothorax in front; both centred on the spider's own axis, size s = body length. */
@@ -124,7 +124,7 @@ function body(morph: Morph, s: number): BodyCache {
       strand(marks, css(P.mark, 0.88), x, y, Math.cos(d) * len, Math.sin(d) * len)
     }
   }
-  const draw = (ctx: CanvasRenderingContext2D) => {
+  const draw = (ctx: CanvasRenderingContext2D, glint: string) => {
     // abdomen: shaded round
     const ag = ctx.createRadialGradient(AX + s * 0.08, -s * 0.12, s * 0.03, AX, 0, ARX * 1.05)
     ag.addColorStop(0, css(P.abdHi)); ag.addColorStop(0.45, css(P.abd)); ag.addColorStop(1, css(P.abdLo))
@@ -154,7 +154,7 @@ function body(morph: Morph, s: number): BodyCache {
       const g = ctx.createRadialGradient(ex + r * 0.25, ey - r * 0.25, r * 0.05, ex, ey, r)
       g.addColorStop(0, morph === 'ghost' ? 'rgb(90,90,96)' : 'rgb(46,40,30)'); g.addColorStop(0.55, 'rgb(6,6,8)'); g.addColorStop(1, 'rgb(1,1,2)')
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ex, ey, r, 0, Math.PI * 2); ctx.fill()
-      if (morph !== 'ghost') { ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.beginPath(); ctx.arc(ex + r * 0.3, ey - r * 0.32, Math.max(0.4, r * 0.24), 0, Math.PI * 2); ctx.fill() }
+      if (morph !== 'ghost') { ctx.fillStyle = glint; ctx.beginPath(); ctx.arc(ex + r * 0.3, ey - r * 0.32, Math.max(0.4, r * 0.24), 0, Math.PI * 2); ctx.fill() }
     }
     eye(CX + s * 0.27, -s * 0.085, s * 0.075); eye(CX + s * 0.27, s * 0.085, s * 0.075)
     eye(CX + s * 0.22, -s * 0.2, s * 0.04); eye(CX + s * 0.22, s * 0.2, s * 0.04)
@@ -214,7 +214,28 @@ function limbHair(b: Buckets, P: Palette, seed: number, ax: number, ay: number, 
   }
 }
 
-export interface RenderLook { gait: number; moving: boolean; groom?: boolean; morph?: Morph }
+export interface RenderLook {
+  gait: number; moving: boolean; groom?: boolean; morph?: Morph
+  /** Body pitch while hauling up a vertical face (0 on the flat): body foreshortened, pair I reaching over the edge, pair IV pushing. */
+  pitch?: number
+  /** Landing compression 0..1: the legs absorb the impact, the body squashes and settles. */
+  squash?: number
+  /** Eyeshine: the catchlight colour, matched to the scene's light. */
+  glint?: string
+  /** Front view only: the head turned toward what it is attending (radians, small). */
+  tilt?: number
+  /** What it stands on: the contact shadow conforms (flat on the floor; offset and tight on a vertical face). */
+  surface?: 'floor' | 'chair' | 'wall'
+}
+/** A contact shadow that lies on the surface under it: a wide flat pool on the floor, a tight offset shape on a vertical face. */
+function contactShadow(ctx: CanvasRenderingContext2D, s: number, surface: RenderLook['surface'], cx: number, cy: number) {
+  const vertical = surface === 'chair' || surface === 'wall'
+  const ox = vertical ? cx + s * 0.18 : cx, oy = vertical ? cy + s * 0.12 : cy
+  const rx = vertical ? s * 0.6 : s * 0.95, ry = vertical ? s * 0.5 : s * 0.7
+  const sg = ctx.createRadialGradient(ox, oy, s * 0.08, ox, oy, Math.max(rx, ry))
+  sg.addColorStop(0, `rgba(0,0,0,${vertical ? 0.55 : 0.45})`); sg.addColorStop(1, 'rgba(0,0,0,0)')
+  ctx.fillStyle = sg; ctx.beginPath(); ctx.ellipse(ox, oy, rx, ry, 0, 0, Math.PI * 2); ctx.fill()
+}
 
 /**
  * Seen from above, local frame +x = forward. Crouched: each leg's femur rises from the body (short from above, because it points
@@ -222,17 +243,20 @@ export interface RenderLook { gait: number; moving: boolean; groom?: boolean; mo
  */
 export function renderJumperTop(ctx: CanvasRenderingContext2D, s: number, look: RenderLook) {
   const morph = look.morph ?? 'carneus', P = PAL[morph]
-  // soft contact shadow
-  const sg = ctx.createRadialGradient(-s * 0.15, s * 0.05, s * 0.1, -s * 0.15, s * 0.05, s * 0.95)
-  sg.addColorStop(0, 'rgba(0,0,0,0.45)'); sg.addColorStop(1, 'rgba(0,0,0,0)')
-  ctx.fillStyle = sg; ctx.beginPath(); ctx.ellipse(-s * 0.15, s * 0.05, s * 0.95, s * 0.7, 0, 0, Math.PI * 2); ctx.fill()
+  const pitch = look.pitch ?? 0, squash = look.squash ?? 0
+  contactShadow(ctx, s, look.surface, -s * 0.15, s * 0.05)
+  ctx.save()
+  // climbing: foreshortened along its length; landing: squashed flat and wide; breathing: the faintest swell
+  const breath = 1 + Math.sin(look.gait * 0.22) * 0.012
+  ctx.scale((1 - squash * 0.16) * Math.cos(pitch * 0.85) * breath, (1 + squash * 0.14) * breath)
   const hair: Buckets = new Map()
   // legs, rear pair first so the front pair sits on top
   for (const i of [3, 2, 1, 0]) for (const side of [-1, 1]) {
     const phase = look.moving ? Math.sin(look.gait * 1.6 + (i % 2 ? Math.PI : 0) + (side > 0 ? Math.PI : 0)) : 0
     const rootX = s * [0.28, 0.17, 0.06, -0.04][i], rootY = side * s * 0.2
-    const ang = ([0.62, 1.05, 1.95, 2.45][i] + phase * 0.1) // from forward, radians (crouched: 35–60° front, 110–140° back)
-    const femur = s * [0.3, 0.24, 0.24, 0.3][i] // short from above: it points up out of the body
+    // climbing: pair I swings forward to reach over the edge, pair IV back to push; landing: every leg splays to take the load
+    const ang = [0.62, 1.05, 1.95, 2.45][i] + phase * 0.1 - (i === 0 ? pitch * 0.35 : i === 3 ? -pitch * 0.25 : 0) + squash * (i < 2 ? 0.12 : -0.12)
+    const femur = s * [0.3, 0.24, 0.24, 0.3][i] * (i === 0 ? 1 + pitch * 0.7 : i === 3 ? 1 + pitch * 0.3 : 1) // short from above: it points up out of the body
     const tibia = s * [0.36, 0.28, 0.3, 0.38][i], tarsus = s * [0.16, 0.12, 0.13, 0.16][i]
     const kx = rootX + Math.cos(ang) * femur, ky = rootY + side * Math.sin(ang) * femur
     const a2 = ang + (i < 2 ? -0.22 : 0.18) - (i === 0 ? 0.18 : 0)
@@ -253,13 +277,14 @@ export function renderJumperTop(ctx: CanvasRenderingContext2D, s: number, look: 
     ctx.fillStyle = morph === 'red' ? css(P.legHair[2], 0.85) : css(P.leg); ctx.beginPath(); ctx.arc(fx, fy, w * 0.24, 0, Math.PI * 2); ctx.fill()
   }
   strokeBuckets(ctx, hair, Math.max(0.35, s * 0.0045))
-  // palps: short, furry, pale-tipped; they twitch when it grooms
-  const tw = look.groom ? Math.sin(look.gait * 2) * s * 0.03 : 0
+  // palps: short, furry, pale-tipped; always a slow wave, faster when it grooms
+  const tw = look.groom ? Math.sin(look.gait * 2) * s * 0.03 : Math.sin(look.gait * 0.6) * s * 0.012
   for (const side of [-1, 1]) {
     limb(ctx, P, s * 0.42, side * s * 0.1, s * 0.56, side * s * 0.12 + tw * side, s * 0.07, s * 0.08)
     ctx.fillStyle = css(P.legHair[2], 0.9); ctx.beginPath(); ctx.arc(s * 0.57, side * s * 0.12 + tw * side, s * 0.035, 0, Math.PI * 2); ctx.fill()
   }
-  body(morph, s).draw(ctx)
+  body(morph, s).draw(ctx, look.glint ?? 'rgba(255,255,255,0.9)')
+  ctx.restore()
 }
 
 /**
@@ -270,9 +295,13 @@ export function renderJumperTop(ctx: CanvasRenderingContext2D, s: number, look: 
 export function renderJumperFront(ctx: CanvasRenderingContext2D, s: number, look: RenderLook) {
   const morph = look.morph ?? 'carneus', P = PAL[morph]
   const breathe = look.groom ? Math.sin(look.gait * 2) * s * 0.015 : Math.sin(look.gait * 0.25) * s * 0.008
+  const squash = look.squash ?? 0
   const sg = ctx.createRadialGradient(0, 0, s * 0.1, 0, 0, s * 1.1)
   sg.addColorStop(0, 'rgba(0,0,0,0.5)'); sg.addColorStop(1, 'rgba(0,0,0,0)')
   ctx.fillStyle = sg; ctx.beginPath(); ctx.ellipse(0, 0, s * 1.1, s * 0.2, 0, 0, Math.PI * 2); ctx.fill()
+  ctx.save()
+  ctx.rotate(look.tilt ?? 0) // the head turns toward what it watches
+  ctx.scale(1 + squash * 0.12, 1 - squash * 0.18) // a landing settles it low
   const headY = -s * 0.36 + breathe
   // abdomen behind, rising over the head
   const ab: Buckets = new Map()
@@ -326,7 +355,7 @@ export function renderJumperFront(ctx: CanvasRenderingContext2D, s: number, look
     g.addColorStop(0, morph === 'ghost' ? 'rgb(90,90,96)' : 'rgb(58,48,30)'); g.addColorStop(0.5, 'rgb(8,8,10)'); g.addColorStop(1, 'rgb(1,1,2)')
     ctx.fillStyle = g; ctx.beginPath(); ctx.arc(ex, ey, r, 0, Math.PI * 2); ctx.fill()
     if (morph !== 'ghost') {
-      ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.beginPath(); ctx.arc(ex - r * 0.32, ey - r * 0.34, Math.max(0.5, r * 0.22), 0, Math.PI * 2); ctx.fill()
+      ctx.fillStyle = look.glint ?? 'rgba(255,255,255,0.95)'; ctx.beginPath(); ctx.arc(ex - r * 0.32, ey - r * 0.34, Math.max(0.5, r * 0.22), 0, Math.PI * 2); ctx.fill()
       ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.arc(ex + r * 0.34, ey + r * 0.3, Math.max(0.3, r * 0.09), 0, Math.PI * 2); ctx.fill()
     }
   }
@@ -338,10 +367,11 @@ export function renderJumperFront(ctx: CanvasRenderingContext2D, s: number, look
     ctx.fillStyle = ig
     ctx.beginPath(); ctx.ellipse(-s * 0.07, headY + s * 0.22, s * 0.065, s * 0.09, 0.12, 0, Math.PI * 2); ctx.ellipse(s * 0.07, headY + s * 0.22, s * 0.065, s * 0.09, -0.12, 0, Math.PI * 2); ctx.fill()
     // palps
-    const tw = look.groom ? Math.sin(look.gait * 2) * s * 0.03 : 0
+    const tw = look.groom ? Math.sin(look.gait * 2) * s * 0.03 : Math.sin(look.gait * 0.6) * s * 0.012
     for (const side of [-1, 1]) {
       limb(ctx, P, side * s * 0.17, headY + s * 0.18, side * s * 0.2, headY + s * 0.34 + tw * side, s * 0.07, s * 0.08)
       ctx.fillStyle = css(P.legHair[2], 0.9); ctx.beginPath(); ctx.arc(side * s * 0.2, headY + s * 0.35 + tw * side, s * 0.035, 0, Math.PI * 2); ctx.fill()
     }
   }
+  ctx.restore()
 }

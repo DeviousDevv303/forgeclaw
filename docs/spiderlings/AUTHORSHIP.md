@@ -13,6 +13,7 @@ next to the code that implements them. Directives are quoted from the owner's ch
 | 2026-11-04 09:29 | main chat (#235 6634700554) | A mind of their own: seeded procedural behaviour trees, weighted choices, deterministic seeds, never pure RNG; occasional web-building; strategic unpredictability. |
 | 2026-11-04 | Claude session chat | Reference photos sent ("They need to look like this"); corrections: drop the outline stroke, thicken the legs, hair; "the face and the fuzz"; final: realistic, not cartoony; stocky compact hairy body, short thick tapering legs, crouched posture with legs angled ~45-65° and the front pair raised; rendered texture, rim light on fur, no white outline. |
 | 2026-11-04 | Claude session chat | Owner IP statement (above); preserve directives, briefs and dated decisions on the object. |
+| 2026-11-04 | Claude session chat | Terrain reactivity (spiders obey the scene's geometry; climbing shows the climb; every pose reads the terrain), realism pass (saccadic locomotion, landing compression, dragline on every jump, attention tilt, eyeshine, idle micro-motion, conforming contact shadows, outcome-encoded movement) and stealth pass (stalk, freeze, prefer edges, statue stillness, escape reflex). |
 
 ## Visual targets (committed in-repo, 2026-11-04)
 - `reference/7511.jpg` — *Phidippus carneus*: black, red abdomen with white spots, white bands (sha256 `b7d233c3284388fc363eed2b9af4d547bd58dce592f3dafdf93e9574e943b63a`).
@@ -26,3 +27,5 @@ If the repository is or becomes public, the owner may prefer to hold these two f
 - 2026-11-04 v1.1: ambient life, seeded behaviour tree, silk distinct from neural, face at rest (`96d0fad1`).
 - 2026-11-04 v4 render: rebuilt as a creature to the two photos (filled tapered crouched legs, fur strands with rim light, no outline,
   glossy eyes; two morphs: carneus and red). Judged side by side with the photos at specimen scale.
+- 2026-11-04 behaviour passes: saccadic stalk, outcome-encoded returns, climb pitch by surface, landing squash, escape reflex on
+  startles, attention tilt to pointer/cube, eyeshine matched to scene light. Per-foot terrain IK left for a ledge-geometry trace.

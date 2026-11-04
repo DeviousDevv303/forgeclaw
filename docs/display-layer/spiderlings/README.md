@@ -30,6 +30,26 @@ catches itself on a line of silk, and comes back down. The scene is a pure funct
   parameters**: load `?rig=1&spiderSeed=11&spiderFreeze=2500` and the ambient scene is the same (the A1 check compares the scene
   signature across two loads). Close-ups `10-anatomy-hopper` (from above, mid-jump), `11-anatomy-wall` and `12-anatomy-face` (at rest, facing the viewer) are seed 11 at 2.5 s, 3x.
 
+## Behaviour (owner's terrain, realism and stealth passes, 2026-11-04)
+- **Stalking, saccadic:** an outbound spider creeps low in 3–5 bursts with statue freezes between them (legs stop in a freeze); never
+  constant speed (`saccade` in `spiderRoutes.ts`). Paths keep to the painted cables and cube edges.
+- **Outcome-encoded return:** clean returns are calm and direct; flagged returns are fast (60% of the time), in short jerky bursts,
+  weaving across the line, trailing red silk.
+- **Terrain:** `surfaceAt` tells the throne's faces from the network floor; climbing a face of the throne pitches the body (foreshortened,
+  pair I reaching over the edge, pair IV pushing). Contact shadows follow the surface: a wide flat pool on the floor, a tight offset
+  shadow on a vertical face (the wall spider, the throne).
+- **Jumps:** a crouch before takeoff, a silk dragline on every hop, landing compression that settles.
+- **Escape reflex:** a big state change (objective received, mission complete or blocked, reset, a tool failure) makes every ambient
+  spider drop on its dragline and hang motionless, then climb back cautiously. Ambient receives only the TIMES of those events, never
+  what they were, so it still claims nothing and stays a pure function of (seed, time, startle times).
+- **Attention:** a resting spider turns its head toward the owner's pointer while it moves, otherwise toward the turning cube.
+- **Life at rest:** statue-still is the resting state (idle is weighted far above hopping); palps wave slowly, groom now and then; the
+  abdomen breathes; eyeshine catchlights take the scene's light colour (the same tone as the cube and cables).
+- Pose sheet: `docs/spiderlings/v4-poses.png` (standing, climbing, landing, attending).
+- **Not built (said plainly):** leg-by-leg inverse kinematics over real ledge geometry (feet at different heights on the armrest and
+  platform) and hiding behind a cube edge. The painting carries no depth map, so v4 classifies surfaces by region and pitches the body;
+  per-foot terrain contact needs ledge geometry traced on the painting first.
+
 ## What a spider is
 | Ledger line | Comes from (already emitted, `src/types/forgeOps.ts`) | On screen |
 |---|---|---|

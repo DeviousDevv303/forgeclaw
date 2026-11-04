@@ -69,7 +69,7 @@ const canvasHas = (phase) => ([p]) => { const c = document.querySelector('canvas
     if (only.includes('L2')) { const state = { hold: true, mode: 'ok' }, { ctx, page, errs } = await open('?rig=1', state); await page.waitForSelector('[data-testid=spider-panel]')
       await ask(page, 'What is 17 times 23? Answer in one short sentence.')
       const flying = await until(page, () => Number(document.querySelector('[data-testid=spider-inflight]').textContent) === 1)
-      await page.waitForTimeout(2600) // past the 2.2 s trip out: the spider is at its node, working
+      await page.waitForTimeout(4000) // past the 3.6 s stalk out (bursts and freezes): the spider is at its node, working
       const mid = await counters(page), dMid = await drawn(page)
       ok(tag, 'L2 a real tool start puts exactly one spider in flight, drawn at its node, and the ledger line says so', flying && mid.inflight === 1 && dMid.n === 1 && 'working' in dMid.phases && (await lines(page)).some(x => /out of the throne → network · (qwen_reason|ask_qwen)/.test(x)), { counters: mid, drawn: dMid })
       await shot(page, '2-in-flight')
@@ -85,7 +85,7 @@ const canvasHas = (phase) => ([p]) => { const c = document.querySelector('canvas
     // L3: live failure: the spider comes back flagged, red
     if (only.includes('L3')) { const state = { hold: true, mode: 'fail' }, { ctx, page, errs } = await open('?rig=1', state); await page.waitForSelector('[data-testid=spider-panel]')
       await ask(page, 'What is 17 times 23? Answer in one short sentence.')
-      await until(page, () => Number(document.querySelector('[data-testid=spider-inflight]').textContent) === 1); await page.waitForTimeout(2600)
+      await until(page, () => Number(document.querySelector('[data-testid=spider-inflight]').textContent) === 1); await page.waitForTimeout(4000)
       state.hold = false
       const flagged = await until(page, () => Number(document.querySelector('[data-testid=spider-flagged]').textContent) === 1, [], 120000)
       const back = await until(page, canvasHas('back'), ['back'], 10000).then(r => r || until(page, canvasHas('dock'), ['dock'], 10000)); await page.waitForTimeout(500); await shot(page, '5-flagged')
@@ -98,7 +98,7 @@ const canvasHas = (phase) => ([p]) => { const c = document.querySelector('canvas
     if (only.includes('D1')) { const { ctx, page, errs } = await open('?rig=1&spiders=demo'); await page.waitForSelector('[data-testid=spider-demo-flag]')
       const flag = await page.innerText('[data-testid=spider-demo-flag]'), src = await page.getAttribute('[data-testid=spider-panel]', 'data-source')
       ok(tag, 'D1 the demo says DEMO · simulated events · not live on the panel and carries data-source=demo', /DEMO · simulated events · not live/.test(flag) && src === 'demo', { flag, source: src })
-      await until(page, () => Number(document.querySelector('[data-testid=spider-inflight]').textContent) === 3, [], 15000); await page.waitForTimeout(2600)
+      await until(page, () => Number(document.querySelector('[data-testid=spider-inflight]').textContent) === 3, [], 15000); await page.waitForTimeout(4000)
       const three = await counters(page), dd = await drawn(page); await shot(page, '6-demo-three-channels')
       ok(tag, 'D1 three spiders out at once (browser, sandbox, network) plus one UNKNOWN past its timeout; the canvas draws all four', three.inflight === 3 && three.unknown === 1 && dd.n === 4 && dd.phases.unknown === 1, { counters: three, drawn: dd })
       await until(page, () => Number(document.querySelector('[data-testid=spider-flagged]').textContent) === 1, [], 30000); await page.waitForTimeout(600); await shot(page, '7-demo-flagged-return')

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { BACK_MS, CHEST, DOCK_MS, NODES, OUT_MS, SEAT, UNRESOLVED_FADE_MS, backPath, buildPath, chooseAnchors, outPath, pathAt, poseOf } from './spiderRoutes'
+import { BACK_MS, CHEST, DOCK_MS, FLAG_BACK_MS, NODES, OUT_MS, SEAT, UNRESOLVED_FADE_MS, backPath, buildPath, chooseAnchors, outPath, pathAt, poseOf, saccade, surfaceAt } from './spiderRoutes'
 import type { SpiderRun } from '../lib/spiderlings'
 
 const IMG_W = 1536, IMG_H = 1024
@@ -79,5 +79,35 @@ describe('where a spider is, moment by moment', () => {
   it('the way back climbs the nearer thigh-light: left of the seat goes left, right goes right', () => {
     const leftFrom = pathAt(backPath({ x: 300, y: 700 }), 0.5), rightFrom = pathAt(backPath({ x: 1200, y: 700 }), 0.5)
     expect(leftFrom.x).toBeLessThan(SEAT.x); expect(rightFrom.x).toBeGreaterThan(SEAT.x)
+  })
+})
+
+describe('locomotion (owner realism and stealth passes, 2026-11-04)', () => {
+  it('saccade: exact at both ends, never goes backwards, and really stops between bursts', () => {
+    expect(saccade(0, 4).u).toBe(0); expect(saccade(1, 4).u).toBe(1)
+    let prev = 0, frozen = 0, moving = 0
+    for (let i = 0; i <= 1000; i++) { const r = saccade(i / 1000, 4); expect(r.u).toBeGreaterThanOrEqual(prev - 1e-12); prev = r.u; if (r.moving) moving++; else frozen++ }
+    expect(frozen).toBeGreaterThan(300); expect(moving).toBeGreaterThan(300)
+  })
+  it('outbound stalks: freezes along the way (legs still), never one constant-speed glide', () => {
+    const r0 = run(), states = Array.from({ length: 100 }, (_, i) => poseOf(r0, r0.startedAt + (i / 100) * OUT_MS, FAR)!)
+    expect(states.some(p => p.phase === 'out' && !p.moving)).toBe(true); expect(states.some(p => p.phase === 'out' && p.moving)).toBe(true)
+  })
+  it('outcome-encoded return: a flagged spider is back sooner and weaves; a clean one is calm and on the line', () => {
+    const ok = run({ endedAt: 2_000_000, outcome: 'ok' }), bad = run({ endedAt: 2_000_000, outcome: 'failed' })
+    expect(FLAG_BACK_MS).toBeLessThan(BACK_MS)
+    expect(poseOf(bad, bad.endedAt! + FLAG_BACK_MS + 50, FAR)!.phase).toBe('dock')
+    expect(poseOf(ok, ok.endedAt! + FLAG_BACK_MS + 50, FAR)!.phase).toBe('back')
+    const back = backPath(poseOf(ok, ok.endedAt!, FAR)!)
+    const off = (p: { x: number; y: number }) => Math.min(...Array.from({ length: 2001 }, (_, i) => { const q = pathAt(back, i / 2000); return Math.hypot(q.x - p.x, q.y - p.y) }))
+    const okOff = Math.max(...[0.2, 0.4, 0.6].map(f => off(poseOf(ok, ok.endedAt! + f * BACK_MS, FAR)!)))
+    const badOff = Math.max(...[0.1, 0.2, 0.3, 0.4, 0.5].map(f => off(poseOf(bad, bad.endedAt! + f * FLAG_BACK_MS, FAR)!)))
+    expect(okOff).toBeLessThan(1); expect(badOff).toBeGreaterThan(2)
+  })
+  it('terrain: the throne\'s faces are the chair, the network is the floor; climbing the chair pitches the body', () => {
+    expect(surfaceAt({ x: 760, y: 400 })).toBe('chair'); expect(surfaceAt(NODES.browser.far)).toBe('floor')
+    const ok = run({ endedAt: 2_000_000, outcome: 'ok' })
+    const climbing = Array.from({ length: 60 }, (_, i) => poseOf(ok, ok.endedAt! + (i / 60) * BACK_MS, FAR)!).filter(p => p.phase === 'back' && p.surface === 'chair')
+    expect(climbing.some(p => p.pitch > 0)).toBe(true)
   })
 })
