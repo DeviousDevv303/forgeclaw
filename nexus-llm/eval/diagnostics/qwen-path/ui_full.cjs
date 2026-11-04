@@ -8,6 +8,7 @@ const fs = require('fs')
 const [normalDir, fallbackDir, outPath] = process.argv.slice(2)
 const read = (d, f) => fs.readFileSync(`${d}/${f}`, 'utf8')
 const report = { scenarios: [] }
+const only = (process.env.ONLY || 'S1,S2,S3,S4,S5,S6').split(',')
 const ok = (name, pass, detail) => { report.scenarios.push({ name, pass, ...detail }); console.log(pass ? 'PASS' : 'FAIL', name, JSON.stringify(detail).slice(0, 220)) }
 
 async function githubStandIn(ctx, dir, state) {
@@ -31,14 +32,14 @@ async function githubStandIn(ctx, dir, state) {
   })
 }
 async function ask(page, text) { const box = page.getByRole('textbox').first(); await box.fill(text); await box.press('Enter') }
-async function waitText(page, re, ms = 60000) { try { await page.waitForSelector(`text=${re}`, { timeout: ms }); return true } catch { return false } }
+async function waitText(page, re, ms = 60000) { try { await page.waitForFunction(src => new RegExp(src, 'i').test(document.body.innerText), re, { timeout: ms }); return true } catch { return false } }
 
 ;(async () => {
   const browser = await chromium.launch()
   const newCtx = async (init) => { const c = await browser.newContext({ viewport: { width: 1100, height: 900 } }); await c.addInitScript(init); return c }
 
   // S1: default route
-  { const state = {}, ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token') }); await githubStandIn(ctx, normalDir, state)
+  if (only.includes('S1')) { const state = {}, ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token') }); await githubStandIn(ctx, normalDir, state)
     const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(String(e)))
     await page.goto('http://localhost:4173/', { waitUntil: 'load' }); await ask(page, 'What is 17 times 23? Answer in one short sentence.')
     const shown = await waitText(page, '391'); const body = await page.innerText('body')
@@ -47,20 +48,20 @@ async function waitText(page, re, ms = 60000) { try { await page.waitForSelector
     await page.screenshot({ path: outPath.replace('.json', '-S1.png') }); await ctx.close() }
 
   // S2: a saved provider id from before the rename
-  { const state = {}, ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token'); localStorage.setItem('fm_provider', 'deepseek') }); await githubStandIn(ctx, normalDir, state)
+  if (only.includes('S2')) { const state = {}, ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token'); localStorage.setItem('fm_provider', 'deepseek') }); await githubStandIn(ctx, normalDir, state)
     const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(String(e)))
     await page.goto('http://localhost:4173/', { waitUntil: 'load' }); await ask(page, 'What is 17 times 23? Answer in one short sentence.')
     const shown = await waitText(page, '391'); const saved = await page.evaluate(() => localStorage.getItem('fm_provider'))
     ok("S2 a saved provider 'deepseek' still routes to Qwen", shown && state.workflow === 'qwen3-8b.yml' && !errs.length, { workflow: state.workflow, shown, savedProviderNow: saved, pageErrors: errs }); await ctx.close() }
 
   // S3: the old in-flight-run key does not break loading
-  { const state = {}, ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token'); localStorage.setItem('forgeclaw_active_deepseek_run', JSON.stringify({ invocationId: 'deepseek-1790000000000-old', dispatchedAt: Date.now() - 60000, messageId: 'm1', question: 'old question' })) }); await githubStandIn(ctx, normalDir, state)
+  if (only.includes('S3')) { const state = {}, ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token'); localStorage.setItem('forgeclaw_active_deepseek_run', JSON.stringify({ invocationId: 'deepseek-1790000000000-old', dispatchedAt: Date.now() - 60000, messageId: 'm1', question: 'old question' })) }); await githubStandIn(ctx, normalDir, state)
     const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(String(e)))
     await page.goto('http://localhost:4173/', { waitUntil: 'load' }); await page.waitForTimeout(4000)
     const body = await page.innerText('body'); ok('S3 an old in-flight-run key does not break the app or show DeepSeek', !errs.length && !/deepseek/i.test(body), { pageErrors: errs, deepseekOnScreen: /deepseek/i.test(body) }); await ctx.close() }
 
   // S4: the REAL slow-fallback run (engine forced to the fallback model on the runner)
-  { const state = {}, ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token') }); await githubStandIn(ctx, fallbackDir, state)
+  if (only.includes('S4')) { const state = {}, ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token') }); await githubStandIn(ctx, fallbackDir, state)
     const page = await ctx.newPage(); const errs = []; page.on('pageerror', e => errs.push(String(e)))
     await page.goto('http://localhost:4173/', { waitUntil: 'load' }); await ask(page, 'What is 17 times 23? Answer in one short sentence.')
     const shown = await waitText(page, 'DEGRADED|fallback', 60000); const body = await page.innerText('body')
@@ -68,7 +69,7 @@ async function waitText(page, re, ms = 60000) { try { await page.waitForSelector
     await page.screenshot({ path: outPath.replace('.json', '-S4.png') }); await ctx.close() }
 
   // S5: Kimi stand-in with reasoning_content: the closed Reasoning Trace bar must not show raw reasoning
-  { const ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token'); localStorage.setItem('fm_provider', 'moonshot'); localStorage.setItem('fm_moonshot_key', 'sk-' + 'a'.repeat(48)) })
+  if (only.includes('S5')) { const ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token'); localStorage.setItem('fm_provider', 'moonshot'); localStorage.setItem('fm_moonshot_key', 'sk-' + 'a'.repeat(48)) })
     await ctx.route('https://api.moonshot.ai/**', async route => {
       const body = JSON.parse(route.request().postData() || '{}'); const RAW = "Then that's exactly what we need to get you is an automation timer. Let me think about the plan."
       if (route.request().url().endsWith('/models')) return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: [{ id: 'kimi-k3' }] }) })
@@ -83,7 +84,7 @@ async function waitText(page, re, ms = 60000) { try { await page.waitForSelector
     await page.screenshot({ path: outPath.replace('.json', '-S5.png') }); await ctx.close() }
 
   // S6: provider selector offers Qwen and nothing says DeepSeek
-  { const ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token') }); const page = await ctx.newPage(); await ctx.route('https://api.github.com/**', r => r.fulfill({ status: 404, body: '{}' }))
+  if (only.includes('S6')) { const ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token') }); const page = await ctx.newPage(); await ctx.route('https://api.github.com/**', r => r.fulfill({ status: 404, body: '{}' }))
     await page.goto('http://localhost:4173/', { waitUntil: 'load' }); await page.waitForTimeout(1500)
     const options = await page.$$eval('select option', os => os.map(o => o.textContent)); const body = await page.innerText('body')
     ok('S6 provider list and header read Qwen, no DeepSeek on screen', /qwen/i.test(body) && !/deepseek/i.test(body), { selectOptions: options.slice(0, 10), headerHasQwen: /qwen\/qwen3-8b/i.test(body) }); await ctx.close() }
