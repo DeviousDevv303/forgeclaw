@@ -210,7 +210,7 @@ class EngineSelection(unittest.TestCase):
     def test_site_profile_raises_the_output_budget_and_skips_the_tool_protocol(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("MAX_NEW_TOKENS = 3000 if LONG_OUTPUT else 768", workflow)
-        self.assertIn("FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 420", workflow)
+        self.assertIn("FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 1500", workflow)
         self.assertIn("LONG_OUTPUT = SITE or CODE", workflow)
         self.assertIn("repeat_penalty=1.1,", workflow)
         self.assertNotIn("repeat_penalty=1.1 if SITE else 1.0", workflow)

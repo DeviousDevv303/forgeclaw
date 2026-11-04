@@ -8,8 +8,8 @@
 # different model (deepseek-coder-1.3b-instruct). `result_meta.txt` always records the exact
 # checkpoint that produced the result, so the UI never has to guess.
 #
-# Reliability: the primary general-chat checkpoint (7B) is a genuine memory
-# risk on a 16 GB CPU runner. If it cannot be loaded or executed, the workflow
+# Reliability: the primary checkpoint (Qwen3-8B) is a genuine memory
+# risk on a 16 GB CPU runner if it is loaded as float16 weights (it runs as a 4-bit GGUF). If it cannot be loaded or executed, the workflow
 # falls back to the smaller public DeepSeek checkpoint rather than failing the
 # run. The reasoning role, dispatch contract, artifact contract and mirror
 # contract stay identical in both cases.
@@ -392,7 +392,7 @@ jobs:
 
           # ---- fast engine: llama.cpp + 4-bit GGUF of the same primary model -------------------------
           GGUF_DIR = os.path.expanduser('~/.cache/forgeclaw-gguf')
-          FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 420  # a partial answer is returned (and flagged) rather than waiting longer
+          FAST_TIME_BUDGET_S = 900 if LONG_OUTPUT else 1500  # a partial answer is returned (and flagged) rather than waiting longer
           fast = {'llm': None, 'failed': False, 'file': None, 'load_s': 0.0, 'tokens': 0, 'gen_s': 0.0,
                   'timed_out': False, 'trimmed': False, 'version': None, 'error': None, 'guidance': 'none'}
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""REVIEWER v1 round-3 diagnostic runner (not an exam run). Runs the REAL embedded script of deepseek-16b.yml @ 4382e09 (workflow scaffold,
+"""NOTE (2026-11-04): frozen history. It drives the workflow and scripts as they were at the commit named below; deepseek-16b.yml and deepseek_*.py were removed from main when the workflow became qwen3-8b.yml, so run it from a checkout of that commit.
+REVIEWER v1 round-3 diagnostic runner (not an exam run). Runs the REAL embedded script of deepseek-16b.yml @ 4382e09 (workflow scaffold,
 non-thinking: exactly as production and as run 1) against the Qwen3-8B Q4_K_M GGUF given as argument 2, locally on CPU. The only patches, each asserted
 to apply exactly once: MAX_NEW_TOKENS -> 3000 and FAST_TIME_BUDGET_S -> 1800 (as in the 2x2 and Q8 diagnostics). Each payload item is one call with its
 own TASK, CONTEXT and invocation id, so it has its own sampling seed. Resumable: items already in OUT are skipped.

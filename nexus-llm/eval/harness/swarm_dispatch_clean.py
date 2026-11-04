@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Swarm dispatch cleanliness check (read-only): the same conditions as reviewer_v1_run1_clean.py, for ONE fire-queue file.
     python3 swarm_dispatch_clean.py <queue.json> <mirror_dir> <workflow_commit>
-<mirror_dir> holds <invocation_id>.prompt.txt and .meta.txt read from the deepseek-results branch. CLEAN iff ALL hold:
+<mirror_dir> holds <invocation_id>.prompt.txt and .meta.txt read from the mirror branch (qwen-results for artifacts written by qwen3-8b.yml; deepseek-results for those banked before the 2026-11-04 rename). CLEAN iff ALL hold:
   1 meta context_sha256 == sha256(prompt bytes), basis fitted_prompt, prompt_calls == 1
   2 prompt == pre + task + mid + context + post, where task and context are the queue file's inputs.task and inputs.context
     byte for byte (task located at the workflow's own 'Task:' head), and sha256(pre/mid/post) == the meta segment hashes

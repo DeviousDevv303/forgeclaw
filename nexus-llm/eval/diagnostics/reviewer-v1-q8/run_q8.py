@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""REVIEWER v1 quantization diagnostic (not an exam run): cells QA and QB = the 2x2 cells A and B (workflow scaffold; non-thinking / thinking) run on Qwen3-8B Q8_0 instead of Q4_K_M. Quantization is the only delta.
+"""NOTE (2026-11-04): frozen history. It drives the workflow and scripts as they were at the commit named below; deepseek-16b.yml and deepseek_*.py were removed from main when the workflow became qwen3-8b.yml, so run it from a checkout of that commit.
+REVIEWER v1 quantization diagnostic (not an exam run): cells QA and QB = the 2x2 cells A and B (workflow scaffold; non-thinking / thinking) run on Qwen3-8B Q8_0 instead of Q4_K_M. Quantization is the only delta.
 Runs the REAL embedded script of deepseek-16b.yml @ 4382e09 against the Qwen3-8B GGUF given as argument 2 (Q8_0 here; the stub keeps the workflow script's 'q4_k_m' listing name, so the script itself is unmodified), locally on CPU,
 with only these patches, each asserted to apply exactly once:
   all cells : MAX_NEW_TOKENS -> 3000, FAST_TIME_BUDGET_S -> 1800 (equal budget in every cell; run 1 hit neither cap)
