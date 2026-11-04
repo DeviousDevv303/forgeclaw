@@ -39,17 +39,24 @@ def mirror_show(inv, ext):
         if r.returncode == 0: return r.stdout
     return ''
 
+QUEUE_REF = 'origin/muse/swarm-fire-queue'
+
+def cells_of(manifest):
+    # Release 1 (2026-11-04) lists its cells under "entries" and carries no queue_commit or *_chars; older manifests use "cells". Queue files are
+    # read from the fetched queue branch when no commit is named. The SHA-256 of task and context is the check either way; lengths when stated.
+    return manifest.get('cells') or manifest.get('entries') or []
+
 def verify(manifest, out):
-    if not manifest.get('cells'):
+    if not cells_of(manifest):
         print('manifest has no cells: nothing to verify, nothing to fire'); return 1
     seen, onmirror, rows, payloads = set(), mirror_ids(), [], []
-    for c in manifest['cells']:
+    for c in cells_of(manifest):
         why = []
         inv = c['invocation_id']
         if inv in seen: why.append('id repeated in the manifest')
         seen.add(inv)
         if inv in onmirror: why.append('id already on the mirror')
-        r = git('show', f"{c['queue_commit']}:{c['queue_file']}")
+        r = git('show', f"{c.get('queue_commit', QUEUE_REF)}:{c['queue_file']}")
         q = None
         if r.returncode != 0: why.append('queue file not readable at that commit')
         else:
@@ -60,8 +67,8 @@ def verify(manifest, out):
             if q.get('invocation_id') != inv: why.append(f"queue invocation_id={q.get('invocation_id')}")
             if i.get('invocation_id', inv) != inv: why.append('inputs.invocation_id differs')
             task, context = i.get('task', ''), i.get('context', '')
-            if len(task) != c['task_chars'] or sha(task) != c['task_sha256']: why.append(f"task mismatch (have {len(task)} chars, {sha(task)[:12]})")
-            if len(context) != c['context_chars'] or sha(context) != c['context_sha256']: why.append(f"context mismatch (have {len(context)} chars, {sha(context)[:12]})")
+            if len(task) != c.get('task_chars', len(task)) or sha(task) != c['task_sha256']: why.append(f"task mismatch (have {len(task)} chars, {sha(task)[:12]})")
+            if len(context) != c.get('context_chars', len(context)) or sha(context) != c['context_sha256']: why.append(f"context mismatch (have {len(context)} chars, {sha(context)[:12]})")
             for k, want in STANDARD.items():
                 if str(i.get(k)) != want: why.append(f'{k}={i.get(k)!r}')
             if not why:
@@ -78,11 +85,11 @@ def check(manifest, pin):
     if not manifest.get('cells'):
         print('manifest has no cells'); return 1
     rows, on = [], mirror_ids()
-    for c in manifest['cells']:
+    for c in cells_of(manifest):
         inv = c['invocation_id']
         if inv not in on: rows.append((inv, 'not on the mirror yet', '', '', '')); continue
         tmp = pathlib.Path(tempfile.mkdtemp(prefix='swarm-check-'))
-        q = git('show', f"{c['queue_commit']}:{c['queue_file']}").stdout
+        q = git('show', f"{c.get('queue_commit', QUEUE_REF)}:{c['queue_file']}").stdout
         (tmp / 'q.json').write_text(q)
         for ext in ('prompt.txt', 'meta.txt'):
             (tmp / f'{inv}.{ext}').write_text(mirror_show(inv, ext))

@@ -90,8 +90,14 @@ describe('FundsPanel', () => {
     expect(screen.queryByText(/Total across shards/)).toBeNull()
     // A refreshKey bump is App's after-every-/funds-command signal: the read it
     // triggers updates the block silently and must not re-open the closed card.
+    const firstSnapshot = localStorage.getItem(KALSHI_BALANCE_STORAGE_KEY)
     rerender(<FundsPanel onCommand={() => {}} refreshKey={1} />)
-    await act(async () => { await new Promise(r => setTimeout(r, 300)) })
+    // Wait for that second read to LAND (its snapshot is rewritten), then flush React, and only then
+    // assert the card stayed closed. A fixed 300 ms wait asserted before the read had landed (signing
+    // runs on real WebCrypto) and left the read running into the NEXT test, whose own wait for a
+    // snapshot then returned early on this test's write (see docs/flakes.md, Closed 6).
+    await waitFor(() => expect(localStorage.getItem(KALSHI_BALANCE_STORAGE_KEY)).not.toBe(firstSnapshot), { timeout: 10_000 })
+    await act(async () => {})
     expect(screen.queryByText(/Total across shards/)).toBeNull()
   })
 
@@ -109,9 +115,13 @@ describe('FundsPanel', () => {
       // The read chain itself waits on timers (signed-read spacing), so flush it by
       // stepping the fake clock until the mount read has saved its snapshot. The
       // card is closed throughout — the countdown has not started.
-      for (let i = 0; i < 40 && !localStorage.getItem(KALSHI_BALANCE_STORAGE_KEY); i++) {
-        await act(async () => { vi.advanceTimersByTime(250) })
-      }
+      // vi.waitFor steps the fake clock on every check AND gives up on REAL time, so it keeps going while the signing (real WebCrypto, which fake
+      // timers cannot advance) finishes, however loaded the machine is. The old loop gave up after 40 fake-clock steps, which on a loaded machine
+      // ran out before the real signing did (CI: "expected null to be truthy"; reproduced with a 60 ms signing delay).
+      await act(async () => {
+        await vi.waitFor(() => { if (!localStorage.getItem(KALSHI_BALANCE_STORAGE_KEY)) throw new Error('balance snapshot not saved yet') }, { timeout: 20_000, interval: 25 })
+      })
+      await act(async () => {}) // the read's setBlock follows the snapshot write by microtasks; flush it before the tap
       expect(localStorage.getItem(KALSHI_BALANCE_STORAGE_KEY)).toBeTruthy()
       expect(screen.queryByText(/Total across shards/)).toBeNull()
       // The block already landed silently, so the tap starts no new read and the

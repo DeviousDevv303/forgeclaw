@@ -219,7 +219,7 @@ jobs:
           # 'code' (ForgeClaw's Qwen self-sculpt chain): rewrite one whole source file.
           CODE = PROFILE == 'code'
           LONG_OUTPUT = SITE or CODE
-          MAX_NEW_TOKENS = 3000 if LONG_OUTPUT else 768
+          MAX_NEW_TOKENS = 3000 if LONG_OUTPUT else 1280
           task = os.environ['TASK'].strip()
           context = os.environ.get('CONTEXT', '').strip()
           invocation_id = os.environ['INVOCATION_ID']

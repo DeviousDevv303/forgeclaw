@@ -11,7 +11,7 @@ import { localInferenceProvider, DEFAULT_LOCAL_MODEL } from './providers/localIn
 import { corpusProvider } from './providers/corpusProvider'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
-import { buildQwenTaskPayload, extractOriginalQwenTask } from './qwenContext'
+import { buildQwenTaskPayload, extractOriginalQwenTask, formatQwenConversation } from './qwenContext'
 import { stripReasoningArtifacts } from './responseFilter'
 import { withResponseLanguage } from '../responseLanguage'
 import { currentDateNote, needsCurrentInfo } from '../currentInfo'
@@ -83,21 +83,6 @@ function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: Provi
   const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? ''
   return /repository evidence comes from github tools|\b(repo|repository|codebase|forgeclaw|source|file|branch|commit|github)\b/i.test(text)
 }
-/**
- * Simple messages that don't need Qwen reasoning — answer directly
- * without hitting GitHub Actions. Covers greetings, acknowledgments,
- * and other low-complexity chat in English and Spanish.
- */
-const SIMPLE_MESSAGE_RE = /^(hi+|hey+|hello+|hola+|buenos?\s*d[ií]as|buenas?\s*(tardes|noches)|thanks?|gracias|thank\s*you|ok|okay|vale|bien|cool|nice|lol|jaja+|ad[ií]os|bye+|chao|sí|si|no|yeah?|yep|nope|\.+|\?+|!+)$/i;
-
-function isSimpleMessage(request: AIRequest): boolean {
-  const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? '';
-  // The App appends its runtime envelope to every user message; judge only what the person typed.
-  const trimmed = extractOriginalQwenTask(text).trim();
-  // Short (< 30 chars) and matches simple pattern, or very short (< 10 chars)
-  return trimmed.length < 10 || (trimmed.length < 30 && SIMPLE_MESSAGE_RE.test(trimmed));
-}
-
 /** Questions that need gathered sources, not model memory. */
 const RESEARCH_INTENT_RE = /\b(?:deep research|research|investigate|look into|find (?:me )?sources|literature review|what (?:do|does) (?:the )?(?:studies|evidence|research) say|compare (?:the )?(?:best|top|leading))\b/i
 
@@ -226,8 +211,6 @@ function chainGuidance(task: string): { context?: string } {
 function shouldBootstrapQwenReasoning(request: AIRequest, providerId: ProviderId): boolean {
   if (!isQwenProvider(providerId) || !request.tools?.some(t => t.name === 'qwen_reason')) return false
   if (failedQwenToolResult(request)) return false
-  // Simple messages bypass GitHub Actions entirely
-  if (isSimpleMessage(request)) return false
   const latest = latestCurrentToolResult(request)
   return !latest || latest.name !== 'qwen_reason'
 }
@@ -236,7 +219,9 @@ function buildQwenToolInput(request: AIRequest): { task: string; context?: strin
   for (const message of turn) if (message.role === 'assistant') for (const call of message.tool_calls ?? []) names.set(call.id, call.name)
   const verified = turn.filter(m => m.role === 'tool' && m.tool_call_id && !/^\s*(?:\[TOOL ERROR\]|\[GUARDIAN (?:BLOCKED?|REJECTED)\])/i.test(m.content)).map(m => `${names.get(m.tool_call_id!) || 'tool'} result:\n${m.content}`).join('\n\n')
   // The workflow never sees request.systemPrompt, so the selected UI language rides in the task.
-  const payload = buildQwenTaskPayload(task, verified)
+  // Earlier turns (everything before this turn's user message) ride in the context; the workflow never sees request.messages.
+  const turnStart = request.messages.length - turn.length
+  const payload = buildQwenTaskPayload(task, verified, formatQwenConversation(request.messages.slice(0, turnStart)))
   // The date rides in the task too, so the model knows how old its own knowledge is.
   return { ...payload, task: `${withResponseLanguage(payload.task, request.responseLanguage)}\n\n${currentDateNote()}` }
 }
@@ -249,14 +234,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // A picture comes first: greetings, repository evidence and research would all answer without it.
   const imageStep = isQwenProvider(selected) ? nextImageStep(request, choice.model, selected) : undefined
   if (imageStep) return imageStep
-  // Simple greetings get a direct response — no GitHub Actions needed
-  if (isQwenProvider(selected) && isSimpleMessage(request)) {
-    const lang = request.responseLanguage || 'en';
-    const greeting = lang.startsWith('es')
-      ? '¡Hola! ¿En qué te puedo ayudar?'
-      : 'Hey! What can I help you with?';
-    return success({ text: greeting, provider: selected, model: choice.model, stopReason: 'simple-greeting' });
-  }
+  // Every message reaches the model: there is no canned reply for greetings, thanks or one-word answers (owner's rule, 2026-11-04).
   if (isQwenProvider(selected) && prior?.name === 'qwen_reason' && isGuardianBlockedResult(prior.content)) return { success: false, error: classifyError(new Error(`Guardian blocked the Qwen/Qwen3-8B reasoning step. ${prior.content.slice(0, 300)}`), selected) }
   // Repository facts must be established before Qwen receives a coding or
   // repository-oriented task. Previously this check ran first, so a request
