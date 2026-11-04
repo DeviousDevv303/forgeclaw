@@ -81,12 +81,11 @@ jobs:
     runs-on: ${{ vars.FORGECLAW_GPU_RUNNER || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
-      # Only the scripts are needed (about 10 s of checkout become about 3 s).
+      # A full checkout on purpose: the mirror publish below uses a git worktree, and a sparse checkout makes `git add` refuse the result files
+      # ("outside of your sparse-checkout definition"). That failure was found on a real runner and, because the publish step is continue-on-error,
+      # it was invisible. Do not make this sparse.
       - name: Check out repository
         uses: actions/checkout@v4
-        with:
-          sparse-checkout: .github/scripts
-          sparse-checkout-cone-mode: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -723,6 +722,7 @@ jobs:
           INVOCATION_ID: ${{ inputs.invocation_id }}
         run: |
           set -euo pipefail
+          trap 'echo "::warning::mirror publish FAILED at line $LINENO; the artifact remains the fallback"' ERR
           git config user.name 'ForgeClaw Qwen Runner'
           git config user.email 'forgeclaw-qwen@local'
           git fetch --depth 1 origin qwen-results || true

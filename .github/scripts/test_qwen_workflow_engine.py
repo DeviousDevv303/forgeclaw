@@ -147,6 +147,13 @@ class LazyFallbackLibraries(unittest.TestCase):
         self.assertNotRegex(install, r"(?m)^\s*pip install (torch|transformers)")
         self.assertIn("pip install huggingface_hub", install)
 
+    def test_the_main_checkout_is_not_sparse_and_a_failed_publish_is_visible(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        checkout = text.split("- name: Check out repository", 1)[1].split("- name: Set up Python", 1)[0]
+        self.assertNotIn("sparse-checkout", checkout, "a sparse checkout makes git add refuse the result files in the publish worktree")
+        publish = text.split("- name: Publish browser-readable result mirror", 1)[1].split("- name: Upload result artifact", 1)[0]
+        self.assertIn("trap 'echo \"::warning::mirror publish FAILED", publish, "a publish failure must show on the run page, not only in the log")
+
     def test_the_install_overlaps_the_cache_restore_and_is_joined_before_the_run(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         order = [text.index(n) for n in ("- name: Start inference dependency install (background)", "- name: Restore GGUF model cache",
