@@ -1,0 +1,96 @@
+{
+  "turns": [
+    {
+      "n": 1,
+      "text": "Teach me something new",
+      "shown": true,
+      "dispatched": 1
+    },
+    {
+      "n": 2,
+      "text": "What do you attribute that phenomenon too?",
+      "shown": true,
+      "task": "What do you attribute that phenomenon too?\n\nToday's date is Wednesday, November 4, 2026. Your built-in knowledge stops at your training cutoff and may be out of date: for anything recent, rely on sour",
+      "contextHasThread": true,
+      "contextChars": 1174
+    }
+  ],
+  "checks": [
+    {
+      "name": "T1 opening message dispatches and the answer renders",
+      "pass": true,
+      "dispatches": 1
+    },
+    {
+      "name": "T2 follow-up dispatches with the earlier question AND the earlier answer in the context",
+      "pass": true,
+      "task": "What do you attribute that phenomenon too?\n\nToday's date is Wednesday, November ",
+      "contextChars": 1174
+    },
+    {
+      "name": "T2 the thread is in the context, ahead of the runtime envelope when one is present, and carries no \"— ForgeClaw\" sign-off",
+      "pass": true,
+      "threadAt": 1016,
+      "envelopeAt": -1
+    },
+    {
+      "name": "T2 the task is only what the person typed (no envelope, no earlier turns in it)",
+      "pass": true,
+      "task": "What do you attribute that phenomenon too?\n\nToday's date is Wednesday, November 4, 2026. Your built-in knowledge stops a"
+    },
+    {
+      "name": "T3 \"and why?\" goes to the model (not the canned greeting) with BOTH earlier exchanges in the context",
+      "pass": true,
+      "dispatches": 3,
+      "contextChars": 1341
+    },
+    {
+      "name": "T4 \"thanks\" after an exchange is answered directly, no dispatch",
+      "pass": true,
+      "dispatches": 3
+    },
+    {
+      "name": "T5 \"no\" goes to the model with the thread in its context",
+      "pass": true,
+      "dispatches": 4,
+      "contextHasLastAnswer": true
+    },
+    {
+      "name": "no page errors; no DeepSeek on screen",
+      "pass": true,
+      "pageErrors": []
+    },
+    {
+      "name": "every dispatch stays inside the workflow_dispatch size limit",
+      "pass": true,
+      "sizes": [
+        1192,
+        1633,
+        1770,
+        1791
+      ]
+    }
+  ],
+  "dispatches": [
+    {
+      "task": "Teach me something new\n\nToday's date is Wednesday, November 4, 2026. Your built-in knowledge stops at your training cutoff and may be out of date: for anything ",
+      "contextChars": 766,
+      "thread": ""
+    },
+    {
+      "task": "What do you attribute that phenomenon too?\n\nToday's date is Wednesday, November 4, 2026. Your built-in knowledge stops at your training cutoff and may be out of",
+      "contextChars": 1174,
+      "thread": "[CONVERSATION_SO_FAR]\nThe conversation so far, oldest first. The user's current message may refer back to it (\"that\", \"it\", \"the last one\"); resolve such references from here, not from the runtime envelope:\nUser: Teach me something new\n\nAssistant: Quantum entanglement is a link between two particles: measuring one instantly fixes the state of the other, however far apart they are.\n[/CONVERSATION_SO_FAR]"
+    },
+    {
+      "task": "and why?\n\nToday's date is Wednesday, November 4, 2026. Your built-in knowledge stops at your training cutoff and may be out of date: for anything recent, rely o",
+      "contextChars": 1341,
+      "thread": "[CONVERSATION_SO_FAR]\nThe conversation so far, oldest first. The user's current message may refer back to it (\"that\", \"it\", \"the last one\"); resolve such references from here, not from the runtime envelope:\nUser: Teach me something new\n\nAssistant: Quantum entanglement is a link between two particles: measuring one instantly fixes the state of the other, however far apart they are.\n\nUser: What do you attribute that phenomenon too?\n\nAssistant: It is attributed to the particles sharing one joint quantum state, not to a signal passing between them.\n[/CONVERSATION_SO_FAR]"
+    },
+    {
+      "task": "no\n\nToday's date is Wednesday, November 4, 2026. Your built-in knowledge stops at your training cutoff and may be out of date: for anything recent, rely on sour",
+      "contextChars": 1364,
+      "thread": "[CONVERSATION_SO_FAR]\nThe conversation so far, oldest first. The user's current message may refer back to it (\"that\", \"it\", \"the last one\"); resolve such references from here, not from the runtime envelope:\nUser: What do you attribute that phenomenon too?\n\nAssistant: It is attributed to the particles sharing one joint quantum state, not to a signal passing between them.\n\nUser: and why?\n\nAssistant: Because the joint state cannot be split into two independent parts, so a measurement on one part updates the whole.\n\nUser: thanks\n\nAssistant: Hey! What can I help you with?\n[/CONVERSATION_SO_FAR]"
+    }
+  ]
+}

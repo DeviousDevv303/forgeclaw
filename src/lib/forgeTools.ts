@@ -60,7 +60,7 @@ import { readKalshiBalanceBlock } from './kalshiBalanceDisplay'
 import { crowdSettleNote, formatFundsStatus, formatProposal, FundsError, loadFunds, NOT_SAVED_WARNING, outcomeFromKalshiResult, proposePosition, saveFunds, settlePosition } from './fundsLedger'
 import { autoApproveHoldNote, kalshiOrderPlacedJournalEntry, maybeAutoApprove, type KalshiExecutionDeps } from './kalshiExecution'
 import { joinNexusGuidance, nexusGuidanceForQwen, splitNexusGuidance } from './nexusGuidance'
-import { splitAnswerFormInstructions } from './ai/qwenContext'
+import { splitAnswerFormInstructions, splitConversationSection } from './ai/qwenContext'
 import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptKey'
 
 /**
@@ -1354,7 +1354,9 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         // no guidance at all because the whole context string was zeroed.
         // The answer-form law rides in the same context (first block of every router payload) and is system
         // instruction with the same exemption: set aside beside the guidance, restored in front of it.
-        const formSplit = splitAnswerFormInstructions(context)
+        // The conversation so far is exempt too: a short follow-up shares no words with its task, and without the thread it has no meaning.
+        const conversationSplit = splitConversationSection(context)
+        const formSplit = splitAnswerFormInstructions(conversationSplit.rest)
         const nexusGuidance = splitNexusGuidance(formSplit.rest)
         context = nexusGuidance.rest
         // A call that did not come through the router (hand-typed, a saved agent, a future path) carries no guidance block.
@@ -1374,6 +1376,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
             context = ''
           }
         }
+        if (conversationSplit.conversation) context = context ? `${conversationSplit.conversation}\n\n${context}` : conversationSplit.conversation
         context = joinNexusGuidance(nexusGuidance.guidance, context)
         if (formSplit.form) context = context ? `${formSplit.form}\n\n${context}` : formSplit.form
         if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {

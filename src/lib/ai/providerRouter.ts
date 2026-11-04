@@ -11,7 +11,7 @@ import { localInferenceProvider, DEFAULT_LOCAL_MODEL } from './providers/localIn
 import { corpusProvider } from './providers/corpusProvider'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
-import { buildQwenTaskPayload, extractOriginalQwenTask } from './qwenContext'
+import { buildQwenTaskPayload, extractOriginalQwenTask, formatQwenConversation } from './qwenContext'
 import { stripReasoningArtifacts } from './responseFilter'
 import { withResponseLanguage } from '../responseLanguage'
 import { currentDateNote, needsCurrentInfo } from '../currentInfo'
@@ -90,12 +90,19 @@ function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: Provi
  */
 const SIMPLE_MESSAGE_RE = /^(hi+|hey+|hello+|hola+|buenos?\s*d[ií]as|buenas?\s*(tardes|noches)|thanks?|gracias|thank\s*you|ok|okay|vale|bien|cool|nice|lol|jaja+|ad[ií]os|bye+|chao|sí|si|no|yeah?|yep|nope|\.+|\?+|!+)$/i;
 
+/** After an exchange only pleasantries are simple; "no", "si", "yep", "ok" and a bare "?" answer the assistant and need the model. */
+const PLEASANTRY_RE = /^(hi+|hey+|hello+|hola+|buenos?\s*d[ií]as|buenas?\s*(tardes|noches)|thanks?|gracias|thank\s*you|cool|nice|lol|jaja+|ad[ií]os|bye+|chao)$/i;
+
 function isSimpleMessage(request: AIRequest): boolean {
   const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? '';
   // The App appends its runtime envelope to every user message; judge only what the person typed.
   const trimmed = extractOriginalQwenTask(text).trim();
   // Short (< 30 chars) and matches simple pattern, or very short (< 10 chars)
-  return trimmed.length < 10 || (trimmed.length < 30 && SIMPLE_MESSAGE_RE.test(trimmed));
+  // A very short message is only a greeting when it opens the conversation: after an exchange, "why?" or "and that one?" is a
+  // follow-up that needs the model and the thread, and used to get the canned greeting back.
+  const latestUser = request.messages.map(m => m.role).lastIndexOf('user')
+  const hasEarlierTurns = request.messages.slice(0, Math.max(latestUser, 0)).some(m => m.role === 'user' || m.role === 'assistant')
+  return hasEarlierTurns ? trimmed.length < 30 && PLEASANTRY_RE.test(trimmed) : trimmed.length < 10 || (trimmed.length < 30 && SIMPLE_MESSAGE_RE.test(trimmed));
 }
 
 /** Questions that need gathered sources, not model memory. */
@@ -236,7 +243,9 @@ function buildQwenToolInput(request: AIRequest): { task: string; context?: strin
   for (const message of turn) if (message.role === 'assistant') for (const call of message.tool_calls ?? []) names.set(call.id, call.name)
   const verified = turn.filter(m => m.role === 'tool' && m.tool_call_id && !/^\s*(?:\[TOOL ERROR\]|\[GUARDIAN (?:BLOCKED?|REJECTED)\])/i.test(m.content)).map(m => `${names.get(m.tool_call_id!) || 'tool'} result:\n${m.content}`).join('\n\n')
   // The workflow never sees request.systemPrompt, so the selected UI language rides in the task.
-  const payload = buildQwenTaskPayload(task, verified)
+  // Earlier turns (everything before this turn's user message) ride in the context; the workflow never sees request.messages.
+  const turnStart = request.messages.length - turn.length
+  const payload = buildQwenTaskPayload(task, verified, formatQwenConversation(request.messages.slice(0, turnStart)))
   // The date rides in the task too, so the model knows how old its own knowledge is.
   return { ...payload, task: `${withResponseLanguage(payload.task, request.responseLanguage)}\n\n${currentDateNote()}` }
 }

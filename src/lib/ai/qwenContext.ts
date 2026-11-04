@@ -13,6 +13,10 @@ export interface QwenTaskPayload {
 const MAX_CONTEXT_CHARS = 22_000
 const MAX_CORPUS_CHARS = 3_000
 const MAX_VERIFIED_TOOL_CHARS = 16_000
+/** Earlier turns of this conversation: how many, how long each, how long in all. App sends the last 6 messages; the newest win the budget. */
+const MAX_CONVERSATION_MESSAGES = 6
+const MAX_CONVERSATION_MESSAGE_CHARS = 1_200
+const MAX_CONVERSATION_CHARS = 5_000
 
 /**
  * Source-backed reference facts for project-architecture questions. These describe
@@ -75,6 +79,46 @@ function separateRuntimeEnvelope(rawTask: string): { task: string; runtimeContex
   return { task, runtimeContext: rawTask.slice(envelopeStart, end + closing.length).trim() }
 }
 
+/**
+ * The conversation so far, for a follow-up like "what do you attribute that to?". The workflow receives one task string and never
+ * sees request.messages, so before this section existed the model got only the newest message, lost the thread after one exchange,
+ * and filled the gap from the runtime envelope (bankroll, ledger). Envelopes and image payloads are stripped from user turns; tool
+ * traffic is left out; the newest turns win the budget, oldest first in the output.
+ */
+export function formatQwenConversation(prior: ReadonlyArray<{ role: string; content: string }>): string {
+  const turns: string[] = []
+  for (const m of prior.slice(-MAX_CONVERSATION_MESSAGES).reverse()) {
+    if (m.role !== 'user' && m.role !== 'assistant') continue
+    // The app signs every reply "— ForgeClaw"; the answer-form law forbids the model that sign-off, so it is not fed back as history.
+    const raw = m.role === 'user' ? extractOriginalQwenTask(m.content) : m.content.replace(/\s*[—–-]+\s*ForgeClaw\s*$/i, '').trim()
+    if (!raw) continue
+    const text = raw.length > MAX_CONVERSATION_MESSAGE_CHARS ? `${raw.slice(0, MAX_CONVERSATION_MESSAGE_CHARS)} […]` : raw
+    const line = `${m.role === 'user' ? 'User' : 'Assistant'}: ${text}`
+    if (turns.reduce((n, t) => n + t.length + 2, 0) + line.length > MAX_CONVERSATION_CHARS) break
+    turns.push(line)
+  }
+  return turns.reverse().join('\n\n')
+}
+
+const CONVERSATION_OPEN = '[CONVERSATION_SO_FAR]'
+const CONVERSATION_CLOSE = '[/CONVERSATION_SO_FAR]'
+
+/**
+ * Set the conversation section back out of an assembled dispatch context. Like the answer-form law and the NEXUS guidance it is not
+ * task-matched context: a follow-up such as "why?" shares no words with its own task, and the dispatch's zero-overlap drop would
+ * otherwise discard the very history the follow-up depends on.
+ */
+export function splitConversationSection(context: string): { conversation: string; rest: string } {
+  const start = context.indexOf(CONVERSATION_OPEN)
+  const end = start >= 0 ? context.indexOf(CONVERSATION_CLOSE, start) : -1
+  if (start < 0 || end < 0) return { conversation: '', rest: context }
+  const after = end + CONVERSATION_CLOSE.length
+  return {
+    conversation: context.slice(start, after),
+    rest: `${context.slice(0, start).replace(/\s+$/, '')}\n\n${context.slice(after).replace(/^\s+/, '')}`.trim(),
+  }
+}
+
 /** Extract only the user's textual objective, excluding appended runtime/image payloads. */
 export function extractOriginalQwenTask(rawTask: string): string {
   const { task } = separateRuntimeEnvelope(rawTask)
@@ -91,7 +135,7 @@ function asksAboutForgeClawArchitecture(task: string): boolean {
  * Keep the exact user objective separate from relevant context. Only approved
  * CORPUS records are selected; live GitHub/tool facts remain explicitly labelled.
  */
-export function buildQwenTaskPayload(rawTask: string, verifiedToolResults = ''): QwenTaskPayload {
+export function buildQwenTaskPayload(rawTask: string, verifiedToolResults = '', conversation = ''): QwenTaskPayload {
   const { task, runtimeContext } = separateRuntimeEnvelope(rawTask)
   const sections: string[] = []
 
@@ -102,6 +146,9 @@ export function buildQwenTaskPayload(rawTask: string, verifiedToolResults = ''):
   // What the owner has taught NEXUS (approved heuristics, recurring failures, approved knowledge) reaches Qwen too.
   const guidance = nexusGuidanceForQwen(task).text
   if (guidance) sections.push(guidance)
+
+  // Before the envelope: the size budget cuts from the end, so a long envelope is what gets trimmed, never the thread.
+  if (conversation.trim()) sections.push(`${CONVERSATION_OPEN}\nThe conversation so far, oldest first. The user's current message may refer back to it ("that", "it", "the last one"); resolve such references from here, not from the runtime envelope:\n${conversation.trim().split(CONVERSATION_OPEN).join('').split(CONVERSATION_CLOSE).join('')}\n${CONVERSATION_CLOSE}`)
 
   if (asksAboutForgeClawArchitecture(task)) sections.push(FORGECLAW_ARCHITECTURE_CONTEXT)
   if (runtimeContext) sections.push(`ForgeClaw runtime envelope (identity/routing hints only; not repository evidence):\n${runtimeContext}`)
