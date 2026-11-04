@@ -45,7 +45,7 @@
           "working": 1
         },
         "ambient": 3,
-        "sig": "hopper-1:idle@1104,660^0|hopper-2:hop@440,655^0|climber:climb@653,419^0#1"
+        "sig": "hopper-1:idle@1104,660^0|hopper-2:hop@440,655^0|climber:climb@653,415^0#1"
       }
     },
     {
@@ -59,8 +59,8 @@
         "unknown": 0
       },
       "lines": [
-        "16:03:14↙returned from network · qwen_reason",
-        "16:03:08↗out of the throne → network · qwen_reason"
+        "16:15:59↙returned from network · qwen_reason",
+        "16:15:54↗out of the throne → network · qwen_reason"
       ],
       "pageErrors": []
     },
@@ -75,8 +75,8 @@
         "unknown": 0
       },
       "lines": [
-        "16:03:24⚑flagged at network · qwen_reason · TOOL_FAILURE",
-        "16:03:19↗out of the throne → network · qwen_reason"
+        "16:16:10⚑flagged at network · qwen_reason · TOOL_FAILURE",
+        "16:16:05↗out of the throne → network · qwen_reason"
       ],
       "sawReturn": true,
       "pageErrors": []
@@ -105,7 +105,7 @@
           "working": 3
         },
         "ambient": 3,
-        "sig": "hopper-1:idle@1104,660^0|hopper-2:hop@440,655^0|climber:climb@653,397^0#1"
+        "sig": "hopper-1:idle@1104,660^0|hopper-2:hop@440,655^0|climber:climb@654,392^0#1"
       }
     },
     {
@@ -119,14 +119,14 @@
         "unknown": 1
       },
       "lines": [
-        "16:03:45↙returned from network · qwen_reason",
-        "16:03:42⚑flagged at sandbox · shell_exec · TOOL_FAILURE",
-        "16:03:39↙returned from browser · browser_run",
-        "16:03:32↗out of the throne → network · qwen_reason",
-        "16:03:31↗out of the throne → sandbox · shell_exec",
-        "16:03:30↗out of the throne → browser · browser_run",
-        "15:55:30?unknown at sandbox · shell_patch · no end event since 15:43:30 (timeout 12 min)",
-        "15:43:30↗out of the throne → sandbox · shell_patch"
+        "16:16:31↙returned from network · qwen_reason",
+        "16:16:27⚑flagged at sandbox · shell_exec · TOOL_FAILURE",
+        "16:16:24↙returned from browser · browser_run",
+        "16:16:17↗out of the throne → network · qwen_reason",
+        "16:16:17↗out of the throne → sandbox · shell_exec",
+        "16:16:16↗out of the throne → browser · browser_run",
+        "16:08:15?unknown at sandbox · shell_patch · no end event since 15:56:15 (timeout 12 min)",
+        "15:56:15↗out of the throne → sandbox · shell_patch"
       ],
       "pageErrors": []
     },
@@ -189,7 +189,7 @@
         "n": 0,
         "phases": {},
         "ambient": 3,
-        "sig": "hopper-1:idle@996,692^0|hopper-2:hop@548,690^0|climber:climb@653,436^0#0"
+        "sig": "hopper-1:idle@996,692^0|hopper-2:hop@548,690^0|climber:climb@653,435^0#0"
       },
       "lines": [
         "no tool events yet: nothing is out of the throne"
@@ -213,7 +213,7 @@
           "working": 1
         },
         "ambient": 3,
-        "sig": "hopper-1:idle@996,692^0|hopper-2:hop@680,770^0|climber:climb@653,421^0#1"
+        "sig": "hopper-1:idle@996,692^0|hopper-2:hop@680,770^0|climber:climb@653,419^0#1"
       }
     },
     {
@@ -227,8 +227,8 @@
         "unknown": 0
       },
       "lines": [
-        "16:04:18↙returned from network · qwen_reason",
-        "16:04:13↗out of the throne → network · qwen_reason"
+        "16:17:05↙returned from network · qwen_reason",
+        "16:17:00↗out of the throne → network · qwen_reason"
       ],
       "pageErrors": []
     },
@@ -243,8 +243,8 @@
         "unknown": 0
       },
       "lines": [
-        "16:04:28⚑flagged at network · qwen_reason · TOOL_FAILURE",
-        "16:04:23↗out of the throne → network · qwen_reason"
+        "16:17:15⚑flagged at network · qwen_reason · TOOL_FAILURE",
+        "16:17:10↗out of the throne → network · qwen_reason"
       ],
       "sawReturn": true,
       "pageErrors": []
@@ -273,7 +273,7 @@
           "working": 3
         },
         "ambient": 3,
-        "sig": "hopper-1:idle@996,692^0|hopper-2:hop@680,770^0|climber:climb@653,397^0#1"
+        "sig": "hopper-1:idle@996,692^0|hopper-2:hop@680,770^0|climber:climb@654,394^0#1"
       }
     },
     {
@@ -287,14 +287,14 @@
         "unknown": 1
       },
       "lines": [
-        "16:04:49↙returned from network · qwen_reason",
-        "16:04:45⚑flagged at sandbox · shell_exec · TOOL_FAILURE",
-        "16:04:42↙returned from browser · browser_run",
-        "16:04:36↗out of the throne → network · qwen_reason",
-        "16:04:35↗out of the throne → sandbox · shell_exec",
-        "16:04:34↗out of the throne → browser · browser_run",
-        "15:56:33?unknown at sandbox · shell_patch · no end event since 15:44:33 (timeout 12 min)",
-        "15:44:33↗out of the throne → sandbox · shell_patch"
+        "16:17:36↙returned from network · qwen_reason",
+        "16:17:33⚑flagged at sandbox · shell_exec · TOOL_FAILURE",
+        "16:17:30↙returned from browser · browser_run",
+        "16:17:23↗out of the throne → network · qwen_reason",
+        "16:17:22↗out of the throne → sandbox · shell_exec",
+        "16:17:21↗out of the throne → browser · browser_run",
+        "16:09:21?unknown at sandbox · shell_patch · no end event since 15:57:21 (timeout 12 min)",
+        "15:57:21↗out of the throne → sandbox · shell_patch"
       ],
       "pageErrors": []
     },
