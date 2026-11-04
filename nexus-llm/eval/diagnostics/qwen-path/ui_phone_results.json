@@ -1,0 +1,48 @@
+{
+  "scenarios": [
+    {
+      "name": "S1 default route: dispatch, discovery, mirror read, answer on screen",
+      "pass": true,
+      "workflow": "qwen3-8b.yml",
+      "id": "qwen-1793769975203-7nrud1",
+      "shown": true,
+      "pageErrors": [],
+      "deepseekOnScreen": false,
+      "providerLabelHasQwen": true
+    },
+    {
+      "name": "S2 a saved provider 'deepseek' still routes to Qwen",
+      "pass": true,
+      "workflow": "qwen3-8b.yml",
+      "shown": true,
+      "savedProviderNow": "qwen",
+      "pageErrors": []
+    },
+    {
+      "name": "S4 the real fallback run renders, labelled as the DeepSeek fallback (a real DeepSeek model keeps its name)",
+      "pass": true,
+      "shown": true,
+      "pageErrors": [],
+      "mentionsFallbackModel": true
+    },
+    {
+      "name": "S5 closed Reasoning Trace bar shows no raw reasoning; the full text is one tap away",
+      "pass": true,
+      "shown": true,
+      "rawReasoningVisibleWhileClosed": false,
+      "rawReasoningAfterOpening": true,
+      "pageErrors": []
+    },
+    {
+      "name": "S6 provider list and header read Qwen, no DeepSeek on screen",
+      "pass": true,
+      "selectOptions": [
+        "English",
+        "Español",
+        "Русский",
+        "中文"
+      ],
+      "headerHasQwen": true
+    }
+  ]
+}

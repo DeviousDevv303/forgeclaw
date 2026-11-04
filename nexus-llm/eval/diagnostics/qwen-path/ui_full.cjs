@@ -36,7 +36,7 @@ async function waitText(page, re, ms = 60000) { try { await page.waitForFunction
 
 ;(async () => {
   const browser = await chromium.launch()
-  const newCtx = async (init) => { const c = await browser.newContext({ viewport: { width: 1100, height: 900 } }); await c.addInitScript(init); return c }
+  const newCtx = async (init) => { const [vw, vh] = (process.env.VIEWPORT || '1100x900').split('x').map(Number); const c = await browser.newContext({ viewport: { width: vw, height: vh }, isMobile: vw < 600, hasTouch: vw < 600 }); await c.addInitScript(init); return c }
 
   // S1: default route
   if (only.includes('S1')) { const state = {}, ctx = await newCtx(() => { localStorage.setItem('gh_token', 'test-token') }); await githubStandIn(ctx, normalDir, state)
