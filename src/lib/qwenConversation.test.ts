@@ -114,21 +114,16 @@ describe('the router and the dispatch carry the thread', () => {
   })
 })
 
-describe('short follow-ups are follow-ups, not greetings', () => {
+describe('every message reaches the model, opening or follow-up', () => {
   const tools = [{ name: 'qwen_reason', description: 'reason', parameters: {} }]
   const earlier: AIMessage[] = [{ role: 'user', content: 'Teach me something new' }, { role: 'assistant', content: ANSWER }]
   const route = (messages: AIMessage[]) => sendViaRouter({ model: 'qwen3-8b', systemPrompt: '', messages, tools }, '', 'qwen')
 
-  it('opening the conversation with a greeting or a very short message is still answered directly', async () => {
-    for (const text of ['hi', 'hola', 'gracias', 'ok?']) expect(await route([{ role: 'user', content: text }]), text).toMatchObject({ success: true, response: { stopReason: 'simple-greeting' } })
-  })
-  it('after an exchange, "why?", "and why?", "no", "si" and "?" go to the model with the thread', async () => {
-    for (const text of ['why?', 'and why?', 'no', 'si', 'yep', '?', 'how so']) {
+  it('after an exchange, "why?", "and why?", "no", "si", "?", "thanks" and "hello" all dispatch with the thread', async () => {
+    for (const text of ['why?', 'and why?', 'no', 'si', 'yep', '?', 'how so', 'thanks', 'hello']) {
       const result = await route([...earlier, { role: 'user', content: text }])
       expect(result, text).toMatchObject({ success: true, response: { stopReason: 'deterministic-qwen-reasoning' } })
+      if (result.success) expect((result.response.toolCalls?.[0]?.input as { context?: string }).context, text).toContain(ANSWER)
     }
-  })
-  it('after an exchange, a plain thank-you or greeting is still answered directly', async () => {
-    for (const text of ['thanks', 'gracias', 'hello']) expect(await route([...earlier, { role: 'user', content: text }]), text).toMatchObject({ success: true, response: { stopReason: 'simple-greeting' } })
   })
 })

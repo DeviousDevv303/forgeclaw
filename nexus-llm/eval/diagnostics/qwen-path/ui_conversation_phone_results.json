@@ -45,14 +45,14 @@
       "contextChars": 1341
     },
     {
-      "name": "T4 \"thanks\" after an exchange is answered directly, no dispatch",
+      "name": "T4 \"thanks\" after an exchange is dispatched to the model with the thread, not answered by a canned reply",
       "pass": true,
-      "dispatches": 3
+      "dispatches": 4
     },
     {
       "name": "T5 \"no\" goes to the model with the thread in its context",
       "pass": true,
-      "dispatches": 4,
+      "dispatches": 5,
       "contextHasLastAnswer": true
     },
     {
@@ -67,7 +67,8 @@
         1192,
         1633,
         1770,
-        1791
+        1916,
+        1777
       ]
     }
   ],
@@ -88,9 +89,14 @@
       "thread": "[CONVERSATION_SO_FAR]\nThe conversation so far, oldest first. The user's current message may refer back to it (\"that\", \"it\", \"the last one\"); resolve such references from here, not from the runtime envelope:\nUser: Teach me something new\n\nAssistant: Quantum entanglement is a link between two particles: measuring one instantly fixes the state of the other, however far apart they are.\n\nUser: What do you attribute that phenomenon too?\n\nAssistant: It is attributed to the particles sharing one joint quantum state, not to a signal passing between them.\n[/CONVERSATION_SO_FAR]"
     },
     {
+      "task": "thanks\n\nToday's date is Wednesday, November 4, 2026. Your built-in knowledge stops at your training cutoff and may be out of date: for anything recent, rely on ",
+      "contextChars": 1485,
+      "thread": "[CONVERSATION_SO_FAR]\nThe conversation so far, oldest first. The user's current message may refer back to it (\"that\", \"it\", \"the last one\"); resolve such references from here, not from the runtime envelope:\nUser: Teach me something new\n\nAssistant: Quantum entanglement is a link between two particles: measuring one instantly fixes the state of the other, however far apart they are.\n\nUser: What do you attribute that phenomenon too?\n\nAssistant: It is attributed to the particles sharing one joint quantum state, not to a signal passing between them.\n\nUser: and why?\n\nAssistant: Because the joint state cannot be split into two independent parts, so a measurement on one part updates the whole.\n[/CONVERSATION_SO_FAR]"
+    },
+    {
       "task": "no\n\nToday's date is Wednesday, November 4, 2026. Your built-in knowledge stops at your training cutoff and may be out of date: for anything recent, rely on sour",
-      "contextChars": 1364,
-      "thread": "[CONVERSATION_SO_FAR]\nThe conversation so far, oldest first. The user's current message may refer back to it (\"that\", \"it\", \"the last one\"); resolve such references from here, not from the runtime envelope:\nUser: What do you attribute that phenomenon too?\n\nAssistant: It is attributed to the particles sharing one joint quantum state, not to a signal passing between them.\n\nUser: and why?\n\nAssistant: Because the joint state cannot be split into two independent parts, so a measurement on one part updates the whole.\n\nUser: thanks\n\nAssistant: Hey! What can I help you with?\n[/CONVERSATION_SO_FAR]"
+      "contextChars": 1350,
+      "thread": "[CONVERSATION_SO_FAR]\nThe conversation so far, oldest first. The user's current message may refer back to it (\"that\", \"it\", \"the last one\"); resolve such references from here, not from the runtime envelope:\nUser: What do you attribute that phenomenon too?\n\nAssistant: It is attributed to the particles sharing one joint quantum state, not to a signal passing between them.\n\nUser: and why?\n\nAssistant: Because the joint state cannot be split into two independent parts, so a measurement on one part updates the whole.\n\nUser: thanks\n\nAssistant: You are welcome.\n[/CONVERSATION_SO_FAR]"
     }
   ]
 }

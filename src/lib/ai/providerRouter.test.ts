@@ -127,15 +127,15 @@ describe('provider router', () => {
   // App.tsx appends this envelope to every user message before routing (effectivePrompt).
   const asSentByApp = (text: string) => `${text}\n\n${buildRuntimeRequestContext({ owner: 'DeviousDevv303', repo: 'forgeclaw', taskStatus: 'idle' })}`
 
-  it('answers a greeting directly even with the app runtime envelope attached', async () => {
+  it('sends a greeting to the model too, with the app runtime envelope attached', async () => {
     for (const text of ['hi', 'hola', 'gracias']) {
       const result = await sendViaRouter({
         model: 'qwen3-8b', systemPrompt: '',
         messages: [{ role: 'user', content: asSentByApp(text) }],
         tools: [{ name: 'qwen_reason', description: 'reason', parameters: {} }],
       }, '', 'qwen')
-      expect(result, text).toMatchObject({ success: true, response: { stopReason: 'simple-greeting' } })
-      if (result.success) expect(result.response.toolCalls ?? [], text).toHaveLength(0)
+      expect(result, text).toMatchObject({ success: true, response: { stopReason: 'deterministic-qwen-reasoning' } })
+      if (result.success) expect(result.response.toolCalls?.[0]?.input, text).toMatchObject({ task: expect.stringContaining(text) })
     }
   })
 

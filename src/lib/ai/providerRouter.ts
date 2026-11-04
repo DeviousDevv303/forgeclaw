@@ -83,28 +83,6 @@ function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: Provi
   const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? ''
   return /repository evidence comes from github tools|\b(repo|repository|codebase|forgeclaw|source|file|branch|commit|github)\b/i.test(text)
 }
-/**
- * Simple messages that don't need Qwen reasoning — answer directly
- * without hitting GitHub Actions. Covers greetings, acknowledgments,
- * and other low-complexity chat in English and Spanish.
- */
-const SIMPLE_MESSAGE_RE = /^(hi+|hey+|hello+|hola+|buenos?\s*d[ií]as|buenas?\s*(tardes|noches)|thanks?|gracias|thank\s*you|ok|okay|vale|bien|cool|nice|lol|jaja+|ad[ií]os|bye+|chao|sí|si|no|yeah?|yep|nope|\.+|\?+|!+)$/i;
-
-/** After an exchange only pleasantries are simple; "no", "si", "yep", "ok" and a bare "?" answer the assistant and need the model. */
-const PLEASANTRY_RE = /^(hi+|hey+|hello+|hola+|buenos?\s*d[ií]as|buenas?\s*(tardes|noches)|thanks?|gracias|thank\s*you|cool|nice|lol|jaja+|ad[ií]os|bye+|chao)$/i;
-
-function isSimpleMessage(request: AIRequest): boolean {
-  const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? '';
-  // The App appends its runtime envelope to every user message; judge only what the person typed.
-  const trimmed = extractOriginalQwenTask(text).trim();
-  // Short (< 30 chars) and matches simple pattern, or very short (< 10 chars)
-  // A very short message is only a greeting when it opens the conversation: after an exchange, "why?" or "and that one?" is a
-  // follow-up that needs the model and the thread, and used to get the canned greeting back.
-  const latestUser = request.messages.map(m => m.role).lastIndexOf('user')
-  const hasEarlierTurns = request.messages.slice(0, Math.max(latestUser, 0)).some(m => m.role === 'user' || m.role === 'assistant')
-  return hasEarlierTurns ? trimmed.length < 30 && PLEASANTRY_RE.test(trimmed) : trimmed.length < 10 || (trimmed.length < 30 && SIMPLE_MESSAGE_RE.test(trimmed));
-}
-
 /** Questions that need gathered sources, not model memory. */
 const RESEARCH_INTENT_RE = /\b(?:deep research|research|investigate|look into|find (?:me )?sources|literature review|what (?:do|does) (?:the )?(?:studies|evidence|research) say|compare (?:the )?(?:best|top|leading))\b/i
 
@@ -233,8 +211,6 @@ function chainGuidance(task: string): { context?: string } {
 function shouldBootstrapQwenReasoning(request: AIRequest, providerId: ProviderId): boolean {
   if (!isQwenProvider(providerId) || !request.tools?.some(t => t.name === 'qwen_reason')) return false
   if (failedQwenToolResult(request)) return false
-  // Simple messages bypass GitHub Actions entirely
-  if (isSimpleMessage(request)) return false
   const latest = latestCurrentToolResult(request)
   return !latest || latest.name !== 'qwen_reason'
 }
@@ -258,14 +234,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // A picture comes first: greetings, repository evidence and research would all answer without it.
   const imageStep = isQwenProvider(selected) ? nextImageStep(request, choice.model, selected) : undefined
   if (imageStep) return imageStep
-  // Simple greetings get a direct response — no GitHub Actions needed
-  if (isQwenProvider(selected) && isSimpleMessage(request)) {
-    const lang = request.responseLanguage || 'en';
-    const greeting = lang.startsWith('es')
-      ? '¡Hola! ¿En qué te puedo ayudar?'
-      : 'Hey! What can I help you with?';
-    return success({ text: greeting, provider: selected, model: choice.model, stopReason: 'simple-greeting' });
-  }
+  // Every message reaches the model: there is no canned reply for greetings, thanks or one-word answers (owner's rule, 2026-11-04).
   if (isQwenProvider(selected) && prior?.name === 'qwen_reason' && isGuardianBlockedResult(prior.content)) return { success: false, error: classifyError(new Error(`Guardian blocked the Qwen/Qwen3-8B reasoning step. ${prior.content.slice(0, 300)}`), selected) }
   // Repository facts must be established before Qwen receives a coding or
   // repository-oriented task. Previously this check ran first, so a request

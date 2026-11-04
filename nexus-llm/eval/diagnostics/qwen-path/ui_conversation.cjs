@@ -13,8 +13,9 @@ const check = (name, pass, detail = {}) => { report.checks.push({ name, pass, ..
 const ANSWER_1 = 'Quantum entanglement is a link between two particles: measuring one instantly fixes the state of the other, however far apart they are.'
 const ANSWER_2 = 'It is attributed to the particles sharing one joint quantum state, not to a signal passing between them.'
 const ANSWER_3 = 'Because the joint state cannot be split into two independent parts, so a measurement on one part updates the whole.'
+const ANSWER_4 = 'You are welcome.'
 const ANSWER_5 = 'Understood, no further detail then.'
-const scripted = [ANSWER_1, ANSWER_2, ANSWER_3, ANSWER_5]
+const scripted = [ANSWER_1, ANSWER_2, ANSWER_3, ANSWER_4, ANSWER_5]
 
 ;(async () => {
   const browser = await chromium.launch()
@@ -61,14 +62,16 @@ const scripted = [ANSWER_1, ANSWER_2, ANSWER_3, ANSWER_5]
   const d3 = dispatches[2] || {}; const body3 = await page.innerText('body')
   check('T3 "and why?" goes to the model (not the canned greeting) with BOTH earlier exchanges in the context', t3 && dispatches.length === 3 && (d3.context || '').includes(ANSWER_1) && (d3.context || '').includes(ANSWER_2) && !/Hey! What can I help you with\?[\s\S]*Hey! What can I help you with\?/.test(body3), { dispatches: dispatches.length, contextChars: (d3.context || '').length })
 
-  // Turn 4: a plain thank-you is still answered directly, with no workflow run
-  const before = dispatches.length; await ask('thanks'); await page.waitForTimeout(2500)
-  check('T4 "thanks" after an exchange is answered directly, no dispatch', dispatches.length === before, { dispatches: dispatches.length })
+  // Turn 4: a plain thank-you reaches the model like everything else (owner's rule: no canned replies)
+  const before = dispatches.length; await ask('thanks'); await waitText('no further detail', 3000).catch(() => false)
+  for (let i = 0; i < 40 && dispatches.length === before; i++) await page.waitForTimeout(250)
+  check('T4 "thanks" after an exchange is dispatched to the model with the thread, not answered by a canned reply', dispatches.length === before + 1 && (dispatches[before].context || '').includes(ANSWER_3), { dispatches: dispatches.length })
+  await page.waitForTimeout(2500)
 
   // Turn 5: a one-word answer reaches the model with the thread
   await ask('no'); const t5 = await waitText('no further detail')
-  const d5 = dispatches[3] || {}
-  check('T5 "no" goes to the model with the thread in its context', t5 && dispatches.length === before + 1 && (d5.context || '').includes(ANSWER_3), { dispatches: dispatches.length, contextHasLastAnswer: (d5.context || '').includes(ANSWER_3) })
+  const d5 = dispatches[4] || {}
+  check('T5 "no" goes to the model with the thread in its context', t5 && dispatches.length === 5 && (d5.context || '').includes(ANSWER_3), { dispatches: dispatches.length, contextHasLastAnswer: (d5.context || '').includes(ANSWER_3) })
 
   check('no page errors; no DeepSeek on screen', !errs.length && !/deepseek/i.test(await page.innerText('body')), { pageErrors: errs })
   check('every dispatch stays inside the workflow_dispatch size limit', dispatches.every(d => JSON.stringify(d).length < 60000), { sizes: dispatches.map(d => JSON.stringify(d).length) })

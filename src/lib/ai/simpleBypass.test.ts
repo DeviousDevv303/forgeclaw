@@ -2,7 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // Built with love for Cristian Jr., Layla, and Jozae.
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { sendViaRouter } from './providerRouter';
 import type { AIRequest } from './types';
 
@@ -16,45 +16,16 @@ function makeRequest(text: string, lang = 'en'): AIRequest {
   };
 }
 
-describe('simple message bypass', () => {
-  it('answers "hi" directly without GitHub Actions', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => { throw new Error('should not fetch'); }));
-    const result = await sendViaRouter(makeRequest('hi'), '', 'qwen');
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.response.text).toContain('help');
-      expect(result.response.stopReason).toBe('simple-greeting');
+// Owner's rule (2026-11-04): everything reaches the model and reasons. There is no canned reply for any message.
+describe('no message bypasses the model', () => {
+  it('sends greetings, thanks and one-word messages to Qwen as a qwen_reason call', async () => {
+    for (const [text, lang] of [['hi', 'en'], ['hola', 'es'], ['thanks', 'en'], ['gracias', 'es'], ['ok?', 'en'], ['why?', 'en'], ['no', 'en']] as const) {
+      const result = await sendViaRouter(makeRequest(text, lang), '', 'qwen');
+      expect(result, text).toMatchObject({ success: true, response: { stopReason: 'deterministic-qwen-reasoning' } });
+      if (result.success) {
+        expect(result.response.toolCalls?.[0]?.name, text).toBe('qwen_reason');
+        expect(result.response.toolCalls?.[0]?.input, text).toMatchObject({ task: expect.stringContaining(text) });
+      }
     }
-  });
-
-  it('answers "hola" in Spanish', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => { throw new Error('should not fetch'); }));
-    const result = await sendViaRouter(makeRequest('hola', 'es'), '', 'qwen');
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.response.text).toContain('Hola');
-    }
-  });
-
-  it('answers "thanks" directly', async () => {
-    vi.stubGlobal('fetch', vi.fn(() => { throw new Error('should not fetch'); }));
-    const result = await sendViaRouter(makeRequest('thanks'), '', 'qwen');
-    expect(result.success).toBe(true);
-  });
-
-  it('still uses Qwen for real questions', async () => {
-    // A real question should NOT get the simple-greeting response
-    // (it will fail without mocked GitHub, but not with simple-greeting)
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
-    const result = await sendViaRouter(
-      makeRequest('Explain how neural networks work in detail'),
-      '',
-      'qwen'
-    );
-    // Should attempt Qwen (not return simple greeting)
-    if (result.success) {
-      expect(result.response.stopReason).not.toBe('simple-greeting');
-    }
-    // If it fails, that's expected (no real GitHub) — just not a greeting
   });
 });
