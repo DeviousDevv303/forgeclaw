@@ -1,0 +1,6 @@
+checkpoints in ~/workspace/run18/ckpt:
+total 17524
+drwxrws--- 1 root nogroup       44 Nov  3 17:13 .
+drwxrws--- 1 root nogroup      912 Nov  3 17:53 ..
+-rw-rw---- 1 root nogroup 17932720 Nov  3 17:13 model.pt
+-rw-rw---- 1 root nogroup     7751 Nov  3 17:13 train-log.json
