@@ -146,8 +146,9 @@ export function intakeOwnerAutoAdmit(record: NexusIntakeRecord): boolean {
  * counterfactual watch's graded rejected-entry outcomes ('decision-outcome',
  * filed under source 'owner-preapproved', which the owner-decision class above
  * misses on the source name alone), the molding walk's per-window records
- * ('live-molding-record') and events ('molding-event'), and the first-hundred
- * campaign's unit records ('campaign-mandate'). The owner's stated basis, in
+ * ('live-molding-record') and events ('molding-event'), the first-hundred
+ * campaign's unit records ('campaign-mandate'), and settled trade receipts
+ * ('live-trading-record'). The owner's stated basis, in
  * his words: everything filed for live trading is based off of live results,
  * so it is verified — the records are verified by construction (live fills,
  * receipts, settlement grades), and no approval stop applies to them. Same
@@ -156,7 +157,7 @@ export function intakeOwnerAutoAdmit(record: NexusIntakeRecord): boolean {
  * IS the record's check-or-ref) — must be present. A Bank record missing
  * either stays a pending candidate at the gate, and a shapeless one still
  * drops at validation. The class is matched on kind, not source: the Bank's
- * producers file under several source names, and the four kinds are theirs —
+ * producers file under several source names, and the listed kinds are theirs —
  * no canary kind is among them, so canary output still never auto-admits.
  * Admitted under the OWNER marker: the class exists by the owner's direct
  * ruling, the same attestation as the owner-decision class.
@@ -166,6 +167,7 @@ export const INTAKE_AUTO_ADMIT_BANK_KINDS: ReadonlySet<string> = new Set([
   'live-molding-record',
   'molding-event',
   'campaign-mandate',
+  'live-trading-record',
 ])
 
 export function intakeBankAutoAdmit(record: NexusIntakeRecord): boolean {

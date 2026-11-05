@@ -431,6 +431,72 @@ describe('nexusIntake Nexus Bank auto-admission (owner ruling, 2026-10-29)', () 
     ['first-hundred campaign-mandate', CAMPAIGN_LINE, 'hundred-campaign'],
   ]
 
+  const F039_RECEIPT_LINE = JSON.stringify({
+    kind: 'live-trading-record',
+    source: 'nexus-bank-ledger',
+    run_id: 'refile-f-039-autohunt-first-fill',
+    ref: 'KXBTC15M-26OCT300630-30',
+    check: 'D1 order_intents + /api/status read-back by crew lead 2026-10-30 ~06:11 CDT',
+    summary: 'AUTO-HUNT FIRST LIVE FILL: window 0630 NO 7 contracts, entry cashflow -518c (avg ~74c), exit cashflow +588c (avg ~84c, profit-lock shape), realized moved -239 -> -185 (net +54c after fees). Equity 817 -> 871. DIST-090 deployed same morning (PR #58, version a6173a8d) and live-verified evaluating (dist90State enabled, 0.3 bps from its threshold at read time).',
+    status: 'verified',
+    ts: '2026-10-30T11:11:00Z',
+    original_run_id: 'autohunt-first-fill-20261030',
+    provenance: 're-filed 2026-10-31 in consumer shape per F-039 option (a) (producer re-file); original line 487 in nexus-intake.jsonl; ts from the original check text, which states the read-back time as approximate (~06:11 CDT 2026-10-30)',
+  })
+
+  it('AUTO-ADMITS the F-039 settled-trade receipt under the OWNER marker', async () => {
+    const record = parseNexusIntakeLine(F039_RECEIPT_LINE)
+    expect(record).not.toBeNull()
+    expect(record).toMatchObject({
+      source: 'nexus-bank-ledger',
+      runId: 'refile-f-039-autohunt-first-fill',
+      kind: 'live-trading-record',
+      ref: 'KXBTC15M-26OCT300630-30',
+    })
+    expect(record?.text).toContain('net +54c')
+    expect(record && intakeBankAutoAdmit(record)).toBe(true)
+    expect(record && intakeAutoAdmitMarker(record)).toBe(OWNER_ADMITTED_BY)
+
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(F039_RECEIPT_LINE), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+    expect(repo.listCandidates()[0]).toMatchObject({
+      admissionStatus: 'approved',
+      metadata: { intakeSource: 'nexus-bank-ledger', admittedBy: OWNER_ADMITTED_BY },
+    })
+    expect(knowledgeOrigin(repo.listKnowledge()[0])).toBe('AUTO-ADDED · OWNER-DIRECTED')
+  })
+
+  it('keeps a live-trading receipt missing run_id pending', async () => {
+    const broken = { ...(JSON.parse(F039_RECEIPT_LINE) as Record<string, unknown>) }
+    delete broken.run_id
+    const line = JSON.stringify(broken)
+    const record = parseNexusIntakeLine(line)
+    expect(record?.runId).toBe('')
+    expect(record && intakeBankAutoAdmit(record)).toBe(false)
+    expect(record && intakeAutoAdmitMarker(record)).toBeNull()
+
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(line), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 1, admitted: 0 })
+    expect(repo.listCandidates()[0].admissionStatus).toBe('candidate')
+    expect(repo.getApprovedCount()).toBe(0)
+  })
+
+  it('does not admit a live-trading receipt without ref or subject', async () => {
+    const broken = { ...(JSON.parse(F039_RECEIPT_LINE) as Record<string, unknown>) }
+    delete broken.ref
+    delete broken.check
+    const line = JSON.stringify(broken)
+    expect(parseNexusIntakeLine(line)).toBeNull()
+
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(line), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 0, added: 0, admitted: 0 })
+    expect(repo.listCandidates()).toEqual([])
+    expect(repo.listKnowledge()).toEqual([])
+  })
+
   for (const [name, line, source] of BANK_LINES) {
     it(`AUTO-ADMITS a ${name} record carrying run_id + ref under the OWNER marker`, async () => {
       const record = parseNexusIntakeLine(line)
