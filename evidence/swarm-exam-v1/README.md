@@ -30,6 +30,7 @@ D1 exports (one JSON object per line, keys sorted):
   delta explained there).
 - `d1_windows.jsonl` — 791 window rows.
 - `d1_canary_adaptations.jsonl` — 19 rows (streak/cap adaptation record).
+- `engine.py` + `analysis.py` — the rebuilt replay engine and its analysis driver (added v1.1, 2026-11-06 00:16 CST, to pin the sheet-as-code baseline for the exam freeze).
 - `d1_decisions_exam_windows.jsonl` — 48,037 decision ticks, sliced to the 322 tickers
   that appear in order_intents or shadow_candidates. Cut from a full export of the live
   decisions table (113,553 rows at export time); the full table stays the source of
