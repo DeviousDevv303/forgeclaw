@@ -11,6 +11,7 @@ import {
   intakeCandidateInput,
   intakeDedupeKey,
   intakeOwnerAutoAdmit,
+  intakeShadowAutoAdmit,
   parseNexusIntake,
   parseNexusIntakeLine,
   parseSimIntake,
@@ -567,6 +568,83 @@ describe('nexusIntake Nexus Bank auto-admission (owner ruling, 2026-10-29)', () 
     const record = parseNexusIntakeLine(CANARY_LINE)
     expect(record && intakeBankAutoAdmit(record)).toBe(false)
     expect(record && intakeAutoAdmitMarker(record)).toBeNull()
+  })
+})
+
+const SHADOW_OUTCOME_LINE = JSON.stringify({
+  ts: '2026-10-30T11:11:00.000Z',
+  source: 'nexus-bank-shadow',
+  kind: 'shadow-outcome',
+  run_id: 'sh:KXBTC15M-26OCT300630-30:dist-090',
+  ref: 'KXBTC15M-26OCT300630-30',
+  evidence: 'Shadow outcome WIN: side no; entry ask 74c; hypothetical contracts 7; distance at arm 13.75 bps vs required 12.5 bps with 420s remaining; settlement result no; modeled net 172c under shipped composite (g) (modeled gross 182c, modeled fee estimate 10c). No actual fill, actual fee, or cash movement is implied.',
+  provenance: 'Nexus Bank shadow_candidates row sh:KXBTC15M-26OCT300630-30:dist-090; variant=dist-090; grade=win; modeled only',
+})
+
+describe('nexusIntake Nexus Bank shadow auto-admission (owner order, 2026-11-04)', () => {
+  beforeEach(() => storage.clear())
+
+  it('AUTO-ADMITS the exact shadow source/kind/run_id/ref shape under the OWNER marker, idempotently', async () => {
+    const record = parseNexusIntakeLine(SHADOW_OUTCOME_LINE)
+    expect(record).not.toBeNull()
+    expect(record && intakeShadowAutoAdmit(record)).toBe(true)
+    expect(record && intakeBankAutoAdmit(record)).toBe(false)
+    expect(record && intakeAutoAdmitMarker(record)).toBe(OWNER_ADMITTED_BY)
+
+    const repo = new CorpusRepository()
+    const first = await syncNexusIntake(sourceOf(SHADOW_OUTCOME_LINE), repo)
+    expect(first).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+    expect(repo.listCandidates()[0]).toMatchObject({
+      admissionStatus: 'approved',
+      metadata: { intakeSource: 'nexus-bank-shadow', admittedBy: OWNER_ADMITTED_BY },
+    })
+    expect(knowledgeOrigin(repo.listKnowledge()[0])).toBe('AUTO-ADDED · OWNER-DIRECTED')
+
+    const second = await syncNexusIntake(sourceOf(SHADOW_OUTCOME_LINE), repo)
+    expect(second).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 0 })
+    expect(repo.listKnowledge()).toHaveLength(1)
+  })
+
+  it('keeps a shadow outcome missing run_id pending', async () => {
+    const broken = { ...(JSON.parse(SHADOW_OUTCOME_LINE) as Record<string, unknown>) }
+    delete broken.run_id
+    const line = JSON.stringify(broken)
+    const record = parseNexusIntakeLine(line)
+    expect(record?.runId).toBe('')
+    expect(record && intakeShadowAutoAdmit(record)).toBe(false)
+    expect(record && intakeAutoAdmitMarker(record)).toBeNull()
+
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(line), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 1, admitted: 0 })
+    expect(repo.listCandidates()[0].admissionStatus).toBe('candidate')
+  })
+
+  it('requires ref specifically even if a check supplies a normalized subject', async () => {
+    const broken: Record<string, unknown> = { ...(JSON.parse(SHADOW_OUTCOME_LINE) as Record<string, unknown>), check: 'fallback subject is not the required ticker ref' }
+    delete broken.ref
+    const line = JSON.stringify(broken)
+    const record = parseNexusIntakeLine(line)
+    expect(record?.ref).toBe('')
+    expect(record?.subject).toBe('fallback subject is not the required ticker ref')
+    expect(record && intakeShadowAutoAdmit(record)).toBe(false)
+    expect(record && intakeAutoAdmitMarker(record)).toBeNull()
+
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(line), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 1, admitted: 0 })
+    expect(repo.listCandidates()[0].admissionStatus).toBe('candidate')
+  })
+
+  it('does not widen visitor or canary admission', async () => {
+    const visitor = { ...(JSON.parse(SHADOW_OUTCOME_LINE) as Record<string, unknown>), source: 'visitor' }
+    const visitorRecord = parseNexusIntakeLine(JSON.stringify(visitor))
+    expect(visitorRecord && intakeShadowAutoAdmit(visitorRecord)).toBe(false)
+    expect(visitorRecord && intakeAutoAdmitMarker(visitorRecord)).toBeNull()
+
+    const canaryRecord = parseNexusIntakeLine(CANARY_LINE)
+    expect(canaryRecord && intakeShadowAutoAdmit(canaryRecord)).toBe(false)
+    expect(canaryRecord && intakeAutoAdmitMarker(canaryRecord)).toBeNull()
   })
 })
 

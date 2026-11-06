@@ -176,10 +176,22 @@ export function intakeBankAutoAdmit(record: NexusIntakeRecord): boolean {
     && (record.ref !== '' || record.subject !== '')
 }
 
+/** The owner's shadow-outcome class: exact Nexus Bank shadow source/kind plus run_id AND ref. */
+export const INTAKE_AUTO_ADMIT_SHADOW_SOURCE = 'nexus-bank-shadow'
+export const INTAKE_AUTO_ADMIT_SHADOW_KIND = 'shadow-outcome'
+
+export function intakeShadowAutoAdmit(record: NexusIntakeRecord): boolean {
+  return record.source === INTAKE_AUTO_ADMIT_SHADOW_SOURCE
+    && record.kind === INTAKE_AUTO_ADMIT_SHADOW_KIND
+    && record.runId !== ''
+    && record.ref !== ''
+}
+
 /** The admission marker a record qualifies for, or null when it stays a pending candidate. */
 export function intakeAutoAdmitMarker(record: NexusIntakeRecord): string | null {
   if (intakeAutoAdmit(record)) return INTAKE_ADMITTED_BY
   if (intakeOwnerAutoAdmit(record)) return OWNER_ADMITTED_BY
+  if (intakeShadowAutoAdmit(record)) return OWNER_ADMITTED_BY
   if (intakeBankAutoAdmit(record)) return OWNER_ADMITTED_BY
   return null
 }
