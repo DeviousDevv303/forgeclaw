@@ -1,0 +1,902 @@
+[
+ {
+  "ticker": "KXBTC15M-26OCT292100-00",
+  "side": "yes",
+  "price": 62.0,
+  "contracts": 7.0,
+  "entry_fee": 11.55,
+  "entry_ts": 1793321574.481,
+  "result": "yes",
+  "win": true,
+  "n_closes": 8,
+  "hold": {
+   "gross": 266.0,
+   "net": 254.45
+  },
+  "g": {
+   "gross": 266.0,
+   "net": 254.45,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 161.0,
+   "net": 142.45,
+   "exit_px": 85.0,
+   "exit_ts": 1793321640
+  },
+  "f3": {
+   "gross": 70.0,
+   "net": 48.45,
+   "exit_px": 72.0,
+   "exit_ts": 1793321700
+  },
+  "f5": {
+   "gross": 70.0,
+   "net": 48.45,
+   "exit_px": 72.0,
+   "exit_ts": 1793321700
+  },
+  "h5": {
+   "gross": 70.0,
+   "net": 48.45,
+   "exit_px": 72.0,
+   "exit_ts": 1793321700
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26OCT292145-45",
+  "side": "yes",
+  "price": 56.0,
+  "contracts": 7.0,
+  "entry_fee": 12.08,
+  "entry_ts": 1793323988.22,
+  "result": "yes",
+  "win": true,
+  "n_closes": 12,
+  "hold": {
+   "gross": 308.0,
+   "net": 295.92
+  },
+  "g": {
+   "gross": 308.0,
+   "net": 295.92,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 63.0,
+   "net": 38.92,
+   "exit_px": 65.0,
+   "exit_ts": 1793324160
+  },
+  "f3": {
+   "gross": 84.0,
+   "net": 60.92,
+   "exit_px": 68.0,
+   "exit_ts": 1793324280
+  },
+  "f5": {
+   "gross": 84.0,
+   "net": 60.92,
+   "exit_px": 68.0,
+   "exit_ts": 1793324280
+  },
+  "h5": {
+   "gross": 84.0,
+   "net": 60.92,
+   "exit_px": 68.0,
+   "exit_ts": 1793324280
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26OCT292245-45",
+  "side": "yes",
+  "price": 59.0,
+  "contracts": 7.0,
+  "entry_fee": 11.86,
+  "entry_ts": 1793327556.048,
+  "result": "yes",
+  "win": true,
+  "n_closes": 13,
+  "hold": {
+   "gross": 287.0,
+   "net": 275.14
+  },
+  "g": {
+   "gross": -196.0,
+   "net": -218.86,
+   "exit_px": 31.0,
+   "exit_ts": 1793327640
+  },
+  "d": {
+   "gross": -196.0,
+   "net": -218.86,
+   "exit_px": 31.0,
+   "exit_ts": 1793327640
+  },
+  "f3": {
+   "gross": 287.0,
+   "net": 275.14,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": 287.0,
+   "net": 275.14,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": -196.0,
+   "net": -218.86,
+   "exit_px": 31.0,
+   "exit_ts": 1793327640
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26OCT300000-00",
+  "side": "yes",
+  "price": 66.0,
+  "contracts": 7.0,
+  "entry_fee": 11.0,
+  "entry_ts": 1793332192.38,
+  "result": "yes",
+  "win": true,
+  "n_closes": 11,
+  "hold": {
+   "gross": 238.0,
+   "net": 227.0
+  },
+  "g": {
+   "gross": 238.0,
+   "net": 227.0,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 147.0,
+   "net": 130.0,
+   "exit_px": 87.0,
+   "exit_ts": 1793332620
+  },
+  "f3": {
+   "gross": 0.0,
+   "net": -22.0,
+   "exit_px": 66.0,
+   "exit_ts": 1793332560
+  },
+  "f5": {
+   "gross": 0.0,
+   "net": -22.0,
+   "exit_px": 66.0,
+   "exit_ts": 1793332560
+  },
+  "h5": {
+   "gross": 0.0,
+   "net": -22.0,
+   "exit_px": 66.0,
+   "exit_ts": 1793332560
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26OCT300045-45",
+  "side": "yes",
+  "price": 69.0,
+  "contracts": 7.0,
+  "entry_fee": 10.49,
+  "entry_ts": 1793334739.01,
+  "result": "no",
+  "win": false,
+  "n_closes": 13,
+  "hold": {
+   "gross": -483.0,
+   "net": -493.49
+  },
+  "g": {
+   "gross": -105.0,
+   "net": -128.49,
+   "exit_px": 54.0,
+   "exit_ts": 1793334780
+  },
+  "d": {
+   "gross": -105.0,
+   "net": -128.49,
+   "exit_px": 54.0,
+   "exit_ts": 1793334780
+  },
+  "f3": {
+   "gross": -483.0,
+   "net": -493.49,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": -483.0,
+   "net": -493.49,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": -105.0,
+   "net": -128.49,
+   "exit_px": 54.0,
+   "exit_ts": 1793334780
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041315-15",
+  "side": "yes",
+  "price": 86.0,
+  "contracts": 2.0,
+  "entry_fee": 1.69,
+  "entry_ts": 1793815292.982,
+  "result": "yes",
+  "win": true,
+  "n_closes": 14,
+  "hold": {
+   "gross": 28.0,
+   "net": 26.31
+  },
+  "g": {
+   "gross": 28.0,
+   "net": 26.31,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 12.400000000000006,
+   "net": 8.710000000000006,
+   "exit_px": 92.2,
+   "exit_ts": 1793815440
+  },
+  "f3": {
+   "gross": -2.0,
+   "net": -5.6899999999999995,
+   "exit_px": 85.0,
+   "exit_ts": 1793815380
+  },
+  "f5": {
+   "gross": 28.0,
+   "net": 26.31,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": 28.0,
+   "net": 26.31,
+   "exit_px": null,
+   "exit_ts": null
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041330-30",
+  "side": "no",
+  "price": 76.0,
+  "contracts": 3.0,
+  "entry_fee": 3.84,
+  "entry_ts": 1793816433.24,
+  "result": "no",
+  "win": true,
+  "n_closes": 10,
+  "hold": {
+   "gross": 72.0,
+   "net": 68.16
+  },
+  "g": {
+   "gross": -39.0,
+   "net": -47.84,
+   "exit_px": 63.0,
+   "exit_ts": 1793816460
+  },
+  "d": {
+   "gross": -39.0,
+   "net": -47.84,
+   "exit_px": 63.0,
+   "exit_ts": 1793816460
+  },
+  "f3": {
+   "gross": 72.0,
+   "net": 68.16,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": 72.0,
+   "net": 68.16,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": -39.0,
+   "net": -47.84,
+   "exit_px": 63.0,
+   "exit_ts": 1793816460
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041400-00",
+  "side": "yes",
+  "price": 67.0,
+  "contracts": 3.0,
+  "entry_fee": 4.65,
+  "entry_ts": 1793818210.025,
+  "result": "no",
+  "win": false,
+  "n_closes": 10,
+  "hold": {
+   "gross": -201.0,
+   "net": -205.65
+  },
+  "g": {
+   "gross": -72.0,
+   "net": -82.65,
+   "exit_px": 43.0,
+   "exit_ts": 1793818440
+  },
+  "d": {
+   "gross": 18.0,
+   "net": 8.35,
+   "exit_px": 73.0,
+   "exit_ts": 1793818260
+  },
+  "f3": {
+   "gross": 12.0,
+   "net": 2.3499999999999996,
+   "exit_px": 71.0,
+   "exit_ts": 1793818380
+  },
+  "f5": {
+   "gross": 12.0,
+   "net": 2.3499999999999996,
+   "exit_px": 71.0,
+   "exit_ts": 1793818380
+  },
+  "h5": {
+   "gross": 12.0,
+   "net": 2.3499999999999996,
+   "exit_px": 71.0,
+   "exit_ts": 1793818380
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041415-15",
+  "side": "no",
+  "price": 72.0,
+  "contracts": 3.0,
+  "entry_fee": 4.24,
+  "entry_ts": 1793818868.118,
+  "result": "no",
+  "win": true,
+  "n_closes": 14,
+  "hold": {
+   "gross": 84.0,
+   "net": 79.76
+  },
+  "g": {
+   "gross": -69.0,
+   "net": -79.24,
+   "exit_px": 49.0,
+   "exit_ts": 1793819280
+  },
+  "d": {
+   "gross": 18.0,
+   "net": 9.76,
+   "exit_px": 78.0,
+   "exit_ts": 1793818920
+  },
+  "f3": {
+   "gross": 33.0,
+   "net": 25.759999999999998,
+   "exit_px": 83.0,
+   "exit_ts": 1793819160
+  },
+  "f5": {
+   "gross": 33.0,
+   "net": 25.759999999999998,
+   "exit_px": 83.0,
+   "exit_ts": 1793819160
+  },
+  "h5": {
+   "gross": 33.0,
+   "net": 25.759999999999998,
+   "exit_px": 83.0,
+   "exit_ts": 1793819160
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041415-15",
+  "side": "yes",
+  "price": 66.0,
+  "contracts": 3.0,
+  "entry_fee": 4.72,
+  "entry_ts": 1793819386.632,
+  "result": "no",
+  "win": false,
+  "n_closes": 6,
+  "hold": {
+   "gross": -198.0,
+   "net": -202.72
+  },
+  "g": {
+   "gross": -45.0,
+   "net": -55.72,
+   "exit_px": 51.0,
+   "exit_ts": 1793819460
+  },
+  "d": {
+   "gross": -45.0,
+   "net": -55.72,
+   "exit_px": 51.0,
+   "exit_ts": 1793819460
+  },
+  "f3": {
+   "gross": -198.0,
+   "net": -202.72,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": -198.0,
+   "net": -202.72,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": -45.0,
+   "net": -55.72,
+   "exit_px": 51.0,
+   "exit_ts": 1793819460
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041430-30",
+  "side": "yes",
+  "price": 65.0,
+  "contracts": 3.0,
+  "entry_fee": 4.78,
+  "entry_ts": 1793819961.944,
+  "result": "yes",
+  "win": true,
+  "n_closes": 11,
+  "hold": {
+   "gross": 105.0,
+   "net": 100.22
+  },
+  "g": {
+   "gross": -72.0,
+   "net": -82.78,
+   "exit_px": 41.0,
+   "exit_ts": 1793820000
+  },
+  "d": {
+   "gross": -72.0,
+   "net": -82.78,
+   "exit_px": 41.0,
+   "exit_ts": 1793820000
+  },
+  "f3": {
+   "gross": 105.0,
+   "net": 100.22,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": 105.0,
+   "net": 100.22,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": -72.0,
+   "net": -82.78,
+   "exit_px": 41.0,
+   "exit_ts": 1793820000
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041430-30",
+  "side": "no",
+  "price": 68.0,
+  "contracts": 3.0,
+  "entry_fee": 4.57,
+  "entry_ts": 1793820046.7,
+  "result": "yes",
+  "win": false,
+  "n_closes": 10,
+  "hold": {
+   "gross": -204.0,
+   "net": -208.57
+  },
+  "g": {
+   "gross": -204.0,
+   "net": -208.57,
+   "exit_px": 0.0,
+   "exit_ts": 1793820600
+  },
+  "d": {
+   "gross": 30.0,
+   "net": 21.43,
+   "exit_px": 78.0,
+   "exit_ts": 1793820180
+  },
+  "f3": {
+   "gross": 60.0,
+   "net": 52.43,
+   "exit_px": 88.0,
+   "exit_ts": 1793820360
+  },
+  "f5": {
+   "gross": 60.0,
+   "net": 52.43,
+   "exit_px": 88.0,
+   "exit_ts": 1793820360
+  },
+  "h5": {
+   "gross": 60.0,
+   "net": 52.43,
+   "exit_px": 88.0,
+   "exit_ts": 1793820360
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041445-45",
+  "side": "no",
+  "price": 70.0,
+  "contracts": 3.0,
+  "entry_fee": 4.41,
+  "entry_ts": 1793820798.855,
+  "result": "no",
+  "win": true,
+  "n_closes": 12,
+  "hold": {
+   "gross": 90.0,
+   "net": 85.59
+  },
+  "g": {
+   "gross": 90.0,
+   "net": 85.59,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 27.0,
+   "net": 18.59,
+   "exit_px": 79.0,
+   "exit_ts": 1793820900
+  },
+  "f3": {
+   "gross": 90.0,
+   "net": 85.59,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": 90.0,
+   "net": 85.59,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": 90.0,
+   "net": 85.59,
+   "exit_px": null,
+   "exit_ts": null
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041445-45",
+  "side": "no",
+  "price": 80.0,
+  "contracts": 3.0,
+  "entry_fee": 3.36,
+  "entry_ts": 1793820892.559,
+  "result": "no",
+  "win": true,
+  "n_closes": 11,
+  "hold": {
+   "gross": 60.0,
+   "net": 56.64
+  },
+  "g": {
+   "gross": 60.0,
+   "net": 56.64,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 36.0,
+   "net": 30.64,
+   "exit_px": 92.0,
+   "exit_ts": 1793821020
+  },
+  "f3": {
+   "gross": 60.0,
+   "net": 56.64,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": 60.0,
+   "net": 56.64,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": 60.0,
+   "net": 56.64,
+   "exit_px": null,
+   "exit_ts": null
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041445-45",
+  "side": "no",
+  "price": 82.0,
+  "contracts": 2.0,
+  "entry_fee": 2.07,
+  "entry_ts": 1793820977.541,
+  "result": "no",
+  "win": true,
+  "n_closes": 9,
+  "hold": {
+   "gross": 36.0,
+   "net": 33.93
+  },
+  "g": {
+   "gross": 36.0,
+   "net": 33.93,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 20.0,
+   "net": 15.93,
+   "exit_px": 92.0,
+   "exit_ts": 1793821020
+  },
+  "f3": {
+   "gross": 36.0,
+   "net": 33.93,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": 36.0,
+   "net": 33.93,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": 36.0,
+   "net": 33.93,
+   "exit_px": null,
+   "exit_ts": null
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041500-00",
+  "side": "no",
+  "price": 73.0,
+  "contracts": 3.0,
+  "entry_fee": 4.14,
+  "entry_ts": 1793821576.323,
+  "result": "no",
+  "win": true,
+  "n_closes": 14,
+  "hold": {
+   "gross": 81.0,
+   "net": 76.86
+  },
+  "g": {
+   "gross": 81.0,
+   "net": 76.86,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 24.0,
+   "net": 15.86,
+   "exit_px": 81.0,
+   "exit_ts": 1793821800
+  },
+  "f3": {
+   "gross": 62.70000000000002,
+   "net": 56.56000000000002,
+   "exit_px": 93.9,
+   "exit_ts": 1793822040
+  },
+  "f5": {
+   "gross": 53.70000000000002,
+   "net": 47.56000000000002,
+   "exit_px": 90.9,
+   "exit_ts": 1793822160
+  },
+  "h5": {
+   "gross": 53.70000000000002,
+   "net": 47.56000000000002,
+   "exit_px": 90.9,
+   "exit_ts": 1793822160
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041500-00",
+  "side": "no",
+  "price": 80.0,
+  "contracts": 3.0,
+  "entry_fee": 3.36,
+  "entry_ts": 1793821799.133,
+  "result": "no",
+  "win": true,
+  "n_closes": 11,
+  "hold": {
+   "gross": 60.0,
+   "net": 56.64
+  },
+  "g": {
+   "gross": 60.0,
+   "net": 56.64,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 33.29999999999998,
+   "net": 27.939999999999984,
+   "exit_px": 91.1,
+   "exit_ts": 1793821860
+  },
+  "f3": {
+   "gross": 41.70000000000002,
+   "net": 36.34000000000002,
+   "exit_px": 93.9,
+   "exit_ts": 1793822040
+  },
+  "f5": {
+   "gross": 32.70000000000002,
+   "net": 27.340000000000018,
+   "exit_px": 90.9,
+   "exit_ts": 1793822160
+  },
+  "h5": {
+   "gross": 32.70000000000002,
+   "net": 27.340000000000018,
+   "exit_px": 90.9,
+   "exit_ts": 1793822160
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041615-15",
+  "side": "yes",
+  "price": 67.0,
+  "contracts": 3.0,
+  "entry_fee": 4.65,
+  "entry_ts": 1793826253.709,
+  "result": "yes",
+  "win": true,
+  "n_closes": 11,
+  "hold": {
+   "gross": 99.0,
+   "net": 94.35
+  },
+  "g": {
+   "gross": 99.0,
+   "net": 94.35,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 30.0,
+   "net": 21.35,
+   "exit_px": 77.0,
+   "exit_ts": 1793826360
+  },
+  "f3": {
+   "gross": 99.0,
+   "net": 94.35,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": 99.0,
+   "net": 94.35,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": 99.0,
+   "net": 94.35,
+   "exit_px": null,
+   "exit_ts": null
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041630-30",
+  "side": "no",
+  "price": 72.0,
+  "contracts": 3.0,
+  "entry_fee": 4.24,
+  "entry_ts": 1793827045.667,
+  "result": "no",
+  "win": true,
+  "n_closes": 13,
+  "hold": {
+   "gross": 84.0,
+   "net": 79.76
+  },
+  "g": {
+   "gross": 84.0,
+   "net": 79.76,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 18.0,
+   "net": 9.76,
+   "exit_px": 78.0,
+   "exit_ts": 1793827140
+  },
+  "f3": {
+   "gross": 84.0,
+   "net": 79.76,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "f5": {
+   "gross": 84.0,
+   "net": 79.76,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "h5": {
+   "gross": 84.0,
+   "net": 79.76,
+   "exit_px": null,
+   "exit_ts": null
+  }
+ },
+ {
+  "ticker": "KXBTC15M-26NOV041645-45",
+  "side": "yes",
+  "price": 75.0,
+  "contracts": 3.0,
+  "entry_fee": 3.94,
+  "entry_ts": 1793828152.366,
+  "result": "yes",
+  "win": true,
+  "n_closes": 10,
+  "hold": {
+   "gross": 75.0,
+   "net": 71.06
+  },
+  "g": {
+   "gross": 75.0,
+   "net": 71.06,
+   "exit_px": null,
+   "exit_ts": null
+  },
+  "d": {
+   "gross": 53.70000000000002,
+   "net": 47.76000000000002,
+   "exit_px": 92.9,
+   "exit_ts": 1793828280
+  },
+  "f3": {
+   "gross": 36.0,
+   "net": 29.060000000000002,
+   "exit_px": 87.0,
+   "exit_ts": 1793828340
+  },
+  "f5": {
+   "gross": 36.0,
+   "net": 29.060000000000002,
+   "exit_px": 87.0,
+   "exit_ts": 1793828340
+  },
+  "h5": {
+   "gross": 36.0,
+   "net": 29.060000000000002,
+   "exit_px": 87.0,
+   "exit_ts": 1793828340
+  }
+ }
+]
