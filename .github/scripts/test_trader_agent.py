@@ -1,5 +1,6 @@
 """Offline tests for trader_agent.py: no network, no model. A fake MCP server and a fake model stand in."""
 import json
+import math
 import os
 import sys
 import unittest
@@ -9,7 +10,7 @@ import trader_agent as ta  # noqa: E402
 
 TOKEN = "test-token-not-a-secret"
 LIVE = {"now": 1_000_000, "window": {"ticker": "KXBTC15M-T", "closeTimeMs": 1_000_000 + 420_000, "strikeUsd": 73983},
-        "snapshot": {"yesBidCents": 58, "yesAskCents": 60, "noBidCents": 40, "noAskCents": 42, "distanceBps": 6.2}}
+        "snapshot": {"yesBidCents": 58, "yesAskCents": 60, "noBidCents": 40, "noAskCents": 42, "distanceBps": 15.0}}
 STATUS = {"killed": False, "equityCents": 1001, "hold": None, "openMark": None, "mandate": {"id": "m-1", "state": "active"}, "openTickers": []}
 
 
@@ -120,6 +121,75 @@ class RunOnceTests(unittest.TestCase):
         with self.assertRaises(ta.McpError) as e:
             session.initialize()
         self.assertNotIn(TOKEN, str(e.exception))
+
+
+class OrientationTests(unittest.TestCase):
+    """The playbook, the numbers the agent thinks with, and the discipline code holds."""
+
+    def test_playbook_carries_the_desks_lessons(self):
+        for lesson in ("Never sell a winning position", "11 of 11", "Chop near the strike", "no entry above 85c",
+                       "Fees eat careless trading", "you are the entry path", '"analysis"'):
+            self.assertIn(lesson, ta.SYSTEM)
+
+    def test_fair_value_is_the_benchmark_formula(self):
+        # 15 bps above the strike, 420 s left, default 6 bps 1-minute move: z = 15 / (6/sqrt(60)*1.15*sqrt(440)) = 0.80
+        f = ta.fair_value(LIVE)
+        self.assertAlmostEqual(f["p_yes"], ta.phi(15 / (6 / math.sqrt(60) * 1.15 * math.sqrt(440))), 9)
+        self.assertAlmostEqual(f["p_yes"], 0.789, 2)
+        self.assertFalse(f["sigma_measured"])
+        self.assertIsNone(ta.fair_value({"now": 1, "window": {}, "snapshot": {}}))
+
+    def test_sigma_is_measured_from_the_window_tape(self):
+        tape = [[t, 0.1 * t] for t in range(0, 400, 5)]  # a steady 6 bps per minute drift
+        s, n = ta.sigma_1m_bps(tape, 395)
+        self.assertEqual(n, 5)
+        self.assertAlmostEqual(s, 6.0, 1)
+        self.assertEqual(ta.sigma_1m_bps([[0, 1.0]], 30), (None, 0))
+
+    def test_edges_are_after_the_fee(self):
+        e = ta.edges({"p_yes": 0.70}, {"yesAskCents": 60, "noAskCents": 42})
+        self.assertAlmostEqual(e["yes"], round(70 - 60 - ta.kalshi_fee_cents(60), 1))
+        self.assertLess(e["no"], 0)
+        self.assertAlmostEqual(ta.kalshi_fee_cents(50), 1.75)
+
+    def test_trend_reads_the_tape(self):
+        live = {"window": {"samples": [[0, 1.0], [100, 4.0], [200, 9.0]]}}
+        self.assertEqual(ta.trend(live, 60), 5.0)
+        self.assertEqual(ta.trend(live, 180), 8.0)
+
+    def test_discipline_blocks_thin_edge_and_chop_but_not_a_real_edge(self):
+        dec = {"p_yes": 0.7, "action": "enter_yes", "reason": "r", "valid": True}
+        thin = ta.apply_discipline(dec, {"edges": {"yes": 1.3}, "live": {"snapshot": {"distanceBps": 6}}})
+        self.assertEqual((thin["action"], thin["blocked"]), ("none", "enter_yes"))
+        self.assertIn("under +3c", thin["reason"])
+        chop = ta.apply_discipline(dec, {"edges": {"yes": 9.0}, "live": {"snapshot": {"distanceBps": 1.2}}})
+        self.assertIn("chop zone", chop["reason"])
+        ok = ta.apply_discipline(dec, {"edges": {"yes": 9.0}, "live": {"snapshot": {"distanceBps": 12}}})
+        self.assertEqual(ok["action"], "enter_yes")
+        hold = {"p_yes": 0.5, "action": "hold", "reason": "r", "valid": True}
+        self.assertIs(ta.apply_discipline(hold, {"edges": {}}), hold)  # only entries are disciplined
+
+    def test_thin_edge_entry_is_not_sent_but_the_prediction_is(self):
+        server = FakeServer()
+        live = json.loads(json.dumps(LIVE)); live["snapshot"]["distanceBps"] = 4.0  # fair ~0.59 vs a 60c ask: no edge
+        orig = STATUS, LIVE
+        try:
+            globals()["LIVE"] = live
+            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                                 think_returning('{"analysis": "a", "p_yes": 0.7, "action": "enter_yes", "reason": "up"}'), log=lambda s: None)
+        finally:
+            globals()["LIVE"] = orig[1]
+        self.assertEqual([c[0] for c in server.actions()], ["predict"])
+        self.assertEqual(report["decision"]["blocked"], "enter_yes")
+        self.assertEqual(report["decision"]["analysis"], "a")
+
+    def test_prompt_shows_the_numbers(self):
+        obs = {"status": STATUS, "live": LIVE, "history": [], "record": {}, "fair": ta.fair_value(LIVE)}
+        obs["edges"] = ta.edges(obs["fair"], LIVE["snapshot"])
+        text = ta.build_user_prompt(obs)
+        self.assertIn("Fair P(YES) = 0.789", text)
+        self.assertIn("Edge after fees", text)
+        self.assertIn("need +3c", text)
 
 
 class WorkflowTests(unittest.TestCase):

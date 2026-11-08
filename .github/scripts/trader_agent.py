@@ -17,6 +17,7 @@ own probability as its prediction and takes no action, and says so.
 The owner token is read from the environment and is never printed (every outbound text passes through redact()).
 """
 import json
+import math
 import os
 import re
 import sys
@@ -125,12 +126,16 @@ class McpSession:
 
 
 def observe(mcp):
-    return {
+    obs = {
         "status": mcp.tool("get_status")["data"],
         "live": mcp.tool("get_live_window")["data"],
         "history": mcp.tool("get_trade_history", {"limit": 8})["data"],
         "record": mcp.tool("get_prediction_record", {"limit": 5})["data"],
     }
+    live = obs["live"] if isinstance(obs["live"], dict) else {}
+    obs["fair"] = fair_value(live)
+    obs["edges"] = edges(obs["fair"], live.get("snapshot"))
+    return obs
 
 
 def market_p_yes(live):
@@ -141,16 +146,106 @@ def market_p_yes(live):
     return None
 
 
-SYSTEM = """You run the Nexus Trader desk on Kalshi's 15-minute BTC markets, alone, with full authority.
-Each window pays $1 per contract if its side is right: YES if BTC settles at or above the strike, NO if below.
-Your tools act through the Bank's own routes; the desk's reflexes stay underneath you (a stop that sells when BTC
-crosses 2 bps past the strike against a position, and a floor guard that never lets a trade risk equity below $5).
-Facts from the desk's own benchmarks: the market price is about as good a forecast as there is, fees make careless
-trading lose, and selling a position on a small wiggle has cost more than it saved. Act only when you have a reason
-the owner would accept. Doing nothing is a valid decision.
+IV_MULT = 1.15            # implied-vol multiplier fitted to Kalshi minute marks (the desk's benchmark)
+DEFAULT_SIGMA_1M_BPS = 6.0  # typical 1-minute BTC move when the tape is too short to measure
+MIN_EDGE_CENTS = 3.0      # discipline: an entry needs at least this much edge after fees
 
-Answer with ONE JSON object and nothing else:
-{"p_yes": <your probability 0..1 that this window settles YES>,
+
+def phi(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+
+def kalshi_fee_cents(price_cents):
+    """Kalshi's taker fee per contract, about 7% of p(1-p)."""
+    p = max(0.0, min(100.0, float(price_cents))) / 100
+    return 7 * p * (1 - p)
+
+
+def sigma_1m_bps(samples, now_s):
+    """RMS of the last five 1-minute distance changes (bps), from the window tape [[seconds, bps], ...]."""
+    pts = sorted((float(t), float(d)) for t, d in (samples or []) if isinstance(t, (int, float)) and isinstance(d, (int, float)))
+    if not pts:
+        return None, 0
+
+    def at(sec):
+        best = None
+        for t, d in pts:
+            if t <= sec:
+                best = d
+        return best
+    moves = []
+    for k in range(5):
+        a, b = at(now_s - 60 * k), at(now_s - 60 * (k + 1))
+        if a is not None and b is not None and now_s - 60 * (k + 1) >= pts[0][0]:
+            moves.append(a - b)
+    if len(moves) < 2:
+        return None, len(moves)
+    return math.sqrt(sum(m * m for m in moves) / len(moves)), len(moves)
+
+
+def fair_value(live):
+    """The desk's fair P(YES): Phi(distance / (sigma * sqrt(time left))), sigma from the window's own tape (x1.15)."""
+    w = (live or {}).get("window") or {}
+    snap = (live or {}).get("snapshot") or {}
+    now_ms, close_ms, start_ms = live.get("now") if live else None, w.get("closeTimeMs"), w.get("startedAtMs")
+    d = snap.get("distanceBps")
+    if not all(isinstance(x, (int, float)) for x in (now_ms, close_ms, d)):
+        return None
+    left_s = max(1.0, (close_ms - now_ms) / 1000 + 20)  # +20 s: the settlement averages the final minute
+    now_s = (now_ms - start_ms) / 1000 if isinstance(start_ms, (int, float)) else None
+    s1m, n = sigma_1m_bps(w.get("samples"), now_s) if now_s is not None else (None, 0)
+    measured = s1m is not None and s1m > 0
+    s1m = s1m if measured else DEFAULT_SIGMA_1M_BPS
+    sigma_per_s = max(s1m, 0.5) / math.sqrt(60) * IV_MULT
+    return {"p_yes": phi(d / (sigma_per_s * math.sqrt(left_s))), "sigma_1m_bps": round(s1m, 2), "sigma_measured": measured, "left_s": round(left_s - 20)}
+
+
+def edges(fair, snap):
+    """Cents of edge per contract after the entry fee, for buying each side at its ask (held to settlement)."""
+    if not fair:
+        return {"yes": None, "no": None}
+    out = {}
+    for side, ask_key, p in (("yes", "yesAskCents", fair["p_yes"]), ("no", "noAskCents", 1 - fair["p_yes"])):
+        ask = (snap or {}).get(ask_key)
+        out[side] = round(100 * p - ask - kalshi_fee_cents(ask), 1) if isinstance(ask, (int, float)) else None
+    return out
+
+
+def trend(live, seconds):
+    w = (live or {}).get("window") or {}
+    pts = [(t, d) for t, d in (w.get("samples") or []) if isinstance(t, (int, float)) and isinstance(d, (int, float))]
+    if len(pts) < 2:
+        return None
+    t_now, d_now = pts[-1]
+    past = [d for t, d in pts if t <= t_now - seconds]
+    return round(d_now - past[-1], 1) if past else None
+
+
+SYSTEM = """You run the Nexus Trader desk on Kalshi's 15-minute BTC markets, alone, with full authority.
+A window pays $1 per contract on the right side: YES if BTC settles at or above the strike, NO if below.
+
+THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not opinions):
+1. The market price is about as good a forecast as exists. Over 341 real settled windows the market mid beat a model
+   trained on 10 years of BTC. You only have an edge when the FAIR value below differs from the ask by more than fees.
+2. Fees eat careless trading: about 1.7c per contract each way at a 50c price. The desk has paid over $7.80 in fees
+   today. A trade with edge under +3c after fees is a donation. Most windows have no edge: "none" is usually right.
+3. Never sell a winning position. When the desk sold positions while BTC was still on their side of the strike, 11 of 11
+   were eventual winners (-$69 in replay). A position is only "wrong" when BTC crosses the strike against it; the desk's
+   stop already sells at 2 bps past the strike, so you rarely need "exit".
+4. Chop near the strike kills both sides. With BTC within ~3 bps of the strike, entries get stopped out on each side
+   (window 1730: -$2.46 from one YES and one NO). Do not enter when |distance| < 3 bps.
+5. Never chase: no entry above 85c (window 0330 re-bought at 91.8c and 97.5c and lost $11.83). After two losing
+   positions in a window, stop for that window (window 0500: five round trips). The desk enforces these, but do not try.
+6. Late in a window with BTC far from the strike, the price already says so: there is nothing left to win.
+7. Kill switch: only for a broken desk (no prices, wrong data, orders failing). Unkill it if the data is healthy again.
+8. The owner paused the Observer's entries ("pause trading until we get our AI doing it"): you are the entry path.
+   Leave that hold as it is; do not release it.
+9. Your scorecard compares your calls with the market's. If your Brier score is worse than the market's, stay closer to
+   the market price in your p_yes.
+
+Think first, then decide. Answer with ONE JSON object and nothing else:
+{"analysis": "<2-3 short sentences: where BTC is vs the strike and trending, the fair value vs the asks after fees, the risk>",
+ "p_yes": <your probability 0..1 that this window settles YES>,
  "action": "none" | "enter_yes" | "enter_no" | "exit" | "hold" | "release_hold" | "kill" | "unkill",
  "reason": "<one sentence the owner will read>"}"""
 
@@ -160,17 +255,19 @@ def build_user_prompt(obs):
     live = obs.get("live") or {}
     w = (live.get("window") or {})
     snap = (live.get("snapshot") or {})
-    now_ms = live.get("now")
-    left = round((w.get("closeTimeMs", 0) - now_ms) / 1000) if isinstance(now_ms, (int, float)) and w.get("closeTimeMs") else None
+    fair, edge = obs.get("fair"), obs.get("edges") or {}
+    rec = obs.get("record") or {}
     lines = [
-        f"Window {w.get('ticker')}: {left}s left, strike ${w.get('strikeUsd')}, distance {snap.get('distanceBps')} bps "
-        f"(positive = BTC above strike). Book YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c, NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c. "
-        f"Market P(YES) = {market_p_yes(live)}.",
+        f"Window {w.get('ticker')}: {fair['left_s'] if fair else '?'}s left, strike ${w.get('strikeUsd')}, BTC {snap.get('distanceBps') if snap.get('distanceBps') is None else round(snap['distanceBps'], 1)} bps "
+        f"from the strike (positive = above). Change: {trend(live, 60)} bps in the last minute, {trend(live, 180)} bps in the last 3 minutes.",
+        f"Book: YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c, NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c. Market P(YES) = {market_p_yes(live)}.",
+        (f"Fair P(YES) = {fair['p_yes']:.3f} (1-minute BTC move {fair['sigma_1m_bps']} bps, {'measured' if fair['sigma_measured'] else 'default'}). "
+         f"Edge after fees if you buy now: YES {edge.get('yes')}c, NO {edge.get('no')}c per contract (need +{MIN_EDGE_CENTS:g}c)." if fair else "Fair value: unavailable (no distance or clock)."),
         f"Desk: equity {st.get('equityCents')}c, kill switch {'ON' if st.get('killed') else 'off'}, hold {json.dumps(st.get('hold'))}, "
-        f"open position {json.dumps(st.get('openMark'))}, mandate {json.dumps(st.get('mandate'))}.",
+        f"open position {json.dumps(st.get('openMark'))}.",
         f"Observer's last decision: {json.dumps(live.get('lastDecision'))}.",
-        f"Recent trades: {json.dumps(obs.get('history'))[:900]}",
-        f"Your prediction record: {json.dumps({k: (obs.get('record') or {}).get(k) for k in ('graded', 'agentBrier', 'marketBrier')})}",
+        f"Recent trades: {json.dumps(obs.get('history'))[:700]}",
+        f"Your scorecard: {json.dumps({k: rec.get(k) for k in ('graded', 'agentBrier', 'marketBrier')})}",
         "Decide now.",
     ]
     return "\n".join(lines)
@@ -189,9 +286,31 @@ def parse_decision(text, fallback_p):
     p = d.get("p_yes")
     p = float(p) if isinstance(p, (int, float)) and 0 <= float(p) <= 1 else fallback_p
     reason = str(d.get("reason") or "").strip()[:280]
+    analysis = str(d.get("analysis") or "").strip()[:600]
     if action is None or not reason:
-        return {"p_yes": p, "action": "none", "reason": reason or "model named no valid action; no action taken", "valid": False}
-    return {"p_yes": p, "action": action, "reason": reason, "valid": True}
+        return {"p_yes": p, "action": "none", "reason": reason or "model named no valid action; no action taken", "valid": False, "analysis": analysis}
+    return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis}
+
+
+def apply_discipline(decision, obs):
+    """Code, not the model, holds the playbook's money rules the desk does not enforce itself: an entry needs at least
+    MIN_EDGE_CENTS of edge after fees (playbook 2) and BTC at least 3 bps from the strike (playbook 4). A blocked
+    entry becomes "none" and says why; the prediction is kept."""
+    side = {"enter_yes": "yes", "enter_no": "no"}.get(decision["action"])
+    if side is None:
+        return decision
+    edge = (obs.get("edges") or {}).get(side)
+    dist = ((obs.get("live") or {}).get("snapshot") or {}).get("distanceBps")
+    why = None
+    if edge is None:
+        why = "no fair value to price the entry"
+    elif edge < MIN_EDGE_CENTS:
+        why = f"edge {edge}c after fees is under +{MIN_EDGE_CENTS:g}c"
+    elif isinstance(dist, (int, float)) and abs(dist) < 3:
+        why = f"BTC is {abs(dist):.1f} bps from the strike (chop zone, under 3 bps)"
+    if why is None:
+        return decision
+    return {**decision, "action": "none", "blocked": decision["action"], "reason": f"{decision['reason']} [discipline: {decision['action']} blocked, {why}]"}
 
 
 def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print):
@@ -203,7 +322,8 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print):
     t0 = time.monotonic()
     answer = think(SYSTEM, user)
     decision = parse_decision(answer, fallback if fallback is not None else 0.5)
-    report = {"mode": mode, "decision": decision, "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None}
+    decision = apply_discipline(decision, obs)
+    report = {"mode": mode, "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None}
     # Predict always (the scorecard grades it), whatever the action.
     if decision["p_yes"] is not None:
         r = mcp.tool("predict", {"p_yes": decision["p_yes"], "reason": decision["reason"]})
@@ -239,8 +359,8 @@ def main():
     llm, name = qwen_gguf.load_model(cache, lambda repo: list_repo_files(repo), lambda repo, f, d: hf_hub_download(repo, f, local_dir=d), Llama)
 
     def think(system, user):
-        stream = llm(qwen_gguf.build_prompt(system, user), max_tokens=220, temperature=0.2, stop=qwen_gguf.STOP, stream=True)
-        text, _, _, _ = qwen_gguf.generate(stream, 220, 240)
+        stream = llm(qwen_gguf.build_prompt(system, user), max_tokens=360, temperature=0.2, stop=qwen_gguf.STOP, stream=True)
+        text, _, _, _ = qwen_gguf.generate(stream, 360, 300)
         return text
 
     try:
@@ -252,7 +372,7 @@ def main():
     if summary:
         with open(summary, "a") as f:
             d = report["decision"]
-            f.write(f"### Trader agent ({mode})\n- P(YES) {d['p_yes']} · action **{d['action']}** · {d['reason']}\n- acted: {json.dumps(report['acted'])}\n- desk after: {json.dumps(report['checked'])}\n")
+            f.write(f"### Trader agent ({mode})\n- thinking: {d.get('analysis', '')}\n- fair {json.dumps(report.get('fair'))} · edges {json.dumps(report.get('edges'))}\n- P(YES) {d['p_yes']} · action **{d['action']}** · {d['reason']}\n- acted: {json.dumps(report['acted'])}\n- desk after: {json.dumps(report['checked'])}\n")
     return 0
 
 
