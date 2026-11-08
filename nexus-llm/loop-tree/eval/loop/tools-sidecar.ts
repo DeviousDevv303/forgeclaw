@@ -4,9 +4,9 @@
 // execution layer (kalshiExecution / kalshiTrade), so no order can be sent. generate_image validates the arguments exactly as the app's
 // executor does and records the dispatch it WOULD make (to --dispatch-log) instead of dispatching. Anything else is refused.
 import { appendFileSync } from 'node:fs'
-import { applyFundsCommand, emptyFunds, formatFundsStatus, formatProposal, FundsError, proposePosition, type FundsState } from '../../../src/lib/fundsLedger'
-import { formatMarkets, selectMarkets, type KalshiMarket, type KalshiQuery } from '../../../src/lib/kalshiMarkets'
-import { formatOwnerPrices, parseOwnerPrices } from '../../../src/lib/kalshiOwnerPrices'
+import { applyFundsCommand, emptyFunds, formatFundsStatus, formatProposal, FundsError, proposePosition, type FundsState } from '../../../../src/lib/fundsLedger'
+import { formatMarkets, selectMarkets, type KalshiMarket, type KalshiQuery } from '../../../../src/lib/kalshiMarkets'
+import { formatOwnerPrices, parseOwnerPrices } from '../../../../src/lib/kalshiOwnerPrices'
 
 const NOW = Date.parse('2026-10-27T12:00:00Z')
 let dispatchLog: string | undefined
