@@ -1,0 +1,75 @@
+# The Nexus Trader agent: once per 15-minute window, Qwen3-8B reads the desk over MCP and decides (owner order 2026-11-08:
+# "They can do everything. Kill switch, hold, exit, entry, bet down, bet up. They do everything autonomously.").
+# It runs LIVE by default. The repository variable AGENT_MODE=shadow is an operator switch only (predict + log, no action).
+# Every action goes through the Bank's /mcp server, which runs it through the Bank's own routes and journals it with its reason,
+# so the owner watches the agent live on the desk. The step summary of each run records the decision too.
+#
+# Without the NEXUS_OWNER_TOKEN secret the job says so and stops before loading the model: nothing is sent.
+# Scheduled runs on GitHub can start several minutes late; the agent reads the time left in the window and decides with it.
+name: Nexus Trader agent
+run-name: Nexus Trader agent ${{ github.event_name }}
+
+on:
+  schedule:
+    - cron: '1,16,31,46 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexus-trader-agent
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Stop here if the owner token is not configured
+        id: gate
+        env:
+          HAS_TOKEN: ${{ secrets.NEXUS_OWNER_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::notice::NEXUS_OWNER_TOKEN is not set in this repository's Actions secrets, so the trader agent did not run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repository
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Set up Python
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Same key and path as qwen3-8b.yml and qwen-cache-keepwarm.yml: the 5 GB model is restored, not downloaded.
+      - name: Restore GGUF model cache
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/forgeclaw-gguf
+          key: deepseek-gguf-v2-qwen3-8b-${{ runner.os }}
+
+      - name: Install inference dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          pip install huggingface_hub
+          pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
+      - name: Plan, act, check
+        if: steps.gate.outputs.run == 'true'
+        env:
+          NEXUS_MCP_URL: https://nexus-bank.towerslutz.workers.dev/mcp
+          NEXUS_OWNER_TOKEN: ${{ secrets.NEXUS_OWNER_TOKEN }}
+          AGENT_MODE: ${{ vars.AGENT_MODE || 'live' }}
+        run: python -B .github/scripts/trader_agent.py
