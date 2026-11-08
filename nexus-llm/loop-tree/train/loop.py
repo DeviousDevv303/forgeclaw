@@ -1,8 +1,8 @@
 """Closed loop: the model drives real tool flows. It decodes (constrained), and every call it makes is executed by
 eval/loop/sidecar-cli.ts (the app's own ledger/market/owner-price code, propose-only; image dispatches recorded, not sent); the result
 is injected as the runtime would, and decoding continues until the final answer (at most --max-calls calls).
-    python nexus-llm/train/loop.py --ckpt <model.pt> --out <transcripts.jsonl> [--dispatch-log <file>]
-Then: npx vite-node nexus-llm/eval/loop/score-loop-cli.ts <transcripts.jsonl>"""
+    python nexus-llm/loop-tree/train/loop.py --ckpt <model.pt> --out <transcripts.jsonl> [--dispatch-log <file>]
+Then: npx vite-node nexus-llm/loop-tree/eval/loop/score-loop-cli.ts <transcripts.jsonl>"""
 import argparse
 import json
 import pathlib
@@ -14,7 +14,13 @@ from common import BOS, SP, frame
 from constrain import ConstrainedDecoder
 from model import Config, NexusLM
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+# Layout (repo): this file lives at nexus-llm/loop-tree/train/loop.py. The scenarios and the
+# sidecar are this snapshot's OWN copies under loop-tree/eval/loop/ — the pair the runs were
+# graded with (the loop-tree tools-sidecar.ts differs from the app-side copy). The sidecar's
+# imports resolve file-relative into the repo's src/lib, so it executes the app's own code
+# regardless of cwd; cwd is the repo root, mirroring the VM workspace-root runs.
+TREE = pathlib.Path(__file__).resolve().parents[1]
+REPO = pathlib.Path(__file__).resolve().parents[3]
 ap = argparse.ArgumentParser()
 ap.add_argument("--ckpt", required=True); ap.add_argument("--out", required=True)
 ap.add_argument("--dispatch-log"); ap.add_argument("--max-calls", type=int, default=3)
@@ -22,9 +28,9 @@ a = ap.parse_args()
 ck = torch.load(a.ckpt, map_location="cpu")
 model = NexusLM(Config(**ck["cfg"])); model.load_state_dict(ck["state"]); model.eval()
 dec = ConstrainedDecoder(SP)
-scen = json.loads((ROOT / "nexus-llm/eval/loop/scenarios.json").read_text())["scenarios"]
-cmd = ["npx", "vite-node", "nexus-llm/eval/loop/sidecar-cli.ts"] + (["--dispatch-log", a.dispatch_log] if a.dispatch_log else [])
-side = subprocess.Popen(cmd, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+scen = json.loads((TREE / "eval/loop/scenarios.json").read_text())["scenarios"]
+cmd = ["npx", "vite-node", str(TREE / "eval/loop/sidecar-cli.ts")] + (["--dispatch-log", a.dispatch_log] if a.dispatch_log else [])
+side = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
 
 
 @torch.no_grad()
