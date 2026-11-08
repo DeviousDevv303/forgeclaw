@@ -1,6 +1,8 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 import type { ToolCall } from './forgeTools'
+import { isMcpToolName } from './mcp/mcpRegistry'
+import { mcpToolIsReadOnly } from './mcp/mcpRuntime'
 
 // Always requires human co-sign regardless of autonomy level or branch.
 // These are irreversible or can expose secrets.
@@ -95,6 +97,10 @@ export function requiresCoSign(call: ToolCall, posture: GuardianPosture | boolea
     if (OPERATOR_AUTONOMOUS.has(call.name)) return false
     // Everything else follows full-cosign rules below.
   }
+
+  // MCP tools (owner-authorized, forgeclaw#372): an external server's tool may act on the world, so outside the
+  // autonomous posture it is co-signed unless the server explicitly marks it read-only (readOnlyHint).
+  if (isMcpToolName(call.name)) return !mcpToolIsReadOnly(call.name)
 
   // full-cosign (and operator-shell fallthrough for non-shell tools):
   // Always co-sign these

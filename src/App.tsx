@@ -236,6 +236,7 @@ import { withForgeClawSignature } from './lib/signature'
 import { compactToolHistory } from './lib/historyCompaction'
 import { clearKeyVerified, isKeyRejection, isKeyVerified, markKeyVerified } from './lib/keyVerification'
 import { qwenRunLabel } from './lib/qwenCheckpoints'
+import { mcpToolsForMessage, refreshMcpTools } from './lib/mcp/mcpRuntime'
 
 /** toolAttempts marker for a call that never ran because its arguments were cut off or malformed. */
 const TRUNCATED_ATTEMPT = '[truncated-arguments]'
@@ -1022,6 +1023,8 @@ function App() {
     el.style.height = `${Math.max(36, Math.min(el.scrollHeight, 120))}px`
   }, [])
   useEffect(() => { autoGrowPromptInput() }, [input, autoGrowPromptInput])
+  // Discover the configured MCP servers' tools once per session (errors stay per-server, never block the app).
+  useEffect(() => { void refreshMcpTools().catch(() => undefined) }, [])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const ttsResumeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
@@ -1588,6 +1591,9 @@ function App() {
     // A merge asked for in any wording gets the merge tool and the readers it needs (still offered only while self-sculpt is unlocked).
     if (mergeRequested(messageLower)) coreToolNames.push('github_merge_pr', 'github_list_prs', 'github_pr_info')
     const coreToolDefs = FORGE_TOOLS.filter(t => coreToolNames.includes(t.name))
+    // MCP servers' tools (forgeclaw#372): offered when the message names the server or asks for MCP; they run only
+    // through executeTool(), after the Guardian check.
+    coreToolDefs.push(...mcpToolsForMessage(messageLower))
     // Self-modification tools are offered only while the owner's self-sculpt key is unlocked.
     const sculptUnlocked = isSculptUnlocked()
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
