@@ -6,8 +6,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { FORGE_TOOLS } from '../../src/lib/forgeTools'
-import { NOT_EVIDENCE_TOOLS } from '../../src/lib/nexusConvergence'
+import { FORGE_TOOLS } from '../../../src/lib/forgeTools'
+import { NOT_EVIDENCE_TOOLS } from '../../../src/lib/nexusConvergence'
 import { buildToolCallSchema, type ToolSchema } from '../src/grammar'
 
 const here = dirname(fileURLToPath(import.meta.url))
