@@ -1,0 +1,17 @@
+invocation_id=qwen-1794134210201-l87qos
+model=deepseek-ai/deepseek-coder-1.3b-instruct
+role=fallback checkpoint after primary failure: RuntimeError
+degraded=true
+creative_retry_attempted=false
+creative_retry_succeeded=false
+output_cleanup_applied=true
+tool_call_tail_dropped=false
+elapsed_seconds=449.6
+engine=transformers float16 (slow fallback: deepseek-ai/deepseek-coder-1.3b-instruct)
+fast_engine_error=ModuleNotFoundError: No module named 'llama_cpp'
+context_sha256=86a3fd1ce8bc79077ee690f46241b57e97648cee22ce7fc36b0ff86683b00b5c
+context_sha256_basis=joined_messages
+prompt_calls=0
+workflow_commit=7b738ea8dda0f1a63474609c1175cdd5333f02a7
+sampling_seed=1539024203
+sampling_seed_applied=false
