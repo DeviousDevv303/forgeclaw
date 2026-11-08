@@ -1,0 +1,20 @@
+pass   img-1   calls=[generate_image] ev=verified
+FAIL   img-2   calls=[generate_image] ev=verified | call argument prompt lacks ["beaver"] (got "Draw cartoon illustration of a dam")
+pass   img-3   calls=[generate_image] ev=verified
+pass   img-4   calls=[generate_image] ev=verified
+FAIL   img-5   calls=[generate_image] ev=verified | call argument prompt lacks ["refinery"] (got "Render a cinematic wallpaper")
+pass   img-6   calls=[] ev=not_verified
+FAIL   trd-1   calls=[kalshi_markets] ev=verified | call argument query lacks ["fed"] (got "E cutting rates")
+pass   trd-2   calls=[kalshi_markets] ev=verified
+pass   trd-3   calls=[funds_status] ev=completed
+pass   trd-4   calls=[funds_status] ev=completed
+FAIL   trd-5   calls=[] ev=not_verified | first call none, expected one of kalshi_markets, funds_status, funds_propose
+pass   trd-6   calls=[kalshi_markets] ev=verified
+FAIL   trd-7   calls=[kalshi_markets] ev=verified | first call kalshi_markets, expected kalshi_owner_prices; call argument prices lacks ["KXFEDCUT-26DEC","31"] (got null); answer lacks any of ["owner","your"]
+FAIL   trd-8   calls=[kalshi_markets] ev=verified | first call kalshi_markets, expected funds_settle; call argument id lacks ["all"] (got null)
+FAIL   trd-9   calls=[] ev=not_verified | answer lacks any of ["/funds"]
+pass   trd-10  calls=[] ev=not_verified
+FAIL   trd-11  calls=[] ev=not_verified | answer lacks any of ["/funds halt"]
+pass   trd-12  calls=[] ev=not_verified
+
+closed loop: 10/18 scenarios pass (55.6%)

@@ -1,0 +1,402 @@
+{
+ "source": "validateTranscript (nexus-llm/src/grammar.ts)",
+ "rows": [
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "verified",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "blocked",
+    "failed",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "blocked",
+    "failed",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "ok"
+    ],
+    [
+     "github_read_file",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "verified",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "ok"
+    ],
+    [
+     "github_read_file",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "verified",
+    "blocked",
+    "failed",
+    "partial",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "ok"
+    ],
+    [
+     "deepseek_reason",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "verified",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "ok"
+    ],
+    [
+     "deepseek_reason",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "verified",
+    "blocked",
+    "failed",
+    "partial",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "error"
+    ],
+    [
+     "github_read_file",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "verified",
+    "blocked",
+    "failed",
+    "partial",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "error"
+    ],
+    [
+     "github_read_file",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "blocked",
+    "failed",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "error"
+    ],
+    [
+     "deepseek_reason",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "blocked",
+    "failed",
+    "partial",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "github_read_file",
+     "error"
+    ],
+    [
+     "deepseek_reason",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "blocked",
+    "failed",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "ok"
+    ],
+    [
+     "github_read_file",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "verified",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "ok"
+    ],
+    [
+     "github_read_file",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "blocked",
+    "failed",
+    "partial",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "ok"
+    ],
+    [
+     "deepseek_reason",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "ok"
+    ],
+    [
+     "deepseek_reason",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "blocked",
+    "failed",
+    "partial",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "error"
+    ],
+    [
+     "github_read_file",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "verified",
+    "blocked",
+    "failed",
+    "partial",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "error"
+    ],
+    [
+     "github_read_file",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "blocked",
+    "failed",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "error"
+    ],
+    [
+     "deepseek_reason",
+     "ok"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "completed",
+    "blocked",
+    "failed",
+    "partial",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "tool",
+   "steps": [
+    [
+     "deepseek_reason",
+     "error"
+    ],
+    [
+     "deepseek_reason",
+     "error"
+    ]
+   ],
+   "allowed": [
+    "attempted",
+    "blocked",
+    "failed",
+    "not_verified"
+   ]
+  },
+  {
+   "route": "direct",
+   "steps": [],
+   "allowed": [
+    "not_verified"
+   ]
+  },
+  {
+   "route": "defer",
+   "steps": [],
+   "allowed": [
+    "blocked",
+    "not_verified"
+   ]
+  }
+ ]
+}
