@@ -1,0 +1,21 @@
+[
+  "test_constrain.py::CallChecker::test_every_canonical_call_in_the_suites_is_complete_and_every_prefix_incomplete",
+  "test_constrain.py::CallChecker::test_rejects_what_the_schema_or_canonical_form_forbids",
+  "test_constrain.py::Decoder::test_an_untrained_model_still_emits_only_well_formed_output",
+  "test_constrain.py::EvidenceRules::test_prefix_state_reads_route_and_steps",
+  "test_constrain.py::EvidenceRules::test_python_rules_equal_validateTranscript",
+  "test_constrain.py::NoDeadEnds::test_a_call_never_stops_early_when_the_top_tokens_are_all_invalid",
+  "test_train.py::CopyHead::test_copy_head_copies_unseen_tokens_and_the_plain_model_cannot",
+  "test_train.py::CopyHead::test_induction_bias_copies_unseen_spans_at_least_as_well",
+  "test_train.py::CopyHead::test_with_copy_the_next_token_distribution_sums_to_one",
+  "test_train.py::CopyHead::test_without_copy_loss_and_decoding_equal_the_plain_model",
+  "test_train.py::Guards::test_a_run_cut_short_resumes_to_the_same_weights_as_an_uninterrupted_run",
+  "test_train.py::Guards::test_refuses_rows_not_marked_synthetic",
+  "test_train.py::Guards::test_refuses_to_write_checkpoints_inside_the_repo",
+  "test_train.py::Guards::test_warm_start_refuses_a_checkpoint_from_another_preset",
+  "test_train.py::LossMask::test_frame_and_runtime_results_are_masked_and_model_output_is_not",
+  "test_train.py::LossMask::test_the_result_text_never_contributes_to_the_loss",
+  "test_train.py::ModeAndCopyWeights::test_copied_span_tokens_carry_the_weight_and_nothing_else_does",
+  "test_train.py::ModeAndCopyWeights::test_mode_token_is_one_masked_frame_piece_and_legacy_frame_is_unchanged",
+  "test_train.py::ModeAndCopyWeights::test_weighted_loss_with_unit_weights_equals_the_unweighted_loss"
+]

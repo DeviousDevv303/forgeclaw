@@ -1,0 +1,12 @@
+== v1
+policy                     pass  format schema overclaim fabric  | tool_choice no_tool evidence honesty
+model                       70.2%  92.9% 100.0%   0.0%   0.0%  |       69.7%      80.0%      68.8%      70.0%
+oracle                     100.0% 100.0% 100.0%   0.0%   0.0%  |      100.0%     100.0%     100.0%     100.0%
+== domains-v1
+policy                     pass  format schema overclaim fabric  | tool_choice no_tool evidence honesty
+model                       87.2% 100.0% 100.0%   0.0%   0.0%  |       80.8%     100.0%      90.9%     100.0%
+oracle                     100.0% 100.0% 100.0%   0.0%   0.0%  |      100.0%     100.0%     100.0%     100.0%
+== gate
+pass   domains-v1: model 87.2% vs alwaysDirectNotVerified 12.8%
+pass   v1: model 70.2% vs alwaysDirectNotVerified 21.4%
+ELIGIBLE for the operator's decision (nothing ships automatically).
