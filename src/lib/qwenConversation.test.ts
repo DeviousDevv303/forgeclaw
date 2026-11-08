@@ -31,13 +31,15 @@ describe('formatQwenConversation', () => {
     expect(formatQwenConversation([{ role: 'assistant', content: `${ANSWER}\n\n— ForgeClaw` }])).toBe(`Assistant: ${ANSWER}`)
   })
   it('keeps the newest turns inside the budget and marks a cut message', () => {
-    const turns = Array.from({ length: 6 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `turn-${i} ${'w'.repeat(1_500)}` }))
+    // Sized against the 2026-11-08 budgets (24 messages, 2,000 chars each, 20,000 in all):
+    // 30 turns of 2,500 chars overflow all three, so the oldest drop and long turns are cut.
+    const turns = Array.from({ length: 30 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `turn-${String(i).padStart(2, '0')} ${'w'.repeat(2_500)}` }))
     const text = formatQwenConversation(turns)
-    expect(text.length).toBeLessThanOrEqual(5_000)
-    expect(text).toContain('turn-5')
-    expect(text).not.toContain('turn-0')
+    expect(text.length).toBeLessThanOrEqual(20_000)
+    expect(text).toContain('turn-29')
+    expect(text).not.toContain('turn-00')
     expect(text).toContain('[…]')
-    expect(text.indexOf('turn-3')).toBeLessThan(text.indexOf('turn-5'))
+    expect(text.indexOf('turn-27')).toBeLessThan(text.indexOf('turn-29'))
   })
   it('is empty when there are no earlier turns', () => {
     expect(formatQwenConversation([])).toBe('')

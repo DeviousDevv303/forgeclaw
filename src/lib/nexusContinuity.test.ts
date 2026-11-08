@@ -107,7 +107,7 @@ describe('the size budget', () => {
     const envelope = `[RUNTIME_STATE ${'x'.repeat(9000)}][/RUNTIME_STATE]`
     const payload = buildQwenTaskPayload(`explain the build pipeline\n\n${envelope}`, 'github_repo_state result:\n' + 'y'.repeat(20000))
     expect(payload.context).toContain(RULE)
-    expect(payload.context!.length).toBeLessThanOrEqual(22_000)
+    expect(payload.context!.length).toBeLessThanOrEqual(44_000)
   })
 })
 
