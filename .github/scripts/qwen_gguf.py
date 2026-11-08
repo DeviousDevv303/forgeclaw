@@ -21,9 +21,10 @@ import time
 
 GGUF_REPO = "Qwen/Qwen3-8B-GGUF"
 QUANT = "q4_k_m"
-# Qwen3-8B supports 32K; 8K keeps prefill time and the KV cache (~1.2 GB) reasonable on 4 CPUs while
-# fitting deep-research evidence (about 5K tokens) plus the answer.
-N_CTX = 8192
+# Qwen3-8B supports 32K; 16K doubles the conversation the walk can carry (owner order 2026-11-08:
+# "increase ForgeClaw's context window so it remembers what we're talking about") at a KV cache of
+# ~2.4 GB and longer prefill on 4 CPUs — the price of memory, paid deliberately.
+N_CTX = 16384
 N_THREADS = 4         # the runner has 4 vCPUs
 STOP = ["<|im_end|>", "<|im_start|>"]  # end of the assistant turn; stop a hallucinated next turn
 

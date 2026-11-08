@@ -8,15 +8,17 @@ export interface QwenTaskPayload {
   context?: string
 }
 
-// Sized for the 8K-token Qwen3-8B window (about 4 chars per token): room for deep-research evidence
-// (6 sources) plus the task and answer. The workflow trims the middle if a prompt still does not fit.
-const MAX_CONTEXT_CHARS = 22_000
+// Sized for the 16K-token Qwen3-8B window (about 4 chars per token; the runner's N_CTX doubled
+// 2026-11-08 on the owner's order to increase the context window): room for a real conversation
+// history plus deep-research evidence (6 sources), the task and the answer. The workflow trims
+// the middle if a prompt still does not fit.
+const MAX_CONTEXT_CHARS = 44_000
 const MAX_CORPUS_CHARS = 3_000
 const MAX_VERIFIED_TOOL_CHARS = 16_000
-/** Earlier turns of this conversation: how many, how long each, how long in all. App sends the last 6 messages; the newest win the budget. */
-const MAX_CONVERSATION_MESSAGES = 6
-const MAX_CONVERSATION_MESSAGE_CHARS = 1_200
-const MAX_CONVERSATION_CHARS = 5_000
+/** Earlier turns of this conversation: how many, how long each, how long in all. App sends the last 24 messages; the newest win the budget. (Was 6 / 1,200 / 5,000 until 2026-11-08 — the walk forgot anything older than three exchanges.) */
+const MAX_CONVERSATION_MESSAGES = 24
+const MAX_CONVERSATION_MESSAGE_CHARS = 2_000
+const MAX_CONVERSATION_CHARS = 20_000
 
 /**
  * Source-backed reference facts for project-architecture questions. These describe

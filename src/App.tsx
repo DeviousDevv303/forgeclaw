@@ -1927,7 +1927,7 @@ function App() {
         return
       }
 
-      const historyMessages: AIMessage[] = messages.slice(-6).flatMap(m =>
+      const historyMessages: AIMessage[] = messages.slice(-24).flatMap(m =>
         m.role === 'user' || m.role === 'assistant'
           ? [{ role: m.role, content: m.content, ...(m.role === 'user' && isSendableImage(m.imageUrl) ? { image_url: m.imageUrl } : {}) }]
           : []
