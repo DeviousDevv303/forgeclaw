@@ -136,6 +136,9 @@ export class McpRegistry {
 
   toolDefs(): ToolDef[] { return [...this.tools.values()].map(e => e.def) }
 
+  /** The tool definitions offered by the given servers only. */
+  toolDefsForServers(serverIds: ReadonlySet<string>): ToolDef[] { return [...this.tools.values()].filter(e => serverIds.has(e.serverId)).map(e => e.def) }
+
   has(name: string): boolean { return this.tools.has(name) }
 
   /** Per MCP spec annotations are hints from the server; only an explicit readOnlyHint counts as read-only. */

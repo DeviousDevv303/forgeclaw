@@ -22,6 +22,8 @@ import {
 } from './codingAgentState'
 import { CANONICAL_IDENTITY } from './canonicalIdentity'
 import { requiresCoSign, type GuardianPosture, DEFAULT_GUARDIAN_POSTURE, postureFromTier1Active } from './guardianGate'
+import { isMcpToolName } from './mcp/mcpRegistry'
+import { mcpRegistry } from './mcp/mcpRuntime'
 import { runDdgWorkflowSearch } from './ddgWorkflowSearch'
 import { explainShellRunMismatch, isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, SHELL_LOG_POLL_INTERVAL_MS, SHELL_LOG_RETRIEVAL_TIMEOUT_MS, SHELL_RUN_LIST_TIMEOUT_MS, type ShellWorkflowRun } from './shellCorrelation'
 import { appendQwenLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
@@ -1046,6 +1048,9 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
     const approved = await ctx.requestGuardianApproval(normalizedCall)
     if (!approved || ctx.signal?.aborted) return `[GUARDIAN REJECTED] ${name} was not executed.`
   }
+  // MCP tools (owner-authorized protected-path change, forgeclaw#372): dispatched only here, after the sculpt-key,
+  // abort and Guardian co-sign checks above, so an external server's tool passes every gate a built-in does.
+  if (isMcpToolName(name)) return await mcpRegistry().execute(normalizedCall, ctx.signal)
   const loadState = () => loadPersistedCodingAgentState(ctx.agentId)
   const saveState = (partial: Partial<CodingAgentState>) =>
     ctx.signal?.aborted ? loadState() : savePersistedCodingAgentState(partial, ctx.agentId)
