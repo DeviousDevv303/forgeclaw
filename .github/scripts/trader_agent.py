@@ -631,6 +631,21 @@ def chat_completions_shadow(url, token=None, model="nexus", timeout_s=NEXUS_SHAD
     return call
 
 
+BLIND_REREADS = 3
+BLIND_REREAD_S = 5
+
+
+def blind_reason(obs):
+    """Why this observation is no picture to rule on (no window, no distance to the strike), or None."""
+    live = obs.get("live") if isinstance(obs.get("live"), dict) else {}
+    if not (live.get("window") or {}).get("ticker"):
+        return "the feed gave no window"
+    d = (live.get("snapshot") or {}).get("distanceBps")
+    if not isinstance(d, (int, float)) or isinstance(d, bool):
+        return "the feed gave no distance to the strike"
+    return None
+
+
 def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None, watch=None, model_name=None,
              shadow=None, record=None, spawn=None):
     """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict.
@@ -659,6 +674,19 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
         sleep(wait_s)
         waited_s += wait_s
         obs = observe(mcp)
+    # NO BLIND RULINGS (2026-11-09 23:48 CST: a ruling read "BTC is None bps from the strike ... fair value is unavailable"
+    # -- the feed's status section had timed out on that read -- and spent minutes of thinking on no picture). Re-read a few
+    # times; if the distance is still missing, skip this check-in instead of ruling on nothing.
+    for _ in range(BLIND_REREADS):
+        if not blind_reason(obs):
+            break
+        sleep(BLIND_REREAD_S)
+        obs = observe(mcp)
+    why_blind = blind_reason(obs)
+    if why_blind:
+        report = {"mode": mode, "skipped": f"{why_blind} after {BLIND_REREADS + 1} reads: not ruling blind", "fair": obs.get("fair"), "acted": [], "checked": None, "waited_s": waited_s}
+        log(json.dumps(report))
+        return report
     fallback = market_p_yes(obs.get("live"))
     ticker = ((obs.get("live") or {}).get("window") or {}).get("ticker")
     window_earlier = (earlier or {}).get(ticker, []) if earlier is not None else []
