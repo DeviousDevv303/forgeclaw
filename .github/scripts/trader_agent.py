@@ -292,8 +292,9 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
    on our side, 0 = sell at the strike. Range -15..2; null = leave it to the desk's own stop (2 bps past the strike).
    Remember lesson 3: a line too close sells winners on noise, so tighten it only when momentum is turning against us.
 12. You rule the desk. Its Observer enters on its own every tick and its stops sell on their own; you see their trades
-   below. In "review", say in one sentence what they did right or wrong lately (e.g. "bought YES 4 bps from the strike and
-   was stopped 48 s later: too close"). In "directives", steer the Observer for THIS window: block_entry_side ("yes",
+   below. In "review", say in one sentence what THEIR TRADES LISTED BELOW show they did right or wrong -- name the side,
+   price and what happened from that list; if the list says the desk has not traded, say exactly that and nothing more.
+   In "directives", steer the Observer for THIS window: block_entry_side ("yes",
    "no", "both" or null), min_entry_bps (only enter when BTC is at least this far from the strike, 3..30, or null),
    max_contracts (1..100 or null). They can only make it more careful, and they end with the window. Use them when the
    tape is choppy or the desk keeps getting stopped; leave them null when it is trading well.
@@ -330,6 +331,13 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
    entry line — unless the note says so in plain words; a note that only steers judgment (when to secure, which
    side to prefer, how patient to be) never overrides a gate.
 
+18. THE MONEY PLAN (owner 2026-11-09: "check the live funds, what we officially have, and try to get us up out the hole
+   ... strategize"). The money lines below are the desk's official figures. Each ruling, write "plan": one sentence on
+   where the money stands and the risk you allow for it (how many contracts, which distance), and carry it out with your
+   directives (max_contracts, min_entry_bps). Climb out by compounding small, high-quality wins: size so one stop-out
+   costs a small part of the money, and grow size only as equity grows. Never chase losses -- a bigger or worse bet to win
+   it back fast is how the rest is lost; after a loss, size down or wait for a cleaner setup.
+
 Think first, then decide. Answer with ONE JSON object and nothing else:
 {"analysis": "<1-2 short sentences: where BTC is vs the strike and trending, the edge after fees, the risk>",
  "p_yes": <your probability 0..1 that this window settles YES>,
@@ -337,6 +345,7 @@ Think first, then decide. Answer with ONE JSON object and nothing else:
  "reason": "<one sentence the owner will read>",
  "exit_line_bps": <number -15..2 or null; only matters while the desk holds a position>,
  "review": "<one sentence: what the Observer/Preserver did right or wrong lately>",
+ "plan": "<one sentence: where the money stands and the risk you allow for it>",
  "directives": {"block_entry_side": "yes" | "no" | "both" | null, "min_entry_bps": <3..30 or null>, "max_contracts": <1..100 or null>} or null}"""
 # Which playbook a ruling was made under (the corpus records it, so rulings from different playbooks are told apart).
 SYSTEM_SHA = hashlib.sha256(SYSTEM.encode()).hexdigest()[:12]
@@ -359,7 +368,9 @@ def build_user_prompt(obs):
          f"Edge after fees if you buy now: YES {edge.get('yes')}c, NO {edge.get('no')}c per contract (need +{MIN_EDGE_CENTS:g}c)." if fair else "Fair value: unavailable (no distance or clock)."),
         f"Desk: equity {st.get('equityCents')}c, kill switch {'ON' if st.get('killed') else 'off'}, hold {json.dumps(st.get('hold'))}, "
         f"open position {json.dumps(st.get('openMark'))}.",
-        f"Observer's last decision: {json.dumps(live.get('lastDecision'))}.",
+        *money_lines(st),
+        observer_line(live),
+        *last_window_lines(obs),
         f"Recent trades: {json.dumps(obs.get('history'))[:700]}",
         f"Your scorecard: {json.dumps({k: rec.get(k) for k in ('graded', 'agentBrier', 'marketBrier')})}",
         *desk_trades_lines(live),
@@ -380,6 +391,27 @@ def owner_note_lines(st):
     if not text:
         return []
     return [f"OWNER'S STANDING NOTE (his word — follow it; it overrides your playbook defaults until he changes it): \"{text}\""]
+
+
+def money_lines(st):
+    """The desk's official money, in plain words, for the money plan (rule 18)."""
+    def usd(c):
+        return f"${c / 100:.2f}" if isinstance(c, (int, float)) else "?"
+    eq, cash = st.get("equityCents"), st.get("kalshiBalanceCents")
+    if not isinstance(eq, (int, float)):
+        return []
+    parts = [f"Money (official): equity {usd(eq)}, Kalshi cash {usd(cash)}"]
+    to_line, line = st.get("toRecoveryLineCents"), st.get("recoveryLineCents")
+    if isinstance(to_line, (int, float)) and isinstance(line, (int, float)):
+        parts.append(f"{usd(to_line)} under the {usd(line)} recovery line" if to_line > 0 else f"above the {usd(line)} recovery line")
+    if isinstance(st.get("toGoalCents"), (int, float)):
+        parts.append(f"{usd(st['toGoalCents'])} from the goal")
+    if isinstance(st.get("daySettledPnlCents"), (int, float)):
+        parts.append(f"today's settled P&L {'+' if st['daySettledPnlCents'] >= 0 else '-'}{usd(abs(st['daySettledPnlCents']))}")
+    risk = st.get("maxStopRiskPerContractCents")
+    if isinstance(risk, (int, float)) and risk > 0:
+        parts.append(f"a stopped contract costs up to {risk:.0f}c, so {int(eq // risk)} stop-outs at one contract each would take it all")
+    return ["; ".join(parts) + "."]
 
 
 def desk_trades_lines(live, max_rows=8):
@@ -422,8 +454,82 @@ def parse_decision(text, fallback_p):
     line = d.get("exit_line_bps")
     line = float(line) if isinstance(line, (int, float)) and not isinstance(line, bool) and -15 <= float(line) <= 2 else None
     review = str(d.get("review") or "").strip()[:400] or None
+    plan = str(d.get("plan") or "").strip()[:400] or None
     return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis, "exit_line_bps": line,
-            "review": review, "directives": parse_directives(d.get("directives"))}
+            "review": review, "plan": plan, "directives": parse_directives(d.get("directives"))}
+
+
+def observer_line(live):
+    """The Observer's last decision; a hold caused by the agent's own directive is labelled so, never evidence."""
+    d = (live or {}).get("lastDecision") or {}
+    reason = str(d.get("reason") or "")
+    if reason.startswith("agent-directive"):
+        return (f"Observer's last decision: holding because of YOUR OWN directive ({reason}). That is your effect, not "
+                f"evidence about the market; do not cite it as a reason.")
+    return f"Observer's last decision: {json.dumps(d or None)}."
+
+
+def window_losses_by_side(live):
+    """Positions the desk closed at a loss in this window, per side (fill prices; a stopped or sold position counts)."""
+    rows = sorted(((live or {}).get("intents") or []), key=lambda x: x.get("created_at_ms") or 0)
+    losses, net, cost = {"yes": 0, "no": 0}, {"yes": 0.0, "no": 0.0}, {"yes": 0.0, "no": 0.0}
+    for i in rows:
+        side, n, yes = i.get("side"), (i.get("filled_hundredths") or 0) / 100, i.get("avg_yes_price_micros")
+        if side not in losses or not n or yes is None:
+            continue
+        own = yes / 1e4 if side == "yes" else 100 - yes / 1e4
+        if i.get("purpose") == "entry":
+            net[side] += n
+            cost[side] += own * n
+        elif i.get("purpose") == "exit" and net[side] > 0:
+            avg = cost[side] / net[side]
+            sold = min(n, net[side])
+            if own < avg:
+                losses[side] += 1
+            cost[side] -= avg * sold
+            net[side] -= sold
+    return losses
+
+
+def ground_directives(directives, live):
+    """CODE, NOT THE MODEL, decides whether a block is earned (Muse's audit, 2026-11-09 23:23 CST: a block-both directive
+    justified by "Observer held position due to agent-directive-block" -- its own effect -- held the 0030 window 107
+    ticks with 0 entries). A side may be blocked only after the desk actually lost on that side in this window; 'both'
+    needs a loss on each side. An unearned block is dropped (the other directive fields stand) and the reason is kept."""
+    if not directives or not directives.get("block_entry_side"):
+        return directives, None
+    losses = window_losses_by_side(live)
+    block = directives["block_entry_side"]
+    earned = (losses["yes"] > 0 and losses["no"] > 0) if block == "both" else losses.get(block, 0) > 0
+    if earned:
+        return directives, None
+    why = f"block {block} dropped: the desk has not lost on {'both sides' if block == 'both' else block.upper()} in this window"
+    return dict(directives, block_entry_side=None), why
+
+
+_SIGN_CLAIM = re.compile(r"(\d+(?:\.\d+)?)\s*bps\s+(above|below)\s+the\s+strike", re.I)
+
+
+def sign_contradiction(analysis, distance_bps):
+    """The analysis says "N bps above/below the strike" with the wrong side of the live feed (21:40 audit: the feed read
+    -10.0 bps and the analysis said 10.0 bps above). Returns a note, or None. Tiny distances are not judged."""
+    if not analysis or not isinstance(distance_bps, (int, float)) or abs(distance_bps) < 1.0:
+        return None
+    for num, word in _SIGN_CLAIM.findall(analysis):
+        if (word.lower() == "above") != (distance_bps > 0):
+            return f"the analysis says {num} bps {word.lower()} the strike but the feed reads {distance_bps:+.1f} bps"
+    return None
+
+
+def last_window_lines(obs):
+    """The last graded window's real outcome, so a review cannot invent one (2215 was reviewed as a loss; it won)."""
+    rec = obs.get("record") if isinstance(obs.get("record"), dict) else {}
+    recent = (rec or {}).get("recent") or []
+    if not recent:
+        return []
+    r = recent[-1]
+    return [f"Last graded window {str(r.get('ticker'))[-7:]}: settled {str(r.get('result')).upper()} "
+            f"(your call was P(yes) {r.get('pYes')}, the market's {r.get('marketPYes')}). Review only what is shown here and below."]
 
 
 def parse_directives(raw):
@@ -560,6 +666,10 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     answer = think(SYSTEM, user)
     decision = parse_decision(answer, fallback if fallback is not None else 0.5)
     decision = apply_discipline(decision, obs)
+    sign_note = sign_contradiction(decision.get("analysis"), ((obs.get("live") or {}).get("snapshot") or {}).get("distanceBps"))
+    if sign_note and decision["action"] != "none":
+        decision = {**decision, "blocked": decision["action"], "action": "none",
+                    "reason": f"{decision['reason']} [not acted on: {sign_note}]"}
     decision["p_model"] = decision["p_yes"]
     decision["p_yes"] = anchored_p_yes(decision["p_yes"], obs)
     report = {"mode": mode, "ticker": ticker, "seen": live_view(obs.get("live")), "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
@@ -594,11 +704,19 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": name, "args": args, "ok": r["ok"], "result": r["text"][:300]})
         else:
             report["acted"].append({"tool": spec[0], "args": spec[1], "ok": None, "result": "shadow mode: not sent"})
-    # Directives to the Observer for this window (nexus-trader direct_desk), whenever the model gives them.
-    if decision.get("valid") and mode == "live" and decision.get("directives") is not None:
+    # Directives to the Observer for this window (nexus-trader direct_desk) are RENEWED EVERY VALID RULING: a ruling that
+    # gives none clears the last one (Muse's audit: rulings #71-#73 said none while a block-both kept binding the desk).
+    # A block must be earned by a real loss on that side this window (ground_directives).
+    if decision.get("valid") and mode == "live":
+        wanted = decision.get("directives") or {"block_entry_side": None, "min_entry_bps": None, "max_contracts": None}
+        sent, dropped = ground_directives(wanted, obs.get("live"))
+        decision["directives_sent"] = sent
+        if dropped:
+            decision["directive_note"] = dropped
         try:
-            r = mcp.tool("direct_desk", {**decision["directives"], "reason": decision.get("review") or decision["reason"]})
-            report["acted"].append({"tool": "direct_desk", "args": decision["directives"], "ok": r["ok"]})
+            reason = decision.get("review") or decision["reason"]
+            r = mcp.tool("direct_desk", {**sent, "reason": f"{reason} [{dropped}]" if dropped else reason})
+            report["acted"].append({"tool": "direct_desk", "args": sent, "ok": r["ok"]})
         except McpError:
             report["acted"].append({"tool": "direct_desk", "ok": False})
     # The AI's exit line, enforced by the desk on every tick (nexus-trader set_exit_line), while it holds a position.
@@ -617,6 +735,8 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             "inputs": {"system_sha": SYSTEM_SHA, "prompt": user, "fair": obs.get("fair"), "edges": obs.get("edges"),
                        "seen": report.get("seen"), "woke": (watch or {}).get("woke")},
             "output": {"raw": (answer or "")[:2000], "analysis": decision.get("analysis"), "reason": decision["reason"],
+                       "directives": decision.get("directives_sent"), "directive_note": decision.get("directive_note"),
+                       "exit_line_bps": decision.get("exit_line_bps"), "review": decision.get("review"), "plan": decision.get("plan"),
                        "valid": decision.get("valid"), "blocked": decision.get("blocked"), "acted": report["acted"]},
             "action": decision["action"], "p_model": decision.get("p_model"), "p_yes": decision["p_yes"]})
         report["acted"].append({"tool": "record_ruling", "ok": r["ok"]})
@@ -627,7 +747,8 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     try:
         r = mcp.tool("share_thinking", {"analysis": decision.get("analysis") or decision["reason"], "action": decision["action"],
                                         "p_yes": decision["p_yes"], "reason": decision["reason"],
-                                        **({"review": decision["review"]} if decision.get("review") else {})})
+                                        **({"review": decision["review"]} if decision.get("review") else {}),
+                                        **({"plan": decision["plan"]} if decision.get("plan") else {})})
         report["acted"].append({"tool": "share_thinking", "ok": r["ok"]})
     except McpError:
         report["acted"].append({"tool": "share_thinking", "ok": False})
