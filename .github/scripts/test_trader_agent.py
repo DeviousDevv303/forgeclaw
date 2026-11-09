@@ -570,6 +570,20 @@ class NexusShadowTests(unittest.TestCase):
         ta.chat_completions_shadow("u", None, post=lambda u, b, h: sent.append((u, b, h)) or {"choices": []})("s", "u")
         self.assertNotIn("Authorization", sent[-1][2])  # no token configured: no header
 
+    def test_a_plain_completions_address_gets_a_prompt_and_its_text_is_read(self):
+        sent = []
+
+        def post(url, body, headers):
+            sent.append(body)
+            return {"model": "nexus-run25", "choices": [{"text": '{"action": "none", "p_yes": 0.6, "reason": "r"}'}]}
+        name, text = ta.chat_completions_shadow("https://nexus-shadow.example/v1/completions", "tok", post=post)("SYS", "USER")
+        self.assertEqual((name, text), ("nexus-run25", '{"action": "none", "p_yes": 0.6, "reason": "r"}'))
+        self.assertNotIn("messages", sent[0])
+        self.assertTrue(sent[0]["prompt"].startswith("SYS") and "USER" in sent[0]["prompt"])
+        # a chat address still gets messages, and a text-shaped reply is still read
+        ta.chat_completions_shadow("https://x/v1/chat/completions", None, post=post)("S", "U")
+        self.assertIn("messages", sent[1])
+
     def test_the_workflow_takes_the_shadow_from_a_variable_and_a_secret(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:
             wf = f.read()

@@ -399,9 +399,16 @@ def shadow_ruling(shadow, record, user, obs, fallback, log=print):
 
 def chat_completions_shadow(url, token=None, model="nexus", timeout_s=NEXUS_SHADOW_TIMEOUT_S, post=None):
     """A shadow caller for an chat-completions-compatible chat endpoint (the packaged Nexus standalone API)."""
+    # Both request shapes: a ".../v1/completions" address takes a plain prompt and answers choices[0].text (the Nexus
+    # shadow Muse exposed on 2026-11-09 is that shape); any other address gets the chat shape. Either reply shape is read.
+    plain = url.rstrip("/").endswith("/completions") and not url.rstrip("/").endswith("/chat/completions")
+
     def call(system, user):
-        body = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-                "max_tokens": MAX_ANSWER_TOKENS, "temperature": 0.2}
+        if plain:
+            body = {"model": model, "prompt": f"{system}\n\n{user}\n\nAnswer:", "max_tokens": MAX_ANSWER_TOKENS, "temperature": 0.2}
+        else:
+            body = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    "max_tokens": MAX_ANSWER_TOKENS, "temperature": 0.2}
         headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
         if token:
             headers["Authorization"] = f"Bearer {token}"
@@ -411,8 +418,9 @@ def chat_completions_shadow(url, token=None, model="nexus", timeout_s=NEXUS_SHAD
             req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=timeout_s) as r:
                 data = json.loads(r.read().decode())
-        msg = ((data.get("choices") or [{}])[0].get("message") or {})
-        return data.get("model") or model, msg.get("content") or ""
+        choice = (data.get("choices") or [{}])[0] or {}
+        text = (choice.get("message") or {}).get("content") or choice.get("text") or ""
+        return data.get("model") or model, text
     return call
 
 
