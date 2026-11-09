@@ -866,6 +866,127 @@ class AnswerRoomTests(unittest.TestCase):
         self.assertIn("not valid JSON", ta.parse_decision("enter yes now", 0.3)["reason"])
 
 
+class PromptReadTests(unittest.TestCase):
+    """Ruling #79 (2026-11-09) came back as just "{": the 300 s budget started before the ~3,500-token prompt was read."""
+
+    def test_the_budget_starts_at_the_first_token_not_at_the_prompt_read(self):
+        t = [0.0]
+
+        def stream():
+            t[0] += 280  # a long prompt read before the first token
+            for piece in ['{"action": "none", ', '"p_yes": 0.4, ', '"reason": "r"}']:
+                yield {"choices": [{"text": piece}]}
+                t[0] += 2
+        text, tokens, write_s, by_time, read_s = ta.generate_after_first_token(stream(), 360, 150, clock=lambda: t[0])
+        self.assertEqual(text, '{"action": "none", "p_yes": 0.4, "reason": "r"}')
+        self.assertFalse(by_time)
+        self.assertEqual(read_s, 280)
+        self.assertEqual(tokens, 3)
+
+    def test_the_writing_budget_still_bounds_a_runaway_answer(self):
+        t = [0.0]
+
+        def stream():
+            while True:
+                yield {"choices": [{"text": "x"}]}
+                t[0] += 10
+        _, tokens, _, by_time, _ = ta.generate_after_first_token(stream(), 360, 150, clock=lambda: t[0])
+        self.assertTrue(by_time)
+        self.assertLessEqual(tokens, 16)
+
+    def test_the_playbook_is_prefilled_at_startup(self):
+        with open(os.path.join(os.path.dirname(__file__), "trader_agent.py")) as f:
+            src = f.read()
+        self.assertIn("qwen_gguf.build_prompt(SYSTEM, \"\"), max_tokens=1", src)
+        main_src = src[src.index("def main():"):]
+        # the prefill logs, so the logger must exist before it (a NameError here would crash the agent on boot)
+        self.assertLess(main_src.index("log = lambda s:"), main_src.index("PRE-READ THE PLAYBOOK"))
+
+
+class BootSmokeTests(unittest.TestCase):
+    """main() end to end with a fake model engine and a fake desk: a boot crash (e.g. a name used before it is defined)
+    fails here instead of on the runner."""
+
+    def test_main_boots_rules_once_and_exits_clean(self):
+        import types
+        calls = []
+
+        class FakeLlama:
+            def __init__(self, **kw):
+                self.kw = kw
+
+            def __call__(self, prompt, max_tokens=1, temperature=0.0, stop=None, stream=True):
+                calls.append(max_tokens)
+                answer = '{"analysis": "a", "p_yes": 0.5, "action": "none", "reason": "boot smoke"}' if max_tokens > 1 else "{"
+                return iter([{"choices": [{"text": answer}]}])
+        fake_hf = types.SimpleNamespace(list_repo_files=lambda repo: ["Qwen3-8B-Q4_K_M.gguf"], hf_hub_download=lambda repo, f, local_dir=None: "/tmp/fake.gguf")
+        fake_llama = types.SimpleNamespace(Llama=FakeLlama)
+        server = FakeServer()
+        saved_modules = {k: sys.modules.get(k) for k in ("huggingface_hub", "llama_cpp")}
+        saved_session, saved_env = ta.McpSession, dict(os.environ)
+        try:
+            sys.modules["huggingface_hub"], sys.modules["llama_cpp"] = fake_hf, fake_llama
+            ta.McpSession = lambda url, token: saved_session(url, token, post=server.post)
+            os.environ.update({"NEXUS_MCP_URL": "https://bank.test/mcp", "NEXUS_OWNER_TOKEN": TOKEN, "AGENT_LOOP_MINUTES": "0"})
+            os.environ.pop("NEXUS_SHADOW_URL", None)
+            os.environ.pop("GITHUB_STEP_SUMMARY", None)
+            rc = ta.main()
+        finally:
+            ta.McpSession = saved_session
+            os.environ.clear()
+            os.environ.update(saved_env)
+            for k, v in saved_modules.items():
+                if v is None:
+                    sys.modules.pop(k, None)
+                else:
+                    sys.modules[k] = v
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls[0], 1)  # the playbook prefill came first
+        self.assertIn("predict", [c[0] for c in server.actions()])
+
+
+class StaleTradesTests(unittest.TestCase):
+    """2026-11-09 23:48 CST: a ruling said "the Observer did not trade in this window" while the desk had bought YES x15
+    at 23:45:54, during its thinking. A review/directive/exit line judged on a desk that is gone is not sent."""
+
+    def run_with_fill_during_thinking(self, fill):
+        server = FakeServer()
+        filled = dict(LIVE, intents=[{"intent_id": "KXBTC15M-T:observer:2:entry", "side": "yes", "purpose": "entry",
+                                      "filled_hundredths": 1500, "avg_yes_price_micros": 670000, "created_at_ms": 999_000}])
+        reads = []
+        orig_post = server.post
+
+        def post(body, headers):
+            if body.get("params", {}).get("name") == "get_live_window":
+                reads.append(1)
+                if fill and len(reads) > 1:  # the first read is the picture the model judges; later reads come after
+                    server.calls.append(("get_live_window", body["params"]["arguments"]))
+                    return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": json.dumps(filled)}], "isError": False}})
+            return orig_post(body, headers)
+        answer = '{"p_yes": 0.5, "action": "none", "reason": "r", "review": "The Observer did not trade in this window.", "directives": {"max_contracts": 2}, "exit_line_bps": -3}'
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=post), think_returning(answer), log=lambda s: None)
+        return server, report
+
+    def test_a_fill_while_thinking_voids_the_review_directives_and_exit_line(self):
+        server, report = self.run_with_fill_during_thinking(True)
+        names = [n for n, _ in server.calls]
+        self.assertNotIn("direct_desk", names)
+        self.assertNotIn("set_exit_line", names)
+        self.assertTrue(report.get("recheck_now"))
+        self.assertIn("the position changed while I was thinking", report["decision"]["directive_note"])
+        self.assertIn("predict", names)  # the graded prediction still goes out
+
+    def test_no_change_while_thinking_sends_them(self):
+        server, report = self.run_with_fill_during_thinking(False)
+        self.assertIn("direct_desk", [n for n, _ in server.calls])
+        self.assertFalse(report.get("recheck_now"))
+
+    def test_distance_alone_does_not_void_a_review(self):
+        seen = {"ticker": "T", "distanceBps": 5.0, "position": (0, 0)}
+        self.assertIsNone(ta.trades_changed(seen, dict(seen, distanceBps=12.0)))
+        self.assertEqual(ta.trades_changed(seen, dict(seen, ticker="U")), "a new window opened")
+
+
 class WorkflowTests(unittest.TestCase):
     def test_workflow_defaults_live_and_keeps_the_token_in_secrets(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:

@@ -689,11 +689,15 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     # materially (BTC >= STALE_DISTANCE_BPS, across the strike, a fill, a new window), this decision was made on a picture
     # that is gone: it is not acted on, and the loop asks again at once with the fresh picture.
     spec = ACTIONS.get(decision["action"])
-    if spec is not None and decision["action"] in ("enter_yes", "enter_no", "exit"):
+    # One fresh read after thinking serves both checks: the order's, and the trades picture the review/directives judged.
+    fresh = None
+    if (spec is not None and decision["action"] in ("enter_yes", "enter_no", "exit")) or (decision.get("valid") and mode == "live"):
         try:
-            stale = stale_reason(report.get("seen"), live_view(mcp.tool("get_live_window")["data"]))
+            fresh = live_view(mcp.tool("get_live_window")["data"])
         except McpError:
-            stale = None
+            fresh = None
+    if spec is not None and decision["action"] in ("enter_yes", "enter_no", "exit"):
+        stale = stale_reason(report.get("seen"), fresh)
         if stale:
             decision["blocked"], decision["action"] = decision["action"], "none"
             decision["reason"] = f"{decision['reason']} [stale: {stale} while I was thinking; re-deciding now]"
@@ -709,7 +713,14 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     # Directives to the Observer for this window (nexus-trader direct_desk) are RENEWED EVERY VALID RULING: a ruling that
     # gives none clears the last one (Muse's audit: rulings #71-#73 said none while a block-both kept binding the desk).
     # A block must be earned by a real loss on that side this window (ground_directives).
-    if decision.get("valid") and mode == "live":
+    # STALE TRADES (2026-11-09 23:48 CST: a ruling said "the Observer did not trade in this window" while the desk had
+    # bought YES x15 at 23:45:54, during its thinking): if the window or the position changed while it thought, its review,
+    # directives and exit line judged a desk that is gone. None is sent (the last directive stands) and it re-decides now.
+    trades_stale = trades_changed(report.get("seen"), fresh)
+    if trades_stale and decision.get("valid") and mode == "live":
+        decision["directive_note"] = f"review, directives and exit line not sent: {trades_stale} while I was thinking; re-deciding now"
+        report["recheck_now"] = True
+    if decision.get("valid") and mode == "live" and not trades_stale:
         wanted = decision.get("directives") or {"block_entry_side": None, "min_entry_bps": None, "max_contracts": None}
         sent, dropped = ground_directives(wanted, obs.get("live"))
         decision["directives_sent"] = sent
@@ -723,7 +734,7 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": "direct_desk", "ok": False})
     # The AI's exit line, enforced by the desk on every tick (nexus-trader set_exit_line), while it holds a position.
     holding = any(x > 0 for x in ((report.get("seen") or {}).get("position") or (0, 0)))
-    if holding and decision.get("valid") and mode == "live" and decision["action"] != "exit":
+    if holding and decision.get("valid") and mode == "live" and decision["action"] != "exit" and not trades_stale:
         try:
             r = mcp.tool("set_exit_line", {"at_bps": decision.get("exit_line_bps"), "reason": decision["reason"]})
             report["acted"].append({"tool": "set_exit_line", "args": {"at_bps": decision.get("exit_line_bps")}, "ok": r["ok"]})
@@ -798,6 +809,29 @@ DANGER_BPS = 3.0          # holding, and BTC came within this of the strike
 # was cut off mid-JSON (2026-11-09 23:41 CST, the first ruling after #390: "model answer was not valid JSON; no action
 # taken"), so the cap leaves room for all of it: ~90 s worst case at ~4 tokens/s.
 MAX_ANSWER_TOKENS = 360
+# The writing budget, counted from the FIRST token the model writes (reading the prompt is not writing): 360 tokens at
+# ~4 tokens/s is ~90 s, so 150 s leaves headroom. A prompt-read that never yields a token is bounded by the job itself.
+ANSWER_TIME_BUDGET_S = 150
+
+
+def generate_after_first_token(stream, max_new_tokens, time_budget_s, clock=time.monotonic):
+    """Consume a llama.cpp stream; the time budget starts at the first token, so a long prompt read cannot eat it.
+    Returns (text, tokens, write_seconds, stopped_by_time, read_prompt_seconds)."""
+    t0 = clock()
+    start = None
+    parts, tokens, by_time = [], 0, False
+    for chunk in stream:
+        if start is None:
+            start = clock()
+        parts.append(chunk["choices"][0].get("text", ""))
+        tokens += 1
+        if tokens >= max_new_tokens:
+            break
+        if clock() - start >= time_budget_s:
+            by_time = True
+            break
+    read_s = round((start if start is not None else clock()) - t0, 1)
+    return "".join(parts).strip(), tokens, round(clock() - (start if start is not None else t0), 1), by_time, read_s
 
 
 def live_view(live):
@@ -838,6 +872,17 @@ def material_change(seen, now):
 
 
 STALE_DISTANCE_BPS = 3.0
+
+
+def trades_changed(seen, now):
+    """Whether the desk the model judged (window, position) is gone, or None. BTC's distance alone does not void a review."""
+    if not seen or not now:
+        return None
+    if now.get("ticker") != seen.get("ticker"):
+        return "a new window opened"
+    if now.get("position") != seen.get("position"):
+        return "the position changed"
+    return None
 
 
 def stale_reason(seen, now):
@@ -940,12 +985,21 @@ def main():
     cache = os.path.expanduser("~/.cache/forgeclaw-gguf")
     llm, name = qwen_gguf.load_model(cache, lambda repo: list_repo_files(repo), lambda repo, f, d: hf_hub_download(repo, f, local_dir=d), Llama)
 
+    log = lambda s: print(redact(s, token), flush=True)  # noqa: E731
+    # PRE-READ THE PLAYBOOK once, right after the model loads: llama.cpp keeps the evaluated prefix, so every ruling --
+    # the first one included -- only reads the new desk data (the playbook alone is ~2,500 tokens; reading it inside a
+    # ruling took most of the old 300 s budget, and ruling #79 on 2026-11-09 came back as just "{").
+    t_warm = time.monotonic()
+    for _ in llm(qwen_gguf.build_prompt(SYSTEM, ""), max_tokens=1, temperature=0.0, stream=True):
+        break
+    log(json.dumps({"playbook_prefilled_s": round(time.monotonic() - t_warm, 1), "playbook_chars": len(SYSTEM)}))
+
     def think(system, user):
         stream = llm(qwen_gguf.build_prompt(system, user), max_tokens=MAX_ANSWER_TOKENS, temperature=0.2, stop=qwen_gguf.STOP, stream=True)
-        text, _, _, _ = qwen_gguf.generate(stream, MAX_ANSWER_TOKENS, 300)
+        text, tokens, seconds, by_time, read_s = generate_after_first_token(stream, MAX_ANSWER_TOKENS, ANSWER_TIME_BUDGET_S)
+        log(json.dumps({"think": {"read_prompt_s": read_s, "write_s": seconds, "tokens": tokens, "cut_by_time": by_time}}))
         return text
 
-    log = lambda s: print(redact(s, token), flush=True)  # noqa: E731
 
     predicted, earlier = set(), {}
 
