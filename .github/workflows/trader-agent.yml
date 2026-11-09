@@ -5,7 +5,14 @@
 # so the owner watches the agent live on the desk. The step summary of each run records the decision too.
 #
 # Without the NEXUS_OWNER_TOKEN secret the job says so and stops before loading the model: nothing is sent.
-# Scheduled runs on GitHub can start several minutes late; the agent reads the time left in the window and decides with it.
+#
+# STANDING AGENT (owner order 2026-11-09: "The AI starts itself"). GitHub's cron below has never fired this workflow, so
+# a run no longer decides once and exits: it loads the model once and rules every window for AGENT_LOOP_MINUTES (320),
+# then queues its own successor with workflow_dispatch (the one event GITHUB_TOKEN may start; actions: write is for
+# that call only). Concurrency keeps exactly one agent running and at most one queued. Guards on the chain:
+#   - a run that ended in under 20 minutes (a crash) does NOT re-queue itself, so a broken build cannot loop;
+#   - the repository variable AGENT_STANDING=off stops the chain at the end of the current run;
+#   - the cron stays as a backup starter, and a manual dispatch restarts the chain at any time.
 name: Nexus Trader agent
 run-name: Nexus Trader agent ${{ github.event_name }}
 
@@ -16,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: nexus-trader-agent
@@ -24,8 +32,12 @@ concurrency:
 jobs:
   decide:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 350
     steps:
+      - name: Record the start time
+        id: start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Stop here if the owner token is not configured
         id: gate
         env:
@@ -72,4 +84,23 @@ jobs:
           NEXUS_MCP_URL: https://nexus-bank.towerslutz.workers.dev/mcp
           NEXUS_OWNER_TOKEN: ${{ secrets.NEXUS_OWNER_TOKEN }}
           AGENT_MODE: ${{ vars.AGENT_MODE || 'live' }}
+          AGENT_LOOP_MINUTES: '320'
         run: python -B .github/scripts/trader_agent.py
+
+      - name: Queue the next standing run
+        if: always() && steps.gate.outputs.run == 'true' && vars.AGENT_STANDING != 'off'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STARTED: ${{ steps.start.outputs.epoch }}
+        run: |
+          ran=$(( $(date +%s) - STARTED ))
+          if [ "$ran" -lt 1200 ]; then
+            echo "::warning::this run lasted only ${ran}s (under 20 minutes): not re-queuing, so a crash cannot loop. A manual dispatch restarts the agent."
+            exit 0
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/trader-agent.yml/dispatches" \
+            -d '{"ref":"main"}')
+          echo "re-queued the standing agent: HTTP $code"
+          [ "$code" = "204" ] || { echo "::error::could not queue the next standing run (HTTP $code)"; exit 1; }
