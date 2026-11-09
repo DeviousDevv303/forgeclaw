@@ -1025,6 +1025,31 @@ class BlindRulingTests(unittest.TestCase):
         self.assertEqual(ta.blind_reason({"live": {}}), "the feed gave no window")
 
 
+class OpenPositionFactTests(unittest.TestCase):
+    """2026-11-09 00:08-00:40 CST: reviews said "held the position to settlement" while NO x4 @ 78c was still open, and
+    applied the 80c hold to it."""
+
+    def intent(self, iid, side, purpose, n, yes_c, at):
+        return {"intent_id": f"T:observer:{iid}", "side": side, "purpose": purpose, "filled_hundredths": n * 100,
+                "avg_yes_price_micros": yes_c * 10_000, "created_at_ms": at}
+
+    def test_the_0145_window(self):
+        live = dict(LIVE, intents=[self.intent("4:entry", "no", "entry", 5, 44, 1), self.intent("43:stop10", "no", "exit", 5, 50, 2),
+                                   self.intent("84:entry", "no", "entry", 4, 22, 3)])
+        line = ta.desk_trades_lines(live)[0]
+        self.assertIn("OPEN NOW: NO x4 bought at 78c (under 80c: not an 80c+ hold)", line)
+        self.assertIn("has NOT been held to settlement", line)
+
+    def test_flat_and_strong_side(self):
+        flat = dict(LIVE, intents=[self.intent("4:entry", "no", "entry", 5, 44, 1), self.intent("43:stop10", "no", "exit", 5, 50, 2)])
+        self.assertIn("Nothing is open now.", ta.desk_trades_lines(flat)[0])
+        strong = dict(LIVE, intents=[self.intent("9:entry", "yes", "entry", 3, 85, 1)])
+        self.assertIn("OPEN NOW: YES x3 bought at 85c (80c or more: the strong-side hold applies)", ta.desk_trades_lines(strong)[0])
+
+    def test_rule_12_says_open_is_not_settled(self):
+        self.assertIn('An OPEN position has not been "held to settlement"', ta.SYSTEM)
+
+
 class WorkflowTests(unittest.TestCase):
     def test_workflow_defaults_live_and_keeps_the_token_in_secrets(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:
