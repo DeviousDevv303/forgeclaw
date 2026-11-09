@@ -71,9 +71,11 @@ export interface QwenResultDelivery {
   promptTrimmed?: boolean
   /** What the workflow did with the NEXUS guidance block: 'none' (no block), 'kept' or 'cut' (`nexus_guidance=`). */
   nexusGuidance?: string
+  /** What the workflow did with the conversation block: 'none' (no block), 'kept' or 'cut' (`conversation=`). */
+  conversation?: string
 }
 
-type ResultMetadata = Pick<QwenResultDelivery, 'model' | 'role' | 'elapsedSeconds' | 'promptTrimmed' | 'nexusGuidance'>
+type ResultMetadata = Pick<QwenResultDelivery, 'model' | 'role' | 'elapsedSeconds' | 'promptTrimmed' | 'nexusGuidance' | 'conversation'>
 
 function parseResultMetadata(text: string): ResultMetadata {
   const fields = new Map<string, string>()
@@ -90,6 +92,7 @@ function parseResultMetadata(text: string): ResultMetadata {
     ...(fields.get('elapsed_seconds') ? { elapsedSeconds: fields.get('elapsed_seconds') } : {}),
     ...(fields.get('prompt_trimmed') === 'true' ? { promptTrimmed: true } : {}),
     ...(fields.get('nexus_guidance') ? { nexusGuidance: fields.get('nexus_guidance') } : {}),
+    ...(fields.get('conversation') ? { conversation: fields.get('conversation') } : {}),
   }
 }
 
