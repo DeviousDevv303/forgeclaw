@@ -1,0 +1,47 @@
+name: Nexus desk owner exit
+
+# Owner order 2026-11-09 ~11:20 CST: "Yes, I give you permission to exit Observer." The desk's /api/exit closes a
+# position the trade control did not open (the Observer's) only as an OWNER exit, which needs the owner token. That
+# token never leaves this repository's Actions secrets: a dispatch of this workflow (by the owner, or by the builder lane
+# under the order above) sends one owner exit for the named window and prints the desk's answer. Nothing else.
+# Protected path: added under the owner's protected-file authorization of 2026-11-09 (forgeclaw #235).
+
+on:
+  workflow_dispatch:
+    inputs:
+      ticker:
+        description: "The window to close, e.g. KXBTC15M-26NOV091230-30 (must be the current window)"
+        required: true
+        type: string
+      reason:
+        description: "Why this exit, in one line (journaled on the desk)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexus-owner-exit
+  cancel-in-progress: false
+
+jobs:
+  exit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Send the owner exit
+        env:
+          NEXUS_OWNER_TOKEN: ${{ secrets.NEXUS_OWNER_TOKEN }}
+          TICKER: ${{ inputs.ticker }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          if [ -z "$NEXUS_OWNER_TOKEN" ]; then echo "::error::NEXUS_OWNER_TOKEN is not set: nothing sent"; exit 1; fi
+          case "$TICKER" in KXBTC15M-*) ;; *) echo "::error::ticker must be a KXBTC15M window"; exit 1;; esac
+          body=$(python3 -c 'import json,os; print(json.dumps({"ownerExit": True, "ticker": os.environ["TICKER"], "reason": "owner exit via workflow: " + os.environ["REASON"][:200]}))')
+          code=$(curl -sS -o resp.json -w '%{http_code}' -X POST "https://nexus-bank.towerslutz.workers.dev/api/exit" \
+            -H "Authorization: Bearer $NEXUS_OWNER_TOKEN" -H "Content-Type: application/json" -H "User-Agent: nexus-owner-exit/1.0" \
+            --data "$body")
+          echo "desk answered HTTP $code"
+          head -c 1500 resp.json; echo
+          case "$code" in 2*) ;; *) exit 1;; esac
