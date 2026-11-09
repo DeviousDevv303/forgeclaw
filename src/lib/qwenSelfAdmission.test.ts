@@ -2,6 +2,8 @@
 // Route C (owner directive, 2026-11-01): a Qwen answer paired with any successful evidence tool used to be recorded
 // 'verified', admit itself by convergence, and come back to Qwen as owner-curated guidance. Machines do not promote
 // machines: an answer with Qwen lineage stays a candidate whatever else succeeded in the turn.
+// Extended 2026-11-09: the bar is total — NO provider's chat/voice answer admits itself on the 'verified' stamp.
+// Case (b) below previously pinned the non-Qwen exception as intended behavior; it now pins its removal.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { corpusRepository, type CorpusRecord } from './corpus'
 import { recordLearningEvent } from './learningEvents'
@@ -40,12 +42,12 @@ describe('Route C: Qwen answers never admit themselves', () => {
     expect(r.inGuidance).toBe(false)
   })
 
-  it('(b) an answer from another provider backed by evidence still admits itself (no regression)', async () => {
+  it('(b) an answer from another provider backed by evidence stays a candidate too (2026-11-09: the bar is total)', async () => {
     const r = await chatTurn(TASK, 'OWNER-B the falcon ledger total is 391', 'moonshot', 'kimi-k2.7-code', ['web_search'])
-    expect(r.outcome).toBe('verified')
-    expect(r.admittedBy).toBe(CONVERGED_BY)
-    expect(r.retrievable).toBe(true)
-    expect(r.inGuidance).toBe(true)
+    expect(r.outcome).toBe('verified') // the evidence gate still records what happened
+    expect(r.admittedBy).toBeNull()
+    expect(r.retrievable).toBe(false)
+    expect(r.inGuidance).toBe(false)
   })
 
   it('(c) a Qwen answer alone is unchanged: completed, a candidate', async () => {

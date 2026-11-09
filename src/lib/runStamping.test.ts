@@ -30,8 +30,10 @@ describe('run ids on learning events', () => {
     const candidates = corpusRepository.listCandidates(10)
     expect(candidates).toHaveLength(1)
     expect(candidates[0].metadata).toMatchObject({ run: 'run-b', runs: 'run-a,run-b' })
-    const [known] = corpusRepository.retrieve('how many open PRs', 3)
-    expect(known.metadata).toMatchObject({ admittedBy: 'nexus-convergence', runs: 'run-a,run-b' })
+    // Since 2026-11-09 the fact no longer converges into retrievable knowledge by itself (no
+    // provider's chat answer self-admits on 'verified'); the run memory lives on the candidate.
+    expect(corpusRepository.retrieve('how many open PRs', 3)).toEqual([])
+    expect(candidates[0].metadata.admittedBy).toBeUndefined()
   })
 
   it('keeps only the newest 20 runs of a fact', async () => {

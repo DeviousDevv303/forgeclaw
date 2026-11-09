@@ -16,8 +16,13 @@ describe('what converges into knowledge by itself', () => {
     expect(PLAYBOOK_SOURCE).toBe(BROWSER_PLAYBOOK_SOURCE)
     expect(VISITOR_SOURCE_ID).toBe(VISITOR_SOURCE)
   })
-  it('First Principles: the owner\'s task answered with tool evidence', () => {
-    expect(convergencePhase(chat('verified'))).toBe('first_principles')
+  it('no chat answer converges on "verified" any more, from any provider (2026-11-09)', () => {
+    // Was First Principles self-convergence (this chat helper is a non-Qwen provider, lineage
+    // 'none'): the 2026-11-01 Qwen-only bar is now total — machines do not promote machines.
+    expect(convergencePhase(chat('verified'))).toBeNull()
+  })
+  it('Extension still converges: a completed browser playbook (recorded steps, not answer text)', () => {
+    expect(convergencePhase({ ...chat('completed'), source: PLAYBOOK_SOURCE })).toBe('extension')
   })
   it('never: an answer with no evidence, a failure, a block, an agent record or a visitor', () => {
     expect(convergencePhase(chat('completed'))).toBeNull()
@@ -32,26 +37,37 @@ describe('what converges into knowledge by itself', () => {
     expect(convergencePhase({ ...verified, metadata: { ...verified.metadata, channel: 'visitor' }, context: verified.context.replace('channel=chat', 'channel=visitor') })).toBeNull()
     expect(convergencePhase({ ...verified, metadata: { ...verified.metadata, visitor: 'v-123' } })).toBeNull()
   })
-  it('a verified answer is stored as approved knowledge, marked and never served verbatim', async () => {
+  it('a verified answer stays a candidate: not knowledge, not retrievable, not training data (2026-11-09)', async () => {
     await corpusRepository.appendInteraction(chat('verified'))
+    expect(corpusRepository.retrieve('how many open PRs', 3)).toEqual([])
+    expect(corpusRepository.getConvergedCounts()).toEqual({})
+    expect(corpusRepository.getApprovedCount()).toBe(0)
+    expect(corpusRepository.checkNexusKnowledge('how many open PRs')).toBeNull()
+    const [candidate] = corpusRepository.listCandidates(5)
+    expect(candidate.admissionStatus).toBe('candidate')
+    expect(candidate.metadata.admittedBy).toBeUndefined()
+  })
+  it('a completed playbook is stored as approved knowledge, marked extension, and never served verbatim', async () => {
+    await corpusRepository.appendInteraction({ ...chat('completed'), source: PLAYBOOK_SOURCE })
     const known = corpusRepository.retrieve('how many open PRs', 3)
     expect(known).toHaveLength(1)
-    expect(known[0].metadata).toMatchObject({ admittedBy: 'nexus-convergence', phase: 'first_principles' })
-    expect(corpusRepository.getConvergedCounts()).toEqual({ first_principles: 1 })
+    expect(known[0].metadata).toMatchObject({ admittedBy: 'nexus-convergence', phase: 'extension' })
+    expect(corpusRepository.getConvergedCounts()).toEqual({ extension: 1 })
     expect(corpusRepository.getApprovedCount()).toBe(1)
     expect(corpusRepository.checkNexusKnowledge('how many open PRs')).toBeNull()
   })
   it('an auto-admitted entry is stamped with its phase and time, and the owner can remove it for good', async () => {
-    await corpusRepository.appendInteraction(chat('verified'))
+    const playbook = { ...chat('completed'), source: PLAYBOOK_SOURCE }
+    await corpusRepository.appendInteraction(playbook)
     const [candidate] = corpusRepository.listCandidates(5)
-    expect(candidate.metadata).toMatchObject({ admittedBy: 'nexus-convergence', phase: 'first_principles' })
+    expect(candidate.metadata).toMatchObject({ admittedBy: 'nexus-convergence', phase: 'extension' })
     expect(Number.isNaN(Date.parse(String(candidate.metadata.admittedAt)))).toBe(false)
     expect(await corpusRepository.rejectCandidate(candidate.id, 'removed by the owner')).not.toBeNull()
     expect(corpusRepository.retrieve('how many open PRs', 3)).toEqual([])
     expect(corpusRepository.getApprovedCount()).toBe(0)
     expect(corpusRepository.listCandidates(5)[0].admissionStatus).toBe('rejected')
     // the same thing happening again does not bring it back
-    await corpusRepository.appendInteraction(chat('verified'))
+    await corpusRepository.appendInteraction(playbook)
     expect(corpusRepository.retrieve('how many open PRs', 3)).toEqual([])
     expect(corpusRepository.getApprovedCount()).toBe(0)
   })
@@ -83,13 +99,17 @@ describe('knowledge: listed, labelled by origin, removable', () => {
   it('lists only knowledge, and removing an auto-added entry keeps it from coming back', async () => {
     await corpusRepository.appendInteraction(chat('completed'))
     expect(corpusRepository.listKnowledge()).toEqual([])
+    // A verified chat answer no longer becomes knowledge by itself (2026-11-09).
     await corpusRepository.appendInteraction(chat('verified'))
+    expect(corpusRepository.listKnowledge()).toEqual([])
+    const playbook = { ...chat('completed'), source: PLAYBOOK_SOURCE }
+    await corpusRepository.appendInteraction(playbook)
     const [known] = corpusRepository.listKnowledge()
     expect(known.metadata.admittedBy).toBe('nexus-convergence')
     expect(corpusRepository.removeKnowledge(known.id)).toBe(true)
     expect(corpusRepository.listKnowledge()).toEqual([])
     expect(corpusRepository.getApprovedCount()).toBe(0)
-    await corpusRepository.appendInteraction(chat('verified'))
+    await corpusRepository.appendInteraction(playbook)
     expect(corpusRepository.listKnowledge()).toEqual([])
     expect(corpusRepository.removeKnowledge('knowledge-nope')).toBe(false)
   })
@@ -103,11 +123,16 @@ describe('knowledge: listed, labelled by origin, removable', () => {
     expect(corpusRepository.getApprovedCount()).toBe(0)
     expect(localStorage.getItem('forgeclaw_nexus_record_v1:knowledge-legacy1')).toBeNull()
   })
-  it('counts only evidence-backed knowledge as training data, not legacy entries', async () => {
+  it('counts only converged knowledge as training data, not legacy entries or chat answers', async () => {
     const legacy = { id: 'knowledge-legacy2', corpusId: 'nexus-local', source: 'forgeclaw', content: 'una Personen Thanksgiving skew', timestamp: '2026-10-02T12:00:00.000Z', version: 1, recordType: 'knowledge', integrity: 'legacy2', admissionStatus: 'approved', metadata: { input: 'hi', model: 'qwen2.5-3b' } }
     localStorage.setItem('forgeclaw_nexus_record_v1:knowledge-legacy2', JSON.stringify(legacy))
     localStorage.setItem('forgeclaw_nexus_index_v1', JSON.stringify(['knowledge-legacy2']))
+    // A verified chat answer adds neither approval nor training data any more (2026-11-09).
     await corpusRepository.appendInteraction(chat('verified'))
+    expect(corpusRepository.getApprovedCount()).toBe(1)
+    expect(corpusRepository.getTrainingCount()).toBe(0)
+    // A converged playbook still counts: it earned its place through convergence.
+    await corpusRepository.appendInteraction({ ...chat('completed'), source: PLAYBOOK_SOURCE })
     expect(corpusRepository.getApprovedCount()).toBe(2)
     expect(corpusRepository.getTrainingCount()).toBe(1)
   })

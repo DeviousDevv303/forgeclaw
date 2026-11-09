@@ -1168,5 +1168,11 @@ export function buildNexusStoreExport(storage: NexusStoreStorage, origin: string
 
 export function formatCorpusContext(records: CorpusRecord[]): string {
   if (!records.length) return ''
-  return records.map((record, index) => `[Corpus ${index + 1} | ${record.source} | ${record.timestamp}]\n${record.content}`).join('\n\n')
+  return records.map((record, index) => {
+    // Provenance rides the label, same distinction as the guidance path (nexusGuidance.ts): this
+    // formatter feeds qwenContext's fresh-corpus section, where a record that admitted itself by
+    // convergence must not read identically to owner-approved knowledge (Lane B finding, 2026-11-09).
+    const provenance = record.metadata?.admittedBy === CONVERGED_BY ? ' | admitted automatically from evidence-backed answers; not reviewed by the owner' : ''
+    return `[Corpus ${index + 1} | ${record.source} | ${record.timestamp}${provenance}]\n${record.content}`
+  }).join('\n\n')
 }

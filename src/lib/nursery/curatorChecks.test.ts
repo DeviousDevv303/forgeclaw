@@ -3,7 +3,7 @@
 // checker that flags everything (or nothing) fails this file. The traps include the HP-06 held-out probe's own record.
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { convergencePhase, CONVERGED_BY, OWNER_ADMITTED_BY } from '../nexusConvergence'
+import { convergencePhase, CONVERGED_BY, OWNER_ADMITTED_BY, PLAYBOOK_SOURCE } from '../nexusConvergence'
 import { checkLineageAdmission, type CuratorRecord } from './curatorChecks'
 
 const probes = readFileSync('nexus-llm/eval/nursery/heldout-v0-draft.jsonl', 'utf8').split('\n').filter(Boolean).map(l => JSON.parse(l))
@@ -63,9 +63,12 @@ describe('CURATOR lineage check agrees with the product rule', () => {
       expect(convergencePhase(input as never)).toBeNull()
     })
   }
-  it('and an evidence-backed non-Qwen answer converges, so the check is not just mirroring a blanket refusal', () => {
-    const input = { input: 'q', result: 'a', runtime: 'moonshot', model: 'kimi-k2.7-code', metadata: { channel: 'chat', actor: 'user', outcome: 'verified', lineage: 'none' } }
-    expect(convergencePhase(input as never)).not.toBeNull()
+  it('and a completed browser playbook still converges, so the check is not just mirroring a blanket refusal', () => {
+    // This control previously used an evidence-backed non-Qwen chat answer; since 2026-11-09 no
+    // chat/voice answer converges from any provider. The playbook path (recorded browser steps,
+    // outcome 'completed') is the convergence that remains.
+    const input = { input: 'q', result: 'a', source: PLAYBOOK_SOURCE, metadata: { outcome: 'completed' } }
+    expect(convergencePhase(input as never)).toBe('extension')
     expect(CONVERGED_BY).toBeTruthy()
   })
 })
