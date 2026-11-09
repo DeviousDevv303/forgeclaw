@@ -196,6 +196,49 @@ class OrientationTests(unittest.TestCase):
         self.assertIn("need +0.5c", text)
 
 
+class OwnerNoteTests(unittest.TestCase):
+    """The owner's standing note (owner order 2026-11-08): written on his page, stored by the desk under the
+    owner_note setting, surfaced by get_status as status.ownerNote, and placed FIRST in the prompt (playbook
+    rule 17) so the model reads his word before any market line."""
+
+    NOTE = "scalp until we are back to double digits; exit in time"
+
+    def prompt_with_status(self, status):
+        obs = {"status": status, "live": LIVE, "history": [], "record": {}, "fair": ta.fair_value(LIVE)}
+        obs["edges"] = ta.edges(obs["fair"], LIVE["snapshot"])
+        return ta.build_user_prompt(obs)
+
+    def test_note_present_is_the_first_line_verbatim(self):
+        text = self.prompt_with_status({**STATUS, "ownerNote": {"text": self.NOTE, "setAtMs": 1794199000000}})
+        first = text.splitlines()[0]
+        self.assertTrue(first.startswith("OWNER'S STANDING NOTE"))
+        self.assertIn(self.NOTE, first)
+
+    def test_note_absent_or_blank_adds_no_line(self):
+        for status in (STATUS, {**STATUS, "ownerNote": None}, {**STATUS, "ownerNote": {"text": "  ", "setAtMs": 1}}):
+            self.assertNotIn("OWNER'S STANDING NOTE", self.prompt_with_status(status))
+
+    def test_full_path_observe_payload_into_the_prompt(self):
+        # The whole chain, not a direct arg: a fake desk whose get_status carries the note -> observe() ->
+        # build_user_prompt. The note text must arrive verbatim, at the top of what the model receives.
+        global STATUS
+        saved = STATUS
+        STATUS = {**STATUS, "ownerNote": {"text": self.NOTE, "setAtMs": 1794199000000}}
+        try:
+            session = ta.McpSession("https://bank.test/mcp", TOKEN, post=FakeServer().post)
+            obs = ta.observe(session)
+            text = ta.build_user_prompt(obs)
+        finally:
+            STATUS = saved
+        self.assertEqual(obs["status"]["ownerNote"]["text"], self.NOTE)
+        self.assertIn(self.NOTE, text.splitlines()[0])
+
+    def test_playbook_rule_17_carries_the_notes_force_and_its_limits(self):
+        self.assertIn("17. THE OWNER'S STANDING NOTE", ta.SYSTEM)
+        self.assertIn("does not lift the hard gates", ta.SYSTEM)
+        self.assertIn("quote it in your", ta.SYSTEM)
+
+
 class FirstRunLessonsTests(unittest.TestCase):
     """Run 42534021710: started with 91 s left, thought 108 s (prediction refused: window closed), and answered "hold"
     meaning "keep my position", which is the desk's entry pause."""

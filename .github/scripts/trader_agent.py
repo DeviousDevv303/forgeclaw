@@ -323,6 +323,12 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
    pays the fee round-trip. Never secure a position whose distance is still widening in its favor. This
    overrides rule 3 while in recovery only when both conditions hold. At 1000c or more, rule 3 governs: never
    sell a winning position whose thesis is intact.
+17. THE OWNER'S STANDING NOTE (owner order 2026-11-08): when the prompt carries the owner's standing note at its
+   top, that note is his direct word — follow it as a plan adjustment to this playbook, and quote it in your
+   reason when it changes your ruling. It stands until he changes it; do not treat an old note as expired. It
+   does not lift the hard gates — the fees/edge math, the 85c entry cap, the two-loss window cap, the recovery
+   entry line — unless the note says so in plain words; a note that only steers judgment (when to secure, which
+   side to prefer, how patient to be) never overrides a gate.
 
 Think first, then decide. Answer with ONE JSON object and nothing else:
 {"analysis": "<1-2 short sentences: where BTC is vs the strike and trending, the edge after fees, the risk>",
@@ -344,6 +350,7 @@ def build_user_prompt(obs):
     fair, edge = obs.get("fair"), obs.get("edges") or {}
     rec = obs.get("record") or {}
     lines = [
+        *owner_note_lines(st),
         f"Window {w.get('ticker')}: {fair['left_s'] if fair else '?'}s left, strike ${w.get('strikeUsd')}, BTC {snap.get('distanceBps') if snap.get('distanceBps') is None else round(snap['distanceBps'], 1)} bps "
         f"from the strike (positive = above). Change: {trend(live, 60)} bps in the last minute, {trend(live, 180)} bps in the last 3 minutes.",
         f"Book: YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c, NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c. Market P(YES) = {market_p_yes(live)}.",
@@ -360,6 +367,19 @@ def build_user_prompt(obs):
         "Decide now.",
     ]
     return "\n".join(lines)
+
+
+def owner_note_lines(st):
+    """The owner's standing note (owner order 2026-11-08), FIRST in the prompt when one is set: the desk's
+    get_status surfaces it as status.ownerNote ({text, setAtMs}, written by the owner from his page through
+    the desk's owner_note tool). His direct word — playbook rule 17 gives it its force. Absent or malformed
+    notes add no line: the prompt is then exactly the playbook's."""
+    note = (st or {}).get("ownerNote")
+    text = note.get("text") if isinstance(note, dict) else note
+    text = str(text).strip() if text is not None else ""
+    if not text:
+        return []
+    return [f"OWNER'S STANDING NOTE (his word — follow it; it overrides your playbook defaults until he changes it): \"{text}\""]
 
 
 def desk_trades_lines(live, max_rows=8):
