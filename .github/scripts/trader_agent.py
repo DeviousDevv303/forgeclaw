@@ -152,8 +152,12 @@ IV_MULT = 1.15            # implied-vol multiplier fitted to Kalshi minute marks
 DEFAULT_SIGMA_1M_BPS = 6.0  # typical 1-minute BTC move when the tape is too short to measure
 MIN_EDGE_CENTS = 0.5      # owner order 2026-11-08: take the best edge each window, even if thin — an entry needs a positive edge after fees
 # The model thinks for up to ~110 s on the CPU runner (run 42534021710: 108 s). With less time than this left in the window,
-# its decision would land after the close (that run's prediction was refused: "no open window"), so it does not start.
+# its decision would land after the close (that run's prediction was refused: "no open window"), so it does not start
+# on THIS window — it waits for the next one instead (owner order 2026-11-08: the AI rules every window; run
+# 42541804428 landed 36 s before a close, skipped, and the desk went unruled for two windows).
 MIN_SECONDS_TO_DECIDE = 150
+WINDOW_ROLL_S = 10        # after a window closes, give the Bank a few seconds to roll to the next one
+MAX_WINDOW_WAIT_S = 300   # total wait budget: setup (~70 s) + model load + this + think (<=300 s) stays inside the 12-min job
 
 
 def phi(x):
@@ -348,22 +352,36 @@ def apply_discipline(decision, obs):
     return {**decision, "action": "none", "blocked": decision["action"], "reason": f"{decision['reason']} [discipline: {decision['action']} blocked, {why}]"}
 
 
-def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print):
-    """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict."""
+def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep):
+    """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict.
+
+    A run that lands too late in a window waits for the next window to open and decides on that
+    one; it goes home silent only when the total wait would exceed MAX_WINDOW_WAIT_S (e.g. the
+    live feed is stuck on a dead window).
+    """
     mcp.initialize()
     obs = observe(mcp)
+    waited_s = 0
+    while True:
+        fair = obs.get("fair")
+        if not fair or fair.get("left_s") is None or fair["left_s"] >= MIN_SECONDS_TO_DECIDE:
+            break
+        wait_s = max(fair["left_s"], 0) + WINDOW_ROLL_S
+        if waited_s + wait_s > MAX_WINDOW_WAIT_S:
+            report = {"mode": mode, "skipped": f"{fair['left_s']}s left in the window: a decision would land after the close", "fair": fair, "acted": [], "checked": None, "waited_s": waited_s}
+            log(json.dumps(report))
+            return report
+        log(json.dumps({"mode": mode, "waiting": f"{fair['left_s']}s left in this window: waiting {wait_s}s for the next window", "fair": fair}))
+        sleep(wait_s)
+        waited_s += wait_s
+        obs = observe(mcp)
     fallback = market_p_yes(obs.get("live"))
-    fair = obs.get("fair")
-    if fair and fair.get("left_s") is not None and fair["left_s"] < MIN_SECONDS_TO_DECIDE:
-        report = {"mode": mode, "skipped": f"{fair['left_s']}s left in the window: a decision would land after the close", "fair": fair, "acted": [], "checked": None}
-        log(json.dumps(report))
-        return report
     user = build_user_prompt(obs)
     t0 = time.monotonic()
     answer = think(SYSTEM, user)
     decision = parse_decision(answer, fallback if fallback is not None else 0.5)
     decision = apply_discipline(decision, obs)
-    report = {"mode": mode, "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None}
+    report = {"mode": mode, "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
     # Predict always (the scorecard grades it), whatever the action.
     if decision["p_yes"] is not None:
         r = mcp.tool("predict", {"p_yes": decision["p_yes"], "reason": decision["reason"]})
