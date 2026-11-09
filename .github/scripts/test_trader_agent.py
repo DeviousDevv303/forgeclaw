@@ -128,7 +128,7 @@ class OrientationTests(unittest.TestCase):
 
     def test_playbook_carries_the_desks_lessons(self):
         for lesson in ("Never sell a winning position", "11 of 11", "Chop near the strike", "no entry above 85c",
-                       "Fees eat careless trading", "you are the entry path", '"analysis"'):
+                       "Fees eat careless trading", "you work as a team", '"analysis"'):
             self.assertIn(lesson, ta.SYSTEM)
 
     def test_fair_value_is_the_benchmark_formula(self):
@@ -159,9 +159,11 @@ class OrientationTests(unittest.TestCase):
 
     def test_discipline_blocks_thin_edge_and_chop_but_not_a_real_edge(self):
         dec = {"p_yes": 0.7, "action": "enter_yes", "reason": "r", "valid": True}
-        thin = ta.apply_discipline(dec, {"edges": {"yes": 1.3}, "live": {"snapshot": {"distanceBps": 6}}})
+        thin = ta.apply_discipline(dec, {"edges": {"yes": 0.3}, "live": {"snapshot": {"distanceBps": 6}}})
         self.assertEqual((thin["action"], thin["blocked"]), ("none", "enter_yes"))
-        self.assertIn("under +3c", thin["reason"])
+        self.assertIn("under +0.5c", thin["reason"])
+        slim = ta.apply_discipline(dec, {"edges": {"yes": 1.3}, "live": {"snapshot": {"distanceBps": 6}}})
+        self.assertEqual(slim["action"], "enter_yes")  # owner order 2026-11-08: a thin positive edge is a trade
         chop = ta.apply_discipline(dec, {"edges": {"yes": 9.0}, "live": {"snapshot": {"distanceBps": 1.2}}})
         self.assertIn("chop zone", chop["reason"])
         ok = ta.apply_discipline(dec, {"edges": {"yes": 9.0}, "live": {"snapshot": {"distanceBps": 12}}})
@@ -189,7 +191,7 @@ class OrientationTests(unittest.TestCase):
         text = ta.build_user_prompt(obs)
         self.assertIn("Fair P(YES) = 0.789", text)
         self.assertIn("Edge after fees", text)
-        self.assertIn("need +3c", text)
+        self.assertIn("need +0.5c", text)
 
 
 class WorkflowTests(unittest.TestCase):
