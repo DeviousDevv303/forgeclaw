@@ -443,7 +443,9 @@ def parse_decision(text, fallback_p):
     except ValueError:
         d = None
     if not isinstance(d, dict):
-        return {"p_yes": fallback_p, "action": "none", "reason": "model answer was not valid JSON; no action taken", "valid": False}
+        cut = "{" in (text or "") and "}" not in (text or "").split("{", 1)[1]
+        why = "model answer was cut off before its JSON closed; no action taken" if cut else "model answer was not valid JSON; no action taken"
+        return {"p_yes": fallback_p, "action": "none", "reason": why, "valid": False}
     action = d.get("action") if d.get("action") in ACTIONS else None
     p = d.get("p_yes")
     p = float(p) if isinstance(p, (int, float)) and 0 <= float(p) <= 1 else fallback_p
@@ -792,7 +794,10 @@ WATCH_POLL_S = 5
 WAKE_DISTANCE_BPS = 5.0   # BTC moved this far vs the strike since the last ruling
 WAKE_BID_CENTS = 10.0     # the YES bid moved this much
 DANGER_BPS = 3.0          # holding, and BTC came within this of the strike
-MAX_ANSWER_TOKENS = 200   # 1-2 sentences of analysis + the JSON; fewer tokens = a faster ruling
+# The full answer now carries analysis, p_yes, action, reason, exit_line_bps, review, plan and directives. At 200 tokens it
+# was cut off mid-JSON (2026-11-09 23:41 CST, the first ruling after #390: "model answer was not valid JSON; no action
+# taken"), so the cap leaves room for all of it: ~90 s worst case at ~4 tokens/s.
+MAX_ANSWER_TOKENS = 360
 
 
 def live_view(live):

@@ -525,7 +525,7 @@ class LiveWatcherTests(unittest.TestCase):
         self.assertIn("Live since your last ruling", seen[0])
 
     def test_faster_answers(self):
-        self.assertLessEqual(ta.MAX_ANSWER_TOKENS, 200)
+        self.assertLessEqual(ta.MAX_ANSWER_TOKENS, 400)  # still bounded: ~90 s worst case on the CPU runner
         self.assertIn("1-2 short sentences", ta.SYSTEM)
 
 
@@ -841,6 +841,29 @@ class GroundingTests(unittest.TestCase):
         lines = ta.last_window_lines({"record": {"recent": [{"ticker": "KXBTC15M-26NOV082215-15", "pYes": 0.3, "marketPYes": 0.4, "result": "yes"}]}})
         self.assertIn("2215-15: settled YES", lines[0])
         self.assertEqual(ta.last_window_lines({"record": {}}), [])
+
+
+class AnswerRoomTests(unittest.TestCase):
+    """2026-11-09 23:41 CST: the first ruling after #390 was "not valid JSON" -- the answer outgrew the 200-token cap."""
+
+    FULL = json.dumps({
+        "analysis": "BTC is 19.1 bps below the strike and still falling, with the NO side holding a +20c per contract gain. The edge after fees is negative for a new entry on either side.",
+        "p_yes": 0.12, "action": "none",
+        "reason": "Holding the NO winner; no new entry has an edge after fees.",
+        "exit_line_bps": -4,
+        "review": "The Observer bought YES x18 at 52c and was stopped at 41c eight seconds later; the NO x11 at 73c is now up 20c.",
+        "plan": "Equity $11.26, above the $10 line: 3 contracts max, entries 8+ bps out only, protect the open winner at 4 bps.",
+        "directives": {"block_entry_side": "yes", "min_entry_bps": 8, "max_contracts": 3}})
+
+    def test_a_full_answer_fits_the_cap(self):
+        # ~3.5 characters a token is a conservative English/JSON estimate; keep 20% headroom
+        self.assertLessEqual(len(self.FULL) / 3.5, ta.MAX_ANSWER_TOKENS * 0.8)
+
+    def test_a_cut_off_answer_says_so(self):
+        d = ta.parse_decision(self.FULL[:180], 0.3)
+        self.assertEqual(d["action"], "none")
+        self.assertIn("cut off", d["reason"])
+        self.assertIn("not valid JSON", ta.parse_decision("enter yes now", 0.3)["reason"])
 
 
 class WorkflowTests(unittest.TestCase):
