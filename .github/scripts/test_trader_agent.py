@@ -945,6 +945,48 @@ class BootSmokeTests(unittest.TestCase):
         self.assertIn("predict", [c[0] for c in server.actions()])
 
 
+class StaleTradesTests(unittest.TestCase):
+    """2026-11-09 23:48 CST: a ruling said "the Observer did not trade in this window" while the desk had bought YES x15
+    at 23:45:54, during its thinking. A review/directive/exit line judged on a desk that is gone is not sent."""
+
+    def run_with_fill_during_thinking(self, fill):
+        server = FakeServer()
+        filled = dict(LIVE, intents=[{"intent_id": "KXBTC15M-T:observer:2:entry", "side": "yes", "purpose": "entry",
+                                      "filled_hundredths": 1500, "avg_yes_price_micros": 670000, "created_at_ms": 999_000}])
+        reads = []
+        orig_post = server.post
+
+        def post(body, headers):
+            if body.get("params", {}).get("name") == "get_live_window":
+                reads.append(1)
+                if fill and len(reads) > 1:  # the first read is the picture the model judges; later reads come after
+                    server.calls.append(("get_live_window", body["params"]["arguments"]))
+                    return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": json.dumps(filled)}], "isError": False}})
+            return orig_post(body, headers)
+        answer = '{"p_yes": 0.5, "action": "none", "reason": "r", "review": "The Observer did not trade in this window.", "directives": {"max_contracts": 2}, "exit_line_bps": -3}'
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=post), think_returning(answer), log=lambda s: None)
+        return server, report
+
+    def test_a_fill_while_thinking_voids_the_review_directives_and_exit_line(self):
+        server, report = self.run_with_fill_during_thinking(True)
+        names = [n for n, _ in server.calls]
+        self.assertNotIn("direct_desk", names)
+        self.assertNotIn("set_exit_line", names)
+        self.assertTrue(report.get("recheck_now"))
+        self.assertIn("the position changed while I was thinking", report["decision"]["directive_note"])
+        self.assertIn("predict", names)  # the graded prediction still goes out
+
+    def test_no_change_while_thinking_sends_them(self):
+        server, report = self.run_with_fill_during_thinking(False)
+        self.assertIn("direct_desk", [n for n, _ in server.calls])
+        self.assertFalse(report.get("recheck_now"))
+
+    def test_distance_alone_does_not_void_a_review(self):
+        seen = {"ticker": "T", "distanceBps": 5.0, "position": (0, 0)}
+        self.assertIsNone(ta.trades_changed(seen, dict(seen, distanceBps=12.0)))
+        self.assertEqual(ta.trades_changed(seen, dict(seen, ticker="U")), "a new window opened")
+
+
 class WorkflowTests(unittest.TestCase):
     def test_workflow_defaults_live_and_keeps_the_token_in_secrets(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:
