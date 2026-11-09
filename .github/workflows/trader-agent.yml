@@ -74,9 +74,19 @@ jobs:
 
       - name: Install inference dependencies
         if: steps.gate.outputs.run == 'true'
+        # Retried (owner-authorized protected-path change, 2026-11-09): run 32 died in 94 s on a one-off HTTP 504 fetching
+        # the wheel, the under-20-minute crash guard rightly did not re-queue it, and the desk ran without the AI for ~70 min.
         run: |
-          pip install huggingface_hub
-          pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+          for attempt in 1 2 3 4 5; do
+            if pip install huggingface_hub \
+              && pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url "https://abetlen.github.io/llama-cpp-python/whl/cpu"; then
+              exit 0
+            fi
+            echo "::warning::dependency install attempt $attempt failed; retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+          done
+          echo "::error::dependency install failed after 5 attempts"
+          exit 1
 
       - name: Plan, act, check
         if: steps.gate.outputs.run == 'true'
