@@ -206,18 +206,47 @@ class FirstRunLessonsTests(unittest.TestCase):
         self.assertIn('"none" means change nothing', ta.SYSTEM)
 
     def test_too_late_in_the_window_the_model_does_not_start(self):
+        # The feed never rolls (the fake clock stands still): the wait budget runs out and the
+        # run still skips without starting the model.
         server = FakeServer()
         live = json.loads(json.dumps(LIVE)); live["window"]["closeTimeMs"] = live["now"] + 91_000
         called = []
         orig = LIVE
         try:
             globals()["LIVE"] = live
-            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), lambda s, u: called.append(1) or "{}", log=lambda s: None)
+            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), lambda s, u: called.append(1) or "{}", log=lambda s: None, sleep=lambda s: None)
         finally:
             globals()["LIVE"] = orig
         self.assertEqual(called, [])
         self.assertIn("91s left", report["skipped"])
+        self.assertGreater(report["waited_s"], 0)
         self.assertEqual(server.actions(), [])
+
+    def test_late_window_waits_then_decides_on_the_next_window(self):
+        # Run 42541804428 (2026-11-08): dispatched 36 s before a close, the old code skipped and
+        # went home; the desk went unruled for two windows. Now the run waits out the close and
+        # decides on the fresh window.
+        server = FakeServer()
+        dead = json.loads(json.dumps(LIVE)); dead["window"]["closeTimeMs"] = dead["now"] + 91_000
+        fresh = json.loads(json.dumps(LIVE)); fresh["window"]["ticker"] = "KXBTC15M-NEXT"
+        slept = []
+
+        def fake_sleep(s):
+            slept.append(s)
+            globals()["LIVE"] = fresh
+
+        orig = LIVE
+        try:
+            globals()["LIVE"] = dead
+            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                                 think_returning('{"p_yes": 0.62, "action": "none", "reason": "next window, no edge"}'),
+                                 log=lambda s: None, sleep=fake_sleep)
+        finally:
+            globals()["LIVE"] = orig
+        self.assertEqual(slept, [101])
+        self.assertNotIn("skipped", report)
+        self.assertEqual(report["waited_s"], 101)
+        self.assertEqual([a[0] for a in server.actions()], ["predict"])
 
 
 class FairValueHonestyTests(unittest.TestCase):
