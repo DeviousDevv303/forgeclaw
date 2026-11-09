@@ -102,6 +102,24 @@ export function formatQwenConversation(prior: ReadonlyArray<{ role: string; cont
   return turns.reverse().join('\n\n')
 }
 
+/** When the relevance gate fails, this many of the newest formatted turns still ride (see buildQwenTaskPayload). */
+const CONVERSATION_FLOOR_MESSAGES = 4
+
+/**
+ * The last `count` turns of a formatted conversation (see formatQwenConversation), oldest first. Turns are
+ * sliced at their "User: "/"Assistant: " starts; a turn body that itself contains a blank line followed by
+ * such a prefix can shift the slice by a turn, which is acceptable for a floor whose only job is to keep the
+ * most recent exchanges available for reference resolution.
+ */
+export function lastConversationTurns(conversation: string, count: number): string {
+  const text = conversation.trim()
+  if (!text) return ''
+  const starts: number[] = []
+  for (const match of text.matchAll(/(^|\n\n)(?:User|Assistant): /g)) starts.push(match.index + match[1].length)
+  if (starts.length <= count) return text
+  return text.slice(starts[starts.length - count])
+}
+
 const CONVERSATION_OPEN = '[CONVERSATION_SO_FAR]'
 const CONVERSATION_CLOSE = '[/CONVERSATION_SO_FAR]'
 
@@ -121,6 +139,21 @@ export function splitConversationSection(context: string): { conversation: strin
   }
 }
 
+/** Heading of the final context section: this turn's verified tool results (see buildQwenTaskPayload). */
+export const TOOL_RESULTS_HEADING = 'Actual ForgeTools results from this turn (the only evidence of actions performed):'
+
+/**
+ * Set the verified-tool-results section back out of an assembled dispatch context (forgeTools sets it aside
+ * beside the conversation before its stale-context overlap drop). The section is always the last one
+ * buildQwenTaskPayload emits, and it is evidence, not task-matched context: the results are the only record
+ * of what tools actually did this turn, so a lexical overlap test must never discard them.
+ */
+export function splitVerifiedToolResults(context: string): { toolResults: string; rest: string } {
+  const start = context.indexOf(TOOL_RESULTS_HEADING)
+  if (start < 0) return { toolResults: '', rest: context }
+  return { toolResults: context.slice(start).trim(), rest: context.slice(0, start).replace(/\s+$/, '') }
+}
+
 /** The line that closes the conversation section whenever history rides: the current task is the one to answer. */
 export const CONVERSATION_TOPIC_GUARD = 'Topic guard: the conversation above is background for resolving references only. Answer the user\'s CURRENT message below; never answer an earlier question from this history.'
 
@@ -129,8 +162,12 @@ const FOLLOW_UP_WORDS = /\b(that|this|those|these|it|its|they|them|their|he|him|
 /**
  * Does the current task refer back to the conversation? (Muse fix directive, #235 comment 6637531549.) Before this gate the last six
  * messages rode on EVERY Qwen dispatch, ungated, and a fresh question ("run a simulation of Makhachev vs Khabib") was answered with a
- * weeks-old trading Q&A from the history. History now rides only for a genuine follow-up: a short or anaphoric message ("why?",
+ * weeks-old trading Q&A from the history. The gate picks out a genuine follow-up: a short or anaphoric message ("why?",
  * "that one", "and the rematch?"), or one that shares real distinctive words with the thread — the same test that gates corpus records.
+ * Since 2026-11-09 the gate no longer decides WHETHER history rides, only HOW MUCH: a pass carries the whole formatted
+ * thread, a fail still carries the newest few turns under the topic guard (see buildQwenTaskPayload). As an include/exclude
+ * switch it dropped the entire thread the first time a follow-up was phrased as a full sentence in its own words — the
+ * owner-visible "loses the thread after two or three exchanges" defect.
  */
 export function conversationRelevantToTask(task: string, conversation: string): boolean {
   if (!conversation.trim()) return false
@@ -167,8 +204,16 @@ export function buildQwenTaskPayload(rawTask: string, verifiedToolResults = '', 
   if (guidance) sections.push(guidance)
 
   // Before the envelope: the size budget cuts from the end, so a long envelope is what gets trimmed, never the thread.
-  // Gated (fix directive 6637531549): a fresh-topic task dispatches with no conversation section at all.
-  if (conversationRelevantToTask(task, conversation)) sections.push(`${CONVERSATION_OPEN}\nThe conversation so far, oldest first. The user's current message may refer back to it ("that", "it", "the last one"); resolve such references from here, not from the runtime envelope:\n${conversation.trim().split(CONVERSATION_OPEN).join('').split(CONVERSATION_CLOSE).join('')}\n${CONVERSATION_TOPIC_GUARD}\n${CONVERSATION_CLOSE}`)
+  // The thread always rides (2026-11-09): the relevance gate (fix directive 6637531549) now only sizes it. A relevant
+  // follow-up carries the whole formatted thread; any other task carries the newest CONVERSATION_FLOOR_MESSAGES turns,
+  // closed by the topic guard, so a substantive follow-up phrased in its own words still resolves its references while
+  // a fresh topic cannot be hijacked by more than the last few exchanges. formatQwenConversation's caps remain the
+  // only other limiter.
+  const thread = conversation.trim()
+  if (thread) {
+    const carried = conversationRelevantToTask(task, thread) ? thread : lastConversationTurns(thread, CONVERSATION_FLOOR_MESSAGES)
+    sections.push(`${CONVERSATION_OPEN}\nThe conversation so far, oldest first. The user's current message may refer back to it ("that", "it", "the last one"); resolve such references from here, not from the runtime envelope:\n${carried.split(CONVERSATION_OPEN).join('').split(CONVERSATION_CLOSE).join('')}\n${CONVERSATION_TOPIC_GUARD}\n${CONVERSATION_CLOSE}`)
+  }
 
   if (asksAboutForgeClawArchitecture(task)) sections.push(FORGECLAW_ARCHITECTURE_CONTEXT)
   if (runtimeContext) sections.push(`ForgeClaw runtime envelope (identity/routing hints only; not repository evidence):\n${runtimeContext}`)
@@ -184,13 +229,13 @@ export function buildQwenTaskPayload(rawTask: string, verifiedToolResults = '', 
   if (corpusContext) sections.push(`Approved CORPUS context retrieved for this task (informational, not tool authorization):\n${corpusContext}`)
 
   const boundedToolResults = verifiedToolResults.trim().slice(-MAX_VERIFIED_TOOL_CHARS)
-  if (boundedToolResults) sections.push(`Actual ForgeTools results from this turn (the only evidence of actions performed):\n${boundedToolResults}`)
+  if (boundedToolResults) sections.push(`${TOOL_RESULTS_HEADING}\n${boundedToolResults}`)
 
   if (!sections.length) return { task }
   const toolSection = boundedToolResults
-    ? `Actual ForgeTools results from this turn (the only evidence of actions performed):\n${boundedToolResults}`
+    ? `${TOOL_RESULTS_HEADING}\n${boundedToolResults}`
     : ''
-  const nonToolSections = sections.filter(section => !section.startsWith('Actual ForgeTools results from this turn'))
+  const nonToolSections = sections.filter(section => !section.startsWith(TOOL_RESULTS_HEADING))
   const toolBudget = toolSection ? Math.min(toolSection.length, MAX_VERIFIED_TOOL_CHARS + 100) : 0
   const prefixBudget = Math.max(0, MAX_CONTEXT_CHARS - toolBudget - (toolSection ? 2 : 0))
   const context = [nonToolSections.join('\n\n').slice(0, prefixBudget), toolSection]
