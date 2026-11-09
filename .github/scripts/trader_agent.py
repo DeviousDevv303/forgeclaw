@@ -294,6 +294,8 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
 12. You rule the desk. Its Observer enters on its own every tick and its stops sell on their own; you see their trades
    below. In "review", say in one sentence what THEIR TRADES LISTED BELOW show they did right or wrong -- name the side,
    price and what happened from that list; if the list says the desk has not traded, say exactly that and nothing more.
+   An OPEN position has not been "held to settlement" -- the window has not closed; say it is open. Apply the 80c hold
+   only to a position the list says was bought at 80c or more.
    In "directives", steer the Observer for THIS window: block_entry_side ("yes",
    "no", "both" or null), min_entry_bps (only enter when BTC is at least this far from the strike, 3..30, or null),
    max_contracts (1..100 or null). They can only make it more careful, and they end with the window. Use them when the
@@ -432,7 +434,31 @@ def desk_trades_lines(live, max_rows=8):
         rows.append(f"{who} {i['side'].upper()} x{n:g} @ {price:.0f}c")
     if not rows:
         return ["The desk has not traded in this window yet."]
-    return ["The desk's trades this window (oldest first): " + "; ".join(rows[-max_rows:]) + "."]
+    return ["The desk's trades this window (oldest first): " + "; ".join(rows[-max_rows:]) + ". " + open_position_fact(live)]
+
+
+def open_position_fact(live):
+    """The position open right now, as a fact the review must not contradict (2026-11-09 00:08-00:40 CST: four reviews
+    said "held the position to settlement" while it was still open, two applied the 80c hold to a 78c entry)."""
+    view = live_view(live)
+    yes, no = view["position"]
+    side = "yes" if yes > 0 else "no" if no > 0 else None
+    if side is None:
+        return "Nothing is open now."
+    n = (yes if side == "yes" else no) / 100
+    cost = qty = 0.0
+    for i in sorted(((live or {}).get("intents") or []), key=lambda x: x.get("created_at_ms") or 0):
+        f, y = i.get("filled_hundredths") or 0, i.get("avg_yes_price_micros")
+        if i.get("side") != side or not f or y is None:
+            continue
+        if i.get("purpose") in ("exit", "flip-close"):
+            cost = qty = 0.0  # a later entry starts a new position
+        elif i.get("purpose") in ("entry", "flip-open"):
+            px = y / 1e4 if side == "yes" else 100 - y / 1e4
+            cost, qty = cost + px * f, qty + f
+    at = f" bought at {cost / qty:.0f}c" if qty else ""
+    band = "" if not qty else (" (80c or more: the strong-side hold applies)" if cost / qty >= 80 else " (under 80c: not an 80c+ hold)")
+    return f"OPEN NOW: {side.upper()} x{n:g}{at}{band}; the window has not closed, so it has NOT been held to settlement."
 
 
 def parse_decision(text, fallback_p):
