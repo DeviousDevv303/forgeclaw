@@ -33,7 +33,7 @@ class FakeServer:
         return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": json.dumps(data)}], "isError": err}})
 
     def actions(self):
-        return [c for c in self.calls if not c[0].startswith("get_") and c[0] not in ("share_thinking", "record_ruling")]
+        return [c for c in self.calls if not c[0].startswith("get_") and c[0] not in ("share_thinking", "record_ruling", "direct_desk", "set_exit_line")]
 
 
 def think_returning(text):
@@ -657,6 +657,47 @@ class AheadOfTheMarketTests(unittest.TestCase):
         self.assertEqual(ta.parse_decision('{"p_yes": 0.5, "action": "none", "reason": "r", "exit_line_bps": 0}', 0.5)["exit_line_bps"], 0.0)
         self.assertIn('"exit_line_bps"', ta.SYSTEM)
         self.assertIn("48 s", ta.SYSTEM)
+
+
+class DirectsTheDeskTests(unittest.TestCase):
+    """Owner 2026-11-09: "if the AI can let observer and preserver know what they did wrong and direct them constantly"."""
+
+    LIVE_2200 = {"intents": [
+        {"intent_id": "KXBTC15M-26NOV082200-00:observer:7:entry", "side": "yes", "purpose": "entry", "filled_hundredths": 300, "avg_yes_price_micros": 600000, "created_at_ms": 1},
+        {"intent_id": "KXBTC15M-26NOV082200-00:observer:62:stop10", "side": "yes", "purpose": "exit", "filled_hundredths": 300, "avg_yes_price_micros": 430000, "created_at_ms": 2},
+        {"intent_id": "KXBTC15M-26NOV082200-00:observer:4:entry", "side": "yes", "purpose": "entry", "filled_hundredths": 0, "avg_yes_price_micros": None, "created_at_ms": 0},
+        {"intent_id": "KXBTC15M-26NOV082200-00:crew-lead-trigger:1:a", "side": "no", "purpose": "entry", "filled_hundredths": 100, "avg_yes_price_micros": 390000, "created_at_ms": 3}]}
+
+    def test_the_agent_sees_the_desks_trades_in_plain_words(self):
+        line = ta.desk_trades_lines(self.LIVE_2200)[0]
+        self.assertIn("Observer entry YES x3 @ 60c; strike-cross stop YES x3 @ 43c; your entry NO x1 @ 61c", line)
+        self.assertEqual(ta.desk_trades_lines({"intents": []}), ["The desk has not traded in this window yet."])
+
+    def test_directives_are_parsed_and_bounded(self):
+        d = ta.parse_decision('{"p_yes": 0.5, "action": "none", "reason": "r", "review": "too close to the strike",'
+                              ' "directives": {"block_entry_side": "yes", "min_entry_bps": 6, "max_contracts": 2}}', 0.5)
+        self.assertEqual(d["directives"], {"block_entry_side": "yes", "min_entry_bps": 6.0, "max_contracts": 2})
+        self.assertEqual(d["review"], "too close to the strike")
+        bad = ta.parse_directives({"block_entry_side": "up", "min_entry_bps": 1, "max_contracts": 2.5})
+        self.assertEqual(bad, {"block_entry_side": None, "min_entry_bps": None, "max_contracts": None})
+        self.assertIsNone(ta.parse_directives(None))
+
+    def test_the_directive_goes_to_the_desk_and_the_review_to_the_panel(self):
+        server = FakeServer()
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think_returning(
+            '{"analysis": "chop", "p_yes": 0.5, "action": "none", "reason": "no edge", "review": "Observer bought YES 4 bps out and was stopped in 48 s",'
+            ' "directives": {"block_entry_side": null, "min_entry_bps": 6, "max_contracts": null}}'), log=lambda s: None)
+        direct = [a for n, a in server.calls if n == "direct_desk"]
+        self.assertEqual(direct, [{"block_entry_side": None, "min_entry_bps": 6.0, "max_contracts": None, "reason": "Observer bought YES 4 bps out and was stopped in 48 s"}])
+        shared = [a for n, a in server.calls if n == "share_thinking"][0]
+        self.assertEqual(shared["review"], "Observer bought YES 4 bps out and was stopped in 48 s")
+        self.assertIn("12. You rule the desk", ta.SYSTEM)
+
+    def test_no_directives_given_means_none_sent(self):
+        server = FakeServer()
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                    think_returning('{"p_yes": 0.5, "action": "none", "reason": "r"}'), log=lambda s: None)
+        self.assertEqual([n for n, _ in server.calls if n == "direct_desk"], [])
 
 
 class WorkflowTests(unittest.TestCase):
