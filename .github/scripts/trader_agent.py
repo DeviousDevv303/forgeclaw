@@ -16,11 +16,13 @@ own probability as its prediction and takes no action, and says so.
 
 The owner token is read from the environment and is never printed (every outbound text passes through redact()).
 """
+import hashlib
 import json
 import math
 import os
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -290,6 +292,8 @@ Think first, then decide. Answer with ONE JSON object and nothing else:
  "p_yes": <your probability 0..1 that this window settles YES>,
  "action": "none" | "enter_yes" | "enter_no" | "exit" | "pause_entries" | "resume_entries" | "kill" | "unkill",
  "reason": "<one sentence the owner will read>"}"""
+# Which playbook a ruling was made under (the corpus records it, so rulings from different playbooks are told apart).
+SYSTEM_SHA = hashlib.sha256(SYSTEM.encode()).hexdigest()[:12]
 
 
 def build_user_prompt(obs):
@@ -377,13 +381,53 @@ def apply_discipline(decision, obs):
     return {**decision, "action": "none", "blocked": decision["action"], "reason": f"{decision['reason']} [discipline: {decision['action']} blocked, {why}]"}
 
 
-def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None, watch=None):
+NEXUS_SHADOW_TIMEOUT_S = 90
+
+
+def shadow_ruling(shadow, record, user, obs, fallback, log=print):
+    """Ask Nexus the ruler's question and file its answer in the corpus as a shadow ruling. Never trades; never raises."""
+    try:
+        name, answer = shadow(SYSTEM, user)
+        d = parse_decision(answer, fallback if fallback is not None else 0.5)
+        record({"model": f"shadow:{name}"[:80], "action": d["action"], "p_model": d["p_yes"], "p_yes": d["p_yes"],
+                "inputs": {"system_sha": SYSTEM_SHA, "prompt": user, "fair": obs.get("fair"), "edges": obs.get("edges")},
+                "output": {"shadow": True, "raw": (answer or "")[:2000], "analysis": d.get("analysis"), "reason": d["reason"], "valid": d.get("valid")}})
+        log(json.dumps({"nexus_shadow": {"model": name, "action": d["action"], "p_yes": d["p_yes"], "valid": d.get("valid")}}))
+    except Exception as e:  # noqa: BLE001  (shadow is best effort: it must never touch the ruler)
+        log(json.dumps({"nexus_shadow_error": str(e)[:200]}))
+
+
+def chat_completions_shadow(url, token=None, model="nexus", timeout_s=NEXUS_SHADOW_TIMEOUT_S, post=None):
+    """A shadow caller for an chat-completions-compatible chat endpoint (the packaged Nexus standalone API)."""
+    def call(system, user):
+        body = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "max_tokens": MAX_ANSWER_TOKENS, "temperature": 0.2}
+        headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if post is not None:
+            data = post(url, body, headers)
+        else:
+            req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=timeout_s) as r:
+                data = json.loads(r.read().decode())
+        msg = ((data.get("choices") or [{}])[0].get("message") or {})
+        return data.get("model") or model, msg.get("content") or ""
+    return call
+
+
+def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None, watch=None, model_name=None,
+             shadow=None, record=None, spawn=None):
     """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict.
 
     A run that lands too late in a window waits for the next window to open and decides on that
     one; it goes home silent only when the total wait would exceed MAX_WINDOW_WAIT_S (e.g. the
     live feed is stuck on a dead window).
     """
+    if spawn is None:
+        spawn = lambda f: threading.Thread(target=f, daemon=True).start()  # noqa: E731
+    if record is None:
+        record = lambda args: mcp.tool("record_ruling", args)  # noqa: E731
     mcp.initialize()
     obs = observe(mcp)
     waited_s = 0
@@ -430,6 +474,19 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": name, "args": args, "ok": r["ok"], "result": r["text"][:300]})
         else:
             report["acted"].append({"tool": spec[0], "args": spec[1], "ok": None, "result": "shadow mode: not sent"})
+    # The ruler's corpus (owner 2026-11-09: Nexus learns "from being ruler"): what it saw and what it decided, filed on the
+    # desk with the window so the export can join the outcome. After acting; a desk without the corpus never stops a ruling.
+    try:
+        r = mcp.tool("record_ruling", {
+            "model": model_name,
+            "inputs": {"system_sha": SYSTEM_SHA, "prompt": user, "fair": obs.get("fair"), "edges": obs.get("edges"),
+                       "seen": report.get("seen"), "woke": (watch or {}).get("woke")},
+            "output": {"raw": (answer or "")[:2000], "analysis": decision.get("analysis"), "reason": decision["reason"],
+                       "valid": decision.get("valid"), "blocked": decision.get("blocked"), "acted": report["acted"]},
+            "action": decision["action"], "p_model": decision.get("p_model"), "p_yes": decision["p_yes"]})
+        report["acted"].append({"tool": "record_ruling", "ok": r["ok"]})
+    except McpError:
+        report["acted"].append({"tool": "record_ruling", "ok": False})
     # After acting (never delaying an order): the owner's live page shows this reasoning where the chart legend was (share_thinking, every check-in). A desk
     # without the tool, or a failed call, never stops the decision.
     try:
@@ -438,6 +495,11 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
         report["acted"].append({"tool": "share_thinking", "ok": r["ok"]})
     except McpError:
         report["acted"].append({"tool": "share_thinking", "ok": False})
+    # Nexus in shadow (owner 2026-11-09: Nexus learns "from being ruler"): the same playbook and the same prompt go to Nexus,
+    # its answer is parsed exactly like the ruler's and filed in the corpus under its own model name -- NEVER acted on.
+    # It runs off the ruler's path (spawn) so a slow or absent Nexus can never delay a ruling.
+    if shadow is not None:
+        spawn(lambda: shadow_ruling(shadow, record, user, obs, fallback, log))
     # Check: read the desk back after acting.
     after = mcp.tool("get_status")["data"]
     if isinstance(after, dict):
@@ -603,8 +665,20 @@ def main():
 
     predicted, earlier = set(), {}
 
+    shadow_url = os.environ.get("NEXUS_SHADOW_URL", "").strip()
+    shadow_token = os.environ.get("NEXUS_SHADOW_TOKEN", "")
+    shadow = chat_completions_shadow(shadow_url, shadow_token) if shadow_url else None
+    if shadow:
+        log(json.dumps({"nexus_shadow": "on"}))
+
+    def shadow_record(args):  # its own session: the shadow runs on its own thread
+        m = McpSession(url, token)
+        m.initialize()
+        return m.tool("record_ruling", args)
+
     def one_window(watch=None):
-        report = run_once(McpSession(url, token), think, mode=mode, log=log, predicted=predicted, earlier=earlier, watch=watch)
+        report = run_once(McpSession(url, token), think, mode=mode, log=lambda s: log(redact(s, shadow_token)), predicted=predicted, earlier=earlier,
+                          watch=watch, model_name=name, shadow=shadow, record=shadow_record)
         write_summary(report, mode)
         return report
 

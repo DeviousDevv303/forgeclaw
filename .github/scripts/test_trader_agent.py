@@ -33,7 +33,7 @@ class FakeServer:
         return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": json.dumps(data)}], "isError": err}})
 
     def actions(self):
-        return [c for c in self.calls if not c[0].startswith("get_") and c[0] != "share_thinking"]
+        return [c for c in self.calls if not c[0].startswith("get_") and c[0] not in ("share_thinking", "record_ruling")]
 
 
 def think_returning(text):
@@ -475,6 +475,97 @@ class LiveWatcherTests(unittest.TestCase):
     def test_faster_answers(self):
         self.assertLessEqual(ta.MAX_ANSWER_TOKENS, 200)
         self.assertIn("1-2 short sentences", ta.SYSTEM)
+
+
+class RulerCorpusTests(unittest.TestCase):
+    """Owner 2026-11-09: Nexus learns "from being ruler" -- every ruling is recorded with what it saw and decided."""
+
+    def test_every_ruling_is_recorded_with_its_inputs_and_output(self):
+        server = FakeServer()
+        answer = '{"analysis": "BTC holding 15 bps above", "p_yes": 0.7, "action": "enter_yes", "reason": "edge after fees"}'
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think_returning(answer), log=lambda s: None,
+                    watch={"woke": "a fill", "readings": []}, model_name="Qwen3-8B-Q4_K_M.gguf")
+        rec = [a for n, a in server.calls if n == "record_ruling"]
+        self.assertEqual(len(rec), 1)
+        r = rec[0]
+        self.assertEqual(r["model"], "Qwen3-8B-Q4_K_M.gguf")
+        self.assertEqual(r["action"], "enter_yes")
+        self.assertEqual(r["p_model"], 0.7)
+        self.assertEqual(r["inputs"]["system_sha"], ta.SYSTEM_SHA)
+        self.assertIn("Fair P(YES)", r["inputs"]["prompt"])
+        self.assertEqual(r["inputs"]["woke"], "a fill")
+        self.assertEqual(r["output"]["raw"], answer)
+        self.assertIn("enter", [a["tool"] for a in r["output"]["acted"]])  # what it did is part of the record
+        names = [n for n, _ in server.calls]
+        self.assertLess(names.index("enter"), names.index("record_ruling"))  # recorded after the order
+
+    def test_the_token_never_enters_the_corpus(self):
+        server = FakeServer()
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think_returning('{"p_yes": 0.5, "action": "none", "reason": "r"}'), log=lambda s: None)
+        rec = [a for n, a in server.calls if n == "record_ruling"][0]
+        self.assertNotIn(TOKEN, json.dumps(rec))
+
+    def test_a_desk_without_the_corpus_still_decides(self):
+        server = FakeServer(tool_error="record_ruling")
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think_returning('{"p_yes": 0.5, "action": "none", "reason": "r"}'), log=lambda s: None)
+        self.assertIn({"tool": "record_ruling", "ok": False}, report["acted"])
+        self.assertIsNotNone(report["checked"])
+
+
+class NexusShadowTests(unittest.TestCase):
+    """Owner 2026-11-09: Nexus walks with the ruler in shadow -- same question, graded, never trades."""
+
+    def run_with(self, shadow, ruler='{"analysis": "a", "p_yes": 0.6, "action": "none", "reason": "no edge"}'):
+        server, recorded, logs = FakeServer(), [], []
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think_returning(ruler), log=logs.append,
+                             shadow=shadow, record=recorded.append, spawn=lambda f: f())
+        return server, recorded, report, logs
+
+    def test_nexus_gets_the_same_question_and_is_filed_as_a_shadow_ruling(self):
+        asked = []
+
+        def nexus(system, user):
+            asked.append((system, user))
+            return "nexus-run25", '{"analysis": "momentum up", "p_yes": 0.8, "action": "enter_yes", "reason": "edge"}'
+        server, recorded, report, _ = self.run_with(nexus)
+        self.assertEqual(asked[0][0], ta.SYSTEM)
+        ruler_prompt = [a for n, a in server.calls if n == "record_ruling"][0]["inputs"]["prompt"]
+        self.assertEqual(asked[0][1], ruler_prompt)  # the very prompt the ruler read
+        self.assertEqual(recorded[0]["model"], "shadow:nexus-run25")
+        self.assertEqual((recorded[0]["action"], recorded[0]["p_yes"]), ("enter_yes", 0.8))
+        self.assertTrue(recorded[0]["output"]["shadow"])
+        # Nexus said enter_yes; nothing was sent for it
+        self.assertEqual([c[0] for c in server.actions()], ["predict"])
+
+    def test_a_broken_or_absent_nexus_never_touches_the_ruler(self):
+        def down(system, user):
+            raise OSError("connection refused")
+        server, recorded, report, logs = self.run_with(down)
+        self.assertEqual(recorded, [])
+        self.assertTrue(any("nexus_shadow_error" in line for line in logs))
+        self.assertIsNotNone(report["checked"])
+        _, rec2, _, _ = self.run_with(lambda s, u: ("nexus", "not json at all"))
+        self.assertEqual((rec2[0]["action"], rec2[0]["output"]["valid"]), ("none", False))
+
+    def test_the_chat_completions_caller(self):
+        sent = []
+
+        def post(url, body, headers):
+            sent.append((url, body, headers))
+            return {"model": "nexus-run25", "choices": [{"message": {"content": '{"action": "none"}'}}]}
+        name, text = ta.chat_completions_shadow("https://nexus.example/v1/chat/completions", "tok", post=post)("SYS", "USER")
+        self.assertEqual((name, text), ("nexus-run25", '{"action": "none"}'))
+        url, body, headers = sent[0]
+        self.assertEqual([m["role"] for m in body["messages"]], ["system", "user"])
+        self.assertEqual(headers["Authorization"], "Bearer tok")
+        ta.chat_completions_shadow("u", None, post=lambda u, b, h: sent.append((u, b, h)) or {"choices": []})("s", "u")
+        self.assertNotIn("Authorization", sent[-1][2])  # no token configured: no header
+
+    def test_the_workflow_takes_the_shadow_from_a_variable_and_a_secret(self):
+        with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:
+            wf = f.read()
+        self.assertIn("NEXUS_SHADOW_URL: ${{ vars.NEXUS_SHADOW_URL }}", wf)
+        self.assertIn("NEXUS_SHADOW_TOKEN: ${{ secrets.NEXUS_SHADOW_TOKEN }}", wf)
 
 
 class WorkflowTests(unittest.TestCase):
