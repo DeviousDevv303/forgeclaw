@@ -29,6 +29,10 @@ import urllib.request
 
 DEFAULT_AGENT_MODE = "live"
 AGENT_MODES = ("live", "shadow")
+# The desk's trade-control entries this agent sent itself (intent ids from its enter results), so its review can tell
+# them from the builder lane's rule trades, which use the same trade control.
+OWN_ENTRY_IDS = set()
+
 ACTIONS = {
     "none": None,
     "enter_yes": ("enter", {"side": "yes"}),
@@ -269,8 +273,8 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
 3. Never sell a winning position whose thesis is intact. When the desk sold positions while BTC was still on their
    side of the strike, 11 of 11 were eventual winners (-$69 in replay). But you rule the book (owner order 2026-11-08):
    when an open position's thesis breaks or its profit peak is rolling over, exit it yourself to save the profit —
-   that call is yours, over the sheet. The desk's stop sells at 2 bps past the strike; your exit is for before that,
-   while there is still profit to save.
+   that call is yours, over the sheet. The desk's stop sells AT the strike (0.5 bps past it); your exit is for before
+   that, while there is still profit to save.
 4. Chop near the strike kills both sides. With BTC within ~3 bps of the strike, entries get stopped out on each side
    (window 1730: -$2.46 from one YES and one NO). Do not enter when |distance| < 3 bps.
 5. Never chase: no entry above 85c (window 0330 re-bought at 91.8c and 97.5c and lost $11.83). After two losing
@@ -289,7 +293,7 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
 11. You think for a minute or two; the market can turn in seconds (window 2200: entry to stop-out in 48 s). So whenever the
    desk holds a position, set "exit_line_bps": where the desk should sell it the moment BTC gets there, before you look
    again. It is in bps past the strike AGAINST the position: -3 = sell if BTC comes within 3 bps of the strike while still
-   on our side, 0 = sell at the strike. Range -15..2; null = leave it to the desk's own stop (2 bps past the strike).
+   on our side, 0 = sell at the strike. Range -15..0; null = leave it to the desk's own stop (at the strike).
    Remember lesson 3: a line too close sells winners on noise, so tighten it only when momentum is turning against us.
 12. You rule the desk. Its Observer enters on its own every tick and its stops sell on their own; you see their trades
    below. In "review", say in one sentence what THEIR TRADES LISTED BELOW show they did right or wrong -- name the side,
@@ -426,7 +430,11 @@ def desk_trades_lines(live, max_rows=8):
             continue
         price = yes / 1e4 if i["side"] == "yes" else 100 - yes / 1e4
         iid = str(i.get("intent_id") or "")
-        who = ("your " if "crew-lead" in iid else "") + (
+        # Trade-control entries are the agent's own only when it sent them (OWN_ENTRY_IDS); the rest are the builder
+        # lane's rule trades (owner order 2026-11-09 ~11:10 CST), which the agent must not review as its own.
+        mine = "crew-lead" in iid and iid in OWN_ENTRY_IDS
+        builder = "crew-lead" in iid and not mine
+        who = ("your " if mine else "the builder lane's " if builder else "") + (
             "strike-cross stop" if ":stop10" in iid or "exit-retry" in iid else
             "Preserver exit" if ":preserver:" in iid else
             ("entry" if "crew-lead" in iid else "Observer entry") if i.get("purpose") == "entry" else
@@ -779,6 +787,8 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             name, args = spec
             r = mcp.tool(name, {**args, "reason": decision["reason"]})
             report["acted"].append({"tool": name, "args": args, "ok": r["ok"], "result": r["text"][:300]})
+            if name == "enter":
+                OWN_ENTRY_IDS.update(re.findall(r'"intentId"\s*:\s*"([^"]+)"', r["text"] or ""))
         else:
             report["acted"].append({"tool": spec[0], "args": spec[1], "ok": None, "result": "shadow mode: not sent"})
     # Directives to the Observer for this window (nexus-trader direct_desk) are RENEWED EVERY VALID RULING: a ruling that

@@ -4,6 +4,7 @@ import math
 import os
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(__file__))
 import trader_agent as ta  # noqa: E402
@@ -712,8 +713,15 @@ class DirectsTheDeskTests(unittest.TestCase):
         {"intent_id": "KXBTC15M-26NOV082200-00:crew-lead-trigger:1:a", "side": "no", "purpose": "entry", "filled_hundredths": 100, "avg_yes_price_micros": 390000, "created_at_ms": 3}]}
 
     def test_the_agent_sees_the_desks_trades_in_plain_words(self):
+        # A trade-control entry the agent did not send is the builder lane's rule trade (owner 2026-11-09 ~11:10 CST).
         line = ta.desk_trades_lines(self.LIVE_2200)[0]
-        self.assertIn("Observer entry YES x3 @ 60c; strike-cross stop YES x3 @ 43c; your entry NO x1 @ 61c", line)
+        self.assertIn("Observer entry YES x3 @ 60c; strike-cross stop YES x3 @ 43c; the builder lane's entry NO x1 @ 61c", line)
+        # one it sent itself (its enter result named the intent id) is its own
+        ta.OWN_ENTRY_IDS.add("KXBTC15M-26NOV082200-00:crew-lead-trigger:1:a")
+        try:
+            self.assertIn("your entry NO x1 @ 61c", ta.desk_trades_lines(self.LIVE_2200)[0])
+        finally:
+            ta.OWN_ENTRY_IDS.discard("KXBTC15M-26NOV082200-00:crew-lead-trigger:1:a")
         self.assertEqual(ta.desk_trades_lines({"intents": []}), ["The desk has not traded in this window yet."])
 
     def test_directives_are_parsed_and_bounded(self):
@@ -1075,6 +1083,31 @@ class ReviewTruthTagTests(unittest.TestCase):
         ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=post), think_returning(answer), log=lambda s: None, sleep=lambda s: None)
         reason = [a for n, a in server.calls if n == "direct_desk"][0]["reason"]
         self.assertIn("[not so: the position is still open", reason)
+
+
+class CurrentDeskRulesTests(unittest.TestCase):
+    """The playbook names the desk's stop as it is since nexus-trader #168: at the strike, not 2 bps past it."""
+
+    def test_stop_wording(self):
+        self.assertNotIn("2 bps past the strike", ta.SYSTEM)
+        self.assertIn("AT the strike", ta.SYSTEM)
+
+    def test_own_entries_are_recorded_from_the_enter_result(self):
+        server = FakeServer()
+        orig = server.post
+
+        def post(body, headers):
+            if body.get("params", {}).get("name") == "enter":
+                server.calls.append(("enter", body["params"]["arguments"]))
+                return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": '{"intentId":"T:crew-lead-trigger:9:z","state":"confirmed"}'}], "isError": False}})
+            return orig(body, headers)
+        ta.OWN_ENTRY_IDS.discard("T:crew-lead-trigger:9:z")
+        with mock.patch.object(ta, "apply_discipline", lambda d, o: d), mock.patch.object(ta, "sign_contradiction", lambda a, d: None), \
+             mock.patch.object(ta, "stale_reason", lambda a, b: None):
+            ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=post),
+                        think_returning('{"p_yes": 0.7, "action": "enter_yes", "reason": "r"}'), log=lambda s: None, sleep=lambda s: None)
+        self.assertIn("T:crew-lead-trigger:9:z", ta.OWN_ENTRY_IDS)
+        ta.OWN_ENTRY_IDS.discard("T:crew-lead-trigger:9:z")
 
 
 class WorkflowTests(unittest.TestCase):
