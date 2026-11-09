@@ -8,7 +8,7 @@ export const corpusProvider: AIProvider = {
   models: [{
     id: 'qwen3-8b',
     label: 'Qwen/Qwen3-8B · GitHub Actions',
-    contextK: 32,
+    contextK: 16,
     note: 'Repository-owned workflow; no browser-local model fallback',
   }],
   isConfigured(): boolean { return true },

@@ -32,7 +32,7 @@ async function relayError(res: Response): Promise<string> {
   return body.error || `relay ${res.status}`
 }
 
-/** Context the relay accepts with a task: gathered web evidence, about 4K tokens of the model's 8K window. */
+/** Context the relay accepts with a task: gathered web evidence, about 4K tokens of the model's 16K window. */
 export const PUBLIC_RELAY_MAX_CONTEXT_CHARS = 16_000
 
 /** Start a relay job, then poll it until it is done; returns the final state. */

@@ -73,8 +73,12 @@ function promptTrimNote(content: string): string {
   const header = content.split('\n\n')[0] ?? ''
   if (!/\bprompt-trimmed=true\b/.test(header)) return ''
   const guidance = /\bnexus-guidance=(\w+)/.exec(header)?.[1]
-  const tail = guidance === 'kept' ? ' Your NEXUS guidance was kept.' : guidance === 'cut' ? ' Your NEXUS guidance was also cut.' : ''
-  return `Note: the model's window could not hold everything supplied, so part of the context was cut.${tail}`
+  const conversation = /\bconversation=(\w+)/.exec(header)?.[1]
+  // A cut conversation is named as what it is — the user loses the thread, not an anonymous "part of the context".
+  const cut = conversation === 'cut' ? 'your conversation history was cut' : 'part of the context was cut'
+  const conversationTail = conversation === 'kept' ? ' Your conversation history was kept.' : ''
+  const guidanceTail = guidance === 'kept' ? ' Your NEXUS guidance was kept.' : guidance === 'cut' ? ' Your NEXUS guidance was also cut.' : ''
+  return `Note: the model's window could not hold everything supplied, so ${cut}.${conversationTail}${guidanceTail}`
 }
 function isSuccessfulQwenToolResult(content: string) { return content.startsWith('✓ Qwen/Qwen3-8B completed as ') }
 function qwenCheckpointLabel(content: string) { return content.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable' }

@@ -1784,7 +1784,7 @@ function App() {
         : null
       const toolDetected = !directShellCommand && isExplicitToolRequest(promptText)
       // Live-world questions ("any UFC fights tonight?") go straight to web_search on the Qwen
-      // provider: its 16B CPU workflow takes 9-23 min per hop and has no live data. Other providers
+      // provider: its Qwen3-8B CPU workflow takes 9-23 min per hop and has no live data. Other providers
       // can call tools themselves, so they are left alone.
       const liveDataCall = !directShellCommand && !toolDetected && !imageUrl && isQwenProvider(activeProvider)
         ? routeLiveDataQuestion(promptText)
