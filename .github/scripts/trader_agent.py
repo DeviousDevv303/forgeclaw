@@ -32,8 +32,10 @@ ACTIONS = {
     "enter_yes": ("enter", {"side": "yes"}),
     "enter_no": ("enter", {"side": "no"}),
     "exit": ("exit", {}),
-    "hold": ("set_hold", {"phase": "held"}),
-    "release_hold": ("set_hold", {"phase": "done"}),
+    # Named for what they do: the desk's "hold" pauses NEW ENTRIES; it is not "hold the position" (run 42534021710
+    # read it that way). Doing nothing, and letting an open position ride, is "none".
+    "pause_entries": ("set_hold", {"phase": "held"}),
+    "resume_entries": ("set_hold", {"phase": "done"}),
     "kill": ("set_kill_switch", {"killed": True}),
     "unkill": ("set_kill_switch", {"killed": False}),
 }
@@ -149,6 +151,9 @@ def market_p_yes(live):
 IV_MULT = 1.15            # implied-vol multiplier fitted to Kalshi minute marks (the desk's benchmark)
 DEFAULT_SIGMA_1M_BPS = 6.0  # typical 1-minute BTC move when the tape is too short to measure
 MIN_EDGE_CENTS = 0.5      # owner order 2026-11-08: take the best edge each window, even if thin — an entry needs a positive edge after fees
+# The model thinks for up to ~110 s on the CPU runner (run 42534021710: 108 s). With less time than this left in the window,
+# its decision would land after the close (that run's prediction was refused: "no open window"), so it does not start.
+MIN_SECONDS_TO_DECIDE = 150
 
 
 def phi(x):
@@ -248,10 +253,13 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
 9. Your scorecard compares your calls with the market's. If your Brier score is worse than the market's, stay closer to
    the market price in your p_yes.
 
+10. "none" means change nothing: an open position keeps riding to settlement. "pause_entries" stops the desk's NEW entries
+   (it never closes a position); "resume_entries" lifts that pause. Do not use them to mean "keep my position".
+
 Think first, then decide. Answer with ONE JSON object and nothing else:
 {"analysis": "<2-3 short sentences: where BTC is vs the strike and trending, the fair value vs the asks after fees, the risk>",
  "p_yes": <your probability 0..1 that this window settles YES>,
- "action": "none" | "enter_yes" | "enter_no" | "exit" | "hold" | "release_hold" | "kill" | "unkill",
+ "action": "none" | "enter_yes" | "enter_no" | "exit" | "pause_entries" | "resume_entries" | "kill" | "unkill",
  "reason": "<one sentence the owner will read>"}"""
 
 
@@ -323,6 +331,11 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print):
     mcp.initialize()
     obs = observe(mcp)
     fallback = market_p_yes(obs.get("live"))
+    fair = obs.get("fair")
+    if fair and fair.get("left_s") is not None and fair["left_s"] < MIN_SECONDS_TO_DECIDE:
+        report = {"mode": mode, "skipped": f"{fair['left_s']}s left in the window: a decision would land after the close", "fair": fair, "acted": [], "checked": None}
+        log(json.dumps(report))
+        return report
     user = build_user_prompt(obs)
     t0 = time.monotonic()
     answer = think(SYSTEM, user)
@@ -376,6 +389,9 @@ def main():
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:
+            if "skipped" in report:
+                f.write(f"### Trader agent ({mode})\n- skipped: {report['skipped']}\n")
+                return 0
             d = report["decision"]
             f.write(f"### Trader agent ({mode})\n- thinking: {d.get('analysis', '')}\n- fair {json.dumps(report.get('fair'))} · edges {json.dumps(report.get('edges'))}\n- P(YES) {d['p_yes']} · action **{d['action']}** · {d['reason']}\n- acted: {json.dumps(report['acted'])}\n- desk after: {json.dumps(report['checked'])}\n")
     return 0

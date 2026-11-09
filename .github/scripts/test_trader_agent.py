@@ -93,7 +93,7 @@ class RunOnceTests(unittest.TestCase):
     def test_live_kill_and_hold_are_sent(self):
         server, _ = self.run_agent('{"p_yes": 0.5, "action": "kill", "reason": "feed is stale"}')
         self.assertIn(("set_kill_switch", {"killed": True, "reason": "feed is stale"}), server.actions())
-        server, _ = self.run_agent('{"p_yes": 0.5, "action": "hold", "reason": "three stop-outs"}')
+        server, _ = self.run_agent('{"p_yes": 0.5, "action": "pause_entries", "reason": "three stop-outs"}')
         self.assertIn(("set_hold", {"phase": "held", "reason": "three stop-outs"}), server.actions())
 
     def test_shadow_predicts_but_sends_no_action(self):
@@ -168,7 +168,7 @@ class OrientationTests(unittest.TestCase):
         self.assertIn("chop zone", chop["reason"])
         ok = ta.apply_discipline(dec, {"edges": {"yes": 9.0}, "live": {"snapshot": {"distanceBps": 12}}})
         self.assertEqual(ok["action"], "enter_yes")
-        hold = {"p_yes": 0.5, "action": "hold", "reason": "r", "valid": True}
+        hold = {"p_yes": 0.5, "action": "pause_entries", "reason": "r", "valid": True}
         self.assertIs(ta.apply_discipline(hold, {"edges": {}}), hold)  # only entries are disciplined
 
     def test_thin_edge_entry_is_not_sent_but_the_prediction_is(self):
@@ -192,6 +192,32 @@ class OrientationTests(unittest.TestCase):
         self.assertIn("Fair P(YES) = 0.789", text)
         self.assertIn("Edge after fees", text)
         self.assertIn("need +0.5c", text)
+
+
+class FirstRunLessonsTests(unittest.TestCase):
+    """Run 42534021710: started with 91 s left, thought 108 s (prediction refused: window closed), and answered "hold"
+    meaning "keep my position", which is the desk's entry pause."""
+
+    def test_hold_is_not_an_action_name_any_more(self):
+        self.assertNotIn("hold", ta.ACTIONS)
+        self.assertEqual(ta.ACTIONS["pause_entries"], ("set_hold", {"phase": "held"}))
+        d = ta.parse_decision('{"p_yes": 0.95, "action": "hold", "reason": "keep it"}', 0.9)
+        self.assertEqual(d["action"], "none")  # the old word is not guessed at
+        self.assertIn('"none" means change nothing', ta.SYSTEM)
+
+    def test_too_late_in_the_window_the_model_does_not_start(self):
+        server = FakeServer()
+        live = json.loads(json.dumps(LIVE)); live["window"]["closeTimeMs"] = live["now"] + 91_000
+        called = []
+        orig = LIVE
+        try:
+            globals()["LIVE"] = live
+            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), lambda s, u: called.append(1) or "{}", log=lambda s: None)
+        finally:
+            globals()["LIVE"] = orig
+        self.assertEqual(called, [])
+        self.assertIn("91s left", report["skipped"])
+        self.assertEqual(server.actions(), [])
 
 
 class WorkflowTests(unittest.TestCase):
