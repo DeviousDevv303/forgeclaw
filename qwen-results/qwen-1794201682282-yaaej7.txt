@@ -1,0 +1,36 @@
+To achieve your goal of increasing your capital from $11 to $20 through scalping, you need a disciplined and strategic approach that leverages small profits consistently. Here's a structured plan with constraints designed to enable multiple small victories throughout each trading window:
+
+### **Plan for Scalping Success**
+
+#### 1. **Entry Constraints**
+- **Market Selection**: Focus on highly liquid markets with tight bid-ask spreads, such as those found in the Yan contracts or similar binary options.
+- **Price Entry**: Only enter trades when the price is within a narrow range (e.g., ±1% of the current market value) to ensure you can exit quickly without significant slippage.
+- **Position Size**: Limit your position size to 5–10% of your total capital. This allows for multiple trades and reduces risk per trade.
+
+#### 2. **Exit Constraints**
+- **Profit Target**: Exit immediately upon achieving a 1–2% profit on each trade. This ensures you lock in small wins consistently.
+- **Stop-Loss Mechanism**: Set a stop-loss at a 1–2% loss to protect against sudden market movements and prevent large drawdowns.
+- **Frequency of Trades**: Aim for at least 5–7 trades per day, focusing on short-term opportunities (e.g., intraday or 1-hour windows).
+
+#### 3. **Risk Management**
+- **Diversification**: Spread your bets across multiple markets to reduce the impact of any single trade going against you.
+- **Capital Preservation**: Never risk more than 2% of your total capital in a single trade, even if it appears profitable.
+- **Cooling Periods**: Implement a 1–2 hour cooling period between trades to allow the market to reset and avoid fatigue-driven decisions.
+
+#### 4. **Monitoring and Adaptation**
+- **Market Analysis**: Use tools like Kalshi or other platforms to monitor price movements in real-time, especially during high-volatility periods.
+- **Adaptive Strategy**: Adjust your entry/exit points based on current market conditions. For example, if the spread tightens, consider increasing position size slightly while maintaining strict profit targets.
+- **Review and Refinement**: After each trading window (e.g., 1–2 hours), review your performance to refine your strategy and improve future outcomes.
+
+#### 5. **Psychological Discipline**
+- **Emotional Control**: Avoid letting wins or losses dictate your next move. Stick to the plan regardless of market sentiment.
+- **Consistency Over Intensity**: Prioritize consistent, small profits over chasing large gains that may not materialize.
+- **Mindset Shift**: View each trade as a separate opportunity rather than a single bet. This mindset helps maintain focus and reduces pressure.
+
+### **Expected Outcomes**
+By following this plan, you can expect to achieve:
+- **Multiple Small Wins**: Each trade contributes to your capital growth through consistent profit-taking.
+- **Risk Mitigation**: The strict constraints help protect your capital from large losses while allowing for steady gains.
+- **Capital Growth**: Over time, the accumulation of small profits will increase your total capital, moving you closer to your $20 goal.
+
+This plan is designed to be adaptable and scalable, ensuring that even with a starting balance of $11, you can steadily grow your capital through disciplined scalping.
