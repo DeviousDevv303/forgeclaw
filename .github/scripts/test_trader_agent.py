@@ -274,9 +274,18 @@ class FairValueHonestyTests(unittest.TestCase):
 
     def test_edges_are_priced_on_the_formula_blended_with_the_market(self):
         snap = {"yesBidCents": 58, "yesAskCents": 60, "noBidCents": 40, "noAskCents": 42}
-        self.assertAlmostEqual(ta.blended_p_yes({"p_yes": 0.96}, snap), 0.5 * 0.59 + 0.5 * 0.96)
+        w = ta.MARKET_WEIGHT
+        self.assertAlmostEqual(ta.blended_p_yes({"p_yes": 0.96}, snap), w * 0.59 + (1 - w) * 0.96)
         e = ta.edges({"p_yes": 0.96}, snap)
-        self.assertAlmostEqual(e["yes"], round(100 * 0.775 - 60 - ta.kalshi_fee_cents(60), 1))
+        self.assertAlmostEqual(e["yes"], round(100 * (w * 0.59 + (1 - w) * 0.96) - 60 - ta.kalshi_fee_cents(60), 1))
+
+    def test_2115_the_formula_alone_no_longer_manufactures_a_no_edge(self):
+        # 2115 (2026-11-08): formula 0.673 vs book 79/80 (NO ask 21); at a 50/50 blend NO read +4.4c and the agent bought it
+        snap = {"yesBidCents": 79, "yesAskCents": 80, "noBidCents": 20, "noAskCents": 21}
+        self.assertEqual(ta.MARKET_WEIGHT, 0.75)
+        no_edge = ta.edges({"p_yes": 0.673}, snap)["no"]
+        self.assertLess(no_edge, 2.0)
+        self.assertLess(no_edge, round(100 * (1 - (0.5 * 0.795 + 0.5 * 0.673)) - 21 - ta.kalshi_fee_cents(21), 1))
         self.assertEqual(ta.blended_p_yes({"p_yes": 0.7}, {"yesAskCents": 60}), 0.7)  # no mid: the formula alone
 
 
@@ -342,7 +351,7 @@ class ConstantPresenceTests(unittest.TestCase):
     def test_the_recorded_prediction_is_anchored_to_the_fair_value(self):
         # 2045: market 0.85, BTC well above the strike, the model said 0.56
         obs = {"fair": {"p_yes": 0.92}, "live": {"snapshot": {"yesBidCents": 84, "yesAskCents": 86}}}
-        blended = 0.5 * 0.85 + 0.5 * 0.92
+        blended = ta.MARKET_WEIGHT * 0.85 + (1 - ta.MARKET_WEIGHT) * 0.92
         self.assertAlmostEqual(ta.anchored_p_yes(0.56, obs), round(0.5 * blended + 0.5 * 0.56, 3))
         self.assertGreater(ta.anchored_p_yes(0.56, obs), 0.7)
         self.assertEqual(ta.anchored_p_yes(0.4, {"fair": None, "live": {}}), 0.4)  # nothing to anchor to
