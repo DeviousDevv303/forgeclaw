@@ -1050,6 +1050,33 @@ class OpenPositionFactTests(unittest.TestCase):
         self.assertIn('An OPEN position has not been "held to settlement"', ta.SYSTEM)
 
 
+class ReviewTruthTagTests(unittest.TestCase):
+    """2026-11-09 01:36 and 01:39 CST: "held the position to settlement" with YES x4 @ 79c open, despite the #394 fact."""
+
+    def test_tags_a_settled_claim_only_while_open(self):
+        r = "The Observer held a position to settlement, showing patience and confidence in the thesis."
+        self.assertEqual(ta.review_contradiction(r, (400, 0)), "not so: the position is still open and the window has not settled")
+        self.assertIsNone(ta.review_contradiction(r, (0, 0)))
+        self.assertIsNone(ta.review_contradiction("The Observer entered YES at 61c and the Preserver exited at 79c.", (400, 0)))
+        self.assertIsNone(ta.review_contradiction(None, (400, 0)))
+
+    def test_the_tag_reaches_the_directive_reason(self):
+        server = FakeServer()
+        open_live = dict(LIVE, intents=[{"intent_id": "T:observer:87:entry", "side": "yes", "purpose": "entry",
+                                         "filled_hundredths": 400, "avg_yes_price_micros": 790_000, "created_at_ms": 1}])
+        orig = server.post
+
+        def post(body, headers):
+            if body.get("params", {}).get("name") == "get_live_window":
+                server.calls.append(("get_live_window", {}))
+                return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": json.dumps(open_live)}], "isError": False}})
+            return orig(body, headers)
+        answer = '{"p_yes": 0.6, "action": "none", "reason": "r", "review": "The Observer held the position to settlement."}'
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=post), think_returning(answer), log=lambda s: None, sleep=lambda s: None)
+        reason = [a for n, a in server.calls if n == "direct_desk"][0]["reason"]
+        self.assertIn("[not so: the position is still open", reason)
+
+
 class WorkflowTests(unittest.TestCase):
     def test_workflow_defaults_live_and_keeps_the_token_in_secrets(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:
