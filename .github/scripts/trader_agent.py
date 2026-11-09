@@ -291,13 +291,21 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
    again. It is in bps past the strike AGAINST the position: -3 = sell if BTC comes within 3 bps of the strike while still
    on our side, 0 = sell at the strike. Range -15..2; null = leave it to the desk's own stop (2 bps past the strike).
    Remember lesson 3: a line too close sells winners on noise, so tighten it only when momentum is turning against us.
+12. You rule the desk. Its Observer enters on its own every tick and its stops sell on their own; you see their trades
+   below. In "review", say in one sentence what they did right or wrong lately (e.g. "bought YES 4 bps from the strike and
+   was stopped 48 s later: too close"). In "directives", steer the Observer for THIS window: block_entry_side ("yes",
+   "no", "both" or null), min_entry_bps (only enter when BTC is at least this far from the strike, 3..30, or null),
+   max_contracts (1..100 or null). They can only make it more careful, and they end with the window. Use them when the
+   tape is choppy or the desk keeps getting stopped; leave them null when it is trading well.
 
 Think first, then decide. Answer with ONE JSON object and nothing else:
 {"analysis": "<1-2 short sentences: where BTC is vs the strike and trending, the edge after fees, the risk>",
  "p_yes": <your probability 0..1 that this window settles YES>,
  "action": "none" | "enter_yes" | "enter_no" | "exit" | "pause_entries" | "resume_entries" | "kill" | "unkill",
  "reason": "<one sentence the owner will read>",
- "exit_line_bps": <number -15..2 or null; only matters while the desk holds a position>}"""
+ "exit_line_bps": <number -15..2 or null; only matters while the desk holds a position>,
+ "review": "<one sentence: what the Observer/Preserver did right or wrong lately>",
+ "directives": {"block_entry_side": "yes" | "no" | "both" | null, "min_entry_bps": <3..30 or null>, "max_contracts": <1..100 or null>} or null}"""
 # Which playbook a ruling was made under (the corpus records it, so rulings from different playbooks are told apart).
 SYSTEM_SHA = hashlib.sha256(SYSTEM.encode()).hexdigest()[:12]
 
@@ -321,10 +329,32 @@ def build_user_prompt(obs):
         f"Observer's last decision: {json.dumps(live.get('lastDecision'))}.",
         f"Recent trades: {json.dumps(obs.get('history'))[:700]}",
         f"Your scorecard: {json.dumps({k: rec.get(k) for k in ('graded', 'agentBrier', 'marketBrier')})}",
+        *desk_trades_lines(live),
         *obs.get("memory", []),
         "Decide now.",
     ]
     return "\n".join(lines)
+
+
+def desk_trades_lines(live, max_rows=8):
+    """This window's fills, in plain words, so the agent can review and direct the desk."""
+    rows = []
+    for i in sorted(((live or {}).get("intents") or []), key=lambda x: x.get("created_at_ms") or 0):
+        n = (i.get("filled_hundredths") or 0) / 100
+        yes = i.get("avg_yes_price_micros")
+        if not n or yes is None or i.get("side") not in ("yes", "no"):
+            continue
+        price = yes / 1e4 if i["side"] == "yes" else 100 - yes / 1e4
+        iid = str(i.get("intent_id") or "")
+        who = ("your " if "crew-lead" in iid else "") + (
+            "strike-cross stop" if ":stop10" in iid or "exit-retry" in iid else
+            "Preserver exit" if ":preserver:" in iid else
+            ("entry" if "crew-lead" in iid else "Observer entry") if i.get("purpose") == "entry" else
+            "exit")
+        rows.append(f"{who} {i['side'].upper()} x{n:g} @ {price:.0f}c")
+    if not rows:
+        return ["The desk has not traded in this window yet."]
+    return ["The desk's trades this window (oldest first): " + "; ".join(rows[-max_rows:]) + "."]
 
 
 def parse_decision(text, fallback_p):
@@ -345,7 +375,22 @@ def parse_decision(text, fallback_p):
         return {"p_yes": p, "action": "none", "reason": reason or "model named no valid action; no action taken", "valid": False, "analysis": analysis}
     line = d.get("exit_line_bps")
     line = float(line) if isinstance(line, (int, float)) and not isinstance(line, bool) and -15 <= float(line) <= 2 else None
-    return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis, "exit_line_bps": line}
+    review = str(d.get("review") or "").strip()[:400] or None
+    return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis, "exit_line_bps": line,
+            "review": review, "directives": parse_directives(d.get("directives"))}
+
+
+def parse_directives(raw):
+    """The model's directives to the Observer, validated; anything out of bounds is dropped, not guessed at."""
+    if not isinstance(raw, dict):
+        return None
+    block = raw.get("block_entry_side")
+    block = block if block in ("yes", "no", "both") else None
+    mn = raw.get("min_entry_bps")
+    mn = float(mn) if isinstance(mn, (int, float)) and not isinstance(mn, bool) and 3 <= float(mn) <= 30 else None
+    mx = raw.get("max_contracts")
+    mx = int(mx) if isinstance(mx, (int, float)) and not isinstance(mx, bool) and float(mx).is_integer() and 1 <= mx <= 100 else None
+    return {"block_entry_side": block, "min_entry_bps": mn, "max_contracts": mx}
 
 
 def anchored_p_yes(model_p, obs):
@@ -503,6 +548,13 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": name, "args": args, "ok": r["ok"], "result": r["text"][:300]})
         else:
             report["acted"].append({"tool": spec[0], "args": spec[1], "ok": None, "result": "shadow mode: not sent"})
+    # Directives to the Observer for this window (nexus-trader direct_desk), whenever the model gives them.
+    if decision.get("valid") and mode == "live" and decision.get("directives") is not None:
+        try:
+            r = mcp.tool("direct_desk", {**decision["directives"], "reason": decision.get("review") or decision["reason"]})
+            report["acted"].append({"tool": "direct_desk", "args": decision["directives"], "ok": r["ok"]})
+        except McpError:
+            report["acted"].append({"tool": "direct_desk", "ok": False})
     # The AI's exit line, enforced by the desk on every tick (nexus-trader set_exit_line), while it holds a position.
     holding = any(x > 0 for x in ((report.get("seen") or {}).get("position") or (0, 0)))
     if holding and decision.get("valid") and mode == "live" and decision["action"] != "exit":
@@ -528,7 +580,8 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     # without the tool, or a failed call, never stops the decision.
     try:
         r = mcp.tool("share_thinking", {"analysis": decision.get("analysis") or decision["reason"], "action": decision["action"],
-                                        "p_yes": decision["p_yes"], "reason": decision["reason"]})
+                                        "p_yes": decision["p_yes"], "reason": decision["reason"],
+                                        **({"review": decision["review"]} if decision.get("review") else {})})
         report["acted"].append({"tool": "share_thinking", "ok": r["ok"]})
     except McpError:
         report["acted"].append({"tool": "share_thinking", "ok": False})
