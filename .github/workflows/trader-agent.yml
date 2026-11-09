@@ -85,6 +85,10 @@ jobs:
           NEXUS_OWNER_TOKEN: ${{ secrets.NEXUS_OWNER_TOKEN }}
           AGENT_MODE: ${{ vars.AGENT_MODE || 'live' }}
           AGENT_LOOP_MINUTES: '320'
+          # Nexus in shadow: set the repository variable NEXUS_SHADOW_URL to the Nexus standalone API's chat endpoint
+          # (chat-completions-compatible /v1/chat/completions) and, if it needs one, the NEXUS_SHADOW_TOKEN secret. Unset = off.
+          NEXUS_SHADOW_URL: ${{ vars.NEXUS_SHADOW_URL }}
+          NEXUS_SHADOW_TOKEN: ${{ secrets.NEXUS_SHADOW_TOKEN }}
         run: python -B .github/scripts/trader_agent.py
 
       - name: Queue the next standing run
