@@ -369,7 +369,8 @@ def build_user_prompt(obs):
         f"Desk: equity {st.get('equityCents')}c, kill switch {'ON' if st.get('killed') else 'off'}, hold {json.dumps(st.get('hold'))}, "
         f"open position {json.dumps(st.get('openMark'))}.",
         *money_lines(st),
-        f"Observer's last decision: {json.dumps(live.get('lastDecision'))}.",
+        observer_line(live),
+        *last_window_lines(obs),
         f"Recent trades: {json.dumps(obs.get('history'))[:700]}",
         f"Your scorecard: {json.dumps({k: rec.get(k) for k in ('graded', 'agentBrier', 'marketBrier')})}",
         *desk_trades_lines(live),
@@ -456,6 +457,79 @@ def parse_decision(text, fallback_p):
     plan = str(d.get("plan") or "").strip()[:400] or None
     return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis, "exit_line_bps": line,
             "review": review, "plan": plan, "directives": parse_directives(d.get("directives"))}
+
+
+def observer_line(live):
+    """The Observer's last decision; a hold caused by the agent's own directive is labelled so, never evidence."""
+    d = (live or {}).get("lastDecision") or {}
+    reason = str(d.get("reason") or "")
+    if reason.startswith("agent-directive"):
+        return (f"Observer's last decision: holding because of YOUR OWN directive ({reason}). That is your effect, not "
+                f"evidence about the market; do not cite it as a reason.")
+    return f"Observer's last decision: {json.dumps(d or None)}."
+
+
+def window_losses_by_side(live):
+    """Positions the desk closed at a loss in this window, per side (fill prices; a stopped or sold position counts)."""
+    rows = sorted(((live or {}).get("intents") or []), key=lambda x: x.get("created_at_ms") or 0)
+    losses, net, cost = {"yes": 0, "no": 0}, {"yes": 0.0, "no": 0.0}, {"yes": 0.0, "no": 0.0}
+    for i in rows:
+        side, n, yes = i.get("side"), (i.get("filled_hundredths") or 0) / 100, i.get("avg_yes_price_micros")
+        if side not in losses or not n or yes is None:
+            continue
+        own = yes / 1e4 if side == "yes" else 100 - yes / 1e4
+        if i.get("purpose") == "entry":
+            net[side] += n
+            cost[side] += own * n
+        elif i.get("purpose") == "exit" and net[side] > 0:
+            avg = cost[side] / net[side]
+            sold = min(n, net[side])
+            if own < avg:
+                losses[side] += 1
+            cost[side] -= avg * sold
+            net[side] -= sold
+    return losses
+
+
+def ground_directives(directives, live):
+    """CODE, NOT THE MODEL, decides whether a block is earned (Muse's audit, 2026-11-09 23:23 CST: a block-both directive
+    justified by "Observer held position due to agent-directive-block" -- its own effect -- held the 0030 window 107
+    ticks with 0 entries). A side may be blocked only after the desk actually lost on that side in this window; 'both'
+    needs a loss on each side. An unearned block is dropped (the other directive fields stand) and the reason is kept."""
+    if not directives or not directives.get("block_entry_side"):
+        return directives, None
+    losses = window_losses_by_side(live)
+    block = directives["block_entry_side"]
+    earned = (losses["yes"] > 0 and losses["no"] > 0) if block == "both" else losses.get(block, 0) > 0
+    if earned:
+        return directives, None
+    why = f"block {block} dropped: the desk has not lost on {'both sides' if block == 'both' else block.upper()} in this window"
+    return dict(directives, block_entry_side=None), why
+
+
+_SIGN_CLAIM = re.compile(r"(\d+(?:\.\d+)?)\s*bps\s+(above|below)\s+the\s+strike", re.I)
+
+
+def sign_contradiction(analysis, distance_bps):
+    """The analysis says "N bps above/below the strike" with the wrong side of the live feed (21:40 audit: the feed read
+    -10.0 bps and the analysis said 10.0 bps above). Returns a note, or None. Tiny distances are not judged."""
+    if not analysis or not isinstance(distance_bps, (int, float)) or abs(distance_bps) < 1.0:
+        return None
+    for num, word in _SIGN_CLAIM.findall(analysis):
+        if (word.lower() == "above") != (distance_bps > 0):
+            return f"the analysis says {num} bps {word.lower()} the strike but the feed reads {distance_bps:+.1f} bps"
+    return None
+
+
+def last_window_lines(obs):
+    """The last graded window's real outcome, so a review cannot invent one (2215 was reviewed as a loss; it won)."""
+    rec = obs.get("record") if isinstance(obs.get("record"), dict) else {}
+    recent = (rec or {}).get("recent") or []
+    if not recent:
+        return []
+    r = recent[-1]
+    return [f"Last graded window {str(r.get('ticker'))[-7:]}: settled {str(r.get('result')).upper()} "
+            f"(your call was P(yes) {r.get('pYes')}, the market's {r.get('marketPYes')}). Review only what is shown here and below."]
 
 
 def parse_directives(raw):
@@ -592,6 +666,10 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     answer = think(SYSTEM, user)
     decision = parse_decision(answer, fallback if fallback is not None else 0.5)
     decision = apply_discipline(decision, obs)
+    sign_note = sign_contradiction(decision.get("analysis"), ((obs.get("live") or {}).get("snapshot") or {}).get("distanceBps"))
+    if sign_note and decision["action"] != "none":
+        decision = {**decision, "blocked": decision["action"], "action": "none",
+                    "reason": f"{decision['reason']} [not acted on: {sign_note}]"}
     decision["p_model"] = decision["p_yes"]
     decision["p_yes"] = anchored_p_yes(decision["p_yes"], obs)
     report = {"mode": mode, "ticker": ticker, "seen": live_view(obs.get("live")), "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
@@ -626,11 +704,19 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": name, "args": args, "ok": r["ok"], "result": r["text"][:300]})
         else:
             report["acted"].append({"tool": spec[0], "args": spec[1], "ok": None, "result": "shadow mode: not sent"})
-    # Directives to the Observer for this window (nexus-trader direct_desk), whenever the model gives them.
-    if decision.get("valid") and mode == "live" and decision.get("directives") is not None:
+    # Directives to the Observer for this window (nexus-trader direct_desk) are RENEWED EVERY VALID RULING: a ruling that
+    # gives none clears the last one (Muse's audit: rulings #71-#73 said none while a block-both kept binding the desk).
+    # A block must be earned by a real loss on that side this window (ground_directives).
+    if decision.get("valid") and mode == "live":
+        wanted = decision.get("directives") or {"block_entry_side": None, "min_entry_bps": None, "max_contracts": None}
+        sent, dropped = ground_directives(wanted, obs.get("live"))
+        decision["directives_sent"] = sent
+        if dropped:
+            decision["directive_note"] = dropped
         try:
-            r = mcp.tool("direct_desk", {**decision["directives"], "reason": decision.get("review") or decision["reason"]})
-            report["acted"].append({"tool": "direct_desk", "args": decision["directives"], "ok": r["ok"]})
+            reason = decision.get("review") or decision["reason"]
+            r = mcp.tool("direct_desk", {**sent, "reason": f"{reason} [{dropped}]" if dropped else reason})
+            report["acted"].append({"tool": "direct_desk", "args": sent, "ok": r["ok"]})
         except McpError:
             report["acted"].append({"tool": "direct_desk", "ok": False})
     # The AI's exit line, enforced by the desk on every tick (nexus-trader set_exit_line), while it holds a position.
@@ -649,6 +735,8 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             "inputs": {"system_sha": SYSTEM_SHA, "prompt": user, "fair": obs.get("fair"), "edges": obs.get("edges"),
                        "seen": report.get("seen"), "woke": (watch or {}).get("woke")},
             "output": {"raw": (answer or "")[:2000], "analysis": decision.get("analysis"), "reason": decision["reason"],
+                       "directives": decision.get("directives_sent"), "directive_note": decision.get("directive_note"),
+                       "exit_line_bps": decision.get("exit_line_bps"), "review": decision.get("review"), "plan": decision.get("plan"),
                        "valid": decision.get("valid"), "blocked": decision.get("blocked"), "acted": report["acted"]},
             "action": decision["action"], "p_model": decision.get("p_model"), "p_yes": decision["p_yes"]})
         report["acted"].append({"tool": "record_ruling", "ok": r["ok"]})

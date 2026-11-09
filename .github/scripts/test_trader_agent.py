@@ -736,11 +736,11 @@ class DirectsTheDeskTests(unittest.TestCase):
         self.assertEqual(shared["review"], "Observer bought YES 4 bps out and was stopped in 48 s")
         self.assertIn("12. You rule the desk", ta.SYSTEM)
 
-    def test_no_directives_given_means_none_sent(self):
+    def test_no_directives_given_clears_the_last_one(self):
         server = FakeServer()
         ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
                     think_returning('{"p_yes": 0.5, "action": "none", "reason": "r"}'), log=lambda s: None)
-        self.assertEqual([n for n, _ in server.calls if n == "direct_desk"], [])
+        self.assertEqual([a["block_entry_side"] for n, a in server.calls if n == "direct_desk"], [None])
 
 
 class MoneyPlanTests(unittest.TestCase):
@@ -782,6 +782,65 @@ class MoneyPlanTests(unittest.TestCase):
         # 23:11 and 23:13 CST: the model repeated the old rule-12 example as fact for windows where it never happened
         self.assertNotIn("stopped 48 s later", ta.SYSTEM)
         self.assertIn("if the list says the desk has not traded, say exactly that", ta.SYSTEM)
+
+
+class GroundingTests(unittest.TestCase):
+    """Muse's handover (2026-11-09): circular blocks, rulings vs desk mismatch, sign flips, invented outcomes."""
+
+    def fills(self, *rows):
+        return {"intents": [{"side": s, "purpose": p, "filled_hundredths": n * 100, "avg_yes_price_micros": (y if s == "yes" else 100 - y) * 10000, "created_at_ms": k}
+                            for k, (s, p, n, y) in enumerate(rows)]}
+
+    def test_a_block_must_be_earned_by_a_real_loss_on_that_side(self):
+        none_lost = self.fills()
+        d, why = ta.ground_directives({"block_entry_side": "both", "min_entry_bps": 6, "max_contracts": None}, none_lost)
+        self.assertEqual(d, {"block_entry_side": None, "min_entry_bps": 6, "max_contracts": None})
+        self.assertIn("has not lost on both sides", why)
+        yes_lost = self.fills(("yes", "entry", 3, 60), ("yes", "exit", 3, 43))
+        self.assertEqual(ta.window_losses_by_side(yes_lost), {"yes": 1, "no": 0})
+        d, why = ta.ground_directives({"block_entry_side": "yes", "min_entry_bps": None, "max_contracts": None}, yes_lost)
+        self.assertEqual((d["block_entry_side"], why), ("yes", None))
+        self.assertIsNone(ta.ground_directives({"block_entry_side": "both", "min_entry_bps": None, "max_contracts": None}, yes_lost)[0]["block_entry_side"])
+        won = self.fills(("no", "entry", 2, 87), ("no", "exit", 2, 95))
+        self.assertEqual(ta.window_losses_by_side(won), {"yes": 0, "no": 0})
+
+    def test_its_own_directive_hold_is_labelled_not_evidence(self):
+        line = ta.observer_line({"lastDecision": {"action": "observer-hold", "reason": "agent-directive-block"}})
+        self.assertIn("YOUR OWN directive", line)
+        self.assertIn("not evidence", line)
+        self.assertIn("awaiting", ta.observer_line({"lastDecision": {"action": "observer-hold", "reason": "awaiting-confirmation-3s"}}))
+
+    def test_directives_are_renewed_every_ruling_and_recorded(self):
+        server = FakeServer()
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                    think_returning('{"p_yes": 0.5, "action": "none", "reason": "quiet"}'), log=lambda s: None)
+        self.assertEqual([a for n, a in server.calls if n == "direct_desk"],
+                         [{"block_entry_side": None, "min_entry_bps": None, "max_contracts": None, "reason": "quiet"}])  # cleared
+        server2 = FakeServer()
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server2.post),
+                    think_returning('{"p_yes": 0.5, "action": "none", "reason": "r", "directives": {"block_entry_side": "both", "min_entry_bps": 6}}'), log=lambda s: None)
+        sent = [a for n, a in server2.calls if n == "direct_desk"][0]
+        self.assertIsNone(sent["block_entry_side"])
+        self.assertEqual(sent["min_entry_bps"], 6.0)
+        self.assertIn("has not lost", sent["reason"])
+        rec = [a for n, a in server2.calls if n == "record_ruling"][0]["output"]
+        self.assertEqual(rec["directives"]["min_entry_bps"], 6.0)
+        self.assertIn("has not lost", rec["directive_note"])
+
+    def test_a_sign_flip_is_not_acted_on(self):
+        self.assertIn("feed reads -10.0", ta.sign_contradiction("BTC is 10.0 bps above the strike", -10.0))
+        self.assertIsNone(ta.sign_contradiction("BTC is 10.0 bps below the strike", -10.0))
+        self.assertIsNone(ta.sign_contradiction("BTC is 0.5 bps above the strike", -0.4))
+        server = FakeServer()  # LIVE distance is +15
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                             think_returning('{"analysis": "BTC is 15 bps below the strike", "p_yes": 0.9, "action": "enter_yes", "reason": "edge"}'), log=lambda s: None)
+        self.assertNotIn("enter", [c[0] for c in server.actions()])
+        self.assertIn("not acted on", report["decision"]["reason"])
+
+    def test_the_last_window_outcome_is_in_the_prompt(self):
+        lines = ta.last_window_lines({"record": {"recent": [{"ticker": "KXBTC15M-26NOV082215-15", "pYes": 0.3, "marketPYes": 0.4, "result": "yes"}]}})
+        self.assertIn("2215-15: settled YES", lines[0])
+        self.assertEqual(ta.last_window_lines({"record": {}}), [])
 
 
 class WorkflowTests(unittest.TestCase):
