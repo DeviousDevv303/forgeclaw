@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildRuntimeRequestContext } from './codingAgentRuntime'
-import { buildQwenTaskPayload, conversationRelevantToTask, CONVERSATION_TOPIC_GUARD, formatQwenConversation, splitConversationSection } from './ai/qwenContext'
+import { buildQwenTaskPayload, conversationRelevantToTask, CONVERSATION_TOPIC_GUARD, formatQwenConversation, lastConversationTurns, splitConversationSection, splitVerifiedToolResults } from './ai/qwenContext'
 import { sendViaRouter } from './ai/providerRouter'
 import type { AIMessage } from './ai/types'
 import { executeTool, loadToolContext } from './forgeTools'
@@ -43,6 +43,32 @@ describe('formatQwenConversation', () => {
   })
   it('is empty when there are no earlier turns', () => {
     expect(formatQwenConversation([])).toBe('')
+  })
+})
+
+describe('lastConversationTurns', () => {
+  const thread = ['User: one', 'Assistant: two', 'User: three', 'Assistant: four', 'User: five', 'Assistant: six'].join('\n\n')
+  it('keeps the newest turns and drops the oldest', () => {
+    expect(lastConversationTurns(thread, 4)).toBe(['User: three', 'Assistant: four', 'User: five', 'Assistant: six'].join('\n\n'))
+  })
+  it('returns the whole thread when it has no more turns than the count', () => {
+    expect(lastConversationTurns(thread, 6)).toBe(thread)
+    expect(lastConversationTurns(thread, 24)).toBe(thread)
+  })
+  it('is empty for an empty conversation', () => {
+    expect(lastConversationTurns('', 4)).toBe('')
+  })
+})
+
+describe('splitVerifiedToolResults', () => {
+  it('sets this turn\'s tool results aside; the rest no longer contains them', () => {
+    const payload = buildQwenTaskPayload('Explain lattice methods', 'web_search result:\nLattice chromodynamics proceedings.', '')
+    const split = splitVerifiedToolResults(payload.context ?? '')
+    expect(split.toolResults).toContain('chromodynamics proceedings')
+    expect(split.rest).not.toContain('chromodynamics')
+  })
+  it('is a no-op when there were no tool results', () => {
+    expect(splitVerifiedToolResults('some context')).toEqual({ toolResults: '', rest: 'some context' })
   })
 })
 
@@ -114,6 +140,12 @@ describe('the router and the dispatch carry the thread', () => {
     expect(sent?.context).toContain(ANSWER)
     expect(sent?.context).not.toContain('deadbeefdeadbeef')
   })
+  it('keeps this turn\'s verified tool results even when they share no words with the task', async () => {
+    // The tool-results section is evidence, not task-matched context: the zero-overlap drop must not discard it.
+    const context = 'Actual ForgeTools results from this turn (the only evidence of actions performed):\nweb_search result:\nLattice quantum chromodynamics results were published for the nucleon spectrum.'
+    const sent = await dispatched({ task: 'and why?', context })
+    expect(sent?.context).toContain('chromodynamics')
+  })
 })
 
 describe('every message reaches the model, opening or follow-up', () => {
@@ -141,11 +173,38 @@ describe('conversation relevance gate', () => {
     { role: 'user', content: asSentByApp('Run a simulation of Islam Makhachev vs Khabib Nurmagomedov') },
     { role: 'assistant', content: 'Simulated over five rounds: Khabib wins a unanimous decision on takedowns and top control against Makhachev.' },
   ])
-  it('a fresh-topic task dispatches with NO conversation section: the old trading turn never reaches the prompt', () => {
-    const payload = buildQwenTaskPayload(asSentByApp('Run a simulation of Islam Makhachev vs Khabib Nurmagomedov'), '', TRADING)
+  const TRADING_LONG = formatQwenConversation([
+    { role: 'user', content: asSentByApp('When is the best time to trade Bitcoin contracts on Kalshi?') },
+    { role: 'assistant', content: 'The best time to trade is during periods of high liquidity and volatility, usually around the US market open.' },
+    { role: 'user', content: asSentByApp('Which contract tenor do you prefer for that style?') },
+    { role: 'assistant', content: 'Hourly contracts suit the plan; the weekly ones move too slowly to matter.' },
+    { role: 'user', content: asSentByApp('And how much bankroll goes on each position?') },
+    { role: 'assistant', content: 'Two percent of the bankroll per position, never more.' },
+  ])
+  // 2026-11-09: the gate is a sizing rule now, not an include/exclude switch (see buildQwenTaskPayload). What the
+  // 6637531549 directive actually has to guarantee survives in bounded form: a fresh topic is never handed the
+  // whole old thread — only the newest floor of it, closed by the topic guard.
+  it('a fresh-topic task carries only the newest floor of the thread, guard-closed: the oldest exchanges never reach the prompt', () => {
+    const payload = buildQwenTaskPayload(asSentByApp('Run a simulation of Islam Makhachev vs Khabib Nurmagomedov'), '', TRADING_LONG)
     expect(payload.task).toBe('Run a simulation of Islam Makhachev vs Khabib Nurmagomedov')
-    expect(payload.context ?? '').not.toContain('[CONVERSATION_SO_FAR]')
-    expect(payload.context ?? '').not.toMatch(/liquidity|volatility|Kalshi/)
+    const context = payload.context ?? ''
+    expect(context).toContain('[CONVERSATION_SO_FAR]')
+    expect(context).not.toMatch(/liquidity|volatility|Kalshi/)
+    expect(context).toContain('Hourly contracts suit the plan')
+    expect(context).toContain('Two percent of the bankroll per position')
+    expect(context).toContain(CONVERSATION_TOPIC_GUARD)
+    expect(context.indexOf(CONVERSATION_TOPIC_GUARD)).toBeLessThan(context.indexOf('[/CONVERSATION_SO_FAR]'))
+  })
+  it('a substantive follow-up phrased in its own words still carries the thread (the gate fails; the floor rides)', () => {
+    const followUp = 'Break down the grappling exchanges and score the championship rounds'
+    // The gate-fail shape behind the owner's "loses the thread after two or three exchanges": a full sentence
+    // with its own vocabulary — one shared distinctive word with the thread and no anaphora — which the old
+    // include/exclude gate dropped to zero history.
+    expect(conversationRelevantToTask(followUp, FIGHT)).toBe(false)
+    const ctx = buildQwenTaskPayload(asSentByApp(followUp), '', FIGHT).context ?? ''
+    expect(ctx).toContain('[CONVERSATION_SO_FAR]')
+    expect(ctx).toContain('Khabib wins a unanimous decision')
+    expect(ctx).toContain(CONVERSATION_TOPIC_GUARD)
   })
   it('a genuine follow-up keeps the thread, closed by the topic guard', () => {
     for (const followUp of ['Who takes the rematch?', 'why?', 'And what about a rematch at featherweight?']) {
