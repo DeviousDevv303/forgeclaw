@@ -987,6 +987,44 @@ class StaleTradesTests(unittest.TestCase):
         self.assertEqual(ta.trades_changed(seen, dict(seen, ticker="U")), "a new window opened")
 
 
+class BlindRulingTests(unittest.TestCase):
+    """2026-11-09 23:48 CST: a ruling read "BTC is None bps from the strike" -- the feed had timed out on that read."""
+
+    def run_with_live(self, lives):
+        server = FakeServer()
+        orig_post, reads, thought = server.post, [], []
+
+        def post(body, headers):
+            if body.get("params", {}).get("name") == "get_live_window":
+                live = lives[min(len(reads), len(lives) - 1)]
+                reads.append(1)
+                server.calls.append(("get_live_window", {}))
+                return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": json.dumps(live)}], "isError": False}})
+            return orig_post(body, headers)
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=post),
+                             lambda s, u: thought.append(u) or '{"p_yes": 0.6, "action": "none", "reason": "r"}',
+                             log=lambda s: None, sleep=lambda s: None)
+        return server, report, thought
+
+    def test_no_distance_on_every_read_skips_without_thinking(self):
+        blind = dict(LIVE, snapshot=dict(LIVE["snapshot"], distanceBps=None))
+        server, report, thought = self.run_with_live([blind])
+        self.assertEqual(thought, [])
+        self.assertIn("not ruling blind", report["skipped"])
+        self.assertNotIn("predict", [n for n, _ in server.calls])
+
+    def test_a_reread_that_recovers_rules_on_the_good_picture(self):
+        blind = dict(LIVE, snapshot=dict(LIVE["snapshot"], distanceBps=None))
+        server, report, thought = self.run_with_live([blind, LIVE])
+        self.assertEqual(len(thought), 1)
+        self.assertIn("BTC 15.0 bps", thought[0])
+        self.assertNotIn("skipped", report)
+
+    def test_blind_reason(self):
+        self.assertIsNone(ta.blind_reason({"live": LIVE}))
+        self.assertEqual(ta.blind_reason({"live": {}}), "the feed gave no window")
+
+
 class WorkflowTests(unittest.TestCase):
     def test_workflow_defaults_live_and_keeps_the_token_in_secrets(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:
