@@ -538,6 +538,20 @@ def ground_directives(directives, live):
 _SIGN_CLAIM = re.compile(r"(\d+(?:\.\d+)?)\s*bps\s+(above|below)\s+the\s+strike", re.I)
 
 
+SETTLED_CLAIM = re.compile(r"\b(held|holding|kept)\b[^.]{0,60}\b(to|until|through)\s+(settlement|the payout|expiry|the close)", re.I)
+
+
+def review_contradiction(review, position):
+    """A review that says the position was held to settlement while it is still open, or None. The tag goes into the
+    review itself, so the corpus never files the false claim untagged (2026-11-09 00:08-01:39 CST: seven reviews said
+    "held the position to settlement" with the position still open, even after #394 stated it in the prompt)."""
+    if not review or not position or not any(x > 0 for x in position):
+        return None
+    if SETTLED_CLAIM.search(review):
+        return "not so: the position is still open and the window has not settled"
+    return None
+
+
 def sign_contradiction(analysis, distance_bps):
     """The analysis says "N bps above/below the strike" with the wrong side of the live feed (21:40 audit: the feed read
     -10.0 bps and the analysis said 10.0 bps above). Returns a note, or None. Tiny distances are not judged."""
@@ -728,6 +742,9 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
                     "reason": f"{decision['reason']} [not acted on: {sign_note}]"}
     decision["p_model"] = decision["p_yes"]
     decision["p_yes"] = anchored_p_yes(decision["p_yes"], obs)
+    review_note = review_contradiction(decision.get("review"), live_view(obs.get("live")).get("position"))
+    if review_note:
+        decision["review"] = f"{decision['review']} [{review_note}]"
     report = {"mode": mode, "ticker": ticker, "seen": live_view(obs.get("live")), "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
     # Predict always (the scorecard grades it), whatever the action.
     # One graded prediction per window: the first call. Later check-ins are closer to the close and would grade easier.
