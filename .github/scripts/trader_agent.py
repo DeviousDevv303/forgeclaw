@@ -798,6 +798,29 @@ DANGER_BPS = 3.0          # holding, and BTC came within this of the strike
 # was cut off mid-JSON (2026-11-09 23:41 CST, the first ruling after #390: "model answer was not valid JSON; no action
 # taken"), so the cap leaves room for all of it: ~90 s worst case at ~4 tokens/s.
 MAX_ANSWER_TOKENS = 360
+# The writing budget, counted from the FIRST token the model writes (reading the prompt is not writing): 360 tokens at
+# ~4 tokens/s is ~90 s, so 150 s leaves headroom. A prompt-read that never yields a token is bounded by the job itself.
+ANSWER_TIME_BUDGET_S = 150
+
+
+def generate_after_first_token(stream, max_new_tokens, time_budget_s, clock=time.monotonic):
+    """Consume a llama.cpp stream; the time budget starts at the first token, so a long prompt read cannot eat it.
+    Returns (text, tokens, write_seconds, stopped_by_time, read_prompt_seconds)."""
+    t0 = clock()
+    start = None
+    parts, tokens, by_time = [], 0, False
+    for chunk in stream:
+        if start is None:
+            start = clock()
+        parts.append(chunk["choices"][0].get("text", ""))
+        tokens += 1
+        if tokens >= max_new_tokens:
+            break
+        if clock() - start >= time_budget_s:
+            by_time = True
+            break
+    read_s = round((start if start is not None else clock()) - t0, 1)
+    return "".join(parts).strip(), tokens, round(clock() - (start if start is not None else t0), 1), by_time, read_s
 
 
 def live_view(live):
@@ -940,12 +963,21 @@ def main():
     cache = os.path.expanduser("~/.cache/forgeclaw-gguf")
     llm, name = qwen_gguf.load_model(cache, lambda repo: list_repo_files(repo), lambda repo, f, d: hf_hub_download(repo, f, local_dir=d), Llama)
 
+    log = lambda s: print(redact(s, token), flush=True)  # noqa: E731
+    # PRE-READ THE PLAYBOOK once, right after the model loads: llama.cpp keeps the evaluated prefix, so every ruling --
+    # the first one included -- only reads the new desk data (the playbook alone is ~2,500 tokens; reading it inside a
+    # ruling took most of the old 300 s budget, and ruling #79 on 2026-11-09 came back as just "{").
+    t_warm = time.monotonic()
+    for _ in llm(qwen_gguf.build_prompt(SYSTEM, ""), max_tokens=1, temperature=0.0, stream=True):
+        break
+    log(json.dumps({"playbook_prefilled_s": round(time.monotonic() - t_warm, 1), "playbook_chars": len(SYSTEM)}))
+
     def think(system, user):
         stream = llm(qwen_gguf.build_prompt(system, user), max_tokens=MAX_ANSWER_TOKENS, temperature=0.2, stop=qwen_gguf.STOP, stream=True)
-        text, _, _, _ = qwen_gguf.generate(stream, MAX_ANSWER_TOKENS, 300)
+        text, tokens, seconds, by_time, read_s = generate_after_first_token(stream, MAX_ANSWER_TOKENS, ANSWER_TIME_BUDGET_S)
+        log(json.dumps({"think": {"read_prompt_s": read_s, "write_s": seconds, "tokens": tokens, "cut_by_time": by_time}}))
         return text
 
-    log = lambda s: print(redact(s, token), flush=True)  # noqa: E731
 
     predicted, earlier = set(), {}
 
