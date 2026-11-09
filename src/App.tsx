@@ -233,6 +233,7 @@ import { ConnectionToast, type ConnectionNotice } from './components/ConnectionT
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
 import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
+import { attestedUrlsForConversation, isAttestedLink } from './lib/linkAttestation'
 import { compactToolHistory } from './lib/historyCompaction'
 import { clearKeyVerified, isKeyRejection, isKeyVerified, markKeyVerified } from './lib/keyVerification'
 import { qwenRunLabel } from './lib/qwenCheckpoints'
@@ -393,11 +394,24 @@ function extractAgentSection(text: string, label: string): string | undefined {
   return match?.[1]?.trim() || undefined
 }
 
-function extractPublicAnswer(text: string): string {
+// eslint-disable-next-line react-refresh/only-export-components -- exported for the scaffold-gate tests (appLinkAttestation.test.tsx), same pattern as SupabaseProvider.tsx
+export function extractPublicAnswer(text: string): string {
   const lines = text.trim().split(/\r?\n/)
   const firstContentIndex = lines.findIndex(line => line.trim().length > 0)
   if (firstContentIndex === -1) return ''
   if (!AGENT_SCAFFOLD_LABEL_RE.test(lines[firstContentIndex].trim())) return text.trim()
+
+  // A reply counts as a scaffold report only when it genuinely is one: at least two
+  // distinct scaffold sections, or an EXECUTION/VERIFICATION section. A normal answer
+  // that merely opens with a single label (e.g. "Plan:") passes through whole —
+  // section-dropping it would lose the real answer written under that label.
+  const sectionLabels = new Set<string>()
+  for (const line of lines) {
+    const labelMatch = AGENT_SCAFFOLD_LABEL_RE.exec(line.trim())
+    if (labelMatch) sectionLabels.add(labelMatch[1].replace('_', '').toUpperCase())
+  }
+  const hasExecutionSection = sectionLabels.has('EXECUTION') || sectionLabels.has('VERIFICATION')
+  if (sectionLabels.size < 2 && !hasExecutionSection) return text.trim()
 
   const visibleLines: string[] = []
   let currentScaffoldLabel: string | null = null
@@ -532,7 +546,7 @@ function readOpenRouterModel(): string {
 }
 
 // Render message text — splits on fenced code blocks and styles them
-function renderMessageContent(text: string, onCopy: (code: string) => void, copiedCode: string | null): React.ReactNode {
+function renderMessageContent(text: string, onCopy: (code: string) => void, copiedCode: string | null, attested: ReadonlySet<string>): React.ReactNode {
   const parts = text.split(/(```[\s\S]*?```)/g)
   return parts.map((part, i) => {
     const codeMatch = /^```(\w*)\n?([\s\S]*?)```$/.exec(part)
@@ -561,15 +575,19 @@ function renderMessageContent(text: string, onCopy: (code: string) => void, copi
       <div key={`${i}-${j}`} style={{ overflowX: 'auto', margin: '6px 0' }}>
         <table style={{ borderCollapse: 'collapse', fontStyle: 'normal', fontSize: '13px', fontFamily: 'ui-monospace, Menlo, Consolas, monospace' }}>
           <thead><tr>{segment.header.map((cell, k) => <th key={k} style={{ border: '1px solid #333', padding: '3px 8px', textAlign: 'left', color: '#f97316' }}>{cell}</th>)}</tr></thead>
-          <tbody>{segment.rows.map((row, r) => <tr key={r}>{row.map((cell, k) => <td key={k} style={{ border: '1px solid #2a2a2a', padding: '3px 8px', verticalAlign: 'top' }}>{renderWithLinks(cell)}</td>)}</tr>)}</tbody>
+          <tbody>{segment.rows.map((row, r) => <tr key={r}>{row.map((cell, k) => <td key={k} style={{ border: '1px solid #2a2a2a', padding: '3px 8px', verticalAlign: 'top' }}>{renderWithLinks(cell, attested)}</td>)}</tr>)}</tbody>
         </table>
       </div>
-    ) : <span key={`${i}-${j}`} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{renderWithLinks(segment.text)}</span>)
+    ) : <span key={`${i}-${j}`} style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{renderWithLinks(segment.text, attested)}</span>)
   })
 }
 
 // Render text with clickable markdown links [label](url) and bare https:// URLs.
-function renderWithLinks(text: string): React.ReactNode[] {
+// A URL renders as an anchor only when it is attested — present in a tool result or the
+// owner's own text in this conversation, or on a trusted host (linkAttestation.ts).
+// Any other URL stays plain text: readable and copyable, but an invented link never
+// renders pixel-identical to a real one. Fenced code blocks never reach this function.
+function renderWithLinks(text: string, attested: ReadonlySet<string>): React.ReactNode[] {
   // Match markdown links first, then bare URLs
   const LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s,)>\]]+)/g
   const nodes: React.ReactNode[] = []
@@ -579,12 +597,16 @@ function renderWithLinks(text: string): React.ReactNode[] {
     if (m.index > last) nodes.push(text.slice(last, m.index))
     const label = m[1] ?? m[3]
     const href  = m[2] ?? m[3]
-    nodes.push(
-      <a key={m.index} href={href} target="_blank" rel="noopener noreferrer"
-        style={{ color: '#38bdf8', textDecoration: 'underline', textDecorationColor: 'rgba(56,189,248,0.4)', overflowWrap: 'anywhere' }}>
-        {label}
-      </a>
-    )
+    if (isAttestedLink(href, attested)) {
+      nodes.push(
+        <a key={m.index} href={href} target="_blank" rel="noopener noreferrer"
+          style={{ color: '#38bdf8', textDecoration: 'underline', textDecorationColor: 'rgba(56,189,248,0.4)', overflowWrap: 'anywhere' }}>
+          {label}
+        </a>
+      )
+    } else {
+      nodes.push(label === href ? href : `${label} (${href})`)
+    }
     last = m.index + m[0].length
   }
   if (last < text.length) nodes.push(text.slice(last))
@@ -1784,7 +1806,7 @@ function App() {
         : null
       const toolDetected = !directShellCommand && isExplicitToolRequest(promptText)
       // Live-world questions ("any UFC fights tonight?") go straight to web_search on the Qwen
-      // provider: its Qwen3-8B CPU workflow takes 9-23 min per hop and has no live data. Other providers
+      // provider: its 16B CPU workflow takes 9-23 min per hop and has no live data. Other providers
       // can call tools themselves, so they are left alone.
       const liveDataCall = !directShellCommand && !toolDetected && !imageUrl && isQwenProvider(activeProvider)
         ? routeLiveDataQuestion(promptText)
@@ -3569,6 +3591,7 @@ function App() {
                 </div>
               ) : (
                 messages.map((rawMsg) => {
+                  const attestedUrls = attestedUrlsForConversation(messages)
                   const displayContent = rawMsg.role === 'assistant' ? cleanVisibleResponse(rawMsg.content) : rawMsg.content
                   const msg = rawMsg.role === 'assistant' ? { ...rawMsg, content: displayContent } : rawMsg
                   const reasoningOpen = openReasoningIds.has(msg.id)
@@ -3596,11 +3619,11 @@ function App() {
                             {msg.role === 'assistant' && <ElapsedNote since={msg.timestamp} qwen={isQwenProvider(activeProvider)} />}
                           </>
                         ) : msg.role === 'assistant' ? (
-                          <div>{renderMessageContent(withForgeClawSignature(msg.content), (code) => { setCopiedCode(code); setTimeout(() => setCopiedCode(null), 2000) }, copiedCode)}</div>
+                          <div>{renderMessageContent(withForgeClawSignature(msg.content), (code) => { setCopiedCode(code); setTimeout(() => setCopiedCode(null), 2000) }, copiedCode, attestedUrls)}</div>
                         ) : (
                           <span style={{ whiteSpace: 'pre-wrap' }}>
                             {msg.content.split('\n').map((line, i, arr) => (
-                              <span key={i}>{renderWithLinks(line)}{i < arr.length - 1 ? '\n' : ''}</span>
+                              <span key={i}>{renderWithLinks(line, attestedUrls)}{i < arr.length - 1 ? '\n' : ''}</span>
                             ))}
                           </span>
                         )}
