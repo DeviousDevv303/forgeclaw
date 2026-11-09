@@ -591,6 +591,74 @@ class NexusShadowTests(unittest.TestCase):
         self.assertIn("NEXUS_SHADOW_TOKEN: ${{ secrets.NEXUS_SHADOW_TOKEN }}", wf)
 
 
+class AheadOfTheMarketTests(unittest.TestCase):
+    """Owner 2026-11-09: "make sure ... it's making these calls before they get too bad". Window 2200: entry to stop-out
+    in 48 s, before the agent ruled once; its first ruling there read BTC +4.1 bps when it was already -5."""
+
+    def with_live(self, live, fn):
+        orig = LIVE
+        try:
+            globals()["LIVE"] = live
+            return fn()
+        finally:
+            globals()["LIVE"] = orig
+
+    def test_stale_reasons(self):
+        seen = {"ticker": "T", "distanceBps": 4.1, "yesBid": 60, "position": (0, 0)}
+        self.assertIn("crossed the strike", ta.stale_reason(seen, dict(seen, distanceBps=-5.0)))
+        self.assertIn("+3.5 bps", ta.stale_reason(seen, dict(seen, distanceBps=7.6)))
+        self.assertIn("position", ta.stale_reason(seen, dict(seen, position=(300, 0))))
+        self.assertIn("new window", ta.stale_reason(seen, dict(seen, ticker="T2")))
+        self.assertIsNone(ta.stale_reason(seen, dict(seen, distanceBps=5.9)))
+        self.assertIsNone(ta.stale_reason(dict(seen, distanceBps=0.2), dict(seen, distanceBps=-0.1)))  # a hair at the strike
+
+    def test_a_stale_entry_is_not_sent_and_the_loop_looks_again_at_once(self):
+        server = FakeServer()
+        moved = json.loads(json.dumps(LIVE)); moved["snapshot"]["distanceBps"] = -5.0
+        feeds = [LIVE, moved]  # observe sees +15, the re-check after thinking sees -5
+        orig_post = server.post
+
+        def post(body, headers):
+            if body.get("method") == "tools/call" and body["params"]["name"] == "get_live_window":
+                globals()["LIVE"] = feeds.pop(0) if len(feeds) > 1 else feeds[0]
+            return orig_post(body, headers)
+        report = self.with_live(LIVE, lambda: ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=post),
+                                think_returning('{"analysis": "a", "p_yes": 0.9, "action": "enter_yes", "reason": "holding above"}'), log=lambda s: None))
+        self.assertNotIn("enter", [c[0] for c in server.actions()])
+        self.assertTrue(report["recheck_now"])
+        self.assertIn("crossed the strike", report["decision"]["reason"])
+        # the loop asks again with no pause
+        t, calls = [0.0], []
+
+        def run(watch=None):
+            calls.append(t[0])
+            return {"decision": {}, "fair": {"left_s": 800}, "recheck_now": len(calls) == 1}
+        ta.standing_loop(run, 1, log=lambda s: None, sleep=lambda x: t.__setitem__(0, t[0] + x), clock=lambda: t[0])
+        self.assertEqual(calls[1] - calls[0], 0)
+
+    def holding_live(self):
+        live = json.loads(json.dumps(LIVE))
+        live["intents"] = [{"side": "yes", "purpose": "entry", "filled_hundredths": 300}]
+        return live
+
+    def test_while_holding_the_agent_sets_its_exit_line_for_the_desk(self):
+        server = FakeServer()
+        self.with_live(self.holding_live(), lambda: ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                       think_returning('{"analysis": "momentum turning", "p_yes": 0.7, "action": "none", "reason": "tighten", "exit_line_bps": -3}'), log=lambda s: None))
+        lines = [a for n, a in server.calls if n == "set_exit_line"]
+        self.assertEqual(lines, [{"at_bps": -3.0, "reason": "tighten"}])
+
+    def test_flat_no_line_and_out_of_range_lines_are_not_trusted(self):
+        server = FakeServer()
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                    think_returning('{"p_yes": 0.7, "action": "none", "reason": "r", "exit_line_bps": -3}'), log=lambda s: None)
+        self.assertEqual([n for n, _ in server.calls if n == "set_exit_line"], [])  # flat: nothing to protect
+        self.assertIsNone(ta.parse_decision('{"p_yes": 0.5, "action": "none", "reason": "r", "exit_line_bps": -40}', 0.5)["exit_line_bps"])
+        self.assertEqual(ta.parse_decision('{"p_yes": 0.5, "action": "none", "reason": "r", "exit_line_bps": 0}', 0.5)["exit_line_bps"], 0.0)
+        self.assertIn('"exit_line_bps"', ta.SYSTEM)
+        self.assertIn("48 s", ta.SYSTEM)
+
+
 class WorkflowTests(unittest.TestCase):
     def test_workflow_defaults_live_and_keeps_the_token_in_secrets(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:

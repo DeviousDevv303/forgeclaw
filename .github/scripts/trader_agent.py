@@ -286,12 +286,18 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
 
 10. "none" means change nothing: an open position keeps riding to settlement. "pause_entries" stops the desk's NEW entries
    (it never closes a position); "resume_entries" lifts that pause. Do not use them to mean "keep my position".
+11. You think for a minute or two; the market can turn in seconds (window 2200: entry to stop-out in 48 s). So whenever the
+   desk holds a position, set "exit_line_bps": where the desk should sell it the moment BTC gets there, before you look
+   again. It is in bps past the strike AGAINST the position: -3 = sell if BTC comes within 3 bps of the strike while still
+   on our side, 0 = sell at the strike. Range -15..2; null = leave it to the desk's own stop (2 bps past the strike).
+   Remember lesson 3: a line too close sells winners on noise, so tighten it only when momentum is turning against us.
 
 Think first, then decide. Answer with ONE JSON object and nothing else:
 {"analysis": "<1-2 short sentences: where BTC is vs the strike and trending, the edge after fees, the risk>",
  "p_yes": <your probability 0..1 that this window settles YES>,
  "action": "none" | "enter_yes" | "enter_no" | "exit" | "pause_entries" | "resume_entries" | "kill" | "unkill",
- "reason": "<one sentence the owner will read>"}"""
+ "reason": "<one sentence the owner will read>",
+ "exit_line_bps": <number -15..2 or null; only matters while the desk holds a position>}"""
 # Which playbook a ruling was made under (the corpus records it, so rulings from different playbooks are told apart).
 SYSTEM_SHA = hashlib.sha256(SYSTEM.encode()).hexdigest()[:12]
 
@@ -337,7 +343,9 @@ def parse_decision(text, fallback_p):
     analysis = str(d.get("analysis") or "").strip()[:600]
     if action is None or not reason:
         return {"p_yes": p, "action": "none", "reason": reason or "model named no valid action; no action taken", "valid": False, "analysis": analysis}
-    return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis}
+    line = d.get("exit_line_bps")
+    line = float(line) if isinstance(line, (int, float)) and not isinstance(line, bool) and -15 <= float(line) <= 2 else None
+    return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis, "exit_line_bps": line}
 
 
 def anchored_p_yes(model_p, obs):
@@ -474,7 +482,20 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     if earlier is not None and ticker:
         left = (obs.get("fair") or {}).get("left_s")
         earlier.setdefault(ticker, []).append({"at_left_s": left, "action": decision["action"], "reason": decision["reason"]})
+    # STALE CHECK: the model thought for a minute or two. Before an order goes out, read the market again; if it moved
+    # materially (BTC >= STALE_DISTANCE_BPS, across the strike, a fill, a new window), this decision was made on a picture
+    # that is gone: it is not acted on, and the loop asks again at once with the fresh picture.
     spec = ACTIONS.get(decision["action"])
+    if spec is not None and decision["action"] in ("enter_yes", "enter_no", "exit"):
+        try:
+            stale = stale_reason(report.get("seen"), live_view(mcp.tool("get_live_window")["data"]))
+        except McpError:
+            stale = None
+        if stale:
+            decision["blocked"], decision["action"] = decision["action"], "none"
+            decision["reason"] = f"{decision['reason']} [stale: {stale} while I was thinking; re-deciding now]"
+            report["recheck_now"] = True
+            spec = None
     if spec is not None:
         if mode == "live":
             name, args = spec
@@ -482,6 +503,14 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": name, "args": args, "ok": r["ok"], "result": r["text"][:300]})
         else:
             report["acted"].append({"tool": spec[0], "args": spec[1], "ok": None, "result": "shadow mode: not sent"})
+    # The AI's exit line, enforced by the desk on every tick (nexus-trader set_exit_line), while it holds a position.
+    holding = any(x > 0 for x in ((report.get("seen") or {}).get("position") or (0, 0)))
+    if holding and decision.get("valid") and mode == "live" and decision["action"] != "exit":
+        try:
+            r = mcp.tool("set_exit_line", {"at_bps": decision.get("exit_line_bps"), "reason": decision["reason"]})
+            report["acted"].append({"tool": "set_exit_line", "args": {"at_bps": decision.get("exit_line_bps")}, "ok": r["ok"]})
+        except McpError:
+            report["acted"].append({"tool": "set_exit_line", "ok": False})
     # The ruler's corpus (owner 2026-11-09: Nexus learns "from being ruler"): what it saw and what it decided, filed on the
     # desk with the window so the export can join the outcome. After acting; a desk without the corpus never stops a ruling.
     try:
@@ -583,6 +612,26 @@ def material_change(seen, now):
     return None
 
 
+STALE_DISTANCE_BPS = 3.0
+
+
+def stale_reason(seen, now):
+    """Why the picture a decision was made on is gone, or None."""
+    if not seen or not now:
+        return None
+    if now.get("ticker") != seen.get("ticker"):
+        return "a new window opened"
+    if now.get("position") != seen.get("position"):
+        return "the position changed"
+    d0, d1 = seen.get("distanceBps"), now.get("distanceBps")
+    if isinstance(d0, (int, float)) and isinstance(d1, (int, float)):
+        if (d0 > 0) != (d1 > 0) and abs(d1 - d0) > 0.5:
+            return f"BTC crossed the strike ({d0:+.1f} -> {d1:+.1f} bps)"
+        if abs(d1 - d0) >= STALE_DISTANCE_BPS:
+            return f"BTC moved {d1 - d0:+.1f} bps"
+    return None
+
+
 def watch_pause(seconds, seen, peek, log=print, sleep=time.sleep, clock=time.time):
     """Pause up to `seconds`, reading the live window every WATCH_POLL_S; return early (with the reason) on a material
     change. Without a peek function, or once the peek fails, it is a plain sleep."""
@@ -640,7 +689,9 @@ def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, pe
         if "skipped" not in report:
             ruled += 1
         left = (report.get("fair") or {}).get("left_s")
-        if not isinstance(left, (int, float)) or left <= 0:
+        if report.get("recheck_now"):
+            pause = 0                         # the decision went stale while thinking: look again at once
+        elif not isinstance(left, (int, float)) or left <= 0:
             pause = LOOP_ERROR_BACKOFF_S
         elif left - CHECK_INTERVAL_S >= MIN_SECONDS_TO_DECIDE:
             pause = CHECK_INTERVAL_S          # stay on this window
