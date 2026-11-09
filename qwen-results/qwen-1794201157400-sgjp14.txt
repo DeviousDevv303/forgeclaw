@@ -1,0 +1,3 @@
+```tool_call
+{"name": "web_search", "arguments": {"query": "best time to trade scalping strategies", "count": 5}}
+```
