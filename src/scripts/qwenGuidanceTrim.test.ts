@@ -12,8 +12,9 @@ const end = workflow.indexOf('# --- NEXUS guidance protection (end)')
 const helper = workflow.slice(begin, end).split('\n').map(line => line.replace(/^ {10}/, '')).join('\n')
 
 const GUIDANCE = `NEXUS GUIDANCE (what the owner has taught NEXUS)\n- say plainly when a step failed\n[END NEXUS GUIDANCE]`
+const CONVERSATION = `[CONVERSATION_SO_FAR]\nUser: Run a simulation of Makhachev vs Khabib\nAssistant: Khabib wins a unanimous decision.\n[/CONVERSATION_SO_FAR]`
 
-function run(prompt: string, budget: number): { out: string; trimmed: boolean; guidance: string; tokens: number; legacy: string } {
+function run(prompt: string, budget: number): { out: string; trimmed: boolean; guidance: string; conversation: string; tokens: number; legacy: string } {
   const py = `
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location('qwen_gguf', '.github/scripts/qwen_gguf.py')
@@ -21,9 +22,9 @@ qwen_gguf = importlib.util.module_from_spec(spec); spec.loader.exec_module(qwen_
 ${helper}
 data = json.load(sys.stdin)
 count = lambda text: (len(text) + 3) // 4
-out, trimmed, guidance = fit_keeping_guidance(data['prompt'], count, data['budget'])
+out, trimmed, guidance, conversation = fit_keeping_guidance(data['prompt'], count, data['budget'])
 legacy, _ = qwen_gguf.fit_text(data['prompt'], count, data['budget'])
-print(json.dumps({'out': out, 'trimmed': trimmed, 'guidance': guidance, 'tokens': count(out), 'legacy': legacy}))
+print(json.dumps({'out': out, 'trimmed': trimmed, 'guidance': guidance, 'conversation': conversation, 'tokens': count(out), 'legacy': legacy}))
 `
   const r = spawnSync('python3', ['-I', '-B', '-c', py], { input: JSON.stringify({ prompt, budget }), encoding: 'utf8' })
   expect(r.status, r.stderr).toBe(0)
@@ -64,5 +65,18 @@ describe('the workflow prompt trim', () => {
     expect(r.guidance).toBe('none')
     expect(r.out).toBe(r.legacy)
     expect(r.trimmed).toBe(true)
+  })
+  it('keeps the conversation when it sits in the middle, and reports it as kept', () => {
+    const prompt = head + filler(100) + CONVERSATION + '\n\n' + filler(400) + tail
+    const r = run(prompt, 600)
+    expect(r.trimmed).toBe(true)
+    expect(r.conversation).toBe('kept')
+    expect(r.out).toContain('Khabib wins a unanimous decision.')
+    expect(r.out).toContain('[/CONVERSATION_SO_FAR]')
+    expect(r.tokens).toBeLessThanOrEqual(600)
+  })
+  it('reports conversation as none when the prompt carries none', () => {
+    const prompt = head + filler(500) + tail
+    expect(run(prompt, 400).conversation).toBe('none')
   })
 })
