@@ -151,6 +151,7 @@ describe('a trim in the workflow is never silent', () => {
   }
   it('reads prompt_trimmed and nexus_guidance from the result metadata', async () => {
     expect(await deliver(meta('prompt_trimmed=true\nnexus_guidance=kept\n'))).toMatchObject({ promptTrimmed: true, nexusGuidance: 'kept' })
+    expect(await deliver(meta('prompt_trimmed=true\nnexus_guidance=kept\nconversation=cut\n'))).toMatchObject({ promptTrimmed: true, nexusGuidance: 'kept', conversation: 'cut' })
     expect(await deliver(meta('prompt_trimmed=false\nnexus_guidance=none\n'))).not.toHaveProperty('promptTrimmed')
   })
   const turn = (stages: string): AIRequest => ({
@@ -168,6 +169,10 @@ describe('a trim in the workflow is never silent', () => {
     expect(await say('Stages: checkpoint=Qwen/Qwen3-8B (primary); prompt-trimmed=true; nexus-guidance=kept; learning-persistence=not requested.')).toContain('Your NEXUS guidance was kept.')
     expect(await say('Stages: checkpoint=Qwen/Qwen3-8B; prompt-trimmed=true; nexus-guidance=cut.')).toContain('Your NEXUS guidance was also cut.')
     expect(await say('Stages: checkpoint=Qwen/Qwen3-8B; prompt-trimmed=true; nexus-guidance=none.')).toMatch(/part of the context was cut\.$/)
+  })
+  it('names a cut conversation as a cut conversation, and a kept one as kept', async () => {
+    expect(await say('Stages: checkpoint=Qwen/Qwen3-8B; prompt-trimmed=true; nexus-guidance=kept; conversation=cut.')).toContain('your conversation history was cut')
+    expect(await say('Stages: checkpoint=Qwen/Qwen3-8B; prompt-trimmed=true; nexus-guidance=cut; conversation=kept.')).toContain('Your conversation history was kept.')
   })
   it('adds nothing when no trim fired', async () => {
     expect(await say('Stages: checkpoint=Qwen/Qwen3-8B; learning-persistence=not requested.')).toBe('Buckets chain or probe.')
