@@ -156,6 +156,10 @@ MIN_EDGE_CENTS = 0.5      # owner order 2026-11-08: take the best edge each wind
 # on THIS window — it waits for the next one instead (owner order 2026-11-08: the AI rules every window; run
 # 42541804428 landed 36 s before a close, skipped, and the desk went unruled for two windows).
 MIN_SECONDS_TO_DECIDE = 150
+# The recorded prediction is pulled halfway to the blended fair value (formula + market). 2045 on 2026-11-08: BTC 20 bps
+# above the strike with 5 minutes left, market 0.85, the model said 0.56; across its first 7 graded windows its Brier was
+# 0.0727 vs the market's 0.0690. Playbook 9 asked for this; code now does it.
+PREDICTION_ANCHOR = 0.5
 WINDOW_ROLL_S = 10        # after a window closes, give the Bank a few seconds to roll to the next one
 MAX_WINDOW_WAIT_S = 300   # total wait budget: setup (~70 s) + model load + this + think (<=300 s) stays inside the 12-min job
 
@@ -307,6 +311,7 @@ def build_user_prompt(obs):
         f"Observer's last decision: {json.dumps(live.get('lastDecision'))}.",
         f"Recent trades: {json.dumps(obs.get('history'))[:700]}",
         f"Your scorecard: {json.dumps({k: rec.get(k) for k in ('graded', 'agentBrier', 'marketBrier')})}",
+        *obs.get("memory", []),
         "Decide now.",
     ]
     return "\n".join(lines)
@@ -331,6 +336,26 @@ def parse_decision(text, fallback_p):
     return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis}
 
 
+def anchored_p_yes(model_p, obs):
+    """The probability recorded for grading: half the model's, half the blended fair value (when there is one)."""
+    target = blended_p_yes(obs.get("fair"), ((obs.get("live") or {}).get("snapshot") or {}))
+    if target is None or model_p is None:
+        return model_p
+    return round(PREDICTION_ANCHOR * target + (1 - PREDICTION_ANCHOR) * model_p, 3)
+
+
+def memory_lines(obs, earlier):
+    """What the agent remembers: its recent graded calls (scorecard) and its earlier check-ins in this window."""
+    out = []
+    recent = ((obs.get("record") or {}).get("recent") or [])[-5:] if isinstance(obs.get("record"), dict) else []
+    if recent:
+        calls = "; ".join(f"{str(r.get('ticker'))[-7:]}: you {r.get('pYes')} vs market {r.get('marketPYes')} -> settled {str(r.get('result')).upper()}" for r in recent)
+        out.append(f"Your last graded calls: {calls}.")
+    if earlier:
+        out.append("Your earlier check-ins this window: " + "; ".join(f"{e['at_left_s']}s left: {e['action']} ({e['reason'][:80]})" for e in earlier[-3:]) + ".")
+    return out
+
+
 def apply_discipline(decision, obs):
     """Code, not the model, holds the playbook's money rules the desk does not enforce itself: an entry needs at least
     MIN_EDGE_CENTS of edge after fees (playbook 2) and BTC at least 3 bps from the strike (playbook 4). A blocked
@@ -352,7 +377,7 @@ def apply_discipline(decision, obs):
     return {**decision, "action": "none", "blocked": decision["action"], "reason": f"{decision['reason']} [discipline: {decision['action']} blocked, {why}]"}
 
 
-def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep):
+def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None):
     """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict.
 
     A run that lands too late in a window waits for the next window to open and decides on that
@@ -376,16 +401,27 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep):
         waited_s += wait_s
         obs = observe(mcp)
     fallback = market_p_yes(obs.get("live"))
+    ticker = ((obs.get("live") or {}).get("window") or {}).get("ticker")
+    window_earlier = (earlier or {}).get(ticker, []) if earlier is not None else []
+    obs["memory"] = memory_lines(obs, window_earlier)
     user = build_user_prompt(obs)
     t0 = time.monotonic()
     answer = think(SYSTEM, user)
     decision = parse_decision(answer, fallback if fallback is not None else 0.5)
     decision = apply_discipline(decision, obs)
-    report = {"mode": mode, "ticker": ((obs.get("live") or {}).get("window") or {}).get("ticker"), "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
+    decision["p_model"] = decision["p_yes"]
+    decision["p_yes"] = anchored_p_yes(decision["p_yes"], obs)
+    report = {"mode": mode, "ticker": ticker, "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
     # Predict always (the scorecard grades it), whatever the action.
-    if decision["p_yes"] is not None:
+    # One graded prediction per window: the first call. Later check-ins are closer to the close and would grade easier.
+    if decision["p_yes"] is not None and (predicted is None or ticker not in predicted):
         r = mcp.tool("predict", {"p_yes": decision["p_yes"], "reason": decision["reason"]})
         report["acted"].append({"tool": "predict", "ok": r["ok"]})
+        if predicted is not None and r["ok"]:
+            predicted.add(ticker)
+    if earlier is not None and ticker:
+        left = (obs.get("fair") or {}).get("left_s")
+        earlier.setdefault(ticker, []).append({"at_left_s": left, "action": decision["action"], "reason": decision["reason"]})
     spec = ACTIONS.get(decision["action"])
     if spec is not None:
         if mode == "live":
@@ -419,6 +455,9 @@ def write_summary(report, mode):
 # successor. After ruling a window it sleeps until shortly after the next one opens.
 NEXT_WINDOW_GRACE_S = 30
 LOOP_ERROR_BACKOFF_S = 60
+# Owner 2026-11-09: "we need the AI to be there constantly". After each ruling the agent looks again after this pause
+# (plus its ~100 s of thinking), all window long, flat or holding; with too little time left it sleeps into the next window.
+CHECK_INTERVAL_S = 30
 
 
 def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time):
@@ -436,7 +475,12 @@ def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time):
         if "skipped" not in report:
             ruled += 1
         left = (report.get("fair") or {}).get("left_s")
-        pause = (left + NEXT_WINDOW_GRACE_S) if isinstance(left, (int, float)) and left > 0 else LOOP_ERROR_BACKOFF_S
+        if not isinstance(left, (int, float)) or left <= 0:
+            pause = LOOP_ERROR_BACKOFF_S
+        elif left - CHECK_INTERVAL_S >= MIN_SECONDS_TO_DECIDE:
+            pause = CHECK_INTERVAL_S          # stay on this window
+        else:
+            pause = left + NEXT_WINDOW_GRACE_S  # too late for another look: wake 30 s into the next window
         sleep(min(pause, max(0, deadline - clock())))
     return ruled
 
@@ -462,8 +506,10 @@ def main():
 
     log = lambda s: print(redact(s, token), flush=True)  # noqa: E731
 
+    predicted, earlier = set(), {}
+
     def one_window():
-        report = run_once(McpSession(url, token), think, mode=mode, log=log)
+        report = run_once(McpSession(url, token), think, mode=mode, log=log, predicted=predicted, earlier=earlier)
         write_summary(report, mode)
         return report
 

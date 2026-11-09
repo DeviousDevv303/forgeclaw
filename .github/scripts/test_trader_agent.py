@@ -85,7 +85,8 @@ class RunOnceTests(unittest.TestCase):
 
     def test_live_enter_sends_predict_then_the_action_with_its_reason(self):
         server, report = self.run_agent('{"p_yes": 0.72, "action": "enter_yes", "reason": "distance holding with time left"}')
-        self.assertEqual(server.actions(), [("predict", {"p_yes": 0.72, "reason": "distance holding with time left"}),
+        obs = {"fair": ta.fair_value(LIVE), "live": LIVE}
+        self.assertEqual(server.actions(), [("predict", {"p_yes": ta.anchored_p_yes(0.72, obs), "reason": "distance holding with time left"}),
                                             ("enter", {"side": "yes", "reason": "distance holding with time left"})])
         self.assertEqual(server.calls[-1][0], "get_status")  # check after acting
         self.assertEqual(report["checked"]["equityCents"], 1001)
@@ -103,7 +104,8 @@ class RunOnceTests(unittest.TestCase):
 
     def test_invalid_answer_predicts_the_market_and_acts_on_nothing(self):
         server, report = self.run_agent("I think yes")
-        self.assertEqual(server.actions(), [("predict", {"p_yes": 0.59, "reason": "model answer was not valid JSON; no action taken"})])
+        obs = {"fair": ta.fair_value(LIVE), "live": LIVE}
+        self.assertEqual(server.actions(), [("predict", {"p_yes": ta.anchored_p_yes(0.59, obs), "reason": "model answer was not valid JSON; no action taken"})])
         self.assertEqual(report["decision"]["action"], "none")
 
     def test_a_refused_action_is_reported_not_hidden(self):
@@ -300,8 +302,18 @@ class StandingAgentTests(unittest.TestCase):
             return {"decision": {}, "fair": {"left_s": 800}}
         ruled = ta.standing_loop(run, 60, log=lambda s: None, sleep=c.sleep, clock=c)
         self.assertEqual(ruled, len(calls))
-        self.assertEqual(calls[1] - calls[0], 800 + ta.NEXT_WINDOW_GRACE_S)  # wakes 30 s into the next window
+        self.assertEqual(calls[1] - calls[0], ta.CHECK_INTERVAL_S)  # constant presence: looks again 30 s later
         self.assertLessEqual(c.t, 60 * 60)
+
+    def test_with_too_little_time_for_another_look_it_sleeps_into_the_next_window(self):
+        c = self.Clock()
+        calls = []
+
+        def run():
+            calls.append(c.t)
+            return {"decision": {}, "fair": {"left_s": 160}}
+        ta.standing_loop(run, 30, log=lambda s: None, sleep=c.sleep, clock=c)
+        self.assertEqual(calls[1] - calls[0], 160 + ta.NEXT_WINDOW_GRACE_S)
 
     def test_one_bad_window_does_not_end_the_agent(self):
         c = self.Clock()
@@ -322,6 +334,44 @@ class StandingAgentTests(unittest.TestCase):
         ruled = ta.standing_loop(lambda: {"skipped": "x", "fair": {"left_s": -19}}, 10, log=lambda s: None, sleep=c.sleep, clock=c)
         self.assertEqual(ruled, 0)
         self.assertLessEqual(c.t, 10 * 60)
+
+
+class ConstantPresenceTests(unittest.TestCase):
+    """Owner 2026-11-09: "we need the AI to be there constantly"."""
+
+    def test_the_recorded_prediction_is_anchored_to_the_fair_value(self):
+        # 2045: market 0.85, BTC well above the strike, the model said 0.56
+        obs = {"fair": {"p_yes": 0.92}, "live": {"snapshot": {"yesBidCents": 84, "yesAskCents": 86}}}
+        blended = 0.5 * 0.85 + 0.5 * 0.92
+        self.assertAlmostEqual(ta.anchored_p_yes(0.56, obs), round(0.5 * blended + 0.5 * 0.56, 3))
+        self.assertGreater(ta.anchored_p_yes(0.56, obs), 0.7)
+        self.assertEqual(ta.anchored_p_yes(0.4, {"fair": None, "live": {}}), 0.4)  # nothing to anchor to
+
+    def run_twice(self):
+        server = FakeServer()
+        predicted, earlier = set(), {}
+        answer = think_returning('{"analysis": "a", "p_yes": 0.7, "action": "none", "reason": "watching the position"}')
+        for _ in range(2):
+            ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), answer, log=lambda s: None,
+                        predicted=predicted, earlier=earlier)
+        return server, predicted, earlier
+
+    def test_one_graded_prediction_per_window_however_many_check_ins(self):
+        server, predicted, earlier = self.run_twice()
+        self.assertEqual([c[0] for c in server.actions()], ["predict"])
+        self.assertEqual(predicted, {"KXBTC15M-T"})
+        self.assertEqual(len(earlier["KXBTC15M-T"]), 2)
+
+    def test_the_agent_remembers_its_check_ins_and_its_graded_calls(self):
+        _, _, earlier = self.run_twice()
+        obs = {"record": {"recent": [{"ticker": "KXBTC15M-26NOV082030-30", "pYes": 0.31, "marketPYes": 0.24, "result": "no"}]}}
+        lines = ta.memory_lines(obs, earlier["KXBTC15M-T"])
+        self.assertIn("2030-30: you 0.31 vs market 0.24 -> settled NO", lines[0])
+        self.assertIn("watching the position", lines[1])
+        seen = []
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=FakeServer().post), lambda s, u: seen.append(u) or "{}",
+                    log=lambda s: None, predicted=set(), earlier=earlier)
+        self.assertIn("Your earlier check-ins this window", seen[0])
 
 
 class WorkflowTests(unittest.TestCase):
