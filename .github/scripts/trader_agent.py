@@ -200,17 +200,38 @@ def fair_value(live):
     now_s = (now_ms - start_ms) / 1000 if isinstance(start_ms, (int, float)) else None
     s1m, n = sigma_1m_bps(w.get("samples"), now_s) if now_s is not None else (None, 0)
     measured = s1m is not None and s1m > 0
-    s1m = s1m if measured else DEFAULT_SIGMA_1M_BPS
+    # Fewer than five 1-minute moves (the first minutes of a window) under-measure a jumpy market: 1930 on 2026-11-08 swung
+    # -8.6 -> +21.5 bps in two minutes while a 3-move tape read calm, and the fair said 0.96 against the market's 0.59.
+    # A short tape may raise sigma above the default, never lower it.
+    if not measured:
+        s1m = DEFAULT_SIGMA_1M_BPS
+    elif n < 5:
+        s1m = max(s1m, DEFAULT_SIGMA_1M_BPS)
     sigma_per_s = max(s1m, 0.5) / math.sqrt(60) * IV_MULT
     return {"p_yes": phi(d / (sigma_per_s * math.sqrt(left_s))), "sigma_1m_bps": round(s1m, 2), "sigma_measured": measured, "left_s": round(left_s - 20)}
 
 
-def edges(fair, snap):
-    """Cents of edge per contract after the entry fee, for buying each side at its ask (held to settlement)."""
+MARKET_WEIGHT = 0.5  # playbook 1: the market mid out-predicts the formula; the edge is priced on a 50/50 blend
+
+
+def blended_p_yes(fair, snap):
+    """The probability the edge is priced on: half the formula, half the market mid (when the book has one)."""
+    yb, ya = (snap or {}).get("yesBidCents"), (snap or {}).get("yesAskCents")
     if not fair:
+        return None
+    if isinstance(yb, (int, float)) and isinstance(ya, (int, float)) and 0 < yb <= ya < 100:
+        return MARKET_WEIGHT * (yb + ya) / 200 + (1 - MARKET_WEIGHT) * fair["p_yes"]
+    return fair["p_yes"]
+
+
+def edges(fair, snap):
+    """Cents of edge per contract after the entry fee, for buying each side at its ask (held to settlement), priced on
+    the formula blended with the market mid."""
+    p_yes = blended_p_yes(fair, snap)
+    if p_yes is None:
         return {"yes": None, "no": None}
     out = {}
-    for side, ask_key, p in (("yes", "yesAskCents", fair["p_yes"]), ("no", "noAskCents", 1 - fair["p_yes"])):
+    for side, ask_key, p in (("yes", "yesAskCents", p_yes), ("no", "noAskCents", 1 - p_yes)):
         ask = (snap or {}).get(ask_key)
         out[side] = round(100 * p - ask - kalshi_fee_cents(ask), 1) if isinstance(ask, (int, float)) else None
     return out
@@ -274,7 +295,8 @@ def build_user_prompt(obs):
         f"Window {w.get('ticker')}: {fair['left_s'] if fair else '?'}s left, strike ${w.get('strikeUsd')}, BTC {snap.get('distanceBps') if snap.get('distanceBps') is None else round(snap['distanceBps'], 1)} bps "
         f"from the strike (positive = above). Change: {trend(live, 60)} bps in the last minute, {trend(live, 180)} bps in the last 3 minutes.",
         f"Book: YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c, NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c. Market P(YES) = {market_p_yes(live)}.",
-        (f"Fair P(YES) = {fair['p_yes']:.3f} (1-minute BTC move {fair['sigma_1m_bps']} bps, {'measured' if fair['sigma_measured'] else 'default'}). "
+        (f"Fair P(YES) = {fair['p_yes']:.3f} by formula (1-minute BTC move {fair['sigma_1m_bps']} bps, {'measured' if fair['sigma_measured'] else 'default'}); "
+         f"blended with the market: {blended_p_yes(fair, snap):.3f}. "
          f"Edge after fees if you buy now: YES {edge.get('yes')}c, NO {edge.get('no')}c per contract (need +{MIN_EDGE_CENTS:g}c)." if fair else "Fair value: unavailable (no distance or clock)."),
         f"Desk: equity {st.get('equityCents')}c, kill switch {'ON' if st.get('killed') else 'off'}, hold {json.dumps(st.get('hold'))}, "
         f"open position {json.dumps(st.get('openMark'))}.",
