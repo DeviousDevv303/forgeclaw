@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CorpusRepository, appendQwenLearning, distinctiveWords, extractImagePatterns, integrityHash, recordRelevantToTask, suggestImprovedPrompt } from './corpus'
+import { CorpusRepository, appendQwenLearning, distinctiveWords, extractImagePatterns, formatCorpusContext, integrityHash, recordRelevantToTask, suggestImprovedPrompt, type CorpusRecord } from './corpus'
+import { CONVERGED_BY } from './nexusConvergence'
 import { authorizationPayload, RFC8032_TEST_KEY_ID, type CandidateAuthorization } from './corpusAdmissionAuth'
 import { corpusProvider } from './ai/providers/corpusProvider'
 import { buildQwenTaskPayload } from './ai/qwenContext'
@@ -537,6 +538,38 @@ describe('recordRelevantToTask — the shared corpus-injection relevance test', 
     expect(words.has('should')).toBe(false)
     expect(words.has('with')).toBe(false)
     expect(words.has('the')).toBe(false)
+  })
+})
+
+describe('formatCorpusContext — fresh-corpus provenance labels (2026-11-09, Lane B finding)', () => {
+  // qwenContext's fresh-corpus section renders records through this formatter under a plain
+  // "[Corpus N | source | timestamp]" label. A record that admitted itself by convergence used
+  // to read identically to owner-approved knowledge there; the label now carries the same
+  // admission-class distinction the guidance path uses.
+  const rec = (id: string, admittedBy?: string): CorpusRecord => ({
+    id, corpusId: 'c', source: 'learning:chat', content: `fact ${id}`, timestamp: '2026-11-09T10:00:00.000Z',
+    version: 1, recordType: 'interaction' as never, integrity: id, admissionStatus: 'approved',
+    metadata: admittedBy ? { admittedBy } : {},
+  })
+
+  it('a converged record is labelled as automatically admitted, not owner-reviewed', () => {
+    const out = formatCorpusContext([rec('conv', CONVERGED_BY)])
+    expect(out).toContain('admitted automatically from evidence-backed answers; not reviewed by the owner')
+    expect(out).toContain('fact conv')
+  })
+
+  it('an owner-approved record keeps the plain standing label', () => {
+    const out = formatCorpusContext([rec('own', 'nexus-intake:owner-directed'), rec('signed')])
+    expect(out).not.toContain('not reviewed by the owner')
+    expect(out).toContain('[Corpus 1 | learning:chat | 2026-11-09T10:00:00.000Z]')
+    expect(out).toContain('[Corpus 2 | learning:chat | 2026-11-09T10:00:00.000Z]')
+  })
+
+  it('the two classes render differently side by side', () => {
+    const out = formatCorpusContext([rec('own'), rec('conv', CONVERGED_BY)])
+    const [first, second] = out.split('\n\n')
+    expect(first).not.toContain('not reviewed by the owner')
+    expect(second).toContain('not reviewed by the owner')
   })
 })
 

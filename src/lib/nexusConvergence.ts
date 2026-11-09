@@ -6,8 +6,10 @@
 // by hand: a record became knowledge solely through a signed admission that no key in the app could sign, so approved
 // knowledge stayed at zero, browser playbooks never reached a prompt, and Qwen's "approved knowledge" was always
 // empty. The owner asked for NEXUS to learn without manual approval. What converges, with no one approving it:
-//   • First Principles: the owner's own task answered with evidence (a final answer that passed ForgeClaw's evidence
-//     gate with at least one successful tool result, recorded as outcome "verified");
+//   • First Principles: until 2026-11-09, the owner's own task answered with evidence (a final answer that passed
+//     ForgeClaw's evidence gate with at least one successful tool result, recorded as outcome "verified"). That
+//     self-convergence is retired — see convergencePhase: no provider's chat/voice answer converges on the stamp
+//     any more, so this phase currently receives nothing from chat or voice;
 //   • Extension: a browsing playbook whose steps all worked (steps only, never typed text);
 //   • Heuristics: the owner's own rules, mined from what the owner typed (nexusHeuristics.ts);
 //   • Assumptions: recurring failures, which already reach prompts as lessons without approval.
@@ -63,10 +65,13 @@ export function convergencePhase(input: CorpusInteractionInput): Extract<NexusPh
   if (input.source === PLAYBOOK_SOURCE) return outcome === 'completed' ? 'extension' : null
   const channel = field(input, 'channel')
   if ((channel === 'chat' || channel === 'voice') && field(input, 'actor') === 'user' && outcome === 'verified') {
-    // Machines do not promote machines (owner, 2026-11-01): a successful evidence tool proves the tool ran, not that Qwen's
-    // claims are true, so an answer with Qwen lineage stays a candidate. The owner's approval (or CURATOR, once live) is its
-    // only way in. Answers from other providers backed by evidence still converge, as before.
-    return hasQwenLineage(input) ? null : 'first_principles'
+    // Machines do not promote machines (owner, 2026-11-01; extended to every provider 2026-11-09): a successful
+    // evidence tool proves the tool ran, not that an answer's claims are true. The 2026-11-01 rule barred only
+    // Qwen-lineage answers; other providers' answers still converged on the same one-tool stamp, fed guidance and
+    // the training pool, and carried the same unchecked-claims risk — so the bar is now total: NO provider's chat
+    // or voice answer converges on 'verified'. It stays a candidate; the owner's approval (or CURATOR, once live)
+    // is its only way in.
+    return null
   }
   return null
 }

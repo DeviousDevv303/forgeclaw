@@ -26,6 +26,15 @@ class LimitedStorage {
 const chat = (n: number, outcome: 'completed' | 'verified' = 'completed') =>
   buildLearningEvent({ channel: 'chat', input: `question ${n}`, result: `answer ${n} ${'x'.repeat(1_500)}`, outcome, runtime: 'kimi', model: 'k2', actor: 'user', runId: `run-${n}`, lineage: 'none' })
 
+/** Admitted knowledge, written the way the owner's intake admits it. Since 2026-11-09 no chat
+ * answer converges into knowledge on its own (nexusConvergence.ts), so the storage tests that
+ * need real knowledge in the store admit it explicitly instead of relying on a 'verified' stamp. */
+const admittedChat = (corpus: CorpusRepository, n: number) =>
+  corpus.appendIntakeExperience(
+    { input: `question ${n}`, context: 'channel=chat; outcome=verified; origin=typed; actor=user', result: `answer ${n} ${'x'.repeat(1_500)}`, runtime: 'kimi', model: 'k2', source: 'nexus-intake', provenance: { admittedBy: 'nexus-intake:owner-directed' } },
+    'nexus-intake:owner-directed',
+  )
+
 describe('when the browser\'s storage is full', () => {
   beforeEach(() => { vi.stubGlobal('localStorage', new LimitedStorage(40_000)) })
   afterEach(() => vi.unstubAllGlobals())
@@ -42,7 +51,7 @@ describe('when the browser\'s storage is full', () => {
 
   it('never removes knowledge to make room', async () => {
     const corpus = new CorpusRepository()
-    await corpus.appendInteraction(chat(0, 'verified')) // converges into knowledge
+    await admittedChat(corpus, 0) // admitted knowledge — never removable to make room
     for (let i = 1; i < 40; i++) await corpus.appendInteraction(chat(i))
     expect(corpus.getApprovedCount()).toBe(1)
     expect(corpus.listCandidates(100).some(c => c.input === 'question 0')).toBe(true)
@@ -52,8 +61,8 @@ describe('when the browser\'s storage is full', () => {
   it('says so when nothing more can be removed, instead of pretending it recorded', async () => {
     vi.stubGlobal('localStorage', new LimitedStorage(12_000))
     const corpus = new CorpusRepository()
-    await corpus.appendInteraction(chat(0, 'verified')) // knowledge fills the little room there is
-    await expect(corpus.appendInteraction(chat(1, 'verified'))).rejects.toThrow(/storage is full/)
+    await admittedChat(corpus, 0) // knowledge fills the little room there is
+    await expect(admittedChat(corpus, 1)).rejects.toThrow(/storage is full/)
     // recordLearningEvent turns that into false, which the app reports as a failure
     expect(await recordLearningEvent(chat(2) as never, corpus)).toBe(false)
   })
