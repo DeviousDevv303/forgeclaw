@@ -377,7 +377,7 @@ def apply_discipline(decision, obs):
     return {**decision, "action": "none", "blocked": decision["action"], "reason": f"{decision['reason']} [discipline: {decision['action']} blocked, {why}]"}
 
 
-def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None):
+def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None, watch=None):
     """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict.
 
     A run that lands too late in a window waits for the next window to open and decides on that
@@ -403,7 +403,7 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     fallback = market_p_yes(obs.get("live"))
     ticker = ((obs.get("live") or {}).get("window") or {}).get("ticker")
     window_earlier = (earlier or {}).get(ticker, []) if earlier is not None else []
-    obs["memory"] = memory_lines(obs, window_earlier)
+    obs["memory"] = watch_lines(watch) + memory_lines(obs, window_earlier)
     user = build_user_prompt(obs)
     t0 = time.monotonic()
     answer = think(SYSTEM, user)
@@ -517,18 +517,41 @@ def watch_pause(seconds, seen, peek, log=print, sleep=time.sleep, clock=time.tim
     """Pause up to `seconds`, reading the live window every WATCH_POLL_S; return early (with the reason) on a material
     change. Without a peek function, or once the peek fails, it is a plain sleep."""
     end = clock() + max(0.0, seconds)
+    readings = []
     while clock() < end:
         sleep(min(WATCH_POLL_S, max(0.0, end - clock())))
         if peek is None or seen is None:
             continue
         try:
-            why = material_change(seen, peek())
+            now = peek()
         except Exception:  # noqa: BLE001  (a failed peek is a missed look, not a stop)
             continue
+        if isinstance(now, dict):
+            readings.append(now)
+        why = material_change(seen, now)
         if why:
             log(json.dumps({"woke": why}))
-            return why
-    return None
+            return {"woke": why, "readings": readings}
+    return {"woke": None, "readings": readings}
+
+
+def watch_lines(watch, max_points=12):
+    """What the watcher saw since the last ruling, for the model: why it woke it, and the live tape (every 5 s)."""
+    if not watch or not watch.get("readings"):
+        return []
+    rs = [r for r in watch["readings"] if r.get("ticker") == watch["readings"][-1].get("ticker")]
+    if len(rs) > max_points:
+        step = len(rs) / max_points
+        rs = [rs[int(i * step)] for i in range(max_points - 1)] + [rs[-1]]
+    fmt = lambda v, f: f.format(v) if isinstance(v, (int, float)) else "?"  # noqa: E731
+    dist = " > ".join(fmt(r.get("distanceBps"), "{:+.1f}") for r in rs)
+    bid = " > ".join(fmt(r.get("yesBid"), "{:.0f}") for r in rs)
+    pos = rs[-1].get("position")
+    lines = [f"Live since your last ruling (watcher, every {WATCH_POLL_S} s, oldest first): distance {dist} bps; YES bid {bid}c; "
+             f"position now YES {pos[0] / 100 if pos else 0:g} / NO {pos[1] / 100 if pos else 0:g} contracts."]
+    if watch.get("woke"):
+        lines.insert(0, f"You were woken early because {watch['woke']}.")
+    return lines
 
 
 def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, peek=None):
@@ -536,9 +559,10 @@ def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, pe
     windows ruled. An error in one window is logged and retried after a backoff; it never ends the loop."""
     deadline = clock() + minutes * 60
     ruled = 0
+    watch = None
     while clock() < deadline - NEXT_WINDOW_GRACE_S:
         try:
-            report = run()
+            report = run(watch)
         except Exception as e:  # noqa: BLE001  (one bad window must not end the standing agent)
             log(json.dumps({"window_error": str(e)[:300]}))
             sleep(min(LOOP_ERROR_BACKOFF_S, max(0, deadline - clock())))
@@ -552,7 +576,7 @@ def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, pe
             pause = CHECK_INTERVAL_S          # stay on this window
         else:
             pause = left + NEXT_WINDOW_GRACE_S  # too late for another look: wake 30 s into the next window
-        watch_pause(min(pause, max(0, deadline - clock())), report.get("seen"), peek, log=log, sleep=sleep, clock=clock)
+        watch = watch_pause(min(pause, max(0, deadline - clock())), report.get("seen"), peek, log=log, sleep=sleep, clock=clock)
     return ruled
 
 
@@ -579,8 +603,8 @@ def main():
 
     predicted, earlier = set(), {}
 
-    def one_window():
-        report = run_once(McpSession(url, token), think, mode=mode, log=log, predicted=predicted, earlier=earlier)
+    def one_window(watch=None):
+        report = run_once(McpSession(url, token), think, mode=mode, log=log, predicted=predicted, earlier=earlier, watch=watch)
         write_summary(report, mode)
         return report
 

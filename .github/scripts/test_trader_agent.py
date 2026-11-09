@@ -297,7 +297,7 @@ class StandingAgentTests(unittest.TestCase):
         c = self.Clock()
         calls = []
 
-        def run():
+        def run(watch=None):
             calls.append(c.t)
             return {"decision": {}, "fair": {"left_s": 800}}
         ruled = ta.standing_loop(run, 60, log=lambda s: None, sleep=c.sleep, clock=c)
@@ -309,7 +309,7 @@ class StandingAgentTests(unittest.TestCase):
         c = self.Clock()
         calls = []
 
-        def run():
+        def run(watch=None):
             calls.append(c.t)
             return {"decision": {}, "fair": {"left_s": 155}}
         ta.standing_loop(run, 30, log=lambda s: None, sleep=c.sleep, clock=c)
@@ -319,7 +319,7 @@ class StandingAgentTests(unittest.TestCase):
         c = self.Clock()
         n = []
 
-        def run():
+        def run(watch=None):
             n.append(1)
             if len(n) == 1:
                 raise ta.McpError("tools/call: HTTP 502")
@@ -331,7 +331,7 @@ class StandingAgentTests(unittest.TestCase):
 
     def test_skipped_windows_are_not_counted_and_it_stops_at_the_deadline(self):
         c = self.Clock()
-        ruled = ta.standing_loop(lambda: {"skipped": "x", "fair": {"left_s": -19}}, 10, log=lambda s: None, sleep=c.sleep, clock=c)
+        ruled = ta.standing_loop(lambda watch=None: {"skipped": "x", "fair": {"left_s": -19}}, 10, log=lambda s: None, sleep=c.sleep, clock=c)
         self.assertEqual(ruled, 0)
         self.assertLessEqual(c.t, 10 * 60)
 
@@ -424,10 +424,11 @@ class LiveWatcherTests(unittest.TestCase):
         sleep = lambda s: t.__setitem__(0, t[0] + s)  # noqa: E731
         reads = [dict(self.seen), dict(self.seen, distanceBps=5.0)]
         why = ta.watch_pause(60, self.seen, lambda: reads.pop(0) if len(reads) > 1 else reads[0], log=lambda s: None, sleep=sleep, clock=clock)
-        self.assertIn("bps", why)
+        self.assertIn("bps", why["woke"])
+        self.assertEqual(len(why["readings"]), 2)
         self.assertEqual(t[0], 2 * ta.WATCH_POLL_S)  # woke on the second look, 10 s in, not after 60
         t[0] = 0.0
-        self.assertIsNone(ta.watch_pause(60, self.seen, lambda: dict(self.seen), log=lambda s: None, sleep=sleep, clock=clock))
+        self.assertIsNone(ta.watch_pause(60, self.seen, lambda: dict(self.seen), log=lambda s: None, sleep=sleep, clock=clock)["woke"])
         self.assertEqual(t[0], 60)
 
     def test_a_failing_peek_is_a_missed_look_not_a_stop(self):
@@ -435,13 +436,41 @@ class LiveWatcherTests(unittest.TestCase):
 
         def bad():
             raise ta.McpError("HTTP 502")
-        self.assertIsNone(ta.watch_pause(20, self.seen, bad, log=lambda s: None, sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0]))
+        self.assertEqual(ta.watch_pause(20, self.seen, bad, log=lambda s: None, sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0]), {"woke": None, "readings": []})
         self.assertEqual(t[0], 20)
 
     def test_live_view_reads_the_position_from_the_fills(self):
         v = ta.live_view({"window": {"ticker": "T"}, "snapshot": {"distanceBps": 3.0, "yesBidCents": 60},
                           "intents": [{"side": "yes", "purpose": "entry", "filled_hundredths": 200}, {"side": "yes", "purpose": "exit", "filled_hundredths": 200}]})
         self.assertEqual(v, {"ticker": "T", "distanceBps": 3.0, "yesBid": 60, "position": (0, 0)})
+
+    def test_the_watcher_tells_the_model_what_it_saw(self):
+        readings = [dict(self.seen, distanceBps=d, yesBid=b) for d, b in ((12.0, 80), (10.1, 76), (8.4, 71), (6.0, 66))]
+        lines = ta.watch_lines({"woke": "BTC moved -6.0 bps vs the strike", "readings": readings})
+        self.assertEqual(lines[0], "You were woken early because BTC moved -6.0 bps vs the strike.")
+        self.assertIn("distance +12.0 > +10.1 > +8.4 > +6.0 bps", lines[1])
+        self.assertIn("YES bid 80 > 76 > 71 > 66c", lines[1])
+        self.assertIn("position now YES 1 / NO 0 contracts", lines[1])
+        self.assertEqual(ta.watch_lines(None), [])
+        long = ta.watch_lines({"woke": None, "readings": [dict(self.seen, distanceBps=float(i)) for i in range(40)]})
+        self.assertEqual(long[0].count(" > ") // 2, 11)  # thinned to 12 points per series
+
+    def test_the_loop_hands_the_watch_to_the_next_ruling_and_it_reaches_the_prompt(self):
+        t = [0.0]
+        got = []
+
+        def run(watch=None):
+            got.append(watch)
+            return {"decision": {}, "fair": {"left_s": 800}, "seen": dict(self.seen)}
+        reads = [dict(self.seen, distanceBps=5.0)]
+        ta.standing_loop(run, 1, log=lambda s: None, sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0], peek=lambda: reads[0])
+        self.assertIsNone(got[0])
+        self.assertIn("bps", got[1]["woke"])
+        seen = []
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=FakeServer().post), lambda s, u: seen.append(u) or "{}",
+                    log=lambda s: None, watch=got[1])
+        self.assertIn("You were woken early because", seen[0])
+        self.assertIn("Live since your last ruling", seen[0])
 
     def test_faster_answers(self):
         self.assertLessEqual(ta.MAX_ANSWER_TOKENS, 200)
