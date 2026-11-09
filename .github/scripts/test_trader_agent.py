@@ -33,7 +33,7 @@ class FakeServer:
         return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": json.dumps(data)}], "isError": err}})
 
     def actions(self):
-        return [c for c in self.calls if not c[0].startswith("get_")]
+        return [c for c in self.calls if not c[0].startswith("get_") and c[0] != "share_thinking"]
 
 
 def think_returning(text):
@@ -85,7 +85,8 @@ class RunOnceTests(unittest.TestCase):
 
     def test_live_enter_sends_predict_then_the_action_with_its_reason(self):
         server, report = self.run_agent('{"p_yes": 0.72, "action": "enter_yes", "reason": "distance holding with time left"}')
-        self.assertEqual(server.actions(), [("predict", {"p_yes": 0.72, "reason": "distance holding with time left"}),
+        obs = {"fair": ta.fair_value(LIVE), "live": LIVE}
+        self.assertEqual(server.actions(), [("predict", {"p_yes": ta.anchored_p_yes(0.72, obs), "reason": "distance holding with time left"}),
                                             ("enter", {"side": "yes", "reason": "distance holding with time left"})])
         self.assertEqual(server.calls[-1][0], "get_status")  # check after acting
         self.assertEqual(report["checked"]["equityCents"], 1001)
@@ -99,16 +100,17 @@ class RunOnceTests(unittest.TestCase):
     def test_shadow_predicts_but_sends_no_action(self):
         server, report = self.run_agent('{"p_yes": 0.72, "action": "enter_yes", "reason": "x"}', mode="shadow")
         self.assertEqual([c[0] for c in server.actions()], ["predict"])
-        self.assertEqual(report["acted"][-1]["result"], "shadow mode: not sent")
+        self.assertEqual([a for a in report["acted"] if a["tool"] == "enter"][0]["result"], "shadow mode: not sent")
 
     def test_invalid_answer_predicts_the_market_and_acts_on_nothing(self):
         server, report = self.run_agent("I think yes")
-        self.assertEqual(server.actions(), [("predict", {"p_yes": 0.59, "reason": "model answer was not valid JSON; no action taken"})])
+        obs = {"fair": ta.fair_value(LIVE), "live": LIVE}
+        self.assertEqual(server.actions(), [("predict", {"p_yes": ta.anchored_p_yes(0.59, obs), "reason": "model answer was not valid JSON; no action taken"})])
         self.assertEqual(report["decision"]["action"], "none")
 
     def test_a_refused_action_is_reported_not_hidden(self):
         _, report = self.run_agent('{"p_yes": 0.7, "action": "enter_yes", "reason": "x"}', tool_error="enter")
-        self.assertFalse(report["acted"][-1]["ok"])
+        self.assertFalse([a for a in report["acted"] if a["tool"] == "enter"][0]["ok"])
 
     def test_the_token_goes_only_in_the_authorization_header_and_never_in_the_log(self):
         server, report = self.run_agent('{"p_yes": 0.7, "action": "none", "reason": "wait"}')
@@ -295,19 +297,29 @@ class StandingAgentTests(unittest.TestCase):
         c = self.Clock()
         calls = []
 
-        def run():
+        def run(watch=None):
             calls.append(c.t)
             return {"decision": {}, "fair": {"left_s": 800}}
         ruled = ta.standing_loop(run, 60, log=lambda s: None, sleep=c.sleep, clock=c)
         self.assertEqual(ruled, len(calls))
-        self.assertEqual(calls[1] - calls[0], 800 + ta.NEXT_WINDOW_GRACE_S)  # wakes 30 s into the next window
+        self.assertEqual(calls[1] - calls[0], ta.CHECK_INTERVAL_S)  # constant presence: looks again 30 s later
         self.assertLessEqual(c.t, 60 * 60)
+
+    def test_with_too_little_time_for_another_look_it_sleeps_into_the_next_window(self):
+        c = self.Clock()
+        calls = []
+
+        def run(watch=None):
+            calls.append(c.t)
+            return {"decision": {}, "fair": {"left_s": 155}}
+        ta.standing_loop(run, 30, log=lambda s: None, sleep=c.sleep, clock=c)
+        self.assertEqual(calls[1] - calls[0], 155 + ta.NEXT_WINDOW_GRACE_S)
 
     def test_one_bad_window_does_not_end_the_agent(self):
         c = self.Clock()
         n = []
 
-        def run():
+        def run(watch=None):
             n.append(1)
             if len(n) == 1:
                 raise ta.McpError("tools/call: HTTP 502")
@@ -319,9 +331,150 @@ class StandingAgentTests(unittest.TestCase):
 
     def test_skipped_windows_are_not_counted_and_it_stops_at_the_deadline(self):
         c = self.Clock()
-        ruled = ta.standing_loop(lambda: {"skipped": "x", "fair": {"left_s": -19}}, 10, log=lambda s: None, sleep=c.sleep, clock=c)
+        ruled = ta.standing_loop(lambda watch=None: {"skipped": "x", "fair": {"left_s": -19}}, 10, log=lambda s: None, sleep=c.sleep, clock=c)
         self.assertEqual(ruled, 0)
         self.assertLessEqual(c.t, 10 * 60)
+
+
+class ConstantPresenceTests(unittest.TestCase):
+    """Owner 2026-11-09: "we need the AI to be there constantly"."""
+
+    def test_the_recorded_prediction_is_anchored_to_the_fair_value(self):
+        # 2045: market 0.85, BTC well above the strike, the model said 0.56
+        obs = {"fair": {"p_yes": 0.92}, "live": {"snapshot": {"yesBidCents": 84, "yesAskCents": 86}}}
+        blended = 0.5 * 0.85 + 0.5 * 0.92
+        self.assertAlmostEqual(ta.anchored_p_yes(0.56, obs), round(0.5 * blended + 0.5 * 0.56, 3))
+        self.assertGreater(ta.anchored_p_yes(0.56, obs), 0.7)
+        self.assertEqual(ta.anchored_p_yes(0.4, {"fair": None, "live": {}}), 0.4)  # nothing to anchor to
+
+    def run_twice(self):
+        server = FakeServer()
+        predicted, earlier = set(), {}
+        answer = think_returning('{"analysis": "a", "p_yes": 0.7, "action": "none", "reason": "watching the position"}')
+        for _ in range(2):
+            ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), answer, log=lambda s: None,
+                        predicted=predicted, earlier=earlier)
+        return server, predicted, earlier
+
+    def test_one_graded_prediction_per_window_however_many_check_ins(self):
+        server, predicted, earlier = self.run_twice()
+        self.assertEqual([c[0] for c in server.actions()], ["predict"])
+        self.assertEqual(predicted, {"KXBTC15M-T"})
+        self.assertEqual(len(earlier["KXBTC15M-T"]), 2)
+
+    def test_the_agent_remembers_its_check_ins_and_its_graded_calls(self):
+        _, _, earlier = self.run_twice()
+        obs = {"record": {"recent": [{"ticker": "KXBTC15M-26NOV082030-30", "pYes": 0.31, "marketPYes": 0.24, "result": "no"}]}}
+        lines = ta.memory_lines(obs, earlier["KXBTC15M-T"])
+        self.assertIn("2030-30: you 0.31 vs market 0.24 -> settled NO", lines[0])
+        self.assertIn("watching the position", lines[1])
+        seen = []
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=FakeServer().post), lambda s, u: seen.append(u) or "{}",
+                    log=lambda s: None, predicted=set(), earlier=earlier)
+        self.assertIn("Your earlier check-ins this window", seen[0])
+
+
+class ReasoningPanelTests(unittest.TestCase):
+    """Owner 2026-11-09: "I want that part to be the model reasoning" -- every check-in publishes its thinking."""
+
+    def test_every_check_in_shares_its_reasoning_after_acting(self):
+        server = FakeServer()
+        predicted, earlier = set(), {}
+        answer = think_returning('{"analysis": "BTC 20 bps above the strike, winning position", "p_yes": 0.9, "action": "none", "reason": "hold the winner"}')
+        for _ in range(2):
+            ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), answer, log=lambda s: None, predicted=predicted, earlier=earlier)
+        shared = [a for n, a in server.calls if n == "share_thinking"]
+        self.assertEqual(len(shared), 2)
+        self.assertEqual(shared[0]["analysis"], "BTC 20 bps above the strike, winning position")
+        self.assertEqual(shared[0]["action"], "none")
+
+    def test_the_reasoning_is_shared_after_the_order_not_before(self):
+        server = FakeServer()
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                    think_returning('{"analysis": "a", "p_yes": 0.72, "action": "enter_yes", "reason": "edge"}'), log=lambda s: None)
+        names = [n for n, _ in server.calls]
+        self.assertLess(names.index("enter"), names.index("share_thinking"))
+
+    def test_a_desk_without_the_tool_still_decides(self):
+        server = FakeServer(tool_error="share_thinking")
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                             think_returning('{"analysis": "a", "p_yes": 0.7, "action": "none", "reason": "r"}'), log=lambda s: None)
+        self.assertIn({"tool": "share_thinking", "ok": False}, report["acted"])
+        self.assertIsNotNone(report["checked"])
+
+
+class LiveWatcherTests(unittest.TestCase):
+    """Owner 2026-11-09: "the quicker the model can read the live trading, the better ... watching constantly"."""
+
+    seen = {"ticker": "T1", "distanceBps": 12.0, "yesBid": 80, "position": (100, 0)}
+
+    def test_material_changes_wake_the_model(self):
+        mc = ta.material_change
+        self.assertIsNone(mc(self.seen, dict(self.seen, distanceBps=14.0, yesBid=84)))           # noise: sleep on
+        self.assertIn("new window", mc(self.seen, dict(self.seen, ticker="T2")))
+        self.assertIn("fill", mc(self.seen, dict(self.seen, position=(0, 0))))
+        self.assertIn("-6.0 bps", mc(self.seen, dict(self.seen, distanceBps=6.0)))
+        self.assertIn("+10c", mc(self.seen, dict(self.seen, yesBid=90)))
+        near = dict(self.seen, distanceBps=4.0)
+        self.assertIn("within 3 bps", mc(near, dict(near, distanceBps=2.5)))                       # holding, into the danger zone
+
+    def test_the_watcher_wakes_early_and_otherwise_sleeps_the_full_pause(self):
+        t = [0.0]
+        clock = lambda: t[0]  # noqa: E731
+        sleep = lambda s: t.__setitem__(0, t[0] + s)  # noqa: E731
+        reads = [dict(self.seen), dict(self.seen, distanceBps=5.0)]
+        why = ta.watch_pause(60, self.seen, lambda: reads.pop(0) if len(reads) > 1 else reads[0], log=lambda s: None, sleep=sleep, clock=clock)
+        self.assertIn("bps", why["woke"])
+        self.assertEqual(len(why["readings"]), 2)
+        self.assertEqual(t[0], 2 * ta.WATCH_POLL_S)  # woke on the second look, 10 s in, not after 60
+        t[0] = 0.0
+        self.assertIsNone(ta.watch_pause(60, self.seen, lambda: dict(self.seen), log=lambda s: None, sleep=sleep, clock=clock)["woke"])
+        self.assertEqual(t[0], 60)
+
+    def test_a_failing_peek_is_a_missed_look_not_a_stop(self):
+        t = [0.0]
+
+        def bad():
+            raise ta.McpError("HTTP 502")
+        self.assertEqual(ta.watch_pause(20, self.seen, bad, log=lambda s: None, sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0]), {"woke": None, "readings": []})
+        self.assertEqual(t[0], 20)
+
+    def test_live_view_reads_the_position_from_the_fills(self):
+        v = ta.live_view({"window": {"ticker": "T"}, "snapshot": {"distanceBps": 3.0, "yesBidCents": 60},
+                          "intents": [{"side": "yes", "purpose": "entry", "filled_hundredths": 200}, {"side": "yes", "purpose": "exit", "filled_hundredths": 200}]})
+        self.assertEqual(v, {"ticker": "T", "distanceBps": 3.0, "yesBid": 60, "position": (0, 0)})
+
+    def test_the_watcher_tells_the_model_what_it_saw(self):
+        readings = [dict(self.seen, distanceBps=d, yesBid=b) for d, b in ((12.0, 80), (10.1, 76), (8.4, 71), (6.0, 66))]
+        lines = ta.watch_lines({"woke": "BTC moved -6.0 bps vs the strike", "readings": readings})
+        self.assertEqual(lines[0], "You were woken early because BTC moved -6.0 bps vs the strike.")
+        self.assertIn("distance +12.0 > +10.1 > +8.4 > +6.0 bps", lines[1])
+        self.assertIn("YES bid 80 > 76 > 71 > 66c", lines[1])
+        self.assertIn("position now YES 1 / NO 0 contracts", lines[1])
+        self.assertEqual(ta.watch_lines(None), [])
+        long = ta.watch_lines({"woke": None, "readings": [dict(self.seen, distanceBps=float(i)) for i in range(40)]})
+        self.assertEqual(long[0].count(" > ") // 2, 11)  # thinned to 12 points per series
+
+    def test_the_loop_hands_the_watch_to_the_next_ruling_and_it_reaches_the_prompt(self):
+        t = [0.0]
+        got = []
+
+        def run(watch=None):
+            got.append(watch)
+            return {"decision": {}, "fair": {"left_s": 800}, "seen": dict(self.seen)}
+        reads = [dict(self.seen, distanceBps=5.0)]
+        ta.standing_loop(run, 1, log=lambda s: None, sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0], peek=lambda: reads[0])
+        self.assertIsNone(got[0])
+        self.assertIn("bps", got[1]["woke"])
+        seen = []
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=FakeServer().post), lambda s, u: seen.append(u) or "{}",
+                    log=lambda s: None, watch=got[1])
+        self.assertIn("You were woken early because", seen[0])
+        self.assertIn("Live since your last ruling", seen[0])
+
+    def test_faster_answers(self):
+        self.assertLessEqual(ta.MAX_ANSWER_TOKENS, 200)
+        self.assertIn("1-2 short sentences", ta.SYSTEM)
 
 
 class WorkflowTests(unittest.TestCase):
