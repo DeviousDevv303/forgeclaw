@@ -93,7 +93,7 @@ class RunOnceTests(unittest.TestCase):
     def test_live_kill_and_hold_are_sent(self):
         server, _ = self.run_agent('{"p_yes": 0.5, "action": "kill", "reason": "feed is stale"}')
         self.assertIn(("set_kill_switch", {"killed": True, "reason": "feed is stale"}), server.actions())
-        server, _ = self.run_agent('{"p_yes": 0.5, "action": "hold", "reason": "three stop-outs"}')
+        server, _ = self.run_agent('{"p_yes": 0.5, "action": "pause_entries", "reason": "three stop-outs"}')
         self.assertIn(("set_hold", {"phase": "held", "reason": "three stop-outs"}), server.actions())
 
     def test_shadow_predicts_but_sends_no_action(self):
@@ -168,7 +168,7 @@ class OrientationTests(unittest.TestCase):
         self.assertIn("chop zone", chop["reason"])
         ok = ta.apply_discipline(dec, {"edges": {"yes": 9.0}, "live": {"snapshot": {"distanceBps": 12}}})
         self.assertEqual(ok["action"], "enter_yes")
-        hold = {"p_yes": 0.5, "action": "hold", "reason": "r", "valid": True}
+        hold = {"p_yes": 0.5, "action": "pause_entries", "reason": "r", "valid": True}
         self.assertIs(ta.apply_discipline(hold, {"edges": {}}), hold)  # only entries are disciplined
 
     def test_thin_edge_entry_is_not_sent_but_the_prediction_is(self):
@@ -192,6 +192,61 @@ class OrientationTests(unittest.TestCase):
         self.assertIn("Fair P(YES) = 0.789", text)
         self.assertIn("Edge after fees", text)
         self.assertIn("need +0.5c", text)
+
+
+class FirstRunLessonsTests(unittest.TestCase):
+    """Run 42534021710: started with 91 s left, thought 108 s (prediction refused: window closed), and answered "hold"
+    meaning "keep my position", which is the desk's entry pause."""
+
+    def test_hold_is_not_an_action_name_any_more(self):
+        self.assertNotIn("hold", ta.ACTIONS)
+        self.assertEqual(ta.ACTIONS["pause_entries"], ("set_hold", {"phase": "held"}))
+        d = ta.parse_decision('{"p_yes": 0.95, "action": "hold", "reason": "keep it"}', 0.9)
+        self.assertEqual(d["action"], "none")  # the old word is not guessed at
+        self.assertIn('"none" means change nothing', ta.SYSTEM)
+
+    def test_too_late_in_the_window_the_model_does_not_start(self):
+        server = FakeServer()
+        live = json.loads(json.dumps(LIVE)); live["window"]["closeTimeMs"] = live["now"] + 91_000
+        called = []
+        orig = LIVE
+        try:
+            globals()["LIVE"] = live
+            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), lambda s, u: called.append(1) or "{}", log=lambda s: None)
+        finally:
+            globals()["LIVE"] = orig
+        self.assertEqual(called, [])
+        self.assertIn("91s left", report["skipped"])
+        self.assertEqual(server.actions(), [])
+
+
+class FairValueHonestyTests(unittest.TestCase):
+    """1930 on 2026-11-08: a calm 3-move tape early in the window gave fair 0.96 against a market of 0.59, and the agent
+    tried to buy YES; BTC then swung -8.6 -> +21.5 bps in two minutes."""
+
+    def live_early(self, calm_bps_per_min=1.0):
+        # 4 minutes into the window, a near-flat tape, BTC 10 bps above the strike, 11 minutes left, market 0.59
+        start = 1_000_000
+        tape = [[t, 10 - calm_bps_per_min * (230 - t) / 60] for t in range(0, 235, 5)]
+        return {"now": start + 232_000, "window": {"startedAtMs": start, "closeTimeMs": start + 900_000, "samples": tape},
+                "snapshot": {"distanceBps": 10.0, "yesBidCents": 58, "yesAskCents": 60, "noBidCents": 40, "noAskCents": 42}}
+
+    def test_a_short_calm_tape_cannot_lower_sigma_below_the_default(self):
+        f = ta.fair_value(self.live_early())
+        self.assertTrue(f["sigma_measured"])
+        self.assertGreaterEqual(f["sigma_1m_bps"], ta.DEFAULT_SIGMA_1M_BPS)
+        self.assertLess(f["p_yes"], 0.80)  # was ~0.96 with the 1 bps/min tape read at face value
+
+    def test_a_short_jumpy_tape_still_raises_sigma(self):
+        f = ta.fair_value(self.live_early(calm_bps_per_min=12.0))
+        self.assertGreater(f["sigma_1m_bps"], ta.DEFAULT_SIGMA_1M_BPS)
+
+    def test_edges_are_priced_on_the_formula_blended_with_the_market(self):
+        snap = {"yesBidCents": 58, "yesAskCents": 60, "noBidCents": 40, "noAskCents": 42}
+        self.assertAlmostEqual(ta.blended_p_yes({"p_yes": 0.96}, snap), 0.5 * 0.59 + 0.5 * 0.96)
+        e = ta.edges({"p_yes": 0.96}, snap)
+        self.assertAlmostEqual(e["yes"], round(100 * 0.775 - 60 - ta.kalshi_fee_cents(60), 1))
+        self.assertEqual(ta.blended_p_yes({"p_yes": 0.7}, {"yesAskCents": 60}), 0.7)  # no mid: the formula alone
 
 
 class WorkflowTests(unittest.TestCase):
