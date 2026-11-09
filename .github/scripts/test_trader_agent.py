@@ -743,6 +743,47 @@ class DirectsTheDeskTests(unittest.TestCase):
         self.assertEqual([n for n, _ in server.calls if n == "direct_desk"], [])
 
 
+class MoneyPlanTests(unittest.TestCase):
+    """Owner 2026-11-09: "checks the live funds, what we officially have, and tries to get us up out the hole ... strategize"."""
+
+    ST = {"equityCents": 1185, "kalshiBalanceCents": 1185, "recoveryLineCents": 1000, "toRecoveryLineCents": 0,
+          "toGoalCents": 2365, "daySettledPnlCents": -412, "maxStopRiskPerContractCents": 40}
+
+    def test_the_money_in_plain_words(self):
+        line = ta.money_lines(self.ST)[0]
+        self.assertIn("equity $11.85, Kalshi cash $11.85", line)
+        self.assertIn("above the $10.00 recovery line", line)
+        self.assertIn("$23.65 from the goal", line)
+        self.assertIn("today's settled P&L -$4.12", line)
+        self.assertIn("29 stop-outs", line)
+        under = ta.money_lines(dict(self.ST, equityCents=486, toRecoveryLineCents=514))[0]
+        self.assertIn("$5.14 under the $10.00 recovery line", under)
+        self.assertEqual(ta.money_lines({}), [])
+
+    def test_the_plan_is_parsed_shown_and_the_rule_says_never_chase(self):
+        server = FakeServer()
+        status = dict(STATUS, **self.ST)
+        orig = STATUS
+        try:
+            globals()["STATUS"] = status
+            seen = []
+            ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                        lambda s, u: seen.append(u) or '{"p_yes": 0.5, "action": "none", "reason": "r", "plan": "Above the line: 2 contracts, 8+ bps only."}',
+                        log=lambda s: None)
+        finally:
+            globals()["STATUS"] = orig
+        self.assertIn("Money (official): equity $11.85", seen[0])
+        shared = [a for n, a in server.calls if n == "share_thinking"][0]
+        self.assertEqual(shared["plan"], "Above the line: 2 contracts, 8+ bps only.")
+        self.assertIn("Never chase losses", ta.SYSTEM)
+        self.assertIn('"plan"', ta.SYSTEM)
+
+    def test_the_review_has_no_example_left_to_parrot(self):
+        # 23:11 and 23:13 CST: the model repeated the old rule-12 example as fact for windows where it never happened
+        self.assertNotIn("stopped 48 s later", ta.SYSTEM)
+        self.assertIn("if the list says the desk has not traded, say exactly that", ta.SYSTEM)
+
+
 class WorkflowTests(unittest.TestCase):
     def test_workflow_defaults_live_and_keeps_the_token_in_secrets(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:

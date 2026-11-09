@@ -292,8 +292,9 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
    on our side, 0 = sell at the strike. Range -15..2; null = leave it to the desk's own stop (2 bps past the strike).
    Remember lesson 3: a line too close sells winners on noise, so tighten it only when momentum is turning against us.
 12. You rule the desk. Its Observer enters on its own every tick and its stops sell on their own; you see their trades
-   below. In "review", say in one sentence what they did right or wrong lately (e.g. "bought YES 4 bps from the strike and
-   was stopped 48 s later: too close"). In "directives", steer the Observer for THIS window: block_entry_side ("yes",
+   below. In "review", say in one sentence what THEIR TRADES LISTED BELOW show they did right or wrong -- name the side,
+   price and what happened from that list; if the list says the desk has not traded, say exactly that and nothing more.
+   In "directives", steer the Observer for THIS window: block_entry_side ("yes",
    "no", "both" or null), min_entry_bps (only enter when BTC is at least this far from the strike, 3..30, or null),
    max_contracts (1..100 or null). They can only make it more careful, and they end with the window. Use them when the
    tape is choppy or the desk keeps getting stopped; leave them null when it is trading well.
@@ -330,6 +331,13 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
    entry line — unless the note says so in plain words; a note that only steers judgment (when to secure, which
    side to prefer, how patient to be) never overrides a gate.
 
+18. THE MONEY PLAN (owner 2026-11-09: "check the live funds, what we officially have, and try to get us up out the hole
+   ... strategize"). The money lines below are the desk's official figures. Each ruling, write "plan": one sentence on
+   where the money stands and the risk you allow for it (how many contracts, which distance), and carry it out with your
+   directives (max_contracts, min_entry_bps). Climb out by compounding small, high-quality wins: size so one stop-out
+   costs a small part of the money, and grow size only as equity grows. Never chase losses -- a bigger or worse bet to win
+   it back fast is how the rest is lost; after a loss, size down or wait for a cleaner setup.
+
 Think first, then decide. Answer with ONE JSON object and nothing else:
 {"analysis": "<1-2 short sentences: where BTC is vs the strike and trending, the edge after fees, the risk>",
  "p_yes": <your probability 0..1 that this window settles YES>,
@@ -337,6 +345,7 @@ Think first, then decide. Answer with ONE JSON object and nothing else:
  "reason": "<one sentence the owner will read>",
  "exit_line_bps": <number -15..2 or null; only matters while the desk holds a position>,
  "review": "<one sentence: what the Observer/Preserver did right or wrong lately>",
+ "plan": "<one sentence: where the money stands and the risk you allow for it>",
  "directives": {"block_entry_side": "yes" | "no" | "both" | null, "min_entry_bps": <3..30 or null>, "max_contracts": <1..100 or null>} or null}"""
 # Which playbook a ruling was made under (the corpus records it, so rulings from different playbooks are told apart).
 SYSTEM_SHA = hashlib.sha256(SYSTEM.encode()).hexdigest()[:12]
@@ -359,6 +368,7 @@ def build_user_prompt(obs):
          f"Edge after fees if you buy now: YES {edge.get('yes')}c, NO {edge.get('no')}c per contract (need +{MIN_EDGE_CENTS:g}c)." if fair else "Fair value: unavailable (no distance or clock)."),
         f"Desk: equity {st.get('equityCents')}c, kill switch {'ON' if st.get('killed') else 'off'}, hold {json.dumps(st.get('hold'))}, "
         f"open position {json.dumps(st.get('openMark'))}.",
+        *money_lines(st),
         f"Observer's last decision: {json.dumps(live.get('lastDecision'))}.",
         f"Recent trades: {json.dumps(obs.get('history'))[:700]}",
         f"Your scorecard: {json.dumps({k: rec.get(k) for k in ('graded', 'agentBrier', 'marketBrier')})}",
@@ -380,6 +390,27 @@ def owner_note_lines(st):
     if not text:
         return []
     return [f"OWNER'S STANDING NOTE (his word — follow it; it overrides your playbook defaults until he changes it): \"{text}\""]
+
+
+def money_lines(st):
+    """The desk's official money, in plain words, for the money plan (rule 18)."""
+    def usd(c):
+        return f"${c / 100:.2f}" if isinstance(c, (int, float)) else "?"
+    eq, cash = st.get("equityCents"), st.get("kalshiBalanceCents")
+    if not isinstance(eq, (int, float)):
+        return []
+    parts = [f"Money (official): equity {usd(eq)}, Kalshi cash {usd(cash)}"]
+    to_line, line = st.get("toRecoveryLineCents"), st.get("recoveryLineCents")
+    if isinstance(to_line, (int, float)) and isinstance(line, (int, float)):
+        parts.append(f"{usd(to_line)} under the {usd(line)} recovery line" if to_line > 0 else f"above the {usd(line)} recovery line")
+    if isinstance(st.get("toGoalCents"), (int, float)):
+        parts.append(f"{usd(st['toGoalCents'])} from the goal")
+    if isinstance(st.get("daySettledPnlCents"), (int, float)):
+        parts.append(f"today's settled P&L {'+' if st['daySettledPnlCents'] >= 0 else '-'}{usd(abs(st['daySettledPnlCents']))}")
+    risk = st.get("maxStopRiskPerContractCents")
+    if isinstance(risk, (int, float)) and risk > 0:
+        parts.append(f"a stopped contract costs up to {risk:.0f}c, so {int(eq // risk)} stop-outs at one contract each would take it all")
+    return ["; ".join(parts) + "."]
 
 
 def desk_trades_lines(live, max_rows=8):
@@ -422,8 +453,9 @@ def parse_decision(text, fallback_p):
     line = d.get("exit_line_bps")
     line = float(line) if isinstance(line, (int, float)) and not isinstance(line, bool) and -15 <= float(line) <= 2 else None
     review = str(d.get("review") or "").strip()[:400] or None
+    plan = str(d.get("plan") or "").strip()[:400] or None
     return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis, "exit_line_bps": line,
-            "review": review, "directives": parse_directives(d.get("directives"))}
+            "review": review, "plan": plan, "directives": parse_directives(d.get("directives"))}
 
 
 def parse_directives(raw):
@@ -627,7 +659,8 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     try:
         r = mcp.tool("share_thinking", {"analysis": decision.get("analysis") or decision["reason"], "action": decision["action"],
                                         "p_yes": decision["p_yes"], "reason": decision["reason"],
-                                        **({"review": decision["review"]} if decision.get("review") else {})})
+                                        **({"review": decision["review"]} if decision.get("review") else {}),
+                                        **({"plan": decision["plan"]} if decision.get("plan") else {})})
         report["acted"].append({"tool": "share_thinking", "ok": r["ok"]})
     except McpError:
         report["acted"].append({"tool": "share_thinking", "ok": False})
