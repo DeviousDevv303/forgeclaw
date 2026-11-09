@@ -16,6 +16,7 @@ own probability as its prediction and takes no action, and says so.
 
 The owner token is read from the environment and is never printed (every outbound text passes through redact()).
 """
+import hashlib
 import json
 import math
 import os
@@ -290,6 +291,8 @@ Think first, then decide. Answer with ONE JSON object and nothing else:
  "p_yes": <your probability 0..1 that this window settles YES>,
  "action": "none" | "enter_yes" | "enter_no" | "exit" | "pause_entries" | "resume_entries" | "kill" | "unkill",
  "reason": "<one sentence the owner will read>"}"""
+# Which playbook a ruling was made under (the corpus records it, so rulings from different playbooks are told apart).
+SYSTEM_SHA = hashlib.sha256(SYSTEM.encode()).hexdigest()[:12]
 
 
 def build_user_prompt(obs):
@@ -377,7 +380,7 @@ def apply_discipline(decision, obs):
     return {**decision, "action": "none", "blocked": decision["action"], "reason": f"{decision['reason']} [discipline: {decision['action']} blocked, {why}]"}
 
 
-def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None, watch=None):
+def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None, watch=None, model_name=None):
     """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict.
 
     A run that lands too late in a window waits for the next window to open and decides on that
@@ -430,6 +433,19 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": name, "args": args, "ok": r["ok"], "result": r["text"][:300]})
         else:
             report["acted"].append({"tool": spec[0], "args": spec[1], "ok": None, "result": "shadow mode: not sent"})
+    # The ruler's corpus (owner 2026-11-09: Nexus learns "from being ruler"): what it saw and what it decided, filed on the
+    # desk with the window so the export can join the outcome. After acting; a desk without the corpus never stops a ruling.
+    try:
+        r = mcp.tool("record_ruling", {
+            "model": model_name,
+            "inputs": {"system_sha": SYSTEM_SHA, "prompt": user, "fair": obs.get("fair"), "edges": obs.get("edges"),
+                       "seen": report.get("seen"), "woke": (watch or {}).get("woke")},
+            "output": {"raw": (answer or "")[:2000], "analysis": decision.get("analysis"), "reason": decision["reason"],
+                       "valid": decision.get("valid"), "blocked": decision.get("blocked"), "acted": report["acted"]},
+            "action": decision["action"], "p_model": decision.get("p_model"), "p_yes": decision["p_yes"]})
+        report["acted"].append({"tool": "record_ruling", "ok": r["ok"]})
+    except McpError:
+        report["acted"].append({"tool": "record_ruling", "ok": False})
     # After acting (never delaying an order): the owner's live page shows this reasoning where the chart legend was (share_thinking, every check-in). A desk
     # without the tool, or a failed call, never stops the decision.
     try:
@@ -604,7 +620,7 @@ def main():
     predicted, earlier = set(), {}
 
     def one_window(watch=None):
-        report = run_once(McpSession(url, token), think, mode=mode, log=log, predicted=predicted, earlier=earlier, watch=watch)
+        report = run_once(McpSession(url, token), think, mode=mode, log=log, predicted=predicted, earlier=earlier, watch=watch, model_name=name)
         write_summary(report, mode)
         return report
 

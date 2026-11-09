@@ -33,7 +33,7 @@ class FakeServer:
         return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": json.dumps(data)}], "isError": err}})
 
     def actions(self):
-        return [c for c in self.calls if not c[0].startswith("get_") and c[0] != "share_thinking"]
+        return [c for c in self.calls if not c[0].startswith("get_") and c[0] not in ("share_thinking", "record_ruling")]
 
 
 def think_returning(text):
@@ -475,6 +475,41 @@ class LiveWatcherTests(unittest.TestCase):
     def test_faster_answers(self):
         self.assertLessEqual(ta.MAX_ANSWER_TOKENS, 200)
         self.assertIn("1-2 short sentences", ta.SYSTEM)
+
+
+class RulerCorpusTests(unittest.TestCase):
+    """Owner 2026-11-09: Nexus learns "from being ruler" -- every ruling is recorded with what it saw and decided."""
+
+    def test_every_ruling_is_recorded_with_its_inputs_and_output(self):
+        server = FakeServer()
+        answer = '{"analysis": "BTC holding 15 bps above", "p_yes": 0.7, "action": "enter_yes", "reason": "edge after fees"}'
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think_returning(answer), log=lambda s: None,
+                    watch={"woke": "a fill", "readings": []}, model_name="Qwen3-8B-Q4_K_M.gguf")
+        rec = [a for n, a in server.calls if n == "record_ruling"]
+        self.assertEqual(len(rec), 1)
+        r = rec[0]
+        self.assertEqual(r["model"], "Qwen3-8B-Q4_K_M.gguf")
+        self.assertEqual(r["action"], "enter_yes")
+        self.assertEqual(r["p_model"], 0.7)
+        self.assertEqual(r["inputs"]["system_sha"], ta.SYSTEM_SHA)
+        self.assertIn("Fair P(YES)", r["inputs"]["prompt"])
+        self.assertEqual(r["inputs"]["woke"], "a fill")
+        self.assertEqual(r["output"]["raw"], answer)
+        self.assertIn("enter", [a["tool"] for a in r["output"]["acted"]])  # what it did is part of the record
+        names = [n for n, _ in server.calls]
+        self.assertLess(names.index("enter"), names.index("record_ruling"))  # recorded after the order
+
+    def test_the_token_never_enters_the_corpus(self):
+        server = FakeServer()
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think_returning('{"p_yes": 0.5, "action": "none", "reason": "r"}'), log=lambda s: None)
+        rec = [a for n, a in server.calls if n == "record_ruling"][0]
+        self.assertNotIn(TOKEN, json.dumps(rec))
+
+    def test_a_desk_without_the_corpus_still_decides(self):
+        server = FakeServer(tool_error="record_ruling")
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think_returning('{"p_yes": 0.5, "action": "none", "reason": "r"}'), log=lambda s: None)
+        self.assertIn({"tool": "record_ruling", "ok": False}, report["acted"])
+        self.assertIsNotNone(report["checked"])
 
 
 class WorkflowTests(unittest.TestCase):
