@@ -221,7 +221,7 @@ def fair_value(live):
     return {"p_yes": phi(d / (sigma_per_s * math.sqrt(left_s))), "sigma_1m_bps": round(s1m, 2), "sigma_measured": measured, "left_s": round(left_s - 20)}
 
 
-MARKET_WEIGHT = 0.5  # playbook 1: the market mid out-predicts the formula; the edge is priced on a 50/50 blend
+MARKET_WEIGHT = 0.75  # playbook 1: the market mid out-predicts the formula (341 windows). 0.5 let the formula drive trades: 2115 (2026-11-08) priced YES 0.67 vs a 0.80 market, read +4.4c NO edge, bought NO and was stopped out
 
 
 def blended_p_yes(fair, snap):
