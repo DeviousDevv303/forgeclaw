@@ -278,6 +278,52 @@ class FairValueHonestyTests(unittest.TestCase):
         self.assertEqual(ta.blended_p_yes({"p_yes": 0.7}, {"yesAskCents": 60}), 0.7)  # no mid: the formula alone
 
 
+class StandingAgentTests(unittest.TestCase):
+    """Owner order 2026-11-09: "The AI starts itself". One run rules window after window."""
+
+    class Clock:
+        def __init__(self):
+            self.t = 0.0
+
+        def __call__(self):
+            return self.t
+
+        def sleep(self, s):
+            self.t += s
+
+    def test_rules_once_per_window_and_sleeps_into_the_next(self):
+        c = self.Clock()
+        calls = []
+
+        def run():
+            calls.append(c.t)
+            return {"decision": {}, "fair": {"left_s": 800}}
+        ruled = ta.standing_loop(run, 60, log=lambda s: None, sleep=c.sleep, clock=c)
+        self.assertEqual(ruled, len(calls))
+        self.assertEqual(calls[1] - calls[0], 800 + ta.NEXT_WINDOW_GRACE_S)  # wakes 30 s into the next window
+        self.assertLessEqual(c.t, 60 * 60)
+
+    def test_one_bad_window_does_not_end_the_agent(self):
+        c = self.Clock()
+        n = []
+
+        def run():
+            n.append(1)
+            if len(n) == 1:
+                raise ta.McpError("tools/call: HTTP 502")
+            return {"decision": {}, "fair": {"left_s": 840}}
+        logs = []
+        ruled = ta.standing_loop(run, 30, log=logs.append, sleep=c.sleep, clock=c)
+        self.assertGreaterEqual(ruled, 1)
+        self.assertIn("window_error", logs[0])
+
+    def test_skipped_windows_are_not_counted_and_it_stops_at_the_deadline(self):
+        c = self.Clock()
+        ruled = ta.standing_loop(lambda: {"skipped": "x", "fair": {"left_s": -19}}, 10, log=lambda s: None, sleep=c.sleep, clock=c)
+        self.assertEqual(ruled, 0)
+        self.assertLessEqual(c.t, 10 * 60)
+
+
 class WorkflowTests(unittest.TestCase):
     def test_workflow_defaults_live_and_keeps_the_token_in_secrets(self):
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:
@@ -285,7 +331,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("AGENT_MODE: ${{ vars.AGENT_MODE || 'live' }}", wf)
         self.assertIn("NEXUS_OWNER_TOKEN: ${{ secrets.NEXUS_OWNER_TOKEN }}", wf)
         self.assertIn("persist-credentials: false", wf)
-        self.assertIn("permissions:\n  contents: read", wf)
+        self.assertIn("permissions:\n  contents: read\n  actions: write", wf)
+        # the standing chain: loop length, crash guard, owner off-switch, re-queue to main
+        self.assertIn("AGENT_LOOP_MINUTES: '320'", wf)
+        self.assertIn('if [ "$ran" -lt 1200 ]', wf)
+        self.assertIn("vars.AGENT_STANDING != 'off'", wf)
+        self.assertIn("""-d '{"ref":"main"}'""", wf)
+        self.assertIn("timeout-minutes: 350", wf)
 
 
 if __name__ == "__main__":

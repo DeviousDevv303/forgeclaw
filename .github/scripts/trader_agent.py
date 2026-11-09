@@ -381,7 +381,7 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep):
     answer = think(SYSTEM, user)
     decision = parse_decision(answer, fallback if fallback is not None else 0.5)
     decision = apply_discipline(decision, obs)
-    report = {"mode": mode, "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
+    report = {"mode": mode, "ticker": ((obs.get("live") or {}).get("window") or {}).get("ticker"), "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
     # Predict always (the scorecard grades it), whatever the action.
     if decision["p_yes"] is not None:
         r = mcp.tool("predict", {"p_yes": decision["p_yes"], "reason": decision["reason"]})
@@ -400,6 +400,45 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep):
         report["checked"] = {"killed": after.get("killed"), "equityCents": after.get("equityCents"), "openTickers": after.get("openTickers"), "hold": after.get("hold")}
     log(json.dumps(report))
     return report
+
+
+def write_summary(report, mode):
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    with open(summary, "a") as f:
+        if "skipped" in report:
+            f.write(f"### Trader agent ({mode})\n- skipped: {report['skipped']}\n")
+            return
+        d = report["decision"]
+        f.write(f"### Trader agent ({mode}) · {report.get('ticker')}\n- thinking: {d.get('analysis', '')}\n- fair {json.dumps(report.get('fair'))} · edges {json.dumps(report.get('edges'))}\n- P(YES) {d['p_yes']} · action **{d['action']}** · {d['reason']}\n- acted: {json.dumps(report['acted'])}\n- desk after: {json.dumps(report['checked'])}\n")
+
+
+# The standing agent (owner order 2026-11-09: "The AI starts itself"). GitHub's cron never fired this workflow, so one
+# run now loads the model once and rules window after window for AGENT_LOOP_MINUTES, then the workflow queues its own
+# successor. After ruling a window it sleeps until shortly after the next one opens.
+NEXT_WINDOW_GRACE_S = 30
+LOOP_ERROR_BACKOFF_S = 60
+
+
+def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time):
+    """Call run() once per window until `minutes` have passed. run() returns a run_once report. Returns the count of
+    windows ruled. An error in one window is logged and retried after a backoff; it never ends the loop."""
+    deadline = clock() + minutes * 60
+    ruled = 0
+    while clock() < deadline - NEXT_WINDOW_GRACE_S:
+        try:
+            report = run()
+        except Exception as e:  # noqa: BLE001  (one bad window must not end the standing agent)
+            log(json.dumps({"window_error": str(e)[:300]}))
+            sleep(min(LOOP_ERROR_BACKOFF_S, max(0, deadline - clock())))
+            continue
+        if "skipped" not in report:
+            ruled += 1
+        left = (report.get("fair") or {}).get("left_s")
+        pause = (left + NEXT_WINDOW_GRACE_S) if isinstance(left, (int, float)) and left > 0 else LOOP_ERROR_BACKOFF_S
+        sleep(min(pause, max(0, deadline - clock())))
+    return ruled
 
 
 def main():
@@ -421,19 +460,23 @@ def main():
         text, _, _, _ = qwen_gguf.generate(stream, 360, 300)
         return text
 
-    try:
-        report = run_once(McpSession(url, token), think, mode=mode, log=lambda s: print(redact(s, token)))
-    except McpError as e:
-        print(f"::error::{redact(str(e), token)}")
-        return 1
-    summary = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary:
-        with open(summary, "a") as f:
-            if "skipped" in report:
-                f.write(f"### Trader agent ({mode})\n- skipped: {report['skipped']}\n")
-                return 0
-            d = report["decision"]
-            f.write(f"### Trader agent ({mode})\n- thinking: {d.get('analysis', '')}\n- fair {json.dumps(report.get('fair'))} · edges {json.dumps(report.get('edges'))}\n- P(YES) {d['p_yes']} · action **{d['action']}** · {d['reason']}\n- acted: {json.dumps(report['acted'])}\n- desk after: {json.dumps(report['checked'])}\n")
+    log = lambda s: print(redact(s, token), flush=True)  # noqa: E731
+
+    def one_window():
+        report = run_once(McpSession(url, token), think, mode=mode, log=log)
+        write_summary(report, mode)
+        return report
+
+    minutes = int(os.environ.get("AGENT_LOOP_MINUTES", "0") or "0")
+    if minutes <= 0:
+        try:
+            one_window()
+        except McpError as e:
+            print(f"::error::{redact(str(e), token)}")
+            return 1
+        return 0
+    ruled = standing_loop(one_window, minutes, log=log)
+    print(f"standing agent: ruled {ruled} windows in {minutes} minutes", flush=True)
     return 0
 
 
