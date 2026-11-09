@@ -33,7 +33,7 @@ class FakeServer:
         return 200, {}, json.dumps({"jsonrpc": "2.0", "id": body["id"], "result": {"content": [{"type": "text", "text": json.dumps(data)}], "isError": err}})
 
     def actions(self):
-        return [c for c in self.calls if not c[0].startswith("get_")]
+        return [c for c in self.calls if not c[0].startswith("get_") and c[0] != "share_thinking"]
 
 
 def think_returning(text):
@@ -100,7 +100,7 @@ class RunOnceTests(unittest.TestCase):
     def test_shadow_predicts_but_sends_no_action(self):
         server, report = self.run_agent('{"p_yes": 0.72, "action": "enter_yes", "reason": "x"}', mode="shadow")
         self.assertEqual([c[0] for c in server.actions()], ["predict"])
-        self.assertEqual(report["acted"][-1]["result"], "shadow mode: not sent")
+        self.assertEqual([a for a in report["acted"] if a["tool"] == "enter"][0]["result"], "shadow mode: not sent")
 
     def test_invalid_answer_predicts_the_market_and_acts_on_nothing(self):
         server, report = self.run_agent("I think yes")
@@ -110,7 +110,7 @@ class RunOnceTests(unittest.TestCase):
 
     def test_a_refused_action_is_reported_not_hidden(self):
         _, report = self.run_agent('{"p_yes": 0.7, "action": "enter_yes", "reason": "x"}', tool_error="enter")
-        self.assertFalse(report["acted"][-1]["ok"])
+        self.assertFalse([a for a in report["acted"] if a["tool"] == "enter"][0]["ok"])
 
     def test_the_token_goes_only_in_the_authorization_header_and_never_in_the_log(self):
         server, report = self.run_agent('{"p_yes": 0.7, "action": "none", "reason": "wait"}')
@@ -372,6 +372,35 @@ class ConstantPresenceTests(unittest.TestCase):
         ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=FakeServer().post), lambda s, u: seen.append(u) or "{}",
                     log=lambda s: None, predicted=set(), earlier=earlier)
         self.assertIn("Your earlier check-ins this window", seen[0])
+
+
+class ReasoningPanelTests(unittest.TestCase):
+    """Owner 2026-11-09: "I want that part to be the model reasoning" -- every check-in publishes its thinking."""
+
+    def test_every_check_in_shares_its_reasoning_after_acting(self):
+        server = FakeServer()
+        predicted, earlier = set(), {}
+        answer = think_returning('{"analysis": "BTC 20 bps above the strike, winning position", "p_yes": 0.9, "action": "none", "reason": "hold the winner"}')
+        for _ in range(2):
+            ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), answer, log=lambda s: None, predicted=predicted, earlier=earlier)
+        shared = [a for n, a in server.calls if n == "share_thinking"]
+        self.assertEqual(len(shared), 2)
+        self.assertEqual(shared[0]["analysis"], "BTC 20 bps above the strike, winning position")
+        self.assertEqual(shared[0]["action"], "none")
+
+    def test_the_reasoning_is_shared_after_the_order_not_before(self):
+        server = FakeServer()
+        ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                    think_returning('{"analysis": "a", "p_yes": 0.72, "action": "enter_yes", "reason": "edge"}'), log=lambda s: None)
+        names = [n for n, _ in server.calls]
+        self.assertLess(names.index("enter"), names.index("share_thinking"))
+
+    def test_a_desk_without_the_tool_still_decides(self):
+        server = FakeServer(tool_error="share_thinking")
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                             think_returning('{"analysis": "a", "p_yes": 0.7, "action": "none", "reason": "r"}'), log=lambda s: None)
+        self.assertIn({"tool": "share_thinking", "ok": False}, report["acted"])
+        self.assertIsNotNone(report["checked"])
 
 
 class WorkflowTests(unittest.TestCase):

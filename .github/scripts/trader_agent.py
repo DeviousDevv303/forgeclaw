@@ -430,6 +430,14 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": name, "args": args, "ok": r["ok"], "result": r["text"][:300]})
         else:
             report["acted"].append({"tool": spec[0], "args": spec[1], "ok": None, "result": "shadow mode: not sent"})
+    # After acting (never delaying an order): the owner's live page shows this reasoning where the chart legend was (share_thinking, every check-in). A desk
+    # without the tool, or a failed call, never stops the decision.
+    try:
+        r = mcp.tool("share_thinking", {"analysis": decision.get("analysis") or decision["reason"], "action": decision["action"],
+                                        "p_yes": decision["p_yes"], "reason": decision["reason"]})
+        report["acted"].append({"tool": "share_thinking", "ok": r["ok"]})
+    except McpError:
+        report["acted"].append({"tool": "share_thinking", "ok": False})
     # Check: read the desk back after acting.
     after = mcp.tool("get_status")["data"]
     if isinstance(after, dict):
