@@ -311,9 +311,9 @@ class StandingAgentTests(unittest.TestCase):
 
         def run():
             calls.append(c.t)
-            return {"decision": {}, "fair": {"left_s": 160}}
+            return {"decision": {}, "fair": {"left_s": 155}}
         ta.standing_loop(run, 30, log=lambda s: None, sleep=c.sleep, clock=c)
-        self.assertEqual(calls[1] - calls[0], 160 + ta.NEXT_WINDOW_GRACE_S)
+        self.assertEqual(calls[1] - calls[0], 155 + ta.NEXT_WINDOW_GRACE_S)
 
     def test_one_bad_window_does_not_end_the_agent(self):
         c = self.Clock()
@@ -401,6 +401,51 @@ class ReasoningPanelTests(unittest.TestCase):
                              think_returning('{"analysis": "a", "p_yes": 0.7, "action": "none", "reason": "r"}'), log=lambda s: None)
         self.assertIn({"tool": "share_thinking", "ok": False}, report["acted"])
         self.assertIsNotNone(report["checked"])
+
+
+class LiveWatcherTests(unittest.TestCase):
+    """Owner 2026-11-09: "the quicker the model can read the live trading, the better ... watching constantly"."""
+
+    seen = {"ticker": "T1", "distanceBps": 12.0, "yesBid": 80, "position": (100, 0)}
+
+    def test_material_changes_wake_the_model(self):
+        mc = ta.material_change
+        self.assertIsNone(mc(self.seen, dict(self.seen, distanceBps=14.0, yesBid=84)))           # noise: sleep on
+        self.assertIn("new window", mc(self.seen, dict(self.seen, ticker="T2")))
+        self.assertIn("fill", mc(self.seen, dict(self.seen, position=(0, 0))))
+        self.assertIn("-6.0 bps", mc(self.seen, dict(self.seen, distanceBps=6.0)))
+        self.assertIn("+10c", mc(self.seen, dict(self.seen, yesBid=90)))
+        near = dict(self.seen, distanceBps=4.0)
+        self.assertIn("within 3 bps", mc(near, dict(near, distanceBps=2.5)))                       # holding, into the danger zone
+
+    def test_the_watcher_wakes_early_and_otherwise_sleeps_the_full_pause(self):
+        t = [0.0]
+        clock = lambda: t[0]  # noqa: E731
+        sleep = lambda s: t.__setitem__(0, t[0] + s)  # noqa: E731
+        reads = [dict(self.seen), dict(self.seen, distanceBps=5.0)]
+        why = ta.watch_pause(60, self.seen, lambda: reads.pop(0) if len(reads) > 1 else reads[0], log=lambda s: None, sleep=sleep, clock=clock)
+        self.assertIn("bps", why)
+        self.assertEqual(t[0], 2 * ta.WATCH_POLL_S)  # woke on the second look, 10 s in, not after 60
+        t[0] = 0.0
+        self.assertIsNone(ta.watch_pause(60, self.seen, lambda: dict(self.seen), log=lambda s: None, sleep=sleep, clock=clock))
+        self.assertEqual(t[0], 60)
+
+    def test_a_failing_peek_is_a_missed_look_not_a_stop(self):
+        t = [0.0]
+
+        def bad():
+            raise ta.McpError("HTTP 502")
+        self.assertIsNone(ta.watch_pause(20, self.seen, bad, log=lambda s: None, sleep=lambda s: t.__setitem__(0, t[0] + s), clock=lambda: t[0]))
+        self.assertEqual(t[0], 20)
+
+    def test_live_view_reads_the_position_from_the_fills(self):
+        v = ta.live_view({"window": {"ticker": "T"}, "snapshot": {"distanceBps": 3.0, "yesBidCents": 60},
+                          "intents": [{"side": "yes", "purpose": "entry", "filled_hundredths": 200}, {"side": "yes", "purpose": "exit", "filled_hundredths": 200}]})
+        self.assertEqual(v, {"ticker": "T", "distanceBps": 3.0, "yesBid": 60, "position": (0, 0)})
+
+    def test_faster_answers(self):
+        self.assertLessEqual(ta.MAX_ANSWER_TOKENS, 200)
+        self.assertIn("1-2 short sentences", ta.SYSTEM)
 
 
 class WorkflowTests(unittest.TestCase):

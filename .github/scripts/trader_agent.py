@@ -286,7 +286,7 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
    (it never closes a position); "resume_entries" lifts that pause. Do not use them to mean "keep my position".
 
 Think first, then decide. Answer with ONE JSON object and nothing else:
-{"analysis": "<2-3 short sentences: where BTC is vs the strike and trending, the fair value vs the asks after fees, the risk>",
+{"analysis": "<1-2 short sentences: where BTC is vs the strike and trending, the edge after fees, the risk>",
  "p_yes": <your probability 0..1 that this window settles YES>,
  "action": "none" | "enter_yes" | "enter_no" | "exit" | "pause_entries" | "resume_entries" | "kill" | "unkill",
  "reason": "<one sentence the owner will read>"}"""
@@ -411,7 +411,7 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     decision = apply_discipline(decision, obs)
     decision["p_model"] = decision["p_yes"]
     decision["p_yes"] = anchored_p_yes(decision["p_yes"], obs)
-    report = {"mode": mode, "ticker": ticker, "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
+    report = {"mode": mode, "ticker": ticker, "seen": live_view(obs.get("live")), "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
     # Predict always (the scorecard grades it), whatever the action.
     # One graded prediction per window: the first call. Later check-ins are closer to the close and would grade easier.
     if decision["p_yes"] is not None and (predicted is None or ticker not in predicted):
@@ -465,10 +465,73 @@ NEXT_WINDOW_GRACE_S = 30
 LOOP_ERROR_BACKOFF_S = 60
 # Owner 2026-11-09: "we need the AI to be there constantly". After each ruling the agent looks again after this pause
 # (plus its ~100 s of thinking), all window long, flat or holding; with too little time left it sleeps into the next window.
-CHECK_INTERVAL_S = 30
+CHECK_INTERVAL_S = 10
+# Owner 2026-11-09: "the quicker the model can read the live trading, the better ... watching constantly". The model needs
+# ~70-110 s per ruling on the CPU runner, so between rulings a cheap watcher (no model) reads the live window every
+# WATCH_POLL_S and wakes the model at once on a material change.
+WATCH_POLL_S = 5
+WAKE_DISTANCE_BPS = 5.0   # BTC moved this far vs the strike since the last ruling
+WAKE_BID_CENTS = 10.0     # the YES bid moved this much
+DANGER_BPS = 3.0          # holding, and BTC came within this of the strike
+MAX_ANSWER_TOKENS = 200   # 1-2 sentences of analysis + the JSON; fewer tokens = a faster ruling
 
 
-def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time):
+def live_view(live):
+    """The few numbers the watcher compares: window, distance, YES bid, and the net position from this window's fills."""
+    live = live if isinstance(live, dict) else {}
+    snap = live.get("snapshot") or {}
+    net = {"yes": 0, "no": 0}
+    for i in live.get("intents") or []:
+        n = i.get("filled_hundredths") or 0
+        if n and i.get("side") in net:
+            if i.get("purpose") in ("entry", "flip-open"):
+                net[i["side"]] += n
+            elif i.get("purpose") in ("exit", "flip-close"):
+                net[i["side"]] -= n
+    return {"ticker": (live.get("window") or {}).get("ticker"), "distanceBps": snap.get("distanceBps"),
+            "yesBid": snap.get("yesBidCents"), "position": (net["yes"], net["no"])}
+
+
+def material_change(seen, now):
+    """Why the watcher should wake the model now, or None."""
+    if not seen or not now:
+        return None
+    if now["ticker"] != seen["ticker"]:
+        return "a new window opened"
+    if now["position"] != seen["position"]:
+        return "the position changed (a fill)"
+    d0, d1 = seen.get("distanceBps"), now.get("distanceBps")
+    if isinstance(d0, (int, float)) and isinstance(d1, (int, float)):
+        if abs(d1 - d0) >= WAKE_DISTANCE_BPS:
+            return f"BTC moved {d1 - d0:+.1f} bps vs the strike"
+        holding = any(x > 0 for x in now["position"])
+        if holding and abs(d1) <= DANGER_BPS < abs(d0):
+            return f"holding, and BTC is within {DANGER_BPS:g} bps of the strike"
+    b0, b1 = seen.get("yesBid"), now.get("yesBid")
+    if isinstance(b0, (int, float)) and isinstance(b1, (int, float)) and abs(b1 - b0) >= WAKE_BID_CENTS:
+        return f"the YES bid moved {b1 - b0:+.0f}c"
+    return None
+
+
+def watch_pause(seconds, seen, peek, log=print, sleep=time.sleep, clock=time.time):
+    """Pause up to `seconds`, reading the live window every WATCH_POLL_S; return early (with the reason) on a material
+    change. Without a peek function, or once the peek fails, it is a plain sleep."""
+    end = clock() + max(0.0, seconds)
+    while clock() < end:
+        sleep(min(WATCH_POLL_S, max(0.0, end - clock())))
+        if peek is None or seen is None:
+            continue
+        try:
+            why = material_change(seen, peek())
+        except Exception:  # noqa: BLE001  (a failed peek is a missed look, not a stop)
+            continue
+        if why:
+            log(json.dumps({"woke": why}))
+            return why
+    return None
+
+
+def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, peek=None):
     """Call run() once per window until `minutes` have passed. run() returns a run_once report. Returns the count of
     windows ruled. An error in one window is logged and retried after a backoff; it never ends the loop."""
     deadline = clock() + minutes * 60
@@ -489,7 +552,7 @@ def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time):
             pause = CHECK_INTERVAL_S          # stay on this window
         else:
             pause = left + NEXT_WINDOW_GRACE_S  # too late for another look: wake 30 s into the next window
-        sleep(min(pause, max(0, deadline - clock())))
+        watch_pause(min(pause, max(0, deadline - clock())), report.get("seen"), peek, log=log, sleep=sleep, clock=clock)
     return ruled
 
 
@@ -508,8 +571,8 @@ def main():
     llm, name = qwen_gguf.load_model(cache, lambda repo: list_repo_files(repo), lambda repo, f, d: hf_hub_download(repo, f, local_dir=d), Llama)
 
     def think(system, user):
-        stream = llm(qwen_gguf.build_prompt(system, user), max_tokens=360, temperature=0.2, stop=qwen_gguf.STOP, stream=True)
-        text, _, _, _ = qwen_gguf.generate(stream, 360, 300)
+        stream = llm(qwen_gguf.build_prompt(system, user), max_tokens=MAX_ANSWER_TOKENS, temperature=0.2, stop=qwen_gguf.STOP, stream=True)
+        text, _, _, _ = qwen_gguf.generate(stream, MAX_ANSWER_TOKENS, 300)
         return text
 
     log = lambda s: print(redact(s, token), flush=True)  # noqa: E731
@@ -529,7 +592,12 @@ def main():
             print(f"::error::{redact(str(e), token)}")
             return 1
         return 0
-    ruled = standing_loop(one_window, minutes, log=log)
+    def peek():
+        m = McpSession(url, token)
+        m.initialize()
+        return live_view(m.tool("get_live_window")["data"])
+
+    ruled = standing_loop(one_window, minutes, log=log, peek=peek)
     print(f"standing agent: ruled {ruled} windows in {minutes} minutes", flush=True)
     return 0
 
