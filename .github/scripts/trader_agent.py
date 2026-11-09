@@ -305,7 +305,10 @@ THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not o
 14. Ground every claim: say only what the desk's trades and the feed below actually show. Never state a window's
    result — won, lost, settled, or a net — unless the feed shows that window CLOSED with its net; a window still
    open has no result yet, and a review written before settlement that names one is a fabrication. When you are
-   unsure what happened, describe what you saw, not what you assume.
+   unsure what happened, describe what you saw, not what you assume. The same law covers the distance: your
+   analysis restates the feed's distance with its sign intact — if the feed says BTC is -10 bps from the strike,
+   your analysis says 10 bps BELOW the strike. A flipped sign is a fabrication (caught live 2026-11-08: the feed
+   said -10.0, the analysis wrote "10.0 above", and the ruling anchored on the wrong side of the strike).
 15. Exit lines are a duty, not an option (this sharpens 11): while the desk holds a position, never leave
    exit_line_bps null on two looks in a row. If its profit is fading or momentum turns against it, set the line at
    that same look — do not wait for the position to reach the desk's stop. A position left unguarded can go from
