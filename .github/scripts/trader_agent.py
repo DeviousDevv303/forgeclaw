@@ -689,11 +689,15 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     # materially (BTC >= STALE_DISTANCE_BPS, across the strike, a fill, a new window), this decision was made on a picture
     # that is gone: it is not acted on, and the loop asks again at once with the fresh picture.
     spec = ACTIONS.get(decision["action"])
-    if spec is not None and decision["action"] in ("enter_yes", "enter_no", "exit"):
+    # One fresh read after thinking serves both checks: the order's, and the trades picture the review/directives judged.
+    fresh = None
+    if (spec is not None and decision["action"] in ("enter_yes", "enter_no", "exit")) or (decision.get("valid") and mode == "live"):
         try:
-            stale = stale_reason(report.get("seen"), live_view(mcp.tool("get_live_window")["data"]))
+            fresh = live_view(mcp.tool("get_live_window")["data"])
         except McpError:
-            stale = None
+            fresh = None
+    if spec is not None and decision["action"] in ("enter_yes", "enter_no", "exit"):
+        stale = stale_reason(report.get("seen"), fresh)
         if stale:
             decision["blocked"], decision["action"] = decision["action"], "none"
             decision["reason"] = f"{decision['reason']} [stale: {stale} while I was thinking; re-deciding now]"
@@ -709,7 +713,14 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     # Directives to the Observer for this window (nexus-trader direct_desk) are RENEWED EVERY VALID RULING: a ruling that
     # gives none clears the last one (Muse's audit: rulings #71-#73 said none while a block-both kept binding the desk).
     # A block must be earned by a real loss on that side this window (ground_directives).
-    if decision.get("valid") and mode == "live":
+    # STALE TRADES (2026-11-09 23:48 CST: a ruling said "the Observer did not trade in this window" while the desk had
+    # bought YES x15 at 23:45:54, during its thinking): if the window or the position changed while it thought, its review,
+    # directives and exit line judged a desk that is gone. None is sent (the last directive stands) and it re-decides now.
+    trades_stale = trades_changed(report.get("seen"), fresh)
+    if trades_stale and decision.get("valid") and mode == "live":
+        decision["directive_note"] = f"review, directives and exit line not sent: {trades_stale} while I was thinking; re-deciding now"
+        report["recheck_now"] = True
+    if decision.get("valid") and mode == "live" and not trades_stale:
         wanted = decision.get("directives") or {"block_entry_side": None, "min_entry_bps": None, "max_contracts": None}
         sent, dropped = ground_directives(wanted, obs.get("live"))
         decision["directives_sent"] = sent
@@ -723,7 +734,7 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": "direct_desk", "ok": False})
     # The AI's exit line, enforced by the desk on every tick (nexus-trader set_exit_line), while it holds a position.
     holding = any(x > 0 for x in ((report.get("seen") or {}).get("position") or (0, 0)))
-    if holding and decision.get("valid") and mode == "live" and decision["action"] != "exit":
+    if holding and decision.get("valid") and mode == "live" and decision["action"] != "exit" and not trades_stale:
         try:
             r = mcp.tool("set_exit_line", {"at_bps": decision.get("exit_line_bps"), "reason": decision["reason"]})
             report["acted"].append({"tool": "set_exit_line", "args": {"at_bps": decision.get("exit_line_bps")}, "ok": r["ok"]})
@@ -861,6 +872,17 @@ def material_change(seen, now):
 
 
 STALE_DISTANCE_BPS = 3.0
+
+
+def trades_changed(seen, now):
+    """Whether the desk the model judged (window, position) is gone, or None. BTC's distance alone does not void a review."""
+    if not seen or not now:
+        return None
+    if now.get("ticker") != seen.get("ticker"):
+        return "a new window opened"
+    if now.get("position") != seen.get("position"):
+        return "the position changed"
+    return None
 
 
 def stale_reason(seen, now):
