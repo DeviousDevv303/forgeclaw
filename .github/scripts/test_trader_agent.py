@@ -212,7 +212,8 @@ class FirstRunLessonsTests(unittest.TestCase):
         orig = LIVE
         try:
             globals()["LIVE"] = live
-            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), lambda s, u: called.append(1) or "{}", log=lambda s: None)
+            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), lambda s, u: called.append(1) or "{}",
+                                 log=lambda s: None, sleep=lambda s: None)  # the feed never rolls over here: the bounded wait runs out
         finally:
             globals()["LIVE"] = orig
         self.assertEqual(called, [])
@@ -247,6 +248,59 @@ class FairValueHonestyTests(unittest.TestCase):
         e = ta.edges({"p_yes": 0.96}, snap)
         self.assertAlmostEqual(e["yes"], round(100 * 0.775 - 60 - ta.kalshi_fee_cents(60), 1))
         self.assertEqual(ta.blended_p_yes({"p_yes": 0.7}, {"yesAskCents": 60}), 0.7)  # no mid: the formula alone
+
+
+class RolloverTests(unittest.TestCase):
+    """Run 42541804428: dispatched a minute before the close, it read the closed window (-19 s) and gave up."""
+
+    def test_a_late_run_waits_for_the_next_window_and_decides_on_it(self):
+        server = FakeServer()
+        old = json.loads(json.dumps(LIVE)); old["window"]["closeTimeMs"] = old["now"] - 19_000; old["window"]["ticker"] = "KXBTC15M-OLD"
+        new = json.loads(json.dumps(LIVE)); new["window"]["ticker"] = "KXBTC15M-NEW"
+        feeds = [old, old, new]
+        slept = []
+        orig_post = server.post
+
+        def post(body, headers):
+            if body.get("method") == "tools/call" and body["params"]["name"] == "get_live_window":
+                feed = feeds.pop(0) if len(feeds) > 1 else feeds[0]
+                globals()["LIVE"] = feed
+            return orig_post(body, headers)
+        orig = LIVE
+        try:
+            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=post),
+                                 think_returning('{"analysis": "a", "p_yes": 0.8, "action": "none", "reason": "wait"}'), log=lambda s: None, sleep=slept.append)
+        finally:
+            globals()["LIVE"] = orig
+        self.assertNotIn("skipped", report)
+        self.assertEqual(slept, [ta.ROLLOVER_POLL_S, ta.ROLLOVER_POLL_S])
+        self.assertEqual([c[0] for c in server.actions()], ["predict"])
+
+    def test_the_wait_is_bounded(self):
+        server = FakeServer()
+        stuck = json.loads(json.dumps(LIVE)); stuck["window"]["closeTimeMs"] = stuck["now"] - 5_000
+        slept = []
+        orig = LIVE
+        try:
+            globals()["LIVE"] = stuck
+            report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), lambda s, u: "{}", log=lambda s: None, sleep=slept.append)
+        finally:
+            globals()["LIVE"] = orig
+        self.assertIn("skipped", report)
+        self.assertLessEqual(sum(slept), ta.ROLLOVER_WAIT_MAX_S)
+        self.assertEqual(server.actions(), [])
+
+    def test_with_a_little_time_left_it_sleeps_past_the_close(self):
+        server = FakeServer()
+        late = json.loads(json.dumps(LIVE)); late["window"]["closeTimeMs"] = late["now"] + 60_000
+        slept = []
+        orig = LIVE
+        try:
+            globals()["LIVE"] = late
+            ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), lambda s, u: "{}", log=lambda s: None, sleep=slept.append)
+        finally:
+            globals()["LIVE"] = orig
+        self.assertEqual(slept[0], 60 + ta.ROLLOVER_POLL_S)
 
 
 class WorkflowTests(unittest.TestCase):

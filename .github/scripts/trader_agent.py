@@ -348,10 +348,31 @@ def apply_discipline(decision, obs):
     return {**decision, "action": "none", "blocked": decision["action"], "reason": f"{decision['reason']} [discipline: {decision['action']} blocked, {why}]"}
 
 
-def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print):
+# A run that lands at the end of a window waits for the next one instead of giving up (run 42541804428, 18:44 CST: started
+# a minute before the close, read the closed window at -19 s and journaled nothing). Bounded: at most this long in total.
+ROLLOVER_WAIT_MAX_S = 240
+ROLLOVER_POLL_S = 15
+
+
+def _left_s(obs):
+    fair = obs.get("fair")
+    return fair.get("left_s") if fair else None
+
+
+def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep):
     """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict."""
     mcp.initialize()
     obs = observe(mcp)
+    first_ticker = ((obs.get("live") or {}).get("window") or {}).get("ticker")
+    waited = 0
+    while _left_s(obs) is not None and _left_s(obs) < MIN_SECONDS_TO_DECIDE and waited < ROLLOVER_WAIT_MAX_S:
+        # Too late for this window: sleep past its close, then read again until the next window is on the feed.
+        pause = max(ROLLOVER_POLL_S, min(_left_s(obs) + ROLLOVER_POLL_S, ROLLOVER_WAIT_MAX_S - waited)) if _left_s(obs) > 0 else ROLLOVER_POLL_S
+        pause = min(pause, ROLLOVER_WAIT_MAX_S - waited)
+        log(json.dumps({"waiting_for_next_window_s": pause, "window": first_ticker, "left_s": _left_s(obs)}))
+        sleep(pause)
+        waited += pause
+        obs = observe(mcp)
     fallback = market_p_yes(obs.get("live"))
     fair = obs.get("fair")
     if fair and fair.get("left_s") is not None and fair["left_s"] < MIN_SECONDS_TO_DECIDE:
