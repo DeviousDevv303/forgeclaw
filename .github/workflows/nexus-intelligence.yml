@@ -1,0 +1,119 @@
+# Nexus Intelligence — the owner's own trained model (Run 25 checkpoint) as a standalone
+# provider, selectable in the ForgeClaw provider picker (provider id 'nexus-intelligence').
+#
+# Truthfulness: the workflow display name, the route and the provider id are all
+# "Nexus Intelligence", and the only model that ever runs here is the Run 25 checkpoint
+# committed under .github/nexus-runtime/ (base64 parts). The runner reassembles it and
+# verifies its sha256 against the hash recorded in run25/verdict.md before generating;
+# a mismatch fails the run. There is no fallback model and no Qwen involvement: Nexus
+# serves alone, or the run fails under its own name.
+#
+# Contract (mirrors qwen3-8b.yml): workflow_dispatch with an invocation_id carried in the
+# run-name; one constrained-decoding segment per dispatch (the app drives the tool loop by
+# re-dispatching with the transcript prefix in `context`); the result is published twice —
+# a plain-text mirror on the `nexus-results` branch (CORS-safe for the Pages browser) and
+# an uploaded artifact (`nexus-<invocation_id>`) as the durable fallback.
+
+name: Nexus Intelligence
+run-name: Nexus Intelligence ${{ inputs.invocation_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Prompt text for the Nexus checkpoint (framed by the app)
+        required: true
+        type: string
+      context:
+        description: Transcript prefix so far (prior call/result spans of this turn)
+        required: false
+        default: ''
+        type: string
+      mode:
+        description: "Harness mode token: 'create' (default) or 'copy'"
+        required: false
+        default: 'create'
+        type: string
+      invocation_id:
+        description: Correlation identifier
+        required: true
+        type: string
+      mirror:
+        description: "Publish the result to the browsable nexus-results branch ('false' disables)"
+        required: false
+        default: 'true'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  process:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # A full checkout on purpose: the mirror publish below uses a git worktree, and a
+      # sparse checkout makes `git add` refuse the result files (learned on the Qwen lane).
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install inference dependencies
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install sentencepiece
+
+      - name: Run Nexus Intelligence (one segment)
+        env:
+          TASK: ${{ inputs.task }}
+          CONTEXT: ${{ inputs.context }}
+          MODE: ${{ inputs.mode }}
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: python .github/scripts/nexus_intelligence.py
+
+      - name: Publish browser-readable result mirror
+        if: ${{ inputs.mirror != 'false' }}
+        continue-on-error: true
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: |
+          set -uxo pipefail
+          trap 'echo "::warning::mirror publish FAILED at line $LINENO; the artifact remains the fallback"' ERR
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -rf /tmp/nexus-results-worktree
+          if git fetch origin nexus-results; then
+            git worktree add /tmp/nexus-results-worktree origin/nexus-results
+            git -C /tmp/nexus-results-worktree checkout -B nexus-results
+          else
+            git worktree add --detach /tmp/nexus-results-worktree HEAD
+            git -C /tmp/nexus-results-worktree checkout --orphan nexus-results
+            git -C /tmp/nexus-results-worktree rm -rf . || true
+          fi
+          mkdir -p /tmp/nexus-results-worktree/nexus-results
+          cp result.txt "/tmp/nexus-results-worktree/nexus-results/${INVOCATION_ID}.txt"
+          cp result_meta.txt "/tmp/nexus-results-worktree/nexus-results/${INVOCATION_ID}.meta.txt"
+          git -C /tmp/nexus-results-worktree add "nexus-results/${INVOCATION_ID}.txt" "nexus-results/${INVOCATION_ID}.meta.txt"
+          git -C /tmp/nexus-results-worktree commit -m "nexus: publish ${INVOCATION_ID}"
+          # Concurrent runs push to the same branch; on a rejected push, rebase onto the new tip and retry.
+          for attempt in 1 2 3 4; do
+            if git -C /tmp/nexus-results-worktree push origin HEAD:nexus-results; then break; fi
+            if [ "$attempt" = 4 ]; then echo "::warning::mirror push failed after 4 attempts; the artifact remains the fallback"; exit 1; fi
+            git -C /tmp/nexus-results-worktree fetch origin nexus-results
+            git -C /tmp/nexus-results-worktree rebase origin/nexus-results
+            sleep $((attempt * 2))
+          done
+
+      - name: Upload result artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-${{ inputs.invocation_id }}
+          path: |
+            result.txt
+            result_meta.txt
+          if-no-files-found: error
+          retention-days: 7
