@@ -627,11 +627,14 @@ class NexusShadowTests(unittest.TestCase):
         ta.chat_completions_shadow("https://x/v1/chat/completions", None, post=post)("S", "U")
         self.assertIn("messages", sent[1])
 
-    def test_the_workflow_takes_the_shadow_from_a_variable_and_a_secret(self):
+    def test_the_shadow_seat_is_retired_and_the_checkpoint_is_checked_out(self):
+        # Owner order 2026-11-10: Nexus REPLACES Qwen as the ruler; there is no shadow seat left to feed.
         with open(os.path.join(os.path.dirname(__file__), "..", "workflows", "trader-agent.yml")) as f:
             wf = f.read()
-        self.assertIn("NEXUS_SHADOW_URL: ${{ vars.NEXUS_SHADOW_URL }}", wf)
-        self.assertIn("NEXUS_SHADOW_TOKEN: ${{ secrets.NEXUS_SHADOW_TOKEN }}", wf)
+        self.assertNotIn("NEXUS_SHADOW_URL", wf)
+        self.assertNotIn("NEXUS_SHADOW_TOKEN", wf)
+        self.assertIn(".github/nexus-runtime", wf)   # the Run 25 checkpoint parts ride the checkout
+        self.assertIn("torch", wf)                   # the runtime that serves the checkpoint
 
 
 class AheadOfTheMarketTests(unittest.TestCase):
@@ -894,13 +897,14 @@ class PromptReadTests(unittest.TestCase):
         self.assertTrue(by_time)
         self.assertLessEqual(tokens, 16)
 
-    def test_the_playbook_is_prefilled_at_startup(self):
+    def test_the_startup_loads_the_nexus_checkpoint_not_qwen(self):
         with open(os.path.join(os.path.dirname(__file__), "trader_agent.py")) as f:
             src = f.read()
-        self.assertIn("qwen_gguf.build_prompt(SYSTEM, \"\"), max_tokens=1", src)
+        self.assertNotIn("qwen_gguf", src)  # the swap is total: no Qwen path remains in the agent
         main_src = src[src.index("def main():"):]
-        # the prefill logs, so the logger must exist before it (a NameError here would crash the agent on boot)
-        self.assertLess(main_src.index("log = lambda s:"), main_src.index("PRE-READ THE PLAYBOOK"))
+        self.assertIn("import nexus_model", main_src)
+        self.assertIn("nexus_model.load_nexus()", main_src)  # raises unless the checkpoint hash is Run 25's
+        self.assertIn("NexusThink", main_src)
 
 
 class BootSmokeTests(unittest.TestCase):
@@ -909,23 +913,24 @@ class BootSmokeTests(unittest.TestCase):
 
     def test_main_boots_rules_once_and_exits_clean(self):
         import types
-        calls = []
 
-        class FakeLlama:
-            def __init__(self, **kw):
-                self.kw = kw
+        class FakeNexus:
+            name = "nexus-run25"
+            checkpoint_sha256 = "c41852fb" + "0" * 56
+            params = 30_000_000
+            ctx_limit = 640
 
-            def __call__(self, prompt, max_tokens=1, temperature=0.0, stop=None, stream=True):
-                calls.append(max_tokens)
-                answer = '{"analysis": "a", "p_yes": 0.5, "action": "none", "reason": "boot smoke"}' if max_tokens > 1 else "{"
-                return iter([{"choices": [{"text": answer}]}])
-        fake_hf = types.SimpleNamespace(list_repo_files=lambda repo: ["Qwen3-8B-Q4_K_M.gguf"], hf_hub_download=lambda repo, f, local_dir=None: "/tmp/fake.gguf")
-        fake_llama = types.SimpleNamespace(Llama=FakeLlama)
+            def count(self, t):
+                return max(1, len(t) // 3)
+
+            def generate(self, task):
+                return "<|answer|>0.55 no clear edge in this window<|/answer|>"
+        fake_nm = types.SimpleNamespace(load_nexus=lambda: FakeNexus())
         server = FakeServer()
-        saved_modules = {k: sys.modules.get(k) for k in ("huggingface_hub", "llama_cpp")}
         saved_session, saved_env = ta.McpSession, dict(os.environ)
+        saved_nm = sys.modules.get("nexus_model")
         try:
-            sys.modules["huggingface_hub"], sys.modules["llama_cpp"] = fake_hf, fake_llama
+            sys.modules["nexus_model"] = fake_nm
             ta.McpSession = lambda url, token: saved_session(url, token, post=server.post)
             os.environ.update({"NEXUS_MCP_URL": "https://bank.test/mcp", "NEXUS_OWNER_TOKEN": TOKEN, "AGENT_LOOP_MINUTES": "0"})
             os.environ.pop("NEXUS_SHADOW_URL", None)
@@ -935,14 +940,15 @@ class BootSmokeTests(unittest.TestCase):
             ta.McpSession = saved_session
             os.environ.clear()
             os.environ.update(saved_env)
-            for k, v in saved_modules.items():
-                if v is None:
-                    sys.modules.pop(k, None)
-                else:
-                    sys.modules[k] = v
+            if saved_nm is None:
+                sys.modules.pop("nexus_model", None)
+            else:
+                sys.modules["nexus_model"] = saved_nm
         self.assertEqual(rc, 0)
-        self.assertEqual(calls[0], 1)  # the playbook prefill came first
         self.assertIn("predict", [c[0] for c in server.actions()])
+        rec = [a for n, a in server.calls if n == "record_ruling"][0]
+        self.assertEqual(rec["model"], "nexus-run25")  # rulings are attributable to Nexus
+        self.assertEqual(len(rec["output"]["phases"]), 5)  # the 5-phase trace rides every ruling
 
 
 class StaleTradesTests(unittest.TestCase):
@@ -1095,3 +1101,149 @@ class WorkflowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FakeNexusModel:
+    """The nexus_model surface NexusThink needs, with a canned transcript."""
+
+    name = "nexus-run25"
+
+    def __init__(self, transcript):
+        self.transcript = transcript
+
+    def count(self, t):
+        return max(1, len(t) // 3)
+
+    def generate(self, task):
+        return self.transcript
+
+
+def nexus_obs(live=None, status=None, fair=None, edges=None):
+    return {"status": status or STATUS, "live": live or LIVE,
+            "fair": fair or {"p_yes": 0.62, "left_s": 420, "sigma_1m_bps": 4.0, "sigma_measured": True},
+            "edges": edges or {"yes": 2.5, "no": -4.0}, "record": {}}
+
+
+PROPOSE_YES = ('<|call|>{"name": "funds_propose", "arguments": {"venue": "kalshi", "market": "KXBTC15M-T", '
+               '"side": "yes", "price": 0.6, "probability": 0.65, "rationale": "momentum favors YES", '
+               '"sources": []}}<|/call|>')
+
+
+class NexusWireTests(unittest.TestCase):
+    """Owner order 2026-11-10: the Run 25 checkpoint rules in Qwen's place, in its own funds grammar."""
+
+    def test_a_grounded_proposal_becomes_an_entry(self):
+        d = ta.parse_nexus_transcript(PROPOSE_YES, nexus_obs(), 0.59)
+        self.assertTrue(d["valid"])
+        self.assertEqual((d["action"], d["p_yes"]), ("enter_yes", 0.65))
+
+    def test_a_proposal_on_another_window_is_void(self):
+        t = PROPOSE_YES.replace("KXBTC15M-T", "KXBTC15M-OTHER")
+        d = ta.parse_nexus_transcript(t, nexus_obs(), 0.59)
+        self.assertFalse(d["valid"])
+        self.assertEqual(d["action"], "none")
+
+    def test_an_ungrounded_price_is_void(self):
+        t = PROPOSE_YES.replace('"price": 0.6', '"price": 0.3')
+        d = ta.parse_nexus_transcript(t, nexus_obs(), 0.59)
+        self.assertFalse(d["valid"])
+        self.assertEqual(d["action"], "none")
+
+    def test_a_direct_answer_states_its_probability_and_passes(self):
+        d = ta.parse_nexus_transcript("<|answer|>0.55 the edge is thin after fees<|/answer|>", nexus_obs(), 0.59)
+        self.assertTrue(d["valid"])
+        self.assertEqual((d["action"], d["p_yes"]), ("none", 0.55))
+
+    def test_an_answer_without_a_probability_fails_closed(self):
+        d = ta.parse_nexus_transcript("<|answer|>looks fine to me<|/answer|>", nexus_obs(), 0.59)
+        self.assertFalse(d["valid"])
+        self.assertEqual(d["action"], "none")
+
+    def test_garbage_fails_closed(self):
+        d = ta.parse_nexus_transcript("lorem ipsum no grammar here", nexus_obs(), 0.59)
+        self.assertFalse(d["valid"])
+
+    def test_the_task_fits_the_window_and_names_the_channel(self):
+        task, trimmed = ta.build_nexus_task(nexus_obs(), count=lambda t: max(1, len(t) // 3))
+        self.assertFalse(trimmed)
+        self.assertIn("KXBTC15M-T", task)
+        self.assertIn("funds_propose", task)
+        self.assertLessEqual(max(1, len(task) // 3), 640 - ta.NEXUS_MAX_NEW - 10)
+
+    def test_the_phase_trace_names_all_five_phases_and_their_authors(self):
+        d = ta.parse_nexus_transcript(PROPOSE_YES, nexus_obs(), 0.59)
+        phases = ta.build_nexus_phases(nexus_obs(), d)
+        self.assertEqual([p["phase"] for p in phases],
+                         ["assumptions", "heuristics", "first_principles", "extension", "convergence"])
+        self.assertTrue(all(p["by"] in ("nexus", "harness") for p in phases))
+        self.assertEqual(phases[1]["by"], "nexus")  # the model's own read, in its own words
+
+    def test_run_once_enters_and_files_the_ruling_under_nexus(self):
+        server, logs = FakeServer(), []
+        think = ta.NexusThink(FakeNexusModel(PROPOSE_YES), log=logs.append)
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think,
+                             log=logs.append, model_name="nexus-run25")
+        self.assertEqual(report["decision"]["action"], "enter_yes")
+        self.assertIn("enter", [c[0] for c in server.actions()])
+        rec = [a for n, a in server.calls if n == "record_ruling"][0]
+        self.assertEqual(rec["model"], "nexus-run25")
+        self.assertIn("funds_propose", rec["output"]["raw"])  # the raw transcript, untranslated
+        self.assertEqual(len(rec["output"]["phases"]), 5)
+
+    def test_the_discipline_gate_still_blocks_a_thin_edge_proposal(self):
+        propose_no = PROPOSE_YES.replace('"side": "yes", "price": 0.6, "probability": 0.65',
+                                         '"side": "no", "price": 0.42, "probability": 0.62')
+        server, logs = FakeServer(), []
+        think = ta.NexusThink(FakeNexusModel(propose_no), log=logs.append)
+        report = ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post), think,
+                             log=logs.append, model_name="nexus-run25")
+        self.assertEqual(report["decision"]["action"], "none")  # the coded gate, not the model, has the last word
+        self.assertNotIn("enter", [c[0] for c in server.actions()])
+
+
+class RolloverTests(unittest.TestCase):
+    """Owner order 2026-11-10: when a mandate ends, the agent sets the next one itself —
+    stake = current equity, goal = stake + 200c, expiry = 4 days."""
+
+    def rollover(self, status):
+        import test_trader_agent as self_mod
+        server = FakeServer()
+        saved = self_mod.STATUS
+        self_mod.STATUS = status
+        try:
+            mcp = ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post)
+            mcp.initialize()
+            result = ta.maybe_rollover_mandate(mcp, log=lambda s: None)
+        finally:
+            self_mod.STATUS = saved
+        return server, result
+
+    def test_an_ended_mandate_rolls_over_on_the_owners_terms(self):
+        server, result = self.rollover({**STATUS, "mandate": {"id": "m-1", "state": "expired"}})
+        starts = [a for n, a in server.calls if n == "start_mandate"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["stake_usd"], 10.01)   # equity 1001c, in dollars
+        self.assertEqual(starts[0]["goal_usd"], 12.01)    # stake + 200c
+        self.assertEqual(starts[0]["expiry_minutes"], 4 * 24 * 60)
+        self.assertIsNotNone(result)
+
+    def test_no_mandate_at_all_rolls_over(self):
+        st = {k: v for k, v in STATUS.items() if k != "mandate"}
+        server, _ = self.rollover(st)
+        self.assertEqual(len([a for n, a in server.calls if n == "start_mandate"]), 1)
+
+    def test_a_live_mandate_is_left_alone(self):
+        server, result = self.rollover(STATUS)  # fixture mandate is active
+        self.assertIsNone(result)
+        self.assertEqual([a for n, a in server.calls if n == "start_mandate"], [])
+
+    def test_the_kill_switch_wins(self):
+        server, result = self.rollover({**STATUS, "killed": True, "mandate": None})
+        self.assertIsNone(result)
+        self.assertEqual([a for n, a in server.calls if n == "start_mandate"], [])
+
+    def test_unreadable_equity_never_sizes_a_stake(self):
+        st = {k: v for k, v in STATUS.items() if k != "equityCents"}
+        server, result = self.rollover({**st, "mandate": None})
+        self.assertIsNone(result)
+        self.assertEqual([a for n, a in server.calls if n == "start_mandate"], [])
