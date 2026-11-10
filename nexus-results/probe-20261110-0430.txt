@@ -1,0 +1,1 @@
+<|route:direct|><|ev:not_verified|><|answer|>Plainly: the cap is the largest share of the bankroll a single proposal may risk.<|/answer|><|end|>
