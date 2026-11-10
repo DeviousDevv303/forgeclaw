@@ -534,22 +534,50 @@ export class CorpusRepository {
   }
 
   /**
-   * Removes up to `count` of the oldest entries that are not knowledge (a candidate and the raw interaction it came from).
-   * Auto-added and signed knowledge is never removed. Returns how many it removed.
+   * Removes up to `count` of the oldest entries that are not knowledge. An unapproved candidate removes both its
+   * candidate and raw interaction; an approved candidate first keeps the candidate for provenance/UI purposes while its
+   * raw interaction is reclaimed, and only drops that redundant candidate metadata on a later pass if more room is needed.
+   * Auto-added and signed knowledge is never removed. Returns how many records were reclaimed.
    */
   private pruneUnapproved(count: number): number {
     const candidateIds = readIndex(CANDIDATE_INDEX_KEY)
     const keep: string[] = []
     const rawGone = new Set<string>()
+    const redundantApproved: string[] = []
     let removed = 0
     for (const id of candidateIds) {
       if (removed >= count) { keep.push(id); continue }
       let candidate: LearningCandidate | null = null
       try { candidate = JSON.parse(safeGetItem(`${CANDIDATE_PREFIX}${id}`) || 'null') as LearningCandidate | null } catch { /* a corrupt record is removable */ }
-      if (candidate?.admissionStatus === 'approved') { keep.push(id); continue }
+      if (candidate?.admissionStatus === 'approved') {
+        // The approved candidate is useful provenance, but the raw interaction duplicates the approved knowledge.
+        // Reclaim the raw record first; on a later retry, candidate metadata may also be dropped if necessary. Never
+        // evict the knowledge record itself.
+        if (candidate.sourceInteractionId && safeGetItem(`${RECORD_PREFIX}${candidate.sourceInteractionId}`) !== null) {
+          safeRemoveItem(`${RECORD_PREFIX}${candidate.sourceInteractionId}`)
+          rawGone.add(candidate.sourceInteractionId)
+          removed += 1
+          keep.push(id)
+        } else {
+          // Defer dropping approved provenance until this pass has considered every unapproved candidate. This keeps
+          // the old approved candidate visible whenever ordinary candidate churn can make room instead.
+          redundantApproved.push(id)
+          keep.push(id)
+        }
+        continue
+      }
       safeRemoveItem(`${CANDIDATE_PREFIX}${id}`)
       if (candidate?.sourceInteractionId) { safeRemoveItem(`${RECORD_PREFIX}${candidate.sourceInteractionId}`); rawGone.add(candidate.sourceInteractionId) }
       removed += 1
+    }
+    if (removed < count) {
+      for (const id of redundantApproved) {
+        if (removed >= count) break
+        safeRemoveItem(`${CANDIDATE_PREFIX}${id}`)
+        const position = keep.indexOf(id)
+        if (position >= 0) keep.splice(position, 1)
+        removed += 1
+      }
     }
     if (removed === 0) return 0
     // The shrunken indexes are smaller than what they replace, so these writes fit.
