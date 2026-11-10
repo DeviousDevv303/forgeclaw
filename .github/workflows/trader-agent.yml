@@ -1,5 +1,8 @@
-# The Nexus Trader agent: once per 15-minute window, Qwen3-8B reads the desk over MCP and decides (owner order 2026-11-08:
-# "They can do everything. Kill switch, hold, exit, entry, bet down, bet up. They do everything autonomously.").
+# The Nexus Trader agent: once per 15-minute window, Nexus Intelligence (the owner's Run 25 checkpoint) reads the
+# desk over MCP and decides (owner order 2026-11-08: "They can do everything. Kill switch, hold, exit, entry, bet
+# down, bet up. They do everything autonomously."; owner order 2026-11-10: Nexus replaces Qwen3-8B as the model —
+# the checkpoint is committed under .github/nexus-runtime/, reassembled and sha256-verified at load against
+# run25/verdict.md, and served by the checkpoint's own constrained-decoding path in-process).
 # It runs LIVE by default. The repository variable AGENT_MODE=shadow is an operator switch only (predict + log, no action).
 # Every action goes through the Bank's /mcp server, which runs it through the Bank's own routes and journals it with its reason,
 # so the owner watches the agent live on the desk. The step summary of each run records the decision too.
@@ -54,7 +57,9 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v4
         with:
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/nexus-runtime
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -64,22 +69,16 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Same key and path as qwen3-8b.yml and qwen-cache-keepwarm.yml: the 5 GB model is restored, not downloaded.
-      - name: Restore GGUF model cache
-        if: steps.gate.outputs.run == 'true'
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.cache/forgeclaw-gguf
-          key: deepseek-gguf-v2-qwen3-8b-${{ runner.os }}
-
       - name: Install inference dependencies
         if: steps.gate.outputs.run == 'true'
         # Retried (owner-authorized protected-path change, 2026-11-09): run 32 died in 94 s on a one-off HTTP 504 fetching
         # the wheel, the under-20-minute crash guard rightly did not re-queue it, and the desk ran without the AI for ~70 min.
+        # The Nexus checkpoint is committed in the repo (.github/nexus-runtime), so there is no model download and no
+        # GGUF cache any more: the wheels below are the whole install (same set nexus-intelligence.yml uses).
         run: |
           for attempt in 1 2 3 4 5; do
-            if pip install huggingface_hub \
-              && pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url "https://abetlen.github.io/llama-cpp-python/whl/cpu"; then
+            if pip install --index-url https://download.pytorch.org/whl/cpu torch \
+              && pip install sentencepiece; then
               exit 0
             fi
             echo "::warning::dependency install attempt $attempt failed; retrying in $((attempt * 15))s"
@@ -95,10 +94,8 @@ jobs:
           NEXUS_OWNER_TOKEN: ${{ secrets.NEXUS_OWNER_TOKEN }}
           AGENT_MODE: ${{ vars.AGENT_MODE || 'live' }}
           AGENT_LOOP_MINUTES: '320'
-          # Nexus in shadow: set the repository variable NEXUS_SHADOW_URL to the Nexus standalone API's chat endpoint
-          # (chat-completions-compatible /v1/chat/completions) and, if it needs one, the NEXUS_SHADOW_TOKEN secret. Unset = off.
-          NEXUS_SHADOW_URL: ${{ vars.NEXUS_SHADOW_URL }}
-          NEXUS_SHADOW_TOKEN: ${{ secrets.NEXUS_SHADOW_TOKEN }}
+          # The Nexus shadow seat retired with the 2026-11-10 swap: Nexus is the ruler now, not the
+          # ruler's shadow, so the shadow endpoint and its token are no longer read by this workflow.
         run: python -B .github/scripts/trader_agent.py
 
       - name: Queue the next standing run

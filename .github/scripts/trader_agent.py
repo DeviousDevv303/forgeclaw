@@ -10,9 +10,13 @@ How it acts: over MCP (Streamable HTTP JSON-RPC) against the Nexus Trader server
 every action through the Bank's own routes, so the desk's reflexes (cross-stop, floor guard, order gate) stay
 underneath. Every action carries a reason and is journaled on the Bank, so the owner watches the agent work live.
 
-How it thinks: Qwen3-8B (the repo's GGUF via qwen_gguf.py) reads the desk and answers one JSON decision. An answer
-that is not valid JSON, or names an action outside the list, is never guessed at: the agent records the market's
-own probability as its prediction and takes no action, and says so.
+How it thinks: Nexus Intelligence (the owner's Run 25 checkpoint, loaded by nexus_model.py and sha256-verified
+against run25/verdict.md before it answers anything) reads a compact picture of the desk in its own trained
+grammar and decides there: a funds_propose call is an entry, a direct answer is its call on the window (owner
+order 2026-11-10: Nexus replaces Qwen3-8B as this agent's model). The harness code around it — the fair-value
+math, the discipline gates, the grounding and stale checks — is unchanged, and an answer with no usable decision
+is never guessed at: the agent records the market's own probability as its prediction and takes no action, and
+says so. Every ruling is filed with the owner's 5-phase trace (build_nexus_phases).
 
 The owner token is read from the environment and is never printed (every outbound text passes through redact()).
 """
@@ -595,6 +599,271 @@ def anchored_p_yes(model_p, obs):
     return round(PREDICTION_ANCHOR * target + (1 - PREDICTION_ANCHOR) * model_p, 3)
 
 
+# ── Nexus Intelligence as the ruler (owner order 2026-11-10: "Let's wire nexus to trade instead of Qwen then") ──
+# Nexus (the Run 25 checkpoint, .github/scripts/nexus_model.py) replaces Qwen3-8B as the model behind every ruling.
+# It cannot be handed the Qwen contract: its window is 640 tokens total (the playbook above is ~2,500) and it was
+# never trained on the desk's ruling JSON. Its trained decision surface is the ForgeClaw funds grammar, so the
+# harness asks it a compact question in its own frame and translates its native answer into the decision dict the
+# rest of this file already validates, disciplines, grounds and acts on:
+#   - a funds_propose call  -> an entry: side, its own probability for that side, its rationale. The named price is
+#     checked against the live book (an ungrounded price voids the call, the same spirit as the sign check).
+#   - a direct answer       -> no entry; its stated P(YES) is the prediction. While the desk holds a position, an
+#     answer beginning EXIT is its exit call; anything else rides (the desk's coded stop/preserver stay underneath).
+# Channels Nexus's grammar does not carry — exit_line_bps, directives, kill/pause — come back null/absent: the
+# model never steers them, and the record says so. An answer with no usable decision fails closed exactly like a
+# malformed Qwen answer: the market's probability is recorded and nothing is acted on.
+# The 5-phase scaffold is the loop's standing frame; build_nexus_phases files it with every ruling, each phase
+# labelled by who actually produced it (nexus = the model's own words/numbers, harness = the code around it).
+
+NEXUS_TASK_VERSION = "nexus-trader-task-v1"
+NEXUS_FRAME_SHA = hashlib.sha256(NEXUS_TASK_VERSION.encode()).hexdigest()[:12]
+NEXUS_MAX_NEW = 160
+_PRICE_GROUND_CENTS = 3.0   # a proposed price further than this from the side's live ask is not grounded in the book
+_P_DEC = re.compile(r"(?<![\d.])0\.\d+(?![\d.])|(?<![\d.])1\.0+(?![\d.])")
+_P_PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+_CALL_SPAN = re.compile(r"<\|call\|>\s*(\{.*?\})\s*<\|/call\|>", re.S)
+_ANSWER_SPAN = re.compile(r"<\|answer\|>(.*?)<\|/answer\|>", re.S)
+
+
+def position_fact(live):
+    """The open position as data (side, contracts, average own-side price in cents), or None. Same intent walk as
+    open_position_fact, which renders the same facts as text for the Qwen-era prompt."""
+    live = live if isinstance(live, dict) else {}
+    view = live_view(live)
+    yes, no = view["position"]
+    side = "yes" if yes > 0 else "no" if no > 0 else None
+    if side is None:
+        return None
+    cost = qty = 0.0
+    for i in sorted((live.get("intents") or []), key=lambda x: x.get("created_at_ms") or 0):
+        f, y = i.get("filled_hundredths") or 0, i.get("avg_yes_price_micros")
+        if i.get("side") != side or not f or y is None:
+            continue
+        if i.get("purpose") in ("exit", "flip-close"):
+            cost = qty = 0.0
+        elif i.get("purpose") in ("entry", "flip-open"):
+            px = y / 1e4 if side == "yes" else 100 - y / 1e4
+            cost, qty = cost + px * f, qty + f
+    return {"side": side, "contracts": (yes if side == "yes" else no) / 100,
+            "avg_cents": round(cost / qty, 1) if qty else None}
+
+
+def _nexus_facts_lines(obs):
+    """The desk picture in Nexus-sized lines: (priority, text) — priority 0 lines are never trimmed."""
+    st = obs.get("status") or {}
+    live = obs.get("live") or {}
+    w = live.get("window") or {}
+    snap = live.get("snapshot") or {}
+    fair, edge = obs.get("fair"), obs.get("edges") or {}
+    d = snap.get("distanceBps")
+    side_word = "above" if isinstance(d, (int, float)) and d >= 0 else "below"
+    lines = [
+        (0, f"Window {w.get('ticker')}: {fair['left_s'] if fair else '?'}s left, strike ${w.get('strikeUsd')}. "
+            f"BTC is {round(d, 1) if isinstance(d, (int, float)) else '?'} bps {side_word} the strike. "
+            f"Change: {trend(live, 60)} bps in the last minute, {trend(live, 180)} bps in the last 3 minutes."),
+        (0, f"Book: YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c, NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c. "
+            f"Market P(YES) = {market_p_yes(live)}."),
+        (0, (f"Fair P(YES) = {fair['p_yes']:.3f} by formula (1-minute BTC move {fair['sigma_1m_bps']} bps, "
+             f"{'measured' if fair['sigma_measured'] else 'default'}). Edge after fees if the desk buys now: "
+             f"YES {edge.get('yes')}c, NO {edge.get('no')}c per contract." if fair else "Fair value: unavailable.")),
+    ]
+    goal = f" Mandate goal ${st['goalCents'] / 100:.2f}, {st['toGoalCents']}c to go." if isinstance(st.get('goalCents'), (int, float)) and isinstance(st.get('toGoalCents'), (int, float)) else ""
+    lines.append((0, f"Desk: equity {st.get('equityCents')}c, kill switch {'ON' if st.get('killed') else 'off'}.{goal}"))
+    pos = position_fact(live)
+    if pos:
+        bid = snap.get('yesBidCents') if pos['side'] == 'yes' else snap.get('noBidCents')
+        lines.append((0, f"The desk holds {pos['side'].upper()} x{pos['contracts']:g} bought at {pos['avg_cents']}c; "
+                         f"its bid is now {bid}c."))
+    else:
+        lines.append((0, "The desk holds no position in this window."))
+    rec = obs.get("record") or {}
+    if isinstance(rec, dict) and rec.get('graded'):
+        lines.append((2, f"Your scorecard: your Brier {rec.get('agentBrier')} vs the market's {rec.get('marketBrier')} "
+                         f"over {rec.get('graded')} graded calls."))
+    trades = desk_trades_lines(live)
+    if trades and "has not traded" not in trades[0]:
+        lines.append((3, trades[0][:300]))
+    return lines, pos
+
+
+def build_nexus_task(obs, count=None):
+    """The compact ruling question in Nexus's native frame size. Returns (task, trimmed): the owner's standing
+    note rides first (his word), trimmed at a sentence boundary when the window cannot hold it whole — the trim
+    is marked in the task itself, never silent. count(text)->tokens decides the budget (the model's own counter
+    in production; a conservative estimate in tests)."""
+    if count is None:
+        count = lambda t: max(1, len(t) // 3)  # noqa: E731  (sentencepiece on number-dense text: chars/3 is safely over)
+    budget = 640 - NEXUS_MAX_NEW - 10
+    lines, pos = _nexus_facts_lines(obs)
+    note_lines = owner_note_lines(obs.get("status") or {})
+    note = note_lines[0] if note_lines else None
+    if pos:
+        ask = ("The desk holds this position now. If it should be sold now, answer directly and begin with EXIT. "
+               "If it should ride, answer directly and begin with HOLD and give your P(YES) as a decimal. "
+               "Propose with funds_propose only if you would add to the position.")
+    else:
+        ask = ("The desk may enter this window once, through Kalshi, with the owner's funds. Propose the position "
+               "you would take with funds_propose, or answer directly if you would not trade; if you answer "
+               "directly, give your P(YES) as a decimal first.")
+    trimmed = False
+
+    def assemble(note_text, kept):
+        parts = ([note_text] if note_text else []) + [t for _, t in sorted(kept, key=lambda x: x[0])] + [ask]
+        return "\n".join(parts)
+
+    task = assemble(note, lines)
+    if count(task) > budget and note:
+        # Trim the note at sentence boundaries until it fits; the trim is marked in the task, never silent.
+        text = note
+        while count(assemble(text, lines)) > budget and ". " in text:
+            text = text.rsplit(". ", 1)[0] + "."
+            trimmed = True
+        if count(assemble(text, lines)) > budget:
+            text = text[:400]
+            trimmed = True
+        if trimmed:
+            text = text + " [the owner's note was shortened to fit your window]"
+        note = text
+        task = assemble(note, lines)
+    for prio in (3, 2):
+        if count(task) <= budget:
+            break
+        lines = [(p, t) for p, t in lines if p != prio]
+        trimmed = True
+        task = assemble(note, lines)
+    return task, trimmed
+
+
+def _nexus_answer_text(transcript):
+    m = _ANSWER_SPAN.search(transcript or "")
+    return m.group(1).strip() if m else ""
+
+
+def _nexus_stated_p_yes(text):
+    """The model's own P(YES) from its direct answer: a decimal probability, else a percent, else None."""
+    m = _P_DEC.search(text or "")
+    if m:
+        return float(m.group(0))
+    m = _P_PCT.search(text or "")
+    if m:
+        p = float(m.group(1)) / 100
+        return p if 0 <= p <= 1 else None
+    return None
+
+
+def parse_nexus_transcript(transcript, obs, fallback_p):
+    """Translate Nexus's native transcript into the decision dict parse_decision produces for Qwen (same keys,
+    same fail-closed shape). See the section header for the mapping and the grounding rule."""
+    live = obs.get("live") or {}
+    snap = live.get("snapshot") or {}
+    ticker = (live.get("window") or {}).get("ticker")
+    pos = position_fact(live)
+    invalid = lambda why: {"p_yes": fallback_p, "action": "none", "reason": why, "valid": False,  # noqa: E731
+                           "analysis": _nexus_answer_text(transcript)[:600], "exit_line_bps": None,
+                           "review": None, "plan": None, "directives": None}
+    m = _CALL_SPAN.search(transcript or "")
+    if m:
+        try:
+            call = json.loads(m.group(1))
+        except ValueError:
+            call = None
+        if isinstance(call, dict) and call.get("name") == "funds_propose":
+            a = call.get("arguments") or {}
+            side = a.get("side")
+            prob = a.get("probability")
+            price = a.get("price")
+            if a.get("market") != ticker:
+                return invalid(f"nexus proposed on {a.get('market')!r}, not this window; no action taken")
+            if side not in ("yes", "no") or not isinstance(prob, (int, float)) or not 0 <= float(prob) <= 1:
+                return invalid("nexus proposal carried no usable side/probability; no action taken")
+            ask = snap.get("yesAskCents") if side == "yes" else snap.get("noAskCents")
+            if isinstance(price, (int, float)) and isinstance(ask, (int, float)) and abs(float(price) * 100 - ask) > _PRICE_GROUND_CENTS:
+                return invalid(f"nexus named a {side} price of {float(price) * 100:.0f}c but the book asks {ask}c; no action taken")
+            p_yes = round(float(prob) if side == "yes" else 1 - float(prob), 3)
+            rationale = str(a.get("rationale") or "").strip()[:280] or f"nexus proposed {side.upper()} on this window"
+            return {"p_yes": p_yes, "action": f"enter_{side}", "reason": rationale, "valid": True,
+                    "analysis": rationale, "exit_line_bps": None, "review": None, "plan": None, "directives": None}
+        return invalid("nexus called a tool that is not a desk decision; no action taken")
+    text = _nexus_answer_text(transcript)
+    if not text:
+        return invalid("nexus answer carried no usable decision; no action taken")
+    if pos and text.upper().startswith("EXIT"):
+        p = _nexus_stated_p_yes(text)
+        return {"p_yes": p if p is not None else fallback_p, "action": "exit",
+                "reason": text[:280], "valid": True, "analysis": text[:600],
+                "exit_line_bps": None, "review": None, "plan": None, "directives": None}
+    p = _nexus_stated_p_yes(text)
+    if p is None:
+        return invalid("nexus answer stated no probability; no action taken")
+    return {"p_yes": p, "action": "none", "reason": text[:280], "valid": True, "analysis": text[:600],
+            "exit_line_bps": None, "review": None, "plan": None, "directives": None}
+
+
+def build_nexus_phases(obs, decision):
+    """The owner's 5-phase scaffold, filed with every Nexus ruling. Each phase names who produced it:
+    nexus (the model's own numbers/words) or harness (the deterministic code around it). Nothing the model
+    did not say is dressed as its thought."""
+    live = obs.get("live") or {}
+    snap = live.get("snapshot") or {}
+    fair = obs.get("fair") or {}
+    edge = obs.get("edges") or {}
+    d = snap.get("distanceBps")
+    phases = [
+        {"phase": "assumptions", "by": "harness",
+         "text": (f"Facts as read from the desk this look: BTC {d} bps from the strike, "
+                  f"book YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c, "
+                  f"{fair.get('left_s')}s left. The playbook gates stand as coded: +{MIN_EDGE_CENTS:g}c edge after fees, "
+                  "no entry inside 3 bps of the strike, 85c cap, two-loss window cap.")},
+        {"phase": "heuristics", "by": "nexus" if decision.get("valid") else "harness",
+         "text": (decision.get("analysis") or decision.get("reason") or "")[:400] or
+                 "The model's answer carried no usable read; the weakest link is the answer itself."},
+        {"phase": "first_principles", "by": "harness",
+         "text": (f"Fair P(YES) = {fair.get('p_yes')} from distance {d} bps with sigma {fair.get('sigma_1m_bps')} bps/min "
+                  f"over {fair.get('left_s')}s; market {market_p_yes(live)}; edges after fees YES {edge.get('yes')}c / NO {edge.get('no')}c. "
+                  "The model's own probability is graded against the settlement, the market's beside it.")},
+        {"phase": "extension", "by": "harness",
+         "text": (f"Code checks around the model: price grounding on any proposal; the discipline gate "
+                  f"({'blocked: ' + str(decision.get('blocked')) if decision.get('blocked') else 'passed'}); "
+                  "a fresh book read before any order (stale check); the desk's coded stop, preserver and caps run underneath regardless.")},
+        {"phase": "convergence", "by": "nexus" if decision.get("valid") else "harness",
+         "text": f"{decision.get('action')}: {decision.get('reason')}"[:400]},
+    ]
+    return phases
+
+
+class NexusThink:
+    """think(system, user) for run_once, served by the Run 25 checkpoint. run_once primes it with the
+    observation; the Qwen-era (system, user) text is not used — Nexus is asked its own compact question.
+    Sets last_decision / last_native / last_task for the ruling record (the corpus keeps the model's raw
+    transcript, never a translation dressed as its words)."""
+
+    is_nexus = True
+
+    def __init__(self, model, log=print):
+        self.model = model
+        self.log = log
+        self.obs = None
+        self.last_decision = None
+        self.last_native = None
+        self.last_task = None
+
+    def prime(self, obs):
+        self.obs = obs
+
+    def __call__(self, system, user):
+        obs = self.obs or {}
+        task, trimmed = build_nexus_task(obs, count=self.model.count)
+        self.last_task = task
+        t0 = time.monotonic()
+        native = self.model.generate(task)
+        fallback = market_p_yes(obs.get("live"))
+        self.last_decision = parse_nexus_transcript(native, obs, fallback if fallback is not None else 0.5)
+        self.last_native = native
+        self.log(json.dumps({"think": {"engine": "nexus-run25", "task_tokens": self.model.count(task),
+                                       "seconds": round(time.monotonic() - t0, 1), "trimmed": trimmed}}))
+        return native
+
+
 def memory_lines(obs, earlier):
     """What the agent remembers: its recent graded calls (scorecard) and its earlier check-ins in this window."""
     out = []
@@ -686,6 +955,46 @@ def blind_reason(obs):
     return None
 
 
+
+# ---------------------------------------------------------------------------
+# MANDATE ROLLOVER (owner order 2026-11-10): when the active mandate ends
+# (goal hit / expired / completed), the agent sets its successor itself instead
+# of leaving the desk idle. THE TERMS BELOW ARE THE OWNER'S WORDS — this block
+# is the single plug-in place for them:
+#   stake  = the desk's CURRENT EQUITY at rollover (status equityCents)
+#   goal   = stake + 200c
+#   expiry = 4 days from rollover
+# The desk refuses a second live mandate and the kill switch always wins; this
+# mechanism only ever runs when no mandate is live.
+MANDATE_ROLLOVER_GOAL_BUMP_CENTS = 200          # goal = stake + 200c
+MANDATE_ROLLOVER_EXPIRY_MINUTES = 4 * 24 * 60   # 4 days from rollover
+
+
+def maybe_rollover_mandate(mcp, log=print):
+    """Issue the successor mandate when none is live. Returns the MCP result, or None when no rollover applies
+    (a mandate is live, the desk is killed, or equity is unreadable). Mandate states (brain/mandate.ts):
+    live = issued/active; ended = goal-banked/expired/killed, or no mandate on the status at all."""
+    st = mcp.tool("get_status")["data"]
+    if not isinstance(st, dict) or st.get("killed"):
+        return None
+    m = st.get("mandate")
+    if isinstance(m, dict) and str(m.get("state") or "").lower() in ("issued", "active"):
+        return None
+    equity = st.get("equityCents")
+    if not isinstance(equity, (int, float)) or isinstance(equity, bool) or equity <= 0:
+        return None
+    stake_c = int(round(equity))
+    goal_c = stake_c + MANDATE_ROLLOVER_GOAL_BUMP_CENTS
+    r = mcp.tool("start_mandate", {
+        "stake_usd": stake_c / 100.0, "goal_usd": goal_c / 100.0,
+        "expiry_minutes": MANDATE_ROLLOVER_EXPIRY_MINUTES,
+        "reason": "mandate rollover (owner standing order 2026-11-10): the previous mandate ended; "
+                  f"stake = current equity {stake_c}c, goal = stake + 200c = {goal_c}c, expiry 4 days"})
+    log(json.dumps({"mandate_rollover": {"ok": r["ok"], "stake_c": stake_c, "goal_c": goal_c,
+                                          "expiry_minutes": MANDATE_ROLLOVER_EXPIRY_MINUTES}}))
+    return r
+
+
 def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None, watch=None, model_name=None,
              shadow=None, record=None, spawn=None):
     """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict.
@@ -699,6 +1008,12 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     if record is None:
         record = lambda args: mcp.tool("record_ruling", args)  # noqa: E731
     mcp.initialize()
+    # Mandate rollover (owner order 2026-11-10): if the previous mandate has ended, set its successor BEFORE
+    # ruling so the new mandate is live for this cycle. A rollover failure never blocks the ruling itself.
+    try:
+        maybe_rollover_mandate(mcp, log)
+    except Exception as e:  # noqa: BLE001
+        log(json.dumps({"mandate_rollover_error": str(e)[:200]}))
     obs = observe(mcp)
     waited_s = 0
     while True:
@@ -732,9 +1047,15 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     window_earlier = (earlier or {}).get(ticker, []) if earlier is not None else []
     obs["memory"] = watch_lines(watch) + memory_lines(obs, window_earlier)
     user = build_user_prompt(obs)
+    if getattr(think, "prime", None):
+        think.prime(obs)
     t0 = time.monotonic()
     answer = think(SYSTEM, user)
-    decision = parse_decision(answer, fallback if fallback is not None else 0.5)
+    if getattr(think, "is_nexus", False):
+        # Nexus answered in its own grammar; its think already translated the transcript (parse_nexus_transcript).
+        decision = think.last_decision
+    else:
+        decision = parse_decision(answer, fallback if fallback is not None else 0.5)
     decision = apply_discipline(decision, obs)
     sign_note = sign_contradiction(decision.get("analysis"), ((obs.get("live") or {}).get("snapshot") or {}).get("distanceBps"))
     if sign_note and decision["action"] != "none":
@@ -813,15 +1134,25 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
             report["acted"].append({"tool": "set_exit_line", "ok": False})
     # The ruler's corpus (owner 2026-11-09: Nexus learns "from being ruler"): what it saw and what it decided, filed on the
     # desk with the window so the export can join the outcome. After acting; a desk without the corpus never stops a ruling.
+    is_nexus = getattr(think, "is_nexus", False)
+    ruling_inputs = {"system_sha": NEXUS_FRAME_SHA if is_nexus else SYSTEM_SHA,
+                     "prompt": think.last_task if is_nexus else user,
+                     "fair": obs.get("fair"), "edges": obs.get("edges"),
+                     "seen": report.get("seen"), "woke": (watch or {}).get("woke")}
+    ruling_output = {"raw": (answer or "")[:2000], "analysis": decision.get("analysis"), "reason": decision["reason"],
+                     "directives": decision.get("directives_sent"), "directive_note": decision.get("directive_note"),
+                     "exit_line_bps": decision.get("exit_line_bps"), "review": decision.get("review"), "plan": decision.get("plan"),
+                     "valid": decision.get("valid"), "blocked": decision.get("blocked"), "acted": report["acted"]}
+    if is_nexus:
+        # The 5-phase scaffold is the loop's standing frame (owner's framework): filed with the ruling, each
+        # phase labelled by who produced it. The raw above is Nexus's own transcript, untranslated.
+        ruling_output["engine"] = "nexus-grammar"
+        ruling_output["phases"] = build_nexus_phases(obs, decision)
     try:
         r = mcp.tool("record_ruling", {
             "model": model_name,
-            "inputs": {"system_sha": SYSTEM_SHA, "prompt": user, "fair": obs.get("fair"), "edges": obs.get("edges"),
-                       "seen": report.get("seen"), "woke": (watch or {}).get("woke")},
-            "output": {"raw": (answer or "")[:2000], "analysis": decision.get("analysis"), "reason": decision["reason"],
-                       "directives": decision.get("directives_sent"), "directive_note": decision.get("directive_note"),
-                       "exit_line_bps": decision.get("exit_line_bps"), "review": decision.get("review"), "plan": decision.get("plan"),
-                       "valid": decision.get("valid"), "blocked": decision.get("blocked"), "acted": report["acted"]},
+            "inputs": ruling_inputs,
+            "output": ruling_output,
             "action": decision["action"], "p_model": decision.get("p_model"), "p_yes": decision["p_yes"]})
         report["acted"].append({"tool": "record_ruling", "ok": r["ok"]})
     except McpError:
@@ -1050,44 +1381,22 @@ def main():
         return 2
     mode = agent_mode()
     sys.path.insert(0, os.path.dirname(__file__))
-    import qwen_gguf  # noqa: E402  (the repo's own model loader)
-    from huggingface_hub import hf_hub_download, list_repo_files  # noqa: E402
-    from llama_cpp import Llama  # noqa: E402
-    cache = os.path.expanduser("~/.cache/forgeclaw-gguf")
-    llm, name = qwen_gguf.load_model(cache, lambda repo: list_repo_files(repo), lambda repo, f, d: hf_hub_download(repo, f, local_dir=d), Llama)
+    import nexus_model  # noqa: E402  (the Run 25 checkpoint loader; verifies the checkpoint hash at load)
 
     log = lambda s: print(redact(s, token), flush=True)  # noqa: E731
-    # PRE-READ THE PLAYBOOK once, right after the model loads: llama.cpp keeps the evaluated prefix, so every ruling --
-    # the first one included -- only reads the new desk data (the playbook alone is ~2,500 tokens; reading it inside a
-    # ruling took most of the old 300 s budget, and ruling #79 on 2026-11-09 came back as just "{").
-    t_warm = time.monotonic()
-    for _ in llm(qwen_gguf.build_prompt(SYSTEM, ""), max_tokens=1, temperature=0.0, stream=True):
-        break
-    log(json.dumps({"playbook_prefilled_s": round(time.monotonic() - t_warm, 1), "playbook_chars": len(SYSTEM)}))
-
-    def think(system, user):
-        stream = llm(qwen_gguf.build_prompt(system, user), max_tokens=MAX_ANSWER_TOKENS, temperature=0.2, stop=qwen_gguf.STOP, stream=True)
-        text, tokens, seconds, by_time, read_s = generate_after_first_token(stream, MAX_ANSWER_TOKENS, ANSWER_TIME_BUDGET_S)
-        log(json.dumps({"think": {"read_prompt_s": read_s, "write_s": seconds, "tokens": tokens, "cut_by_time": by_time}}))
-        return text
-
+    # The model is Nexus now (owner order 2026-11-10), loaded once and asked window after window, the way the
+    # Qwen GGUF was. The load itself is the provider-truth gate: a checkpoint whose sha256 is not the Run 25
+    # hash recorded in run25/verdict.md raises here and the agent does not run. The old shadow seat is retired
+    # with the swap — Nexus is the ruler, not the ruler's shadow (the shadow helpers stay for their tests).
+    nx = nexus_model.load_nexus()
+    log(json.dumps({"model": nx.name, "checkpoint_sha256": nx.checkpoint_sha256, "params": nx.params, "ctx": nx.ctx_limit}))
+    think = NexusThink(nx, log=log)
 
     predicted, earlier = set(), {}
 
-    shadow_url = os.environ.get("NEXUS_SHADOW_URL", "").strip()
-    shadow_token = os.environ.get("NEXUS_SHADOW_TOKEN", "")
-    shadow = chat_completions_shadow(shadow_url, shadow_token) if shadow_url else None
-    if shadow:
-        log(json.dumps({"nexus_shadow": "on"}))
-
-    def shadow_record(args):  # its own session: the shadow runs on its own thread
-        m = McpSession(url, token)
-        m.initialize()
-        return m.tool("record_ruling", args)
-
     def one_window(watch=None):
-        report = run_once(McpSession(url, token), think, mode=mode, log=lambda s: log(redact(s, shadow_token)), predicted=predicted, earlier=earlier,
-                          watch=watch, model_name=name, shadow=shadow, record=shadow_record)
+        report = run_once(McpSession(url, token), think, mode=mode, log=log, predicted=predicted, earlier=earlier,
+                          watch=watch, model_name=nx.name)
         write_summary(report, mode)
         return report
 
