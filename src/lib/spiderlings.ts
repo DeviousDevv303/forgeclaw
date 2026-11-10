@@ -2,7 +2,7 @@
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 
 /**
- * Spiderlings — the ledger behind the spiders on the throne rig (?rig=1).
+ * Spiderlings — the ledger behind the spiders on the throne rig (mounted by default in App.tsx; the ?rig=1 preview flag was removed 2026-11-10).
  *
  * Rule from the owner: no decorative spiders. A spider exists only for a real TOOL_START that has not been
  * answered, and every number on screen is counted from ledger LINES that each trace to one event:
