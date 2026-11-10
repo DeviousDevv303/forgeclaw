@@ -590,8 +590,11 @@ export class CorpusRepository {
   /**
    * Everything NEXUS treats as knowledge, newest first, so the owner can see it and remove what is wrong. Until this existed
    * the page showed only a count: 33 admitted entries of unknown origin (2026-10-21) could not be inspected at all.
+   * The default limit is effectively unbounded (2026-11-09 fix): the panel reads with the default, and the old 300 cap
+   * silently hid the oldest admitted records — after the 2026-11-09 corpus backfill the corpus holds ~380 admitted
+   * records, ~80 of which fell below the cut while still counting for training. Callers wanting a page pass a limit.
    */
-  listKnowledge(limit = 300): CorpusRecord[] {
+  listKnowledge(limit = 100_000): CorpusRecord[] {
     const out: CorpusRecord[] = []
     for (const id of readIndex(INDEX_KEY)) {
       const record = safeRecord(safeGetItem(`${RECORD_PREFIX}${id}`))

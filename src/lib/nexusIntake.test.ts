@@ -11,9 +11,11 @@ import {
   intakeCandidateInput,
   intakeDedupeKey,
   intakeOwnerAutoAdmit,
+  loadSeenIntakeKeys,
   parseNexusIntake,
   parseNexusIntakeLine,
   parseSimIntake,
+  saveSeenIntakeKeys,
   simOutcomeRecordProblem,
   simRunRecordProblem,
   syncNexusIntake,
@@ -567,6 +569,125 @@ describe('nexusIntake Nexus Bank auto-admission (owner ruling, 2026-10-29)', () 
     const record = parseNexusIntakeLine(CANARY_LINE)
     expect(record && intakeBankAutoAdmit(record)).toBe(false)
     expect(record && intakeAutoAdmitMarker(record)).toBeNull()
+  })
+})
+
+describe('nexusIntake producer-record sync (corpus sync fixes, 2026-11-09)', () => {
+  beforeEach(() => storage.clear())
+
+  // The daily producer's exact shape (observer_intake_producer.py): every
+  // record carries the SAME constant check string as its subject and its own
+  // window ticker as ref, with run_id 'nb-observer-run-<ticker>'.
+  const PRODUCER_CHECK = 'D1 order_intents (confirmed + filled partials) + settlements + cash_adjustments read-back by observer_intake_producer'
+  const producerLine = (ticker: string, summary: string, ts = '2026-11-09T15:33:17.000Z') => JSON.stringify({
+    ts,
+    source: 'nexus-bank',
+    run_id: `nb-observer-run-${ticker}`,
+    kind: 'live-trading-record',
+    check: PRODUCER_CHECK,
+    ref: ticker,
+    summary,
+    status: 'verified',
+  })
+
+  it('admits a second producer record with a different ref on a later sync, after a first one is stored', async () => {
+    const repo = new CorpusRepository()
+    const day1 = await syncNexusIntake(sourceOf(producerLine('KXBTC15M-26NOV090900-00', 'OBSERVER RUN 0900 settled.')), repo)
+    expect(day1).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+    // Day 2: the stored candidate's subject is the shared check string; the new
+    // record must be judged by its own ref, not by that shared subject.
+    const day2 = await syncNexusIntake(sourceOf(producerLine('KXBTC15M-26NOV090915-15', 'OBSERVER RUN 0915 settled.', '2026-11-09T15:48:17.000Z')), repo)
+    expect(day2).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+    expect(repo.listKnowledge()).toHaveLength(2)
+    expect(repo.getApprovedCount()).toBe(2)
+  })
+
+  it('admits different kinds of record about the same window — one kind never spends another kind’s ref', async () => {
+    const repo = new CorpusRepository()
+    // The molding walk's per-window record for the 0900 window lands first
+    // (in the published file these precede the settled receipts).
+    const molding = JSON.stringify({
+      ...(JSON.parse(MOLDING_LINE) as Record<string, unknown>),
+      ref: 'KXBTC15M-26NOV090900-00',
+      run_id: 'molding-walk-20261109-0900',
+    })
+    const first = await syncNexusIntake(sourceOf(molding), repo)
+    expect(first.admitted).toBe(1)
+    // The producer's settled receipt for the SAME window is distinct knowledge
+    // (a different kind): it must admit, not be blocked by the molding record.
+    const receipt = producerLine('KXBTC15M-26NOV090900-00', 'OBSERVER RUN 0900 settled.')
+    const second = await syncNexusIntake(sourceOf(receipt), repo)
+    expect(second).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+    expect(repo.listKnowledge()).toHaveLength(2)
+    // But a second RECEIPT for the same window under another run_id is still
+    // the owner's one-admission rule, same kind + same ref: blocked.
+    const refile = JSON.stringify({
+      ...(JSON.parse(receipt) as Record<string, unknown>),
+      run_id: 'nb-observer-run-KXBTC15M-26NOV090900-00-recheck',
+      summary: 'OBSERVER RUN 0900 settled — refiled by a later pass.',
+    })
+    const third = await syncNexusIntake(sourceOf(refile), repo)
+    expect(third.admitted).toBe(0)
+    expect(repo.listKnowledge()).toHaveLength(2)
+  })
+
+  it('does not persist the seen key of a ref-blocked record, so a later sync reconsiders it', async () => {
+    const repo = new CorpusRepository()
+    const original = producerLine('KXBTC15M-26NOV090900-00', 'OBSERVER RUN 0900 settled.')
+    const refile = JSON.stringify({
+      ...(JSON.parse(original) as Record<string, unknown>),
+      run_id: 'nb-observer-run-KXBTC15M-26NOV090900-00-recheck',
+      summary: 'OBSERVER RUN 0900 settled — refiled by a later pass.',
+    })
+    const first = await syncNexusIntake(sourceOf(original), repo)
+    expect(first.admitted).toBe(1)
+    // Same ref under a different run_id: the one-admission-per-ref rule blocks
+    // it — but a block is not a presentation, so its key must NOT be written
+    // into the persisted seen set (the pre-fix code wrote it off as seen).
+    const blocked = await syncNexusIntake(sourceOf(refile), repo)
+    expect(blocked).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 0 })
+    expect(repo.listKnowledge()).toHaveLength(1)
+    const refileRecord = parseNexusIntakeLine(refile)
+    if (!refileRecord) throw new Error('fixture must parse')
+    expect(loadSeenIntakeKeys().has(intakeDedupeKey(refileRecord))).toBe(false)
+    // Reconsidered on the next sync (still blocked while the first admission
+    // stands) — and still not written off as seen.
+    const again = await syncNexusIntake(sourceOf(refile), repo)
+    expect(again.admitted).toBe(0)
+    expect(loadSeenIntakeKeys().has(intakeDedupeKey(refileRecord))).toBe(false)
+  })
+
+  it('admits on re-sync a producer record the old collision had marked seen without ever presenting it', async () => {
+    const repo = new CorpusRepository()
+    const first = producerLine('KXBTC15M-26NOV090900-00', 'OBSERVER RUN 0900 settled.')
+    const second = producerLine('KXBTC15M-26NOV090915-15', 'OBSERVER RUN 0915 settled.', '2026-11-09T15:48:17.000Z')
+    await syncNexusIntake(sourceOf(first), repo)
+    // Reproduce the pre-fix storage state: the second record's dedupe key sits
+    // in the persisted seen set although it was never presented or admitted.
+    const secondRecord = parseNexusIntakeLine(second)
+    if (!secondRecord) throw new Error('fixture must parse')
+    const seen = loadSeenIntakeKeys()
+    seen.add(intakeDedupeKey(secondRecord))
+    saveSeenIntakeKeys(seen)
+    const result = await syncNexusIntake(sourceOf(second), repo)
+    expect(result).toEqual({ status: 'synced', fetched: 1, added: 0, admitted: 1 })
+    expect(repo.listKnowledge()).toHaveLength(2)
+  })
+
+  it('the knowledge list is not capped below the admitted corpus (panel display cap fix)', async () => {
+    const repo = new CorpusRepository()
+    const lines: string[] = []
+    for (let i = 0; i < 305; i += 1) {
+      lines.push(producerLine(`KXBTC15M-TEST-${i}`, `OBSERVER RUN test window ${i} settled.`))
+    }
+    const result = await syncNexusIntake(sourceOf(lines.join('\n')), repo)
+    expect(result.admitted).toBe(305)
+    expect(repo.getApprovedCount()).toBe(305)
+    // The panel reads listKnowledge() with no explicit limit: all 305 admitted
+    // records must come back (the pre-fix default silently cut the list at 300).
+    expect(repo.listKnowledge()).toHaveLength(305)
+    // An explicit smaller limit is still honored.
+    expect(repo.listKnowledge(10)).toHaveLength(10)
   })
 })
 
