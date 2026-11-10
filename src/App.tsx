@@ -841,8 +841,10 @@ function App() {
   const [nexusSendRepo, setNexusSendRepo] = useState<string>(() => safeGetItem('fm_nexus_send_repo') || DEFAULT_NEXUS_SEND_REPO)
   const [corpusSendStatus, setCorpusSendStatus] = useState('')
   const [sendingNexusStore, setSendingNexusStore] = useState(false)
-  const normalizedActiveModel = activeProvider === 'local' ? localModel : isQwenProvider(activeProvider) ? 'qwen3-8b' : activeProvider === 'moonshot' ? moonshotModel : activeProvider === 'muse' ? metaModel : activeProvider === 'openrouter' ? openrouterModel.trim() : anthropicModel
-  const activeModelLabel = isQwenProvider(activeProvider)
+  const normalizedActiveModel = activeProvider === 'local' ? localModel : isQwenProvider(activeProvider) ? 'qwen3-8b' : activeProvider === 'nexus-intelligence' ? 'nexus-run25' : activeProvider === 'moonshot' ? moonshotModel : activeProvider === 'muse' ? metaModel : activeProvider === 'openrouter' ? openrouterModel.trim() : anthropicModel
+  const activeModelLabel = activeProvider === 'nexus-intelligence'
+    ? 'Nexus Intelligence · Run 25 checkpoint'
+    : isQwenProvider(activeProvider)
     ? corpusProvider.models[0]?.label ?? 'Qwen/Qwen3-8B · GitHub Actions'
     : activeProvider === 'local'
       ? localInferenceProvider.models.find(m => m.id === localModel)?.label ?? localModel
@@ -1315,7 +1317,7 @@ function App() {
       : displayContent
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: displayContent, imageUrl, timestamp: Date.now(), ...(options.resumedAfterInterrupt ? { resumedAfterInterrupt: true } : {}) }
     const currentApiKey = activeProvider === 'local' ? localEndpoint : activeProvider === 'anthropic' ? anthropicApiKey : activeProvider === 'moonshot' ? moonshotApiKey : activeProvider === 'muse' ? metaApiKey : activeProvider === 'openrouter' ? openrouterApiKey : ''
-    const currentProviderLabel = isQwenProvider(activeProvider) ? 'Qwen/Qwen3-8B GitHub Actions' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'muse' ? 'Meta (Muse)' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'
+    const currentProviderLabel = isQwenProvider(activeProvider) ? 'Qwen/Qwen3-8B GitHub Actions' : activeProvider === 'nexus-intelligence' ? 'Nexus Intelligence' : activeProvider === 'local' ? 'Local inference' : activeProvider === 'moonshot' ? 'Moonshot (Kimi)' : activeProvider === 'muse' ? 'Meta (Muse)' : activeProvider === 'openrouter' ? 'OpenRouter' : 'Anthropic'
     const currentKeyFormat = activeProvider === 'local' ? 'http://127.0.0.1:8080/v1' : activeProvider === 'moonshot' ? 'sk-...' : activeProvider === 'muse' ? 'LLM_...' : activeProvider === 'openrouter' ? 'sk-or-...' : 'sk-ant-...'
 
     const explicitQwen = !imageUrl ? parseDirectQwenCommand(promptText) : null
@@ -3003,6 +3005,7 @@ function App() {
                 >
                   <option value="moonshot" style={{ background: '#111' }}>Moonshot · Kimi</option>
                   <option value="corpus" style={{ background: '#111' }}>Qwen/Qwen3-8B · GitHub Actions</option>
+                  <option value="nexus-intelligence" style={{ background: '#111' }}>Nexus Intelligence · Run 25 checkpoint (GitHub Actions)</option>
                   <option value="anthropic" style={{ background: '#111' }}>Anthropic (Claude)</option>
                   <option value="muse" style={{ background: '#111' }}>Muse · Meta</option>
                   <option value="openrouter" style={{ background: '#111' }}>OpenRouter</option>
@@ -3043,6 +3046,13 @@ function App() {
                   <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#22c55e', display: 'inline-block' }} />
                   <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Qwen/Qwen3-8B · GitHub Actions</span>
                   <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>{t('settings.corpusDesc')}</span>
+                </div>
+              )}
+              {activeProvider === 'nexus-intelligence' && (
+                <div style={{ background: '#111', border: '1px solid #333', borderRadius: '4px', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <span style={{ width: '10px', height: '10px', borderRadius: '2px', background: '#f97316', display: 'inline-block' }} />
+                  <span style={{ color: '#ccc', fontSize: '12px', fontWeight: 'bold', fontFamily: 'monospace' }}>Nexus Intelligence · GitHub Actions</span>
+                  <span style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace' }}>Your trained Nexus model alone (Run 25 checkpoint, 4.48M params, 640-token window) — no Qwen, no walk. Answers take a few minutes; it is a tool-call specialist, not a general chat model.</span>
                 </div>
               )}
 

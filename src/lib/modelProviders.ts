@@ -6,6 +6,7 @@ import { DEFAULT_META_MODEL, metaProvider, META_MODELS } from './ai/providers/me
 import { DEFAULT_OPENROUTER_MODEL, OPENROUTER_CHAT_URL, OPENROUTER_MODELS, openrouterProvider } from './ai/providers/openrouterProvider'
 import { DEFAULT_LOCAL_ENDPOINT, DEFAULT_LOCAL_MODEL, localInferenceProvider } from './ai/providers/localInferenceProvider'
 import { corpusProvider } from './ai/providers/corpusProvider'
+import { nexusProvider } from './ai/providers/nexusProvider'
 import type { ToolCall, ToolDef } from './forgeTools'
 import type { ProviderId } from './providerDefaults'
 export { DEFAULT_PROVIDER, resolveInitialProvider } from './providerDefaults'
@@ -21,15 +22,17 @@ export const PROVIDERS: Record<ProviderId, ProviderConfig> = {
   local: { id: 'local', name: 'Local Inference (llama.cpp)', url: `${DEFAULT_LOCAL_ENDPOINT}/chat/completions`, models: localInferenceProvider.models.map(model => ({ ...model })), keyPlaceholder: DEFAULT_LOCAL_ENDPOINT },
   nexus: { id: 'nexus', name: 'Qwen/Qwen3-8B (legacy saved-session alias)', url: 'https://github.com/DeviousDevv303/forgeclaw/actions/workflows/qwen3-8b.yml', models: corpusProvider.models.map(model => ({ ...model })), keyPlaceholder: 'Use the Qwen workflow token' },
   qwen: { id: 'qwen', name: 'Qwen/Qwen3-8B', url: 'https://github.com/DeviousDevv303/forgeclaw/actions/workflows/qwen3-8b.yml', models: corpusProvider.models.map(model => ({ ...model })), keyPlaceholder: 'No API key required; Qwen workflow uses GitHub authorization' },
+  'nexus-intelligence': { id: 'nexus-intelligence', name: 'Nexus Intelligence', url: 'https://github.com/DeviousDevv303/forgeclaw/actions/workflows/nexus-intelligence.yml', models: nexusProvider.models.map(model => ({ ...model })), keyPlaceholder: 'No API key required; Nexus workflow uses GitHub authorization' },
 }
-export const PROVIDER_ORDER: ProviderId[] = ['qwen', 'moonshot', 'corpus', 'local', 'anthropic', 'muse', 'openrouter']
-export const DEFAULT_MODEL: Record<ProviderId, string> = { corpus: 'qwen3-8b', qwen: 'qwen3-8b', moonshot: DEFAULT_MOONSHOT_MODEL, anthropic: DEFAULT_ANTHROPIC_MODEL, muse: DEFAULT_META_MODEL, openrouter: DEFAULT_OPENROUTER_MODEL, local: DEFAULT_LOCAL_MODEL, nexus: 'qwen3-8b' }
+export const PROVIDER_ORDER: ProviderId[] = ['qwen', 'nexus-intelligence', 'moonshot', 'corpus', 'local', 'anthropic', 'muse', 'openrouter']
+export const DEFAULT_MODEL: Record<ProviderId, string> = { corpus: 'qwen3-8b', qwen: 'qwen3-8b', moonshot: DEFAULT_MOONSHOT_MODEL, anthropic: DEFAULT_ANTHROPIC_MODEL, muse: DEFAULT_META_MODEL, openrouter: DEFAULT_OPENROUTER_MODEL, local: DEFAULT_LOCAL_MODEL, nexus: 'qwen3-8b', 'nexus-intelligence': 'nexus-run25' }
 export type ChatMessage = AIMessage
 export interface CallResult { text: string; provider: ProviderId; model: string; toolCalls?: ToolCall[]; stopReason?: string }
 export interface CallOptions { tools?: ToolDef[]; onToken?: (token: string) => void; signal?: AbortSignal; maxTokens?: number }
 export async function callProvider(providerId: ProviderId, model: string, systemPrompt: string, messages: ChatMessage[], apiKey: string, options: CallOptions = {}): Promise<CallResult> {
   const request: AIRequest = { systemPrompt, messages, model, maxTokens: options.maxTokens, tools: options.tools, onToken: options.onToken, signal: options.signal }
   if (providerId === 'corpus' || providerId === 'nexus' || providerId === 'qwen') { const response = await corpusProvider.send({ ...request, model: model || 'qwen3-8b' }, apiKey); return { text: response.text, provider: providerId, model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
+  if (providerId === 'nexus-intelligence') { const response = await nexusProvider.send({ ...request, model: model || 'nexus-run25' }, apiKey); return { text: response.text, provider: providerId, model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
   if (providerId === 'moonshot') { const response = await moonshotProvider.send({ ...request, model: model || DEFAULT_MOONSHOT_MODEL }, apiKey); return { text: response.text, provider: 'moonshot', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
   if (providerId === 'anthropic') { const response = await anthropicProvider.send({ ...request, model: model || DEFAULT_ANTHROPIC_MODEL }, apiKey); return { text: response.text, provider: 'anthropic', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
   if (providerId === 'muse') { const response = await metaProvider.send({ ...request, model: model || DEFAULT_META_MODEL }, apiKey); return { text: response.text, provider: 'muse', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason } }
@@ -38,6 +41,7 @@ export async function callProvider(providerId: ProviderId, model: string, system
   return { text: response.text, provider: 'local', model: response.model, toolCalls: response.toolCalls, stopReason: response.stopReason }
 }
 export function modelSupportsTools(providerId: ProviderId, modelId: string): boolean {
+  if (providerId === 'nexus-intelligence') return nexusProvider.supportsTools(modelId)
   if (providerId === 'corpus' || providerId === 'nexus') return corpusProvider.supportsTools(modelId)
   if (providerId === 'moonshot') return moonshotProvider.supportsTools(modelId)
   if (providerId === 'anthropic') return anthropicProvider.supportsTools(modelId)
@@ -46,6 +50,7 @@ export function modelSupportsTools(providerId: ProviderId, modelId: string): boo
   return localInferenceProvider.supportsTools(modelId)
 }
 export async function testProviderKey(providerId: ProviderId, _model: string, apiKey: string): Promise<void> {
+  if (providerId === 'nexus-intelligence') { await nexusProvider.test(apiKey); return }
   if (providerId === 'corpus' || providerId === 'nexus') { await corpusProvider.test(apiKey); return }
   if (providerId === 'moonshot') { await moonshotProvider.test(apiKey); return }
   if (providerId === 'anthropic') { await anthropicProvider.test(apiKey); return }

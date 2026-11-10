@@ -33,6 +33,8 @@ import { downloadImagePng, registerGeneratedImage, waitForImageRun } from './ima
 import { buildSimDispatchInputs, dispatchSim, findActiveSimRun, findSimRunByInvocation, formatSimResult, learnFromSim, readSimResult, SIM_CHAT_WAIT_MS, SIM_DEFAULT_CEILING_USD, SIM_MAX_CEILING_USD, SIM_WORKFLOW_ID, svgDataUrl, waitForSimRun, type SimRun } from './mirofishSim'
 import { tasteForImagePrompt } from './nexusTaste'
 import { QWEN_GITHUB_READ_TIMEOUT_MS, isEmptyQwenResponse, waitForQwenResult } from './qwenArtifact'
+import { NEXUS_GITHUB_READ_TIMEOUT_MS, waitForNexusResult } from './nexusArtifact'
+import { NEXUS_CHECKPOINT_SHA256 } from './ai/nexusIntelligenceContext'
 import { journalRecord, type RunJournal } from './runRollback'
 import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type GithubRequest, type PublishFile } from './githubPublish'
 import { buildAndPublishSite } from './siteBuild'
@@ -321,6 +323,20 @@ export const FORGE_TOOLS: ToolDef[] = [
         task: { type: 'string', description: 'Task for the Qwen/Qwen3-8B reasoning workflow' },
         context: { type: 'string', description: 'Additional context for the task' },
         nexus_learn: { type: 'boolean', description: 'Record the dispatch as an unapproved learning candidate (default true)' },
+        ref: { type: 'string', description: 'Branch or tag to run the workflow from (default main)' },
+      },
+      required: ['task'],
+    },
+  },
+  {
+    name: 'nexus_reason',
+    description: 'One generation segment of Nexus Intelligence — the owner\'s trained Nexus model (Run 25 checkpoint) served ALONE by the repository-owned GitHub Actions workflow (provider id \'nexus-intelligence\'). No Qwen, no walk, no NEXUS guidance. The workflow runs the checkpoint\'s constrained decoder and returns the raw transcript segment; when the segment ends in a tool call, the provider router executes it through the normal tool path and re-dispatches with the result injected.',
+    parameters: {
+      type: 'object',
+      properties: {
+        task: { type: 'string', description: 'Prompt text for the Nexus checkpoint (the framed conversation; the current message last)' },
+        context: { type: 'string', description: 'Transcript prefix so far: prior call/result spans of this turn in Nexus grammar (empty for the first segment)' },
+        mode: { type: 'string', description: "Harness mode token: 'create' (default) or 'copy'" },
         ref: { type: 'string', description: 'Branch or tag to run the workflow from (default main)' },
       },
       required: ['task'],
@@ -987,6 +1003,23 @@ export function formatQwenResultText(
   return `✓ Qwen/Qwen3-8B completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${runUrl}\n\n${result}`
 }
 
+/**
+ * Format the user-visible nexus_reason success output. The segment after the blank line is
+ * the model's raw transcript grammar — the provider router parses it (tool call vs answer);
+ * it is never shown to the user unprocessed.
+ */
+export function formatNexusResultText(
+  invocationId: string,
+  owner: string,
+  repo: string,
+  ref: string,
+  stages: string,
+  runUrl: string,
+  result: string,
+): string {
+  return `✓ Nexus Intelligence completed as ${invocationId} on ${owner}/${repo}@${ref}.\n${stages}\nRun: ${runUrl}\n\n${result}`
+}
+
 /** Tools whose effects leave the repository or cannot be recalled; STOP reports them instead of claiming an undo. */
 const SHELL_PATCH_MAX_CHARS = 60_000
 
@@ -1457,6 +1490,73 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         const trim = completed.promptTrimmed ? `; prompt-trimmed=true; nexus-guidance=${completed.nexusGuidance || 'unknown'}; conversation=${completed.conversation || 'unknown'}` : ''
         const stages = `Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=${completed.source}; result-extraction=complete; checkpoint=${checkpoint}${role}${trim}; learning-persistence=${learningStatus}.`
         return formatQwenResultText(invocationId, owner, repo, ref, stages, completed.run.html_url, completed.result)
+      }
+
+      // ── Nexus Intelligence: the owner's trained model, served alone ──────
+      case 'nexus_reason': {
+        let task = typeof input.task === 'string' ? input.task.trim() : ''
+        const context = typeof input.context === 'string' ? input.context : ''
+        const mode = input.mode === 'copy' ? 'copy' : 'create'
+        const ref = typeof input.ref === 'string' && input.ref.trim() ? input.ref.trim() : 'main'
+        if (!task) throw new Error('Nexus task is required.')
+        // Same dispatch-input hygiene as qwen_reason: base64 image data blows past the
+        // workflow_dispatch size limits, and the Nexus workflow is text-only.
+        const IMAGE_DATA_PATTERN = /data:image\/[a-zA-Z]+;base64,[A-Za-z0-9+/=]+/g
+        task = task.replace(IMAGE_DATA_PATTERN, '[image omitted: not supported via Nexus workflow dispatch]')
+        if (!token) throw new Error('No GitHub token configured.')
+        if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {
+          throw new Error('Invalid workflow ref.')
+        }
+        // Nexus serves ALONE here: no NEXUS guidance is attached, no corpus context is
+        // retrieved, nothing is recorded for learning — the contrast with qwen_reason is
+        // the point of the provider (the owner's order: test the model by itself).
+        const invocationId = `nexus-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const dispatchedAt = Date.now()
+        const headers = {
+          Authorization: `token ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+        }
+        const dispatchRequest = {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            ref,
+            inputs: {
+              task,
+              context,
+              mode,
+              invocation_id: invocationId,
+            },
+          }),
+        } as const
+        let dispatch: Response
+        try {
+          dispatch = await toolFetch({ ...ctx, timeoutMs: NEXUS_GITHUB_READ_TIMEOUT_MS }, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/nexus-intelligence.yml/dispatches`, dispatchRequest)
+        } catch (dispatchError) {
+          throw new Error(describeGithubTransportFailure('nexus-dispatch POST /actions/workflows/nexus-intelligence.yml/dispatches', dispatchError))
+        }
+        if (!dispatch.ok) {
+          const detail = await dispatch.text().catch(() => '')
+          const explanation = describeGithubDispatchFailure(dispatch.status, dispatch.statusText)
+          throw new Error(`nexus-dispatch POST /actions/workflows/nexus-intelligence.yml/dispatches: ${explanation}${detail ? ` Nexus dispatch response: ${detail.slice(0, 300)}` : ''}`)
+        }
+        journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'nexus-intelligence.yml', needle: invocationId, since: dispatchedAt, label: 'nexus_reason' })
+        const completed = await waitForNexusResult(ctx, owner, repo, invocationId, dispatchedAt)
+        if (completed.runFailed || completed.result.startsWith('[NEXUS RUN FAILED]')) {
+          return `[TOOL ERROR] Nexus Intelligence run ${completed.run.html_url} failed on the runner: ${completed.result.replace(/^\[NEXUS RUN FAILED\]\s*/, '').slice(0, 300)}`
+        }
+        if (!completed.result) {
+          return `[TOOL ERROR] Nexus Intelligence run ${completed.run.html_url} finished but produced an empty segment, so there is no answer to show.`
+        }
+        // Provider truth, app side: the segment is only attributed to the Run 25 checkpoint
+        // when the runner's own metadata names that checkpoint's sha256.
+        const checkpoint = completed.checkpointSha256 === NEXUS_CHECKPOINT_SHA256
+          ? `nexus-run25-sha256-${NEXUS_CHECKPOINT_SHA256.slice(0, 12)}`
+          : 'checkpoint metadata unavailable'
+        const trim = completed.promptTrimmed ? '; prompt-trimmed=true' : ''
+        const stages = `Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=${completed.source}; result-extraction=complete; checkpoint=${checkpoint}${trim}.`
+        return formatNexusResultText(invocationId, owner, repo, ref, stages, completed.run.html_url, completed.result)
       }
 
       // ── Self-sculpt: branch + pull request proposal ──────────────────────────

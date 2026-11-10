@@ -1,7 +1,7 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 
-export const PROVIDER_IDS = ['moonshot', 'corpus', 'qwen', 'local', 'anthropic', 'muse', 'openrouter', 'nexus'] as const
+export const PROVIDER_IDS = ['moonshot', 'corpus', 'qwen', 'local', 'anthropic', 'muse', 'openrouter', 'nexus', 'nexus-intelligence'] as const
 export type ProviderId = typeof PROVIDER_IDS[number]
 
 /** Qwen/Qwen3-8B (via GitHub Actions, provider id 'qwen') is the default — no API key needed.
