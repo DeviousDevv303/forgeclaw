@@ -251,6 +251,13 @@ export function intakeCandidateInput(record: NexusIntakeRecord): ShellCorpusExpe
       intakeSource: record.source,
       kind: record.kind,
       subject: record.subject,
+      // The record's ref, stored under its own name (2026-11-09 fix): the
+      // one-admission-per-ref rule in syncNexusIntake compares refs to refs.
+      // Before this, only the subject was stored, and the admitted-ref set was
+      // built from subjects — for records whose subject is a shared prose
+      // check string (the Bank producers), subject-space and ref-space
+      // collided.
+      ...(record.ref ? { ref: record.ref } : {}),
       provenance: record.provenance,
       ...(link ? { link } : {}),
     },
@@ -298,10 +305,19 @@ export interface NexusIntakeSyncResult {
  * guard still vetoes). Admission is idempotent at two levels: the dedupe key
  * (run_id + kind + subject) means a refetch never re-presents or re-admits a
  * record, and — the owner's strengthened rule — a REF may be admitted at most
- * once ever, even when the same finding arrives again under a different run_id
- * (the 2026-10-24 ledger backfill and a future audit pass can both report
- * F-0NN; it is admitted once). A repeat arrival of an already-admitted ref is
- * recorded as seen and presented no further. Any failure — transport, storage,
+ * once ever PER KIND, even when the same finding arrives again under a
+ * different run_id (the 2026-10-24 ledger backfill and a future audit pass can
+ * both report F-0NN; it is admitted once). The per-kind scope is the
+ * like-for-like reading: different kinds of record about the same ref (a
+ * window's molding record, its counterfactual grade, its settled receipt) are
+ * distinct knowledge and never spend each other's admission. A repeat arrival
+ * of an already-admitted ref is
+ * presented no further, but its dedupe key is kept OUT of the persisted seen
+ * set (and any stale entry cleared): a block is not a presentation, so the
+ * arrival is reconsidered on a later sync if the ref's admission is ever
+ * removed — and a seen key with no presented candidate behind it (the write-off
+ * the pre-fix sync left for skipped records) is reprocessed in full rather
+ * than honored as a presentation. Any failure — transport, storage,
  * a broken write — reports 'unavailable' and changes nothing the tab shows
  * beyond records already fully written.
  */
@@ -321,22 +337,55 @@ export async function syncNexusIntake(
       }),
     )
     const presented = new Set(presentedByKey.keys())
-    // Refs already admitted under either of the owner's auto-admission classes,
-    // read off the candidates carrying an admission marker (an admitted record's
-    // subject IS its ref). This set is the enforcement of "admitted at most once
-    // ever" across run_ids — and across classes: one ref, one admission.
+    // Admissions already spent, as (kind, ref) pairs. This set is the
+    // enforcement of "admitted at most once ever" across run_ids, scoped
+    // like-for-like (2026-11-09 fix): a ref names WHAT a record is about (a
+    // finding, a window), and each KIND of record about it is distinct
+    // knowledge — a molding track record, a counterfactual grade, and the
+    // settled trade receipt of the same window are three records, not one, so
+    // one kind's admission never spends another kind's. Before the fix the set
+    // was built from the admitted candidates' SUBJECTS and queried with
+    // incoming records' refs, unscoped: Bank producer records all share one
+    // constant check-subject and name their window only in ref, so subject-
+    // space and ref-space collided and unrelated admissions spent each
+    // other's refs (29 of the 375 settled-window receipts in the published
+    // intake were blocked by molding/counterfactual records of the same
+    // windows). Candidates admitted before refs were stored in metadata carry
+    // no ref; for those, the ref is recovered from the producer run_id shape
+    // when it encodes one ('nb-observer-run-<ticker>'), and otherwise the
+    // subject stands in — for the audit and owner classes the subject IS the
+    // ref by construction.
+    const admissionKey = (kind: string, ref: string) => `${kind}|${ref}`
     const admittedRefs = new Set(
       candidates.flatMap(candidate => {
-        const subject = candidate.metadata?.subject
         const marker = candidate.metadata?.admittedBy
-        return (marker === INTAKE_ADMITTED_BY || marker === OWNER_ADMITTED_BY) && typeof subject === 'string' && subject ? [subject] : []
+        if (marker !== INTAKE_ADMITTED_BY && marker !== OWNER_ADMITTED_BY) return []
+        const kind = candidate.metadata?.kind
+        if (typeof kind !== 'string' || !kind) return []
+        const ref = candidate.metadata?.ref
+        if (typeof ref === 'string' && ref) return [admissionKey(kind, ref)]
+        const run = candidate.metadata?.run
+        if (typeof run === 'string' && run.startsWith('nb-observer-run-')) {
+          const derived = run.slice('nb-observer-run-'.length)
+          if (derived) return [admissionKey(kind, derived)]
+        }
+        const subject = candidate.metadata?.subject
+        return typeof subject === 'string' && subject ? [admissionKey(kind, subject)] : []
       }),
     )
+    // A record with no ref has no ref-admission to spend or check; the dedupe
+    // key alone governs it.
+    const refSpent = (record: NexusIntakeRecord) => record.ref !== '' && admittedRefs.has(admissionKey(record.kind, record.ref))
+    const spendRef = (record: NexusIntakeRecord) => { if (record.ref) admittedRefs.add(admissionKey(record.kind, record.ref)) }
+    // Keys blocked by the ref rule during THIS sync: a blocked record is not
+    // presented, so its key must never reach the persisted seen set — not even
+    // via a duplicate line later in the same file.
+    const blockedThisSync = new Set<string>()
     let added = 0
     let admitted = 0
     for (const record of records) {
       const key = intakeDedupeKey(record)
-      if (seen.has(key) || presented.has(key)) {
+      if (presented.has(key)) {
         // Already presented. One exception, and it is the point of the owner's
         // classes: a record that was presented as a PENDING candidate before it
         // qualified (e.g. it arrived before the class existed, or before the app
@@ -345,26 +394,35 @@ export async function syncNexusIntake(
         // guard enforces, or its ref's one admission is already spent.
         const prior = presentedByKey.get(key)
         const marker = intakeAutoAdmitMarker(record)
-        if (marker && prior && prior.admissionStatus === 'candidate' && !admittedRefs.has(record.ref)) {
+        if (marker && prior && prior.admissionStatus === 'candidate' && !refSpent(record)) {
           await repo.appendIntakeExperience(intakeCandidateInput(record), marker)
-          admittedRefs.add(record.ref)
+          spendRef(record)
           admitted += 1
         }
-        seen.add(key)
+        if (!blockedThisSync.has(key)) seen.add(key)
         continue
       }
+      // A key sitting in the persisted seen set with NO presented candidate
+      // behind it is not a presentation: it is the write-off the pre-fix sync
+      // left for records it skipped (the ref-collision path marked them seen),
+      // and it falls through to full processing so the record is reconsidered.
       const input = intakeCandidateInput(record)
       const marker = intakeAutoAdmitMarker(record)
       if (marker) {
-        if (admittedRefs.has(record.ref)) {
+        if (refSpent(record)) {
           // This ref's one admission is already spent (possibly under another
-          // run_id): record the arrival as seen, present nothing further.
-          seen.add(key)
+          // run_id): present nothing further — and do NOT persist the key as
+          // seen (2026-11-09 fix). A block is not a presentation; writing the
+          // key off meant the record was never reconsidered, even after the
+          // admission that spent its ref was removed. Any stale seen entry
+          // for it is cleared for the same reason.
+          seen.delete(key)
           presented.add(key)
+          blockedThisSync.add(key)
           continue
         }
         await repo.appendIntakeExperience(input, marker)
-        admittedRefs.add(record.ref)
+        spendRef(record)
         admitted += 1
       } else {
         await repo.appendShellExperience(input)
