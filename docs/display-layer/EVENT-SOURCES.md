@@ -10,7 +10,7 @@ I said the display layer had "no journal entry" for browser, sandbox and trainin
 |---|---|---|
 | ForgeOps stream | `TOOL_START {tool, iter}`, `TOOL_SUCCESS {tool}`, `TOOL_FAILURE {tool, failClass}`, `PHASE_CHANGE`, `MISSION_COMPLETE`, `MISSION_BLOCKED {reason}` | `src/types/forgeOps.ts`; emitted in `src/App.tsx` (about 15 sites) |
 | `useNeuralState` | folds the stream into `{phase, provider, activeToolCount, tokenVelocity, errorLevel, completedAt}` | `src/hooks/useNeuralState.ts` |
-| `ThroneRig` | draws the cube and light on cables, pinned to the 1536×1024 backdrop; reads only `NeuralState`; opt-in with `?rig=1` | `src/components/ThroneRig.tsx` (anchors: `CUBE`, `CABLES`, `HANDS`, `HEAD`) |
+| `ThroneRig` | draws the cube and light on cables, pinned to the 1536×1024 backdrop; reads only `NeuralState`; mounted by default (the `?rig=1` preview flag was removed 2026-11-10) | `src/components/ThroneRig.tsx` (anchors: `CUBE`, `CABLES`, `HANDS`, `HEAD`) |
 | Run journal | dispatch ledger for rollback: `workflow_dispatch {workflow, needle(invocation id), since, label}`, `branch_created`, `branch_advanced`, `irreversible` | `src/lib/runRollback.ts`; recorded in `forgeTools.ts` for `qwen_reason`, `shell_exec`, `shell_patch`, `sculpt_self`, `mirofish_sim`, `github_run_workflow` |
 
 ## 3. Channel by channel
