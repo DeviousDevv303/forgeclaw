@@ -2951,8 +2951,8 @@ function App() {
 
       {/* Throne backdrop (sibling before neural canvas in DOM order) */}
       <ThroneBackdrop opacity={0.35} />
-      {/* Preview: the live throne cube and cables. Opt in with ?rig=1 until the owner decides. */}
-      {new URLSearchParams(window.location.search).get('rig') === '1' && <ThroneRig state={neuralState} events={forgeOpsState.events} spiders={new URLSearchParams(window.location.search).get('spiders') === 'demo' ? 'demo' : 'live'} ambient={parseAmbientParams(window.location.search)} />}
+      {/* The throne scene is the default (owner ruling 2026-11-03: painted onto the backdrop, one scene; the ?rig=1 preview flag was removed by owner order 2026-11-10). Live spiders, bound to the real event stream; ?spiders=demo stays as an explicit demo override. */}
+      <ThroneRig state={neuralState} events={forgeOpsState.events} spiders={new URLSearchParams(window.location.search).get('spiders') === 'demo' ? 'demo' : 'live'} ambient={parseAmbientParams(window.location.search)} />
       {/* Neural Network Background */}
       <NeuralNetworkBackground
         messageCount={messages.length}
