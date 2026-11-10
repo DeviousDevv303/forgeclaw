@@ -1,14 +1,14 @@
 # Spiderlings on the throne rig (v1, with the amended brief)
 
-Built by the Claude lane at the owner's directive (2026-11-04). Spiders live on the existing `ThroneRig` (`?rig=1`), painted onto the
+Built by the Claude lane at the owner's directive (2026-11-04). Spiders live on the existing `ThroneRig` — since 2026-11-10 the rig is
+mounted by default in the app (the `?rig=1` preview flag was removed by owner order); painted onto the
 backdrop. They leave the chair, run the painted cables to their task cubes, and climb back to the circle at the throne's chest when the
 tool answers. App path only: nothing under `.github/`, no workflow, no file the exam anchor pins.
 
 ## See it
-- `?rig=1`: live. Spiders appear only for real tool events from the running app. Idle means nothing is drawn.
-- `?rig=1&spiders=demo`: a **scripted demo**, labelled `DEMO · simulated events · not live` on the panel and `data-source=demo`.
+- Default (no parameters): live. Spiders appear only for real tool events from the running app. Idle means nothing is drawn.
+- `?spiders=demo`: a **scripted demo**, labelled `DEMO · simulated events · not live` on the panel and `data-source=demo`.
   It feeds its own ledger and never reads, or mixes into, the live one.
-- No `?rig=1`: the app is unchanged (no canvas, no panel).
 
 ## Two kinds of spider (claim-to-diff)
 | Kind | Code | Reads | Counted | Look |
