@@ -58,13 +58,17 @@ describe('when the browser\'s storage is full', () => {
     expect(corpus.retrieve('question 0 answer', 3)).toHaveLength(1)
   })
 
-  it('says so when nothing more can be removed, instead of pretending it recorded', async () => {
+  it('reclaims redundant raw interactions while preserving approved knowledge', async () => {
     vi.stubGlobal('localStorage', new LimitedStorage(12_000))
     const corpus = new CorpusRepository()
-    await admittedChat(corpus, 0) // knowledge fills the little room there is
-    await expect(admittedChat(corpus, 1)).rejects.toThrow(/storage is full/)
-    // recordLearningEvent turns that into false, which the app reports as a failure
-    expect(await recordLearningEvent(chat(2) as never, corpus)).toBe(false)
+    await admittedChat(corpus, 0)
+    await expect(admittedChat(corpus, 1)).resolves.toBeDefined()
+    expect(corpus.getApprovedCount()).toBe(2)
+    const knowledge = corpus.listKnowledge(10)
+    expect(knowledge).toHaveLength(2)
+    expect(knowledge.map(record => record.metadata.input)).toEqual(expect.arrayContaining(['question 0', 'question 1']))
+    // The same recovery path keeps subsequent learning events recording instead of dropping them silently.
+    expect(await recordLearningEvent(chat(2) as never, corpus)).toBe(true)
   })
 })
 
