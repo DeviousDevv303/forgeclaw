@@ -9,6 +9,8 @@ import { metaProvider } from './providers/metaProvider'
 import { openrouterProvider } from './providers/openrouterProvider'
 import { localInferenceProvider, DEFAULT_LOCAL_MODEL } from './providers/localInferenceProvider'
 import { corpusProvider } from './providers/corpusProvider'
+import { nexusProvider } from './providers/nexusProvider'
+import { buildNexusPrompt, buildNexusTranscript, parseNexusSegment, stripNexusGrammar, NEXUS_MAX_CALLS, NEXUS_MODEL_ID } from './nexusIntelligenceContext'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { buildQwenTaskPayload, extractOriginalQwenTask, formatQwenConversation } from './qwenContext'
@@ -25,7 +27,7 @@ export function isQwenProvider(providerId: string): boolean {
   return providerId === 'corpus' || providerId === 'qwen' || providerId === 'deepseek';  // 'deepseek' = the legacy id in saved sessions and stored records
 }
 
-export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, qwen: corpusProvider, anthropic: anthropicProvider, muse: metaProvider, openrouter: openrouterProvider, local: localInferenceProvider, nexus: corpusProvider } as const
+export const providers = { moonshot: moonshotProvider, corpus: corpusProvider, qwen: corpusProvider, anthropic: anthropicProvider, muse: metaProvider, openrouter: openrouterProvider, local: localInferenceProvider, nexus: corpusProvider, 'nexus-intelligence': nexusProvider } as const
 export type ProviderId = keyof typeof providers
 export interface ProviderChoice { providerId: ProviderId; model: string; level: 1 | 2 | 3 | 4 }
 export const LOCAL_PROVIDER_TIMEOUT_MS = 4_000
@@ -81,6 +83,31 @@ function promptTrimNote(content: string): string {
   return `Note: the model's window could not hold everything supplied, so ${cut}.${conversationTail}${guidanceTail}`
 }
 function isSuccessfulQwenToolResult(content: string) { return content.startsWith('✓ Qwen/Qwen3-8B completed as ') }
+
+/** True for the standalone Nexus Intelligence provider (the Run 25 checkpoint alone, no Qwen). */
+export function isNexusIntelligenceProvider(providerId: string): boolean {
+  return providerId === 'nexus-intelligence'
+}
+function isSuccessfulNexusToolResult(content: string) { return content.startsWith('✓ Nexus Intelligence completed as ') }
+function failedNexusToolResult(request: AIRequest): { content: string } | undefined {
+  const turn = currentTurnMessages(request); const names = new Map<string, string>()
+  for (const message of turn) if (message.role === 'assistant') for (const call of message.tool_calls ?? []) names.set(call.id, call.name)
+  const result = [...turn].reverse().find(m => m.role === 'tool' && m.tool_call_id && names.get(m.tool_call_id) === 'nexus_reason' && !isSuccessfulNexusToolResult(m.content))
+  return result?.role === 'tool' ? { content: result.content } : undefined
+}
+/**
+ * Nexus dispatch input: the flattened prompt (prior turns + current message) as the task,
+ * and this turn's rebuilt call/result transcript as the context. Continuation dispatches
+ * differ from the bootstrap only in that the transcript is non-empty.
+ */
+function buildNexusToolInput(request: AIRequest): { task: string; context?: string; mode: 'create' } {
+  const turn = currentTurnMessages(request)
+  const task = [...turn].reverse().find(m => m.role === 'user')?.content || ''
+  const turnStart = request.messages.length - turn.length
+  const prompt = buildNexusPrompt(request.messages.slice(0, turnStart), task)
+  const { transcript } = buildNexusTranscript(turn)
+  return { task: prompt, ...(transcript ? { context: transcript } : {}), mode: 'create' }
+}
 function qwenCheckpointLabel(content: string) { return content.match(/\bcheckpoint=([^\s;]+)/i)?.[1] || 'checkpoint metadata unavailable' }
 function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: ProviderId): boolean {
   if (!isQwenProvider(providerId) || !request.tools?.some(t => t.name === 'github_repo_state') || hasToolResult(request, 'github_repo_state')) return false
@@ -261,6 +288,37 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
     return { success: false, error: classifyError(new Error(`Deep research gathered no usable sources, so Qwen/Qwen3-8B was not asked to answer from memory. ${research.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').slice(0, 400)}`), selected) }
   }
   if (!research && shouldBootstrapRepositoryEvidence(request, selected)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `bootstrap-repo-state-${Date.now()}`, name: 'github_repo_state', input: {} }], stopReason: 'deterministic-repository-evidence' })
+  // Nexus Intelligence runs its own deterministic loop, mirroring nexus-llm/train/loop.py:
+  // dispatch a segment -> a segment ending in a call becomes a normal app tool call -> the
+  // tool result is injected into the next dispatch's transcript -> the segment that answers
+  // ends the turn. Nothing here touches the Qwen path (or vice versa).
+  if (isNexusIntelligenceProvider(selected)) {
+    const failed = failedNexusToolResult(request)
+    if (failed) return { success: false, error: classifyError(new Error(failed.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
+    const latest = latestCurrentToolResult(request)
+    if (latest?.name === 'nexus_reason' && isSuccessfulNexusToolResult(latest.content)) {
+      const segment = latest.content.split('\n\n').slice(1).join('\n\n').trim()
+      const parsed = parseNexusSegment(segment)
+      if (parsed.kind === 'failed') return { success: false, error: classifyError(new Error(parsed.message), selected) }
+      if (parsed.kind === 'call') {
+        const { calls } = buildNexusTranscript(currentTurnMessages(request))
+        if (calls < NEXUS_MAX_CALLS) {
+          return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: `nexus-call-${Date.now()}`, name: parsed.name, input: parsed.input }], stopReason: 'nexus-tool-call' })
+        }
+        // The graded loop's call cap: the model still wants a tool, but the loop is over.
+        // Show its last segment grammar-stripped instead of dispatching a fourth call.
+        return success({ text: `Nexus Intelligence reached its ${NEXUS_MAX_CALLS}-call loop limit still mid-task. Its last segment:\n\n${stripNexusGrammar(parsed.raw)}`, provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-call-cap' })
+      }
+      const trimNote = /\bprompt-trimmed=true\b/.test(latest.content.split('\n\n')[0] ?? '')
+        ? 'Note: the 640-token window could not hold the whole conversation, so the oldest part was trimmed before this segment ran.'
+        : ''
+      return success({ text: trimNote ? `${parsed.text}\n\n${trimNote}` : parsed.text, provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-synthesis-complete' })
+    }
+    if (request.tools?.some(t => t.name === 'nexus_reason')) {
+      return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `bootstrap-nexus-${Date.now()}`, name: 'nexus_reason', input: buildNexusToolInput(request) }], stopReason: 'deterministic-nexus-reasoning' })
+    }
+    return { success: false, error: classifyError(new Error('nexus-not-dispatched: the request reached the Nexus Intelligence provider without the nexus_reason tool, so no workflow was dispatched and GitHub Actions was never contacted.'), selected) }
+  }
   if (shouldBootstrapQwenReasoning(request, selected)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `bootstrap-qwen-${Date.now()}`, name: 'qwen_reason', input: buildQwenToolInput(request) }], stopReason: 'deterministic-qwen-reasoning' })
   if (!(await provider.isConfigured(apiKey))) return { success: false, error: { class: 'AUTH_FAILURE', message: `${provider.label} API key or endpoint required.`, provider: selected, retryable: false } }
   try {
