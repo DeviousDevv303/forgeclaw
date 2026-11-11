@@ -260,7 +260,17 @@ function buildQwenToolInput(request: AIRequest): { task: string; context?: strin
 export async function sendViaRouter(request: AIRequest, apiKey: string, providerId: ProviderId = DEFAULT_PROVIDER): Promise<{ success: true; response: AIResponse } | { success: false; error: AIError }> {
   const choice = await getBestProvider(apiKey, providerId, request.model || ''); const selected = choice.providerId; const provider = providers[selected]
   const lastUser = [...request.messages].reverse().find(m => m.role === 'user')
-  if (lastUser && isImageGenerationRequest(lastUser.content)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `direct-image-${Date.now()}`, name: 'generate_image', input: { prompt: extractImagePrompt(lastUser.content), style: inferImageStyle(extractImagePrompt(lastUser.content)), width: 512, height: 512 } }], stopReason: 'direct-image-intent' })
+  // Nexus Intelligence is deliberately exempt from this intercept (owner's correction,
+  // 2026-11-11: "Nexus has an image generator"). The generate-image workflow is part of Nexus
+  // Intelligence (ForgeClaw is its body), so an image request under the Nexus provider falls
+  // through to the Nexus dispatch below like any other turn: Nexus decides. If its segment
+  // calls generate_image, the call executes through the nexus-tool-call route and the result
+  // is labelled as Nexus Intelligence's image generator naming the Stable Diffusion pipeline;
+  // if Nexus answers in text instead, the turn ends as a normal Nexus text turn. No
+  // deterministic intercept under this provider — the pre-correction behavior (diffusion
+  // dispatched for every provider and the turn attributed to Nexus without Nexus deciding)
+  // mislabelled the picture's maker, which the owner flagged on 2026-11-09.
+  if (lastUser && isImageGenerationRequest(lastUser.content) && !isNexusIntelligenceProvider(selected)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `direct-image-${Date.now()}`, name: 'generate_image', input: { prompt: extractImagePrompt(lastUser.content), style: inferImageStyle(extractImagePrompt(lastUser.content)), width: 512, height: 512 } }], stopReason: 'direct-image-intent' })
   const prior = latestCurrentToolResult(request)
   // A picture comes first: greetings, repository evidence and research would all answer without it.
   const imageStep = isQwenProvider(selected) ? nextImageStep(request, choice.model, selected) : undefined

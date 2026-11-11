@@ -20,7 +20,7 @@ describe('which tools get a spider', () => {
   it('maps the real channels and gives local tools none', () => {
     expect(spiderChannel('browser_run')?.channel).toBe('browser')
     for (const t of ['shell_exec', 'shell_patch', 'sculpt_self', 'run_js']) expect(spiderChannel(t)?.channel, t).toBe('sandbox')
-    for (const t of ['qwen_reason', 'ask_qwen', 'github_run_workflow', 'web_search', 'github_read_file', 'kalshi_markets']) expect(spiderChannel(t)?.channel, t).toBe('network')
+    for (const t of ['qwen_reason', 'nexus_reason', 'ask_qwen', 'github_run_workflow', 'web_search', 'github_read_file', 'kalshi_markets']) expect(spiderChannel(t)?.channel, t).toBe('network')
     for (const t of ['memory_write', 'funds_propose', 'coding_task_update', 'error_report', 'spawn_agent', 'not_a_tool']) expect(spiderChannel(t), t).toBeNull()
   })
 })
@@ -36,6 +36,14 @@ describe('the ledger (the owner\'s rule: no decorative spiders)', () => {
     const l = fold([start('browser_run', T0), start('shell_exec', T0 + 10), start('qwen_reason', T0 + 20)])
     expect(l.runs.map(r => r.channel)).toEqual(['browser', 'sandbox', 'network'])
     expect(spiderCounters(l, T0 + 30)).toMatchObject({ inFlight: 3, returned: 0, flagged: 0, out: 3 }); invariant(l, T0 + 30)
+  })
+  it('a Nexus dispatch gets a spider too: nexus_reason starts count as in flight', () => {
+    // Regression pin: nexus_reason was missing from the channel map, so a Nexus run in
+    // flight produced no ledger line — invisible on the throne swarm and never raising
+    // the status strip, unlike every other provider's reasoning dispatch.
+    const l = fold([start('nexus_reason', T0)])
+    expect(l.runs.map(r => r.channel)).toEqual(['network'])
+    expect(spiderCounters(l, T0 + 30)).toMatchObject({ inFlight: 1, out: 1 }); invariant(l, T0 + 30)
   })
   it('start then success: the spider returns, returned +1, none in flight', () => {
     const l = fold([start('qwen_reason', T0), ok('qwen_reason', T0 + 5_000)])

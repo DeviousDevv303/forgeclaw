@@ -109,9 +109,22 @@ export const MAX_REPO_CREATIONS_PER_RUN = 2
 /** Dispatcher aliases (executeTool normalizes these) that count as the offered tool. */
 const TOOL_ALIASES: Readonly<Record<string, string>> = { generateimage: 'generate_image', qwenreason: 'qwen_reason' }
 
-/** True when the router itself issued the calls (deterministic bootstraps), not the model. */
+/**
+ * True when the router itself issued the calls (deterministic bootstraps), not the model.
+ * 'nexus-tool-call' belongs here: in the Nexus Intelligence loop the checkpoint never emits an
+ * app tool call directly — providerRouter parses its segment and constructs the call itself
+ * (stopReason 'nexus-tool-call'), exactly as the Qwen chains construct theirs ('deterministic-*').
+ * Without the recognition, App.tsx's offered-set check refused the segment's call whenever its
+ * name was outside the turn's keyword-offered set, so a Nexus turn could dispatch nexus_reason
+ * yet never actually run the tool the segment asked for — the loop degraded to an error span.
+ * Admission is not a Guardian bypass: every admitted call still passes executeTool's own
+ * provider-independent enforcement (Guardian co-sign by posture, the self-sculpt key lock),
+ * the run's repeated-call loop detection, and the repository-creation cap below, which is
+ * checked for router-issued calls too. The loop itself is capped by the router
+ * (NEXUS_MAX_CALLS in nexusIntelligenceContext.ts).
+ */
 export function isRouterIssued(stopReason: string | undefined): boolean {
-  return !!stopReason && (stopReason.startsWith('deterministic-') || stopReason === 'direct-image-intent')
+  return !!stopReason && (stopReason.startsWith('deterministic-') || stopReason === 'direct-image-intent' || stopReason === 'nexus-tool-call')
 }
 
 /**

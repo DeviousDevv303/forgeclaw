@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { baselineToolNames, FUNDS_GUIDANCE, nexusDispatchToolNames, SHELL_EXEC_GUIDANCE } from './toolExposure'
+import { baselineToolNames, FUNDS_GUIDANCE, isRouterIssued, nexusDispatchToolNames, SHELL_EXEC_GUIDANCE, toolCallRefusal } from './toolExposure'
 import { FIGHTER_STATE_MAX_WEIGHT_PCT, FIGHT_SECTIONS, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT } from './fightResearch'
 import { SIM_MIN_HIT_RATE, SIM_MIN_SETTLED_RUNS, SIM_WEIGHT_CAP } from './simGrading'
 import { FORGE_TOOLS } from './forgeTools'
@@ -196,6 +196,39 @@ describe('nexus dispatch tool', () => {
   })
   it('the dispatched name is a real tool in the catalog', () => {
     expect(FORGE_TOOLS.some(t => t.name === 'nexus_reason')).toBe(true)
+  })
+})
+
+describe('router-issued stop reasons and the offered-set check', () => {
+  // The Nexus Intelligence loop: providerRouter parses the checkpoint's segment and constructs
+  // the app tool call itself (stopReason 'nexus-tool-call'). Before this recognition existed,
+  // App.tsx refused any such call whose name the turn's keywords had not offered, so a Nexus
+  // segment asking for e.g. shell_exec was Guardian-blocked and the loop could never run it.
+  it('recognizes the stop reasons the router issues calls under', () => {
+    expect(isRouterIssued('deterministic-nexus-reasoning')).toBe(true)
+    expect(isRouterIssued('deterministic-qwen-reasoning')).toBe(true)
+    expect(isRouterIssued('direct-image-intent')).toBe(true)
+    expect(isRouterIssued('nexus-tool-call')).toBe(true)
+  })
+  it('does not treat model-issued or absent stop reasons as router-issued', () => {
+    expect(isRouterIssued('nexus-synthesis-complete')).toBe(false)
+    expect(isRouterIssued('nexus-call-cap')).toBe(false)
+    expect(isRouterIssued('tool_calls')).toBe(false)
+    expect(isRouterIssued(undefined)).toBe(false)
+    expect(isRouterIssued('')).toBe(false)
+  })
+  it('admits a router-issued Nexus segment call outside the keyword-offered set', () => {
+    const offered = new Set(['nexus_reason'])
+    expect(toolCallRefusal('shell_exec', offered, isRouterIssued('nexus-tool-call'), 0)).toBeNull()
+    expect(toolCallRefusal('github_read_file', offered, isRouterIssued('nexus-tool-call'), 0)).toBeNull()
+  })
+  it('still refuses the same call when it is not router-issued', () => {
+    const offered = new Set(['nexus_reason'])
+    expect(toolCallRefusal('shell_exec', offered, isRouterIssued('nexus-synthesis-complete'), 0)).toMatch(/\[GUARDIAN BLOCKED\] shell_exec was not offered/)
+    expect(toolCallRefusal('shell_exec', offered, false, 0)).toMatch(/\[GUARDIAN BLOCKED\] shell_exec was not offered/)
+  })
+  it('the repository-creation cap binds router-issued calls too', () => {
+    expect(toolCallRefusal('github_create_repo', new Set(), isRouterIssued('nexus-tool-call'), 2)).toMatch(/already created 2 repositories/)
   })
 })
 

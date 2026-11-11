@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { SpiderPanel } from './SpiderPanel'
+import { SpiderPanel, SPIDER_PANEL_BOTTOM_PX } from './SpiderPanel'
 import { ThroneRig } from './ThroneRig'
 import { IDLE_NEURAL_STATE } from '../hooks/useNeuralState'
-import { emptyLedger, foldSpiderEvents } from '../lib/spiderlings'
+import { emptyLedger, foldSpiderEvents, SPIDER_PANEL_LINGER_MS } from '../lib/spiderlings'
 import type { AgentEvent } from '../types/forgeOps'
 
 afterEach(() => { cleanup(); vi.useRealTimers() })
@@ -60,6 +60,39 @@ describe('SpiderPanel', () => {
     expect([num('spider-inflight'), num('spider-unknown')]).toEqual([0, 1])
     fireEvent.click(screen.getByTestId('spider-toggle'))
     expect(screen.getByTestId('spider-lines').textContent).toMatch(/unknown at sandbox · shell_patch · no end event since/)
+  })
+})
+
+describe('panel visibility: shown for a run, gone when idle (owner order 2026-11-10)', () => {
+  const settled: AgentEvent[] = [
+    { type: 'TOOL_START', tool: 'github_read_file', iter: 0, timestamp: T0 },
+    { type: 'TOOL_SUCCESS', tool: 'github_read_file', timestamp: T0 + 2_000 },
+  ]
+  it('appears while activity is fresh, then hides once the linger after settling passes', () => {
+    const ledger = foldSpiderEvents(emptyLedger('live', T0), settled)
+    const { rerender } = render(<SpiderPanel ledger={ledger} now={T0 + 3_000} />)
+    expect(screen.getByTestId('spider-panel')).toBeTruthy()
+    expect(num('spider-returned')).toBe(1)
+    rerender(<SpiderPanel ledger={ledger} now={T0 + 2_000 + SPIDER_PANEL_LINGER_MS + 1_000} />)
+    expect(screen.queryByTestId('spider-panel')).toBeNull()
+  })
+  it('stays up while a run is unanswered, however long that takes', () => {
+    const ledger = foldSpiderEvents(emptyLedger('live', T0), [{ type: 'TOOL_START', tool: 'qwen_reason', iter: 0, timestamp: T0 }])
+    render(<SpiderPanel ledger={ledger} now={T0 + 60 * 60_000} />)
+    expect(screen.getByTestId('spider-panel')).toBeTruthy()
+    // Past the tool's 31-minute timeout the run reads unknown, never in flight — still unanswered, still shown.
+    expect([num('spider-inflight'), num('spider-unknown')]).toEqual([0, 1])
+  })
+  it('an untouched ledger shows the strip at mount, then it clears', () => {
+    const { rerender } = render(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} />)
+    expect(screen.getByTestId('spider-panel')).toBeTruthy()
+    rerender(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0 + SPIDER_PANEL_LINGER_MS + 1_000} />)
+    expect(screen.queryByTestId('spider-panel')).toBeNull()
+  })
+  it('sits above the composer bar instead of covering it and its SEND button', () => {
+    render(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} />)
+    expect(SPIDER_PANEL_BOTTOM_PX).toBeGreaterThanOrEqual(84)
+    expect(screen.getByTestId('spider-panel').style.bottom).toBe(`${SPIDER_PANEL_BOTTOM_PX}px`)
   })
 })
 
