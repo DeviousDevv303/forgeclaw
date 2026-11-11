@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { baselineToolNames, FUNDS_GUIDANCE, SHELL_EXEC_GUIDANCE } from './toolExposure'
+import { baselineToolNames, FUNDS_GUIDANCE, nexusDispatchToolNames, SHELL_EXEC_GUIDANCE } from './toolExposure'
 import { FIGHTER_STATE_MAX_WEIGHT_PCT, FIGHT_SECTIONS, FUNDS_CROWD_MIN_COMPARABLE_FIGHTS, FUNDS_CROWD_MIN_HIT_RATE_PCT, FUNDS_SENTIMENT_MAX_WEIGHT_PCT } from './fightResearch'
 import { SIM_MIN_HIT_RATE, SIM_MIN_SETTLED_RUNS, SIM_WEIGHT_CAP } from './simGrading'
 import { FORGE_TOOLS } from './forgeTools'
@@ -178,6 +178,24 @@ describe('read-only money baseline', () => {
   it('local and Qwen models get no baseline', () => {
     expect(baselineToolNames('local')).toEqual([])
     expect(baselineToolNames('qwen')).toEqual([])
+  })
+})
+
+describe('nexus dispatch tool', () => {
+  // Regression pin for the nexus-not-dispatched failure: providerRouter can run a
+  // 'nexus-intelligence' turn only when nexus_reason is among the offered tools, and no
+  // keyword or baseline ever offered it, so every question under the Nexus provider failed
+  // before any workflow was dispatched. The tool is offered by provider instead.
+  it('the Nexus Intelligence provider is offered its dispatch tool by provider', () => {
+    expect(nexusDispatchToolNames('nexus-intelligence')).toEqual(['nexus_reason'])
+  })
+  it('no other provider gets the Nexus dispatch tool', () => {
+    for (const provider of ['qwen', 'corpus', 'deepseek', 'nexus', 'local', 'moonshot', 'anthropic', 'muse', 'openrouter']) {
+      expect(nexusDispatchToolNames(provider)).toEqual([])
+    }
+  })
+  it('the dispatched name is a real tool in the catalog', () => {
+    expect(FORGE_TOOLS.some(t => t.name === 'nexus_reason')).toBe(true)
   })
 })
 

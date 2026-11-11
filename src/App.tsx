@@ -231,7 +231,7 @@ import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/p
 import { QWEN_RUN_EXPIRED_NOTE, isQwenRunResumable } from './lib/qwenRunResume'
 import { ConnectionToast, type ConnectionNotice } from './components/ConnectionToast'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
-import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, nexusDispatchToolNames, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 import { attestedUrlsForConversation, isAttestedLink } from './lib/linkAttestation'
 import { compactToolHistory } from './lib/historyCompaction'
@@ -1610,6 +1610,9 @@ function App() {
     // Questions about what is current get gathered sources, whatever the wording (currentInfo.ts).
     if (needsCurrentInfo(promptText)) coreToolNames.push('deep_research')
     coreToolNames.push(...baselineToolNames(activeProvider))
+    // Nexus Intelligence's dispatch tool rides by provider, with the baselines above (toolExposure.ts):
+    // without it the router cannot dispatch the Nexus workflow at all (nexus-not-dispatched).
+    coreToolNames.push(...nexusDispatchToolNames(activeProvider))
     // A pasted address says what to use: this repository's pages need the GitHub tools, any other page the cloud browser.
     coreToolNames.push(...toolsForUrls(promptText || '', ghOwner || CANONICAL_IDENTITY.owner, ghRepo || CANONICAL_IDENTITY.repository))
     // A merge asked for in any wording gets the merge tool and the readers it needs (still offered only while self-sculpt is unlocked).
