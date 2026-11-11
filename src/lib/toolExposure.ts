@@ -41,6 +41,18 @@ export function baselineToolNames(providerId: string): string[] {
   return HOSTED_TOOL_PROVIDERS.has(providerId) ? [...READ_ONLY_BASELINE_TOOLS] : []
 }
 
+/**
+ * The dispatch tool of the standalone Nexus Intelligence provider (provider id
+ * 'nexus-intelligence'). providerRouter can run such a turn only by dispatching nexus_reason,
+ * and nothing else ever offered it — it has no keyword entry in App.tsx and belongs to no
+ * baseline — so every Nexus-provider turn reached the router without the tool and failed with
+ * nexus-not-dispatched. Like the Qwen providers' qwen_reason in App.tsx, it is offered by
+ * provider, not by what the message happens to say.
+ */
+export function nexusDispatchToolNames(providerId: string): string[] {
+  return providerId === 'nexus-intelligence' ? ['nexus_reason'] : []
+}
+
 /** Appended to the prompt of a turn that has no tools, so the model cannot pretend it used any. */
 export const NO_TOOLS_NOTICE =
   'No tools are available in this message. You cannot read the repository, run commands, check workflow runs, or make commits right now. ' +

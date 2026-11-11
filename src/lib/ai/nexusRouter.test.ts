@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { getBestProvider, isNexusIntelligenceProvider, sendViaRouter } from './providerRouter'
 import type { AIRequest } from './types'
+import { FORGE_TOOLS } from '../forgeTools'
+import { nexusDispatchToolNames } from '../toolExposure'
 
 const TOOLS = [{ name: 'nexus_reason', description: 'reason', parameters: {} }]
 const CALL_SEGMENT = '<|route:tool|><|call|>{"name":"github_read_file","arguments":{"path":"package.json"}}<|/call|>'
@@ -89,6 +91,18 @@ describe('Nexus Intelligence router loop', () => {
     const result = await sendViaRouter(request, '', 'nexus-intelligence')
     expect(result.success).toBe(false)
     if (!result.success) expect(result.error.message).toContain('nexus-dispatch failed')
+  })
+
+  it('dispatches when the offered tools are the ones the app offers the Nexus provider', async () => {
+    // The seam that broke in production: App.tsx offers the Nexus provider its tools via
+    // nexusDispatchToolNames, and the router dispatches only if nexus_reason is among them.
+    // Building the request's tools from that same offering pins the two sides together.
+    const offered = FORGE_TOOLS.filter(t => nexusDispatchToolNames('nexus-intelligence').includes(t.name))
+    expect(offered.map(t => t.name)).toEqual(['nexus_reason'])
+    const request: AIRequest = { model: 'nexus-run25', systemPrompt: '', messages: [{ role: 'user', content: 'hello' }], tools: offered }
+    const result = await sendViaRouter(request, '', 'nexus-intelligence')
+    expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', stopReason: 'deterministic-nexus-reasoning' } })
+    if (result.success) expect(result.response.toolCalls?.[0]?.name).toBe('nexus_reason')
   })
 
   it('refuses to pretend when the nexus_reason tool is unavailable', async () => {

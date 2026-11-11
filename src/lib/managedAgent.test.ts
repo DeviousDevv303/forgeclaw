@@ -103,6 +103,12 @@ describe('capability profiles decide tool authority', () => {
     for (const write of WRITE_TOOL_NAMES) expect(granted).not.toContain(write)
   })
 
+  it('keeps the Nexus dispatch tool in the coding profile, so a coding-classified Nexus-provider turn can still dispatch', () => {
+    // App.tsx rebuilds a coding turn's tools from this profile; if nexus_reason is missing here,
+    // the router fails the turn with nexus-not-dispatched even though the chat path offers it.
+    expect(toolsForCapability('coding', FORGE_TOOLS).map(tool => tool.name)).toContain('nexus_reason')
+  })
+
   it('grants the existing write tools to coding so writes keep flowing through the dispatcher', () => {
     const granted = toolsForCapability('coding', FORGE_TOOLS).map(tool => tool.name)
     for (const read of CODING_READONLY_TOOL_NAMES) expect(granted).toContain(read)
