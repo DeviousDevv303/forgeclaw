@@ -47,6 +47,10 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
 export const CODING_TOOL_ORDER: readonly string[] = [
   'qwen_reason',
   'ask_qwen',
+  // The Nexus Intelligence dispatch tool, beside the Qwen reason tools: a coding-classified turn
+  // under the Nexus provider is rebuilt from this list, and without nexus_reason in it the router
+  // fails that turn with nexus-not-dispatched exactly as the chat path did.
+  'nexus_reason',
   'github_repo_state',
   'github_read_file',
   'github_list_files',
