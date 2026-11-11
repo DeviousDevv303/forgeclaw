@@ -252,9 +252,11 @@ class FirstRunLessonsTests(unittest.TestCase):
 
     def test_too_late_in_the_window_the_model_does_not_start(self):
         # The feed never rolls (the fake clock stands still): the wait budget runs out and the
-        # run still skips without starting the model.
+        # run still skips without starting the model. (Fixture re-pointed 91s -> 41s on 2026-11-10:
+        # MIN_SECONDS_TO_DECIDE dropped 150 -> 60 on Nexus's measured ~28 s cycle, so "too late"
+        # now begins under 60 s left; the scenario — a start that would land after the close — is unchanged.)
         server = FakeServer()
-        live = json.loads(json.dumps(LIVE)); live["window"]["closeTimeMs"] = live["now"] + 91_000
+        live = json.loads(json.dumps(LIVE)); live["window"]["closeTimeMs"] = live["now"] + 41_000
         called = []
         orig = LIVE
         try:
@@ -263,7 +265,7 @@ class FirstRunLessonsTests(unittest.TestCase):
         finally:
             globals()["LIVE"] = orig
         self.assertEqual(called, [])
-        self.assertIn("91s left", report["skipped"])
+        self.assertIn("41s left", report["skipped"])
         self.assertGreater(report["waited_s"], 0)
         self.assertEqual(server.actions(), [])
 
@@ -272,7 +274,7 @@ class FirstRunLessonsTests(unittest.TestCase):
         # went home; the desk went unruled for two windows. Now the run waits out the close and
         # decides on the fresh window.
         server = FakeServer()
-        dead = json.loads(json.dumps(LIVE)); dead["window"]["closeTimeMs"] = dead["now"] + 91_000
+        dead = json.loads(json.dumps(LIVE)); dead["window"]["closeTimeMs"] = dead["now"] + 41_000  # 41s left: under the 60 s floor (2026-11-10 re-point, was 91s under the 150 s floor)
         fresh = json.loads(json.dumps(LIVE)); fresh["window"]["ticker"] = "KXBTC15M-NEXT"
         slept = []
 
@@ -288,9 +290,9 @@ class FirstRunLessonsTests(unittest.TestCase):
                                  log=lambda s: None, sleep=fake_sleep)
         finally:
             globals()["LIVE"] = orig
-        self.assertEqual(slept, [101])
+        self.assertEqual(slept, [51])
         self.assertNotIn("skipped", report)
-        self.assertEqual(report["waited_s"], 101)
+        self.assertEqual(report["waited_s"], 51)
         self.assertEqual([a[0] for a in server.actions()], ["predict"])
 
 
@@ -358,14 +360,17 @@ class StandingAgentTests(unittest.TestCase):
         self.assertLessEqual(c.t, 60 * 60)
 
     def test_with_too_little_time_for_another_look_it_sleeps_into_the_next_window(self):
+        # Fixture re-pointed 155s -> 62s on 2026-11-10: "too little time for another look" now means
+        # left - CHECK_INTERVAL_S < MIN_SECONDS_TO_DECIDE (62 - 5 < 60); the behavior — sleeping past the
+        # close into the next window instead of starting a look that cannot land — is unchanged.
         c = self.Clock()
         calls = []
 
         def run(watch=None):
             calls.append(c.t)
-            return {"decision": {}, "fair": {"left_s": 155}}
+            return {"decision": {}, "fair": {"left_s": 62}}
         ta.standing_loop(run, 30, log=lambda s: None, sleep=c.sleep, clock=c)
-        self.assertEqual(calls[1] - calls[0], 155 + ta.NEXT_WINDOW_GRACE_S)
+        self.assertEqual(calls[1] - calls[0], 62 + ta.NEXT_WINDOW_GRACE_S)
 
     def test_one_bad_window_does_not_end_the_agent(self):
         c = self.Clock()
@@ -1320,3 +1325,122 @@ class MainLoopFailureTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("rulings recorded 7", summary)
         self.assertIn("skipped 2", summary)
+
+
+class ConstantWatchTests(unittest.TestCase):
+    """Owner 2026-11-10: "watching as constant as possibly capable" — and his scalp directive of the same evening
+    (scalp back to double digits; never exit below entry)."""
+
+    flat = {"ticker": "T1", "distanceBps": 2.0, "yesBid": 50, "position": (0, 0)}
+
+    def test_the_watcher_wakes_on_a_strike_cross_and_an_entry_zone_crossing(self):
+        mc = ta.material_change
+        self.assertIn("crossed the strike", mc(self.flat, dict(self.flat, distanceBps=-2.0)))   # +2 -> -2: inside the 5 bps magnitude wake
+        self.assertIn("entry-zone edge", mc(self.flat, dict(self.flat, distanceBps=3.1)))        # 2.0 -> 3.1: the YES entry zone opens
+        self.assertIn("entry-zone edge", mc(dict(self.flat, distanceBps=-2.0), dict(self.flat, distanceBps=-3.2)))
+        self.assertIsNone(mc(self.flat, dict(self.flat, distanceBps=2.6, yesBid=53)))            # still noise: sleep on
+
+    def cycle(self, server, state, think=None):
+        return ta.run_once(ta.McpSession("https://bank.test/mcp", TOKEN, post=server.post),
+                           think or think_returning('{"analysis": "a", "p_yes": 0.7, "action": "none", "reason": "watching"}'),
+                           log=lambda s: None, ruling_state=state)
+
+    def test_an_unchanged_stance_on_an_unchanged_picture_writes_no_second_row(self):
+        server, state = FakeServer(), {}
+        first = self.cycle(server, state)
+        self.assertTrue(first["ruling_recorded"])
+        second = self.cycle(server, state)
+        self.assertFalse(second["ruling_recorded"])
+        self.assertIn("unchanged stance", second["ruling_deduped"])
+        self.assertEqual(len([c for c in server.calls if c[0] == "record_ruling"]), 1)
+        self.assertEqual(len([c for c in server.calls if c[0] == "share_thinking"]), 1)
+
+    def test_a_material_change_inside_the_same_window_earns_a_new_row(self):
+        server, state = FakeServer(), {}
+        self.cycle(server, state)
+        live = json.loads(json.dumps(LIVE)); live["snapshot"]["distanceBps"] = 6.0   # 15 -> 6 bps: past the 5 bps wake
+        orig = LIVE
+        try:
+            globals()["LIVE"] = live
+            again = self.cycle(server, state)
+        finally:
+            globals()["LIVE"] = orig
+        self.assertTrue(again["ruling_recorded"])
+        self.assertEqual(len([c for c in server.calls if c[0] == "record_ruling"]), 2)
+
+    def test_a_changed_stance_earns_a_new_row_on_the_same_picture(self):
+        server, state = FakeServer(), {}
+        self.cycle(server, state)
+        again = self.cycle(server, state, think_returning('{"analysis": "a", "p_yes": 0.7, "action": "enter_yes", "reason": "edge after fees"}'))
+        self.assertTrue(again["ruling_recorded"])
+        self.assertEqual(len([c for c in server.calls if c[0] == "record_ruling"]), 2)
+
+    def test_the_heartbeat_rerecordes_an_unchanged_stance(self):
+        server, state = FakeServer(), {}
+        self.cycle(server, state)
+        state["recorded_mono"] -= ta.HEARTBEAT_RULING_S + 1   # the heartbeat bound has passed: silence is impossible
+        again = self.cycle(server, state)
+        self.assertTrue(again["ruling_recorded"])
+        self.assertEqual(len([c for c in server.calls if c[0] == "record_ruling"]), 2)
+
+    def test_deduped_cycles_are_counted_apart_and_never_as_recorded(self):
+        t = [0.0]
+        clock = lambda: t[0]  # noqa: E731
+        sleep = lambda s: t.__setitem__(0, t[0] + s)  # noqa: E731
+        outcomes = [{"decision": {}, "fair": {"left_s": 800}, "ruling_recorded": True},
+                    {"decision": {}, "fair": {"left_s": 800}, "ruling_recorded": False},
+                    {"skipped": "x", "fair": {"left_s": -19}}]
+        n = [0]
+
+        def run(watch=None):
+            r = outcomes[min(n[0], len(outcomes) - 1)]
+            n[0] += 1
+            return r
+        stats = {}
+        ruled = ta.standing_loop(run, 1, log=lambda s: None, sleep=sleep, clock=clock, stats=stats)
+        self.assertEqual(ruled, 1)
+        self.assertEqual(stats["recorded"], 1)
+        self.assertEqual(stats["deduped"], 1)
+        self.assertEqual(stats["skipped"], 1)
+        self.assertEqual(stats["attempted"], stats["recorded"] + stats["skipped"] + stats.get("errors", 0) + stats["deduped"])
+
+    def test_a_loop_of_only_deduped_cycles_records_zero(self):
+        # The #407 failure rule at the new cadence: deduped is not recorded, so main()'s zero-recorded exit
+        # still means what it meant. (In production the first cycle of a run always records, so this loop
+        # shape cannot occur — the classification is what is on trial.)
+        t = [0.0]
+        stats = {}
+        ruled = ta.standing_loop(lambda watch=None: {"decision": {}, "fair": {"left_s": 800}, "ruling_recorded": False},
+                                 1, log=lambda s: None, sleep=lambda s: t.__setitem__(0, t[0] + s),
+                                 clock=lambda: t[0], stats=stats)
+        self.assertEqual(ruled, 0)
+        self.assertEqual(stats.get("recorded", 0), 0)
+        self.assertEqual(stats["deduped"], stats["attempted"])
+
+    def test_the_scalp_directive_rides_in_both_task_builders(self):
+        fair = ta.fair_value(LIVE)
+        obs = {"status": STATUS, "live": LIVE, "history": [], "record": {}, "fair": fair,
+               "edges": ta.edges(fair, LIVE["snapshot"])}
+        prompt = ta.build_user_prompt(obs)
+        self.assertIn("OWNER DIRECTIVE (Cristian, 2026-11-10", prompt)
+        task, _ = ta.build_nexus_task(obs)
+        self.assertIn("OWNER DIRECTIVE (Cristian, 2026-11-10", task)
+        self.assertIn("above 1000c equity", task)
+        self.assertIn("1500c goal", task)
+        self.assertIn("below its blended entry", task)
+        # The directive never crowds out the ruling: the whole task still fits the 640-token window
+        # under the conservative chars/3 counter the budget uses.
+        self.assertLessEqual(max(1, len(task) // 3), 640 - ta.NEXUS_MAX_NEW - 10)
+
+    def test_no_agent_exit_sells_below_the_blended_entry(self):
+        live = {"window": {"ticker": "T"},
+                "snapshot": {"yesBidCents": 55, "yesAskCents": 57, "noBidCents": 43, "noAskCents": 45, "distanceBps": 8.0},
+                "intents": [{"side": "yes", "purpose": "entry", "filled_hundredths": 100, "avg_yes_price_micros": 600000}]}
+        dec = {"p_yes": 0.4, "action": "exit", "reason": "get out", "valid": True}
+        blocked = ta.apply_discipline(dec, {"live": live})
+        self.assertEqual((blocked["action"], blocked["blocked"]), ("none", "exit"))
+        self.assertIn("no exit below entry", blocked["reason"])
+        live["snapshot"]["yesBidCents"] = 60   # at entry is not below entry: the exit stands
+        self.assertIs(ta.apply_discipline(dec, {"live": live}), dec)
+        live["snapshot"]["yesBidCents"] = 71   # in profit: untouched
+        self.assertIs(ta.apply_discipline(dec, {"live": live}), dec)

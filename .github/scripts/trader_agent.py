@@ -157,11 +157,17 @@ def market_p_yes(live):
 IV_MULT = 1.15            # implied-vol multiplier fitted to Kalshi minute marks (the desk's benchmark)
 DEFAULT_SIGMA_1M_BPS = 6.0  # typical 1-minute BTC move when the tape is too short to measure
 MIN_EDGE_CENTS = 0.5      # owner order 2026-11-08: take the best edge each window, even if thin — an entry needs a positive edge after fees
-# The model thinks for up to ~110 s on the CPU runner (run 42534021710: 108 s). With less time than this left in the window,
-# its decision would land after the close (that run's prediction was refused: "no open window"), so it does not start
-# on THIS window — it waits for the next one instead (owner order 2026-11-08: the AI rules every window; run
-# 42541804428 landed 36 s before a close, skipped, and the desk went unruled for two windows).
-MIN_SECONDS_TO_DECIDE = 150
+# The 150 s below was Qwen-era: that model thought for up to ~110 s on the CPU runner (run 42534021710: 108 s), so a
+# decision begun with less time left would land after the close (that run's prediction was refused: "no open window"),
+# and it waited for the next window instead (owner order 2026-11-08: the AI rules every window; run 42541804428 landed
+# 36 s before a close, skipped, and the desk went unruled for two windows).
+# Nexus (2026-11-10) is not that model: measured live on its first day (D1 agent_rulings ids 365-393, windows 1915/1930),
+# consecutive rulings inside a window landed 21-34 s apart end to end — observe + think + act + the inter-ruling pause —
+# so a full cycle is ~28 s, not ~2 minutes. 60 s is two full cycles of headroom: a decision begun at 60 s left lands
+# with ~30 s to spare, and the stale check still voids any order whose picture moved while it thought. The lower
+# floor hands back 90 s of ruled time at the end of every window (owner order 2026-11-10: watch as constant as
+# possibly capable).
+MIN_SECONDS_TO_DECIDE = 60
 # The recorded prediction is pulled halfway to the blended fair value (formula + market). 2045 on 2026-11-08: BTC 20 bps
 # above the strike with 5 minutes left, market 0.85, the model said 0.56; across its first 7 graded windows its Brier was
 # 0.0727 vs the market's 0.0690. Playbook 9 asked for this; code now does it.
@@ -366,6 +372,7 @@ def build_user_prompt(obs):
     rec = obs.get("record") or {}
     lines = [
         *owner_note_lines(st),
+        *owner_directive_lines(),
         f"Window {w.get('ticker')}: {fair['left_s'] if fair else '?'}s left, strike ${w.get('strikeUsd')}, BTC {snap.get('distanceBps') if snap.get('distanceBps') is None else round(snap['distanceBps'], 1)} bps "
         f"from the strike (positive = above). Change: {trend(live, 60)} bps in the last minute, {trend(live, 180)} bps in the last 3 minutes.",
         f"Book: YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c, NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c. Market P(YES) = {market_p_yes(live)}.",
@@ -397,6 +404,27 @@ def owner_note_lines(st):
     if not text:
         return []
     return [f"OWNER'S STANDING NOTE (his word — follow it; it overrides your playbook defaults until he changes it): \"{text}\""]
+
+
+# OWNER DIRECTIVE (Cristian, 2026-11-10 18:20 CST, given in chat for the Trader agent): scalp the desk back to
+# double digits, and never exit below entry. This is HIS standing order, carried in code so it reaches the model
+# on every ruling whether or not a desk owner-note is set; it is deliberately worded as his directive and dated,
+# so the corpus can always tell it apart from model-authored strategy text (the agent's own adaptive strategy,
+# which he also ordered on 2026-11-10, lives in the model's rulings — never in this block). The no-exit-below-entry
+# half is ALSO enforced in code (apply_discipline), mirroring the desk's STOP law (dist157, nexus-trader PR #174:
+# a stop-due position exits only when its own-side bid is at or above its blended entry, else it rides).
+OWNER_SCALP_DIRECTIVE = (
+    "OWNER DIRECTIVE (Cristian, 2026-11-10 — his standing order until he changes it): Scalp the mandate back "
+    "above 1000c equity (double digits) and on to the 1500c goal before the 2026-11-13 09:17 CST expiry: bank "
+    "the recovery-scalp (+8c net on eligible entries) and the per-contract recovery-trail (arm +15c, 8c "
+    "give-back) wins whenever they print, instead of holding out for payout-sized moves. HARD RULE: never exit "
+    "a position below its blended entry — if the own-side bid is under the entry price, the exit does not fire.")
+
+
+def owner_directive_lines():
+    """The owner's standing scalp directive (2026-11-10), in every task the model is asked — right after his
+    desk note when one is set. Never trimmed: it is his word, not context."""
+    return [OWNER_SCALP_DIRECTIVE]
 
 
 def money_lines(st):
@@ -708,7 +736,10 @@ def build_nexus_task(obs, count=None):
     trimmed = False
 
     def assemble(note_text, kept):
-        parts = ([note_text] if note_text else []) + [t for _, t in sorted(kept, key=lambda x: x[0])] + [ask]
+        # The owner's standing directive (2026-11-10) rides in every Nexus task too, right after his desk note.
+        # The trims below only ever shorten the desk note or drop low-priority fact lines — the directive is
+        # never trimmed (owner_directive_lines).
+        parts = ([note_text] if note_text else []) + owner_directive_lines() + [t for _, t in sorted(kept, key=lambda x: x[0])] + [ask]
         return "\n".join(parts)
 
     task = assemble(note, lines)
@@ -879,7 +910,22 @@ def memory_lines(obs, earlier):
 def apply_discipline(decision, obs):
     """Code, not the model, holds the playbook's money rules the desk does not enforce itself: an entry needs at least
     MIN_EDGE_CENTS of edge after fees (playbook 2) and BTC at least 3 bps from the strike (playbook 4). A blocked
-    entry becomes "none" and says why; the prediction is kept."""
+    entry becomes "none" and says why; the prediction is kept.
+    OWNER HARD RULE (Cristian, 2026-11-10): no agent exit sells below the position's blended entry — the same line
+    the desk's STOP law holds (dist157). An exit whose own-side bid reads under the entry is blocked to "none";
+    an exit whose bid or entry cannot be read is NOT blocked on a guess — the rule binds on evidence, the way the
+    desk's own stop-below-entry hold does."""
+    if decision["action"] == "exit":
+        pos = position_fact(obs.get("live"))
+        snap = ((obs.get("live") or {}).get("snapshot") or {})
+        if pos and pos.get("avg_cents") is not None:
+            bid = snap.get("yesBidCents") if pos["side"] == "yes" else snap.get("noBidCents")
+            if isinstance(bid, (int, float)) and bid < pos["avg_cents"]:
+                return {**decision, "action": "none", "blocked": "exit",
+                        "reason": f"{decision['reason']} [owner hard rule 2026-11-10: no exit below entry — "
+                                  f"{pos['side'].upper()} bid {bid:g}c is under the {pos['avg_cents']:g}c blended entry; "
+                                  f"the exit does not fire]"}
+        return decision
     side = {"enter_yes": "yes", "enter_no": "no"}.get(decision["action"])
     if side is None:
         return decision
@@ -995,8 +1041,17 @@ def maybe_rollover_mandate(mcp, log=print):
     return r
 
 
+def stance_signature(report, decision):
+    """What a ruling SAYS, for the ruling-row dedupe: window, action, the directives actually sent, the exit line.
+    The probability is deliberately out — it is graded once per window by the predict call however often the
+    stance repeats, and its jitter alone does not make a new ruling row. A new row is earned by a changed stance
+    (this signature) or a materially changed picture (material_change against the last recorded ruling's seen)."""
+    return (report.get("ticker"), decision.get("action"),
+            json.dumps(decision.get("directives_sent"), sort_keys=True), decision.get("exit_line_bps"))
+
+
 def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None, watch=None, model_name=None,
-             shadow=None, record=None, spawn=None):
+             shadow=None, record=None, spawn=None, ruling_state=None):
     """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict.
 
     A run that lands too late in a window waits for the next window to open and decides on that
@@ -1148,25 +1203,49 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
         # phase labelled by who produced it. The raw above is Nexus's own transcript, untranslated.
         ruling_output["engine"] = "nexus-grammar"
         ruling_output["phases"] = build_nexus_phases(obs, decision)
-    try:
-        r = mcp.tool("record_ruling", {
-            "model": model_name,
-            "inputs": ruling_inputs,
-            "output": ruling_output,
-            "action": decision["action"], "p_model": decision.get("p_model"), "p_yes": decision["p_yes"]})
-        report["acted"].append({"tool": "record_ruling", "ok": r["ok"]})
-    except McpError:
-        report["acted"].append({"tool": "record_ruling", "ok": False})
+    # RULING-ROW DEDUPE (owner 2026-11-10, constant watch): when the caller keeps a ruling_state across check-ins,
+    # a cycle whose stance repeats the last RECORDED ruling on a picture that has not materially changed writes no
+    # new row and re-shares nothing — the cycle still thought, still renewed the desk's directives above, and any
+    # order it carried was still sent; only the corpus row is a duplicate. A heartbeat bounds the silence: the
+    # stance is re-recorded at least every HEARTBEAT_RULING_S however calm the window. A failed record never
+    # updates the state, so the next cycle retries the write instead of deduping against a row that does not exist.
+    record_it, dedupe_why, sig = True, None, None
+    if ruling_state is not None:
+        sig = stance_signature(report, decision)
+        if (ruling_state.get("signature") is not None and ruling_state.get("signature") == sig
+                and material_change(ruling_state.get("seen"), report.get("seen")) is None
+                and time.monotonic() - ruling_state.get("recorded_mono", 0) < HEARTBEAT_RULING_S):
+            record_it, dedupe_why = False, "unchanged stance on an unchanged picture"
+    report["ruling_recorded"] = record_it
+    if record_it:
+        try:
+            r = mcp.tool("record_ruling", {
+                "model": model_name,
+                "inputs": ruling_inputs,
+                "output": ruling_output,
+                "action": decision["action"], "p_model": decision.get("p_model"), "p_yes": decision["p_yes"]})
+            report["acted"].append({"tool": "record_ruling", "ok": r["ok"]})
+            if r["ok"] and ruling_state is not None:
+                ruling_state.update({"signature": sig, "seen": report.get("seen"), "recorded_mono": time.monotonic()})
+        except McpError:
+            report["acted"].append({"tool": "record_ruling", "ok": False})
+    else:
+        report["ruling_deduped"] = dedupe_why
+        report["acted"].append({"tool": "record_ruling", "ok": None, "result": f"deduped: {dedupe_why}"})
     # After acting (never delaying an order): the owner's live page shows this reasoning where the chart legend was (share_thinking, every check-in). A desk
-    # without the tool, or a failed call, never stops the decision.
-    try:
-        r = mcp.tool("share_thinking", {"analysis": decision.get("analysis") or decision["reason"], "action": decision["action"],
-                                        "p_yes": decision["p_yes"], "reason": decision["reason"],
-                                        **({"review": decision["review"]} if decision.get("review") else {}),
-                                        **({"plan": decision["plan"]} if decision.get("plan") else {})})
-        report["acted"].append({"tool": "share_thinking", "ok": r["ok"]})
-    except McpError:
-        report["acted"].append({"tool": "share_thinking", "ok": False})
+    # without the tool, or a failed call, never stops the decision. A deduped check-in re-shares nothing: the page
+    # already shows this exact stance (and the heartbeat re-share is never more than HEARTBEAT_RULING_S away).
+    if record_it:
+        try:
+            r = mcp.tool("share_thinking", {"analysis": decision.get("analysis") or decision["reason"], "action": decision["action"],
+                                            "p_yes": decision["p_yes"], "reason": decision["reason"],
+                                            **({"review": decision["review"]} if decision.get("review") else {}),
+                                            **({"plan": decision["plan"]} if decision.get("plan") else {})})
+            report["acted"].append({"tool": "share_thinking", "ok": r["ok"]})
+        except McpError:
+            report["acted"].append({"tool": "share_thinking", "ok": False})
+    else:
+        report["acted"].append({"tool": "share_thinking", "ok": None, "result": "deduped: stance already shared"})
     # Nexus in shadow (owner 2026-11-09: Nexus learns "from being ruler"): the same playbook and the same prompt go to Nexus,
     # its answer is parsed exactly like the ruler's and filed in the corpus under its own model name -- NEVER acted on.
     # It runs off the ruler's path (spawn) so a slow or absent Nexus can never delay a ruling.
@@ -1188,6 +1267,9 @@ def write_summary(report, mode):
         if "skipped" in report:
             f.write(f"### Trader agent ({mode})\n- skipped: {report['skipped']}\n")
             return
+        if report.get("ruling_deduped"):
+            f.write(f"### Trader agent ({mode}) · {report.get('ticker')}\n- check-in deduped: {report['ruling_deduped']} — stance unchanged, no new ruling row\n")
+            return
         d = report["decision"]
         f.write(f"### Trader agent ({mode}) · {report.get('ticker')}\n- thinking: {d.get('analysis', '')}\n- fair {json.dumps(report.get('fair'))} · edges {json.dumps(report.get('edges'))}\n- P(YES) {d['p_yes']} · action **{d['action']}** · {d['reason']}\n- acted: {json.dumps(report['acted'])}\n- desk after: {json.dumps(report['checked'])}\n")
 
@@ -1198,12 +1280,26 @@ def write_summary(report, mode):
 NEXT_WINDOW_GRACE_S = 30
 LOOP_ERROR_BACKOFF_S = 60
 # Owner 2026-11-09: "we need the AI to be there constantly". After each ruling the agent looks again after this pause
-# (plus its ~100 s of thinking), all window long, flat or holding; with too little time left it sleeps into the next window.
-CHECK_INTERVAL_S = 10
-# Owner 2026-11-09: "the quicker the model can read the live trading, the better ... watching constantly". The model needs
-# ~70-110 s per ruling on the CPU runner, so between rulings a cheap watcher (no model) reads the live window every
-# WATCH_POLL_S and wakes the model at once on a material change.
-WATCH_POLL_S = 5
+# (plus its thinking), all window long, flat or holding; with too little time left it sleeps into the next window.
+# Owner 2026-11-10: "watching as constant as possibly capable" — retuned on Nexus's measured numbers, not Qwen's:
+# a full ruling cycle measured 21-34 s live (above), of which the pause below is the only idle part, so it drops
+# 10 -> 5 s. The binding constraint is the cycle itself (observe ~4 MCP calls, one Nexus generation, ~6 more
+# calls to act/record/check), not this pause: at ~20-30 s per cycle the agent evaluates fresh state 2-3x a minute,
+# and the watcher (below) covers the gaps between evaluations.
+CHECK_INTERVAL_S = 5
+# Owner 2026-11-09: "the quicker the model can read the live trading, the better ... watching constantly". Between
+# rulings a cheap watcher (no model) reads the live window every WATCH_POLL_S and wakes the model at once on a
+# material change. 2026-11-10: the poll drops 5 -> 3 s and the peek reuses ONE MCP session (main's peek), so a poll
+# costs a single get_live_window round trip (~0.4 s measured) instead of a fresh initialize + call (~3 round trips).
+# 3 s is the fastest poll that keeps the watcher a small fraction of the Bank's read load: ~20 light reads a minute
+# during pauses only, against the desk's own per-second internal reads.
+WATCH_POLL_S = 3
+# Ruling-row dedupe (owner 2026-11-10, constant watch): at a ~25 s cadence, most check-ins repeat the stance of the
+# last on an unchanged picture. Those cycles still think, still renew directives and still act — but they do not
+# write another agent_rulings row (or re-share the same thinking): a recorded row means Nexus evaluated a CHANGED
+# stance or a materially changed picture. Silence is still impossible: an unchanged stance is re-recorded at least
+# this often, so a flat calm window still files a heartbeat ruling every HEARTBEAT_RULING_S.
+HEARTBEAT_RULING_S = 120
 WAKE_DISTANCE_BPS = 5.0   # BTC moved this far vs the strike since the last ruling
 WAKE_BID_CENTS = 10.0     # the YES bid moved this much
 DANGER_BPS = 3.0          # holding, and BTC came within this of the strike
@@ -1270,6 +1366,15 @@ def material_change(seen, now):
     b0, b1 = seen.get("yesBid"), now.get("yesBid")
     if isinstance(b0, (int, float)) and isinstance(b1, (int, float)) and abs(b1 - b0) >= WAKE_BID_CENTS:
         return f"the YES bid moved {b1 - b0:+.0f}c"
+    if isinstance(d0, (int, float)) and isinstance(d1, (int, float)):
+        # Sub-threshold moves that still change what the model should decide (2026-11-10, constant watch): a strike
+        # cross flips the winning side, and crossing the 3 bps entry-zone edge (playbook 4) opens or closes the
+        # entry the desk is allowed to take — both can happen inside the 5 bps magnitude wake above.
+        if d0 and d1 and (d0 > 0) != (d1 > 0):
+            return f"BTC crossed the strike ({d0:+.1f} -> {d1:+.1f} bps)"
+        zone = lambda v: "above" if v >= 3 else "below" if v <= -3 else "inside"  # noqa: E731
+        if zone(d0) != zone(d1):
+            return f"BTC crossed the entry-zone edge ({d0:+.1f} -> {d1:+.1f} bps)"
     return None
 
 
@@ -1349,8 +1454,11 @@ def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, pe
     """Call run() once per window until `minutes` have passed. run() returns a run_once report. Returns the count of
     windows ruled. An error in one window is logged and retried after a backoff; it never ends the loop. When a
     `stats` dict is passed it is filled with the per-window outcome counts (attempted / recorded / skipped /
-    errors): a loop whose every window errored or skipped records nothing, and the caller must be able to see
-    that — 2026-11-10 the Bank's MCP 503'd every window for a day while this loop exited green."""
+    errors / deduped — every attempt lands in exactly one): a loop whose every window errored or skipped records
+    nothing, and the caller must be able to see that — 2026-11-10 the Bank's MCP 503'd every window for a day
+    while this loop exited green. `recorded` counts rulings actually written (a report carries ruling_recorded;
+    a deduped check-in — the stance repeated on an unchanged picture — is counted as deduped, never as recorded,
+    so the zero-recorded failure in main() still means the agent never got a ruling onto the desk."""
     deadline = clock() + minutes * 60
     ruled = 0
     watch = None
@@ -1366,9 +1474,12 @@ def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, pe
             sleep(min(LOOP_ERROR_BACKOFF_S, max(0, deadline - clock())))
             continue
         if "skipped" not in report:
-            ruled += 1
-            if stats is not None:
-                stats["recorded"] = stats.get("recorded", 0) + 1
+            if report.get("ruling_recorded", True):
+                ruled += 1
+                if stats is not None:
+                    stats["recorded"] = stats.get("recorded", 0) + 1
+            elif stats is not None:
+                stats["deduped"] = stats.get("deduped", 0) + 1
         elif stats is not None:
             stats["skipped"] = stats.get("skipped", 0) + 1
         left = (report.get("fair") or {}).get("left_s")
@@ -1404,10 +1515,11 @@ def main():
     think = NexusThink(nx, log=log)
 
     predicted, earlier = set(), {}
+    ruling_state = {}   # the dedupe's memory across check-ins: last recorded stance, its picture, when it was written
 
     def one_window(watch=None):
         report = run_once(McpSession(url, token), think, mode=mode, log=log, predicted=predicted, earlier=earlier,
-                          watch=watch, model_name=nx.name)
+                          watch=watch, model_name=nx.name, ruling_state=ruling_state)
         write_summary(report, mode)
         return report
 
@@ -1419,23 +1531,38 @@ def main():
             print(f"::error::{redact(str(e), token)}")
             return 1
         return 0
+    peek_box = {}
+
     def peek():
-        m = McpSession(url, token)
-        m.initialize()
-        return live_view(m.tool("get_live_window")["data"])
+        # ONE session for every watcher poll (2026-11-10): a poll used to pay a fresh initialize + call (~3 round
+        # trips) every WATCH_POLL_S; reusing the session makes it the single get_live_window call. A failed poll
+        # drops the session so the next one re-initializes; watch_pause already treats a failed peek as a missed
+        # look, never a stop.
+        m = peek_box.get("session")
+        if m is None:
+            m = McpSession(url, token)
+            m.initialize()
+            peek_box["session"] = m
+        try:
+            return live_view(m.tool("get_live_window")["data"])
+        except Exception:
+            peek_box["session"] = None
+            raise
 
     stats = {}
     ruled = standing_loop(one_window, minutes, log=log, peek=peek, stats=stats)
     recorded = stats.get("recorded", 0)
     print(f"standing agent: ruled {ruled} windows in {minutes} minutes "
           f"(attempted {stats.get('attempted', 0)}, recorded {recorded}, "
-          f"skipped {stats.get('skipped', 0)}, errors {stats.get('errors', 0)})", flush=True)
+          f"skipped {stats.get('skipped', 0)}, errors {stats.get('errors', 0)}, "
+          f"deduped {stats.get('deduped', 0)})", flush=True)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as f:
             f.write(f"### Trader agent — standing loop totals\n"
                     f"- windows attempted {stats.get('attempted', 0)} · rulings recorded {recorded} · "
-                    f"skipped {stats.get('skipped', 0)} · window errors {stats.get('errors', 0)}\n")
+                    f"skipped {stats.get('skipped', 0)} · window errors {stats.get('errors', 0)} · "
+                    f"deduped {stats.get('deduped', 0)}\n")
     if recorded == 0:
         # Zero recorded rulings means the agent never reached the Bank (2026-11-10: MCP 503 on every
         # window, loop green, a day of trading with no rulings). Fail the run so it is seen at once.
