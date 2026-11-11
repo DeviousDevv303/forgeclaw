@@ -43,7 +43,8 @@ def compact(d, yb, with_directive):
 
 
 FORMS = {
-    "production task (build_nexus_task)": lambda d, yb: ta.build_nexus_task(desk(d, yb), count=nx.count)[0],
+    "v1 task (build_nexus_task_v1)": lambda d, yb: ta.build_nexus_task_v1(desk(d, yb), count=nx.count)[0],
+    "v2 task (build_nexus_task)": lambda d, yb: ta.build_nexus_task(desk(d, yb), count=nx.count)[0],
     "compact one-liner": lambda d, yb: compact(d, yb, False),
     "compact + owner directive": lambda d, yb: compact(d, yb, True),
 }
@@ -59,5 +60,5 @@ for name, build in FORMS.items():
         s = re.search(r'"side":"(\w+)"', out)
         if s:
             sides[s.group(1)] += 1
-        valid += bool(ta.parse_nexus_transcript(out, desk(d, yb), 0.5)["valid"])
+        valid += bool(ta.parse_nexus_transcript(out, desk(d, yb), 0.5)["valid"])   # under the current NEXUS_ACT_ON_PROPOSALS
     print(f"{name:36s} tokens {min(toks)}-{max(toks)} | routes {dict(routes)} | side {dict(sides)} | valid {valid}/{len(STATES)}")

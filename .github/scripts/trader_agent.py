@@ -645,7 +645,7 @@ def anchored_p_yes(model_p, obs):
 # The 5-phase scaffold is the loop's standing frame; build_nexus_phases files it with every ruling, each phase
 # labelled by who actually produced it (nexus = the model's own words/numbers, harness = the code around it).
 
-NEXUS_TASK_VERSION = "nexus-trader-task-v1"
+NEXUS_TASK_VERSION = "nexus-trader-task-v2"
 NEXUS_FRAME_SHA = hashlib.sha256(NEXUS_TASK_VERSION.encode()).hexdigest()[:12]
 NEXUS_MAX_NEW = 160
 # The checkpoint's window is 640 tokens TOTAL (prompt + generation), and its next_logprobs silently slides the
@@ -659,6 +659,18 @@ NEXUS_MIN_NEW = 96
 # (2026-11-10 22:43 -> 2026-11-11 04:03 CST: 381 rulings, 0 valid, run green).
 VALIDITY_ALARM_MIN_RULINGS = 10
 _PRICE_GROUND_CENTS = 3.0   # a proposed price further than this from the side's live ask is not grounded in the book
+# OWNER ORDER 2026-11-11 (Cristian, after the audit in docs/nexus-trader-audit-2026-11-11/): "let's just have Nexus trade
+# and then we'll see what errors it has as it trades." Measured on the real Run 25 checkpoint, its funds_propose calls are
+# well-formed but its market, price and rationale fields are noise (the ticker comes back mangled, the price is unrelated to
+# the book, the rationale is the template "Owner order."), so a strict-grounding gate voided 381 of 381 rulings. With this
+# flag on, a well-formed proposal is ACTED ON for what it reliably carries -- side and probability -- while the harness
+# pins the market to the live window (the order can only ever go to the live window anyway), ignores the model's price
+# (the desk fills at the book; the price never reaches the order), and writes the reason itself from the desk's own math
+# instead of relaying the model's text as if it were evidence. Every override is recorded on the ruling (decision.notes),
+# so the errors Nexus makes stay visible and gradable. EVERY OTHER GATE STANDS: discipline (edge after fees, 3 bps chop
+# line, no exit below entry), stale check, sign check, the desk's floor / caps / stops / blackout, and the Bank's own
+# route law underneath. Set False to restore strict grounding (a proposal on another market or an ungrounded price is void).
+NEXUS_ACT_ON_PROPOSALS = True
 _P_DEC = re.compile(r"(?<![\d.])0\.\d+(?![\d.])|(?<![\d.])1\.0+(?![\d.])")
 _P_PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
 _CALL_SPAN = re.compile(r"<\|call\|>\s*(\{.*?\})\s*<\|/call\|>", re.S)
@@ -726,8 +738,9 @@ def _nexus_facts_lines(obs):
     return lines, pos
 
 
-def build_nexus_task(obs, count=None):
-    """The compact ruling question in Nexus's native frame size. Returns (task, trimmed): the owner's standing
+def build_nexus_task_v1(obs, count=None):
+    """RETAINED FOR REFERENCE (task v1, 2026-11-10; replaced by build_nexus_task v2 on 2026-11-11 after the audit: 436-513
+    tokens, routed to shell_exec/gmail_send/http_fetch and never to funds_propose on the real checkpoint). The compact ruling question in Nexus's native frame size. Returns (task, trimmed): the owner's standing
     note rides first (his word), trimmed at a sentence boundary when the window cannot hold it whole — the trim
     is marked in the task itself, never silent. count(text)->tokens decides the budget (the model's own counter
     in production; a conservative estimate in tests)."""
@@ -777,6 +790,30 @@ def build_nexus_task(obs, count=None):
     return task, trimmed
 
 
+def build_nexus_task(obs, count=None):
+    """Task v2 (2026-11-11): the question in the register the Run 25 checkpoint was trained on -- one short imperative
+    sentence, ~55 tokens -- because on the real checkpoint the 436-513 token v1 task routed to shell_exec / gmail_send /
+    http_fetch and never to funds_propose (docs/nexus-trader-audit-2026-11-11/probe.py: v2-style prompts route to
+    funds_propose 12 of 12). Returns (task, trimmed) like v1; v2 is never trimmed.
+    DELIBERATELY NOT IN THE MODEL PROMPT: the owner's desk note and the owner's scalp directive. Measured: adding the
+    directive (~100 tokens) flips routing to shell_exec / memory_write 10 of 10. They are not lost -- the directive's
+    hard half (never exit below entry) is enforced in code by apply_discipline, the desk note is shown to the owner's
+    page and journal, and each ruling's inputs record exactly what was omitted from the model's prompt and why."""
+    live = obs.get("live") or {}
+    w = live.get("window") or {}
+    snap = live.get("snapshot") or {}
+    d = snap.get("distanceBps")
+    dist = f"{d:+.1f}" if isinstance(d, (int, float)) else "?"
+    ticker = w.get("ticker")
+    pos = position_fact(live)
+    if pos:
+        bid = snap.get("yesBidCents") if pos["side"] == "yes" else snap.get("noBidCents")
+        avg = f" bought at {pos['avg_cents']:g}c" if pos.get("avg_cents") is not None else ""
+        return (f"The desk holds {pos['side'].upper()} in {ticker}{avg}; its bid is {bid}c and BTC is {dist} bps vs the strike. "
+                f"Sell it now? Answer EXIT, or HOLD with your P(YES)."), False
+    return f"Propose a trade on {ticker}: BTC is {dist} bps vs the strike, YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c", False
+
+
 def _nexus_answer_text(transcript):
     m = _ANSWER_SPAN.search(transcript or "")
     return m.group(1).strip() if m else ""
@@ -819,17 +856,38 @@ def parse_nexus_transcript(transcript, obs, fallback_p):
             side = a.get("side")
             prob = a.get("probability")
             price = a.get("price")
+            notes = []
             if a.get("market") != ticker:
-                return invalid(f"nexus proposed on {a.get('market')!r}, not this window; no action taken", "ungrounded_market", "funds_propose")
-            if side not in ("yes", "no") or not isinstance(prob, (int, float)) or not 0 <= float(prob) <= 1:
+                if not NEXUS_ACT_ON_PROPOSALS:
+                    return invalid(f"nexus proposed on {a.get('market')!r}, not this window; no action taken", "ungrounded_market", "funds_propose")
+                notes.append(f"market pinned to the live window {ticker} (model wrote {str(a.get('market'))[:60]!r})")
+            if side not in ("yes", "no") or not isinstance(prob, (int, float)) or isinstance(prob, bool) or not 0 <= float(prob) <= 1:
                 return invalid("nexus proposal carried no usable side/probability; no action taken", "bad_proposal", "funds_propose")
             ask = snap.get("yesAskCents") if side == "yes" else snap.get("noAskCents")
             if isinstance(price, (int, float)) and isinstance(ask, (int, float)) and abs(float(price) * 100 - ask) > _PRICE_GROUND_CENTS:
-                return invalid(f"nexus named a {side} price of {float(price) * 100:.0f}c but the book asks {ask}c; no action taken", "ungrounded_price", "funds_propose")
+                if not NEXUS_ACT_ON_PROPOSALS:
+                    return invalid(f"nexus named a {side} price of {float(price) * 100:.0f}c but the book asks {ask}c; no action taken", "ungrounded_price", "funds_propose")
+                notes.append(f"model price {float(price) * 100:.0f}c ignored (the {side} book asks {ask:g}c; the desk fills at the book)")
             p_yes = round(float(prob) if side == "yes" else 1 - float(prob), 3)
-            rationale = str(a.get("rationale") or "").strip()[:280] or f"nexus proposed {side.upper()} on this window"
+            stated = str(a.get("rationale") or "").strip()[:280]
+            if NEXUS_ACT_ON_PROPOSALS:
+                # The reason the owner reads is written from the desk's own numbers; the model's rationale is quoted, never
+                # relayed as evidence (it measured as the template "Owner order.", which claims an order nobody gave).
+                edge = (obs.get("edges") or {}).get(side)
+                d = snap.get("distanceBps")
+                rationale = (f"Nexus proposed {side.upper()} at P(YES) {p_yes:g}. Desk math: edge {edge}c after fees, BTC "
+                             f"{round(d, 1) if isinstance(d, (int, float)) else '?'} bps from the strike. Nexus's own rationale: {stated!r}.")[:280]
+            else:
+                rationale = stated or f"nexus proposed {side.upper()} on this window"
+            if pos:
+                # The task for a holding desk asks only EXIT/HOLD. A funds_propose there is noise-adding to a position the
+                # desk's coded stops and preserver are already guarding: the proposal is a decision, but it is not acted on.
+                return {"p_yes": p_yes, "action": "none", "reason": f"{rationale} [not acted on: the desk already holds a position in this window]",
+                        "valid": True, "analysis": rationale, "exit_line_bps": None, "review": None, "plan": None,
+                        "directives": None, "blocked": f"enter_{side}", "notes": notes}
             return {"p_yes": p_yes, "action": f"enter_{side}", "reason": rationale, "valid": True,
-                    "analysis": rationale, "exit_line_bps": None, "review": None, "plan": None, "directives": None}
+                    "analysis": rationale, "exit_line_bps": None, "review": None, "plan": None, "directives": None,
+                    **({"notes": notes} if notes else {})}
         called = call.get("name") if isinstance(call, dict) else None
         return invalid("nexus called a tool that is not a desk decision; no action taken",
                        "off_task_tool" if called else "garbled_call", str(called)[:40] if called else None)
@@ -873,7 +931,8 @@ def build_nexus_phases(obs, decision):
         {"phase": "extension", "by": "harness",
          "text": (f"Code checks around the model: price grounding on any proposal; the discipline gate "
                   f"({'blocked: ' + str(decision.get('blocked')) if decision.get('blocked') else 'passed'}); "
-                  "a fresh book read before any order (stale check); the desk's coded stop, preserver and caps run underneath regardless.")},
+                  "a fresh book read before any order (stale check); the desk's coded stop, preserver and caps run underneath regardless."
+                  + (" Overrides on this proposal: " + "; ".join(decision["notes"]) + "." if decision.get("notes") else ""))},
         {"phase": "convergence", "by": "nexus" if decision.get("valid") else "harness",
          "text": f"{decision.get('action')}: {decision.get('reason')}"[:400]},
     ]
@@ -1227,7 +1286,10 @@ def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, p
     ruling_inputs = {"system_sha": NEXUS_FRAME_SHA if is_nexus else SYSTEM_SHA,
                      "prompt": think.last_task if is_nexus else user,
                      "fair": obs.get("fair"), "edges": obs.get("edges"),
-                     "seen": report.get("seen"), "woke": (watch or {}).get("woke")}
+                     "seen": report.get("seen"), "woke": (watch or {}).get("woke"),
+                     **({"omitted_from_model_prompt": ["owner_note", "owner_scalp_directive"],
+                         "omitted_why": "the checkpoint stops routing to funds_propose when the prompt exceeds its trained register; "
+                                        "no-exit-below-entry is enforced in code (apply_discipline)"} if is_nexus else {})}
     ruling_output = {"raw": (answer or "")[:2000], "analysis": decision.get("analysis"), "reason": decision["reason"],
                      "directives": decision.get("directives_sent"), "directive_note": decision.get("directive_note"),
                      "exit_line_bps": decision.get("exit_line_bps"), "review": decision.get("review"), "plan": decision.get("plan"),

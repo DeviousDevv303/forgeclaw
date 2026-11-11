@@ -83,3 +83,73 @@ Option ranking medium — depends on the owner's priority between trading now an
 - Replays on the real checkpoint (torch 2.15 CPU): `probe.py`; `NexusThink` with long owner notes → task 506–529 tokens,
   `max_new` 109–132, 506 + 132 ≤ 640, failures classified, no action.
 - Not verified: a live Actions run of this branch (not dispatched; workflows run from `main`); the desk-side floor/limits.
+
+---
+
+# Addendum — owner decision 2026-11-11: "let Nexus trade, then see what errors it has"
+
+**Decision (Cristian, in this session, after reading the audit):** first "Option A", then changed to: have Nexus trade and
+learn from the errors it makes as it trades. This is the named authorization the first commit lacked. It is implemented in
+a **second, separate commit** on the same branch (PR #410) so it can be reverted alone (`git revert <sha>`), or switched off
+with one constant, without touching the observability fixes.
+
+## What "Nexus trades" means here (read this before merging)
+
+Measured on the real checkpoint, Nexus's `funds_propose` calls are **well-formed but content-free**: side is `yes` ~100 % of
+the time regardless of the market, price/probability are unrelated to the book, the market ticker is mangled, the rationale
+is the template `"Owner order."`. So a proposal is now acted on **for what it reliably carries (a well-formed call = "enter",
+plus side/probability)**, and the harness's own math decides whether the entry is allowed. In practice this is **YES entries
+that the harness's fair-value edge already approves, confirmed by Nexus's proposal**. It is the owner's chosen experiment; it
+is not evidence that Nexus can read the market. Every ruling is filed with `model='nexus-run25'`, its raw transcript, its
+`p_model`, and the overrides, so the error rate is measurable afterwards.
+
+## Changes (commit 2; `.github/scripts/trader_agent.py`, tests, probe, this doc)
+
+| # | Change | Why / evidence |
+|---|---|---|
+| 1 | **Task v2** `build_nexus_task`: one sentence, ~56 tokens: `Propose a trade on <ticker>: BTC is +x.x bps vs the strike, YES bid/ask c`. Holding desk: `The desk holds SIDE in <ticker> bought at Nc; its bid is Bc and BTC is …  Sell it now? Answer EXIT, or HOLD with your P(YES).` v1 kept as `build_nexus_task_v1` (reference/repro). `NEXUS_TASK_VERSION` → `nexus-trader-task-v2` (new `system_sha` on every ruling). | v1 (436–513 tok) routed to `shell_exec`/`gmail_send`/`http_fetch`, 0 × `funds_propose`. v2: `funds_propose` 10/10 (probe), 12/12 for five prompt variants. No "paper" wording: it is a real trade. |
+| 2 | **`NEXUS_ACT_ON_PROPOSALS = True`.** A well-formed proposal is acted on; **market pinned** to the live window, **model price ignored** (the desk fills at the book; price never reaches the order), **reason written by the harness** from desk math, model rationale only quoted. Overrides listed in `decision.notes` and in phase 4 of the ruling's 5-phase trace. Side not yes/no or probability not in [0,1] (or a bool) is still void (`bad_proposal`). Set `False` → strict grounding returns (market/price mismatch = void). | Without it 381/381 void. The model's `"Owner order."` rationale would otherwise have reached the owner's live page and the `AGENT_ACTION` journal as if the owner had ordered the trade. |
+| 3 | **A proposal while the desk already holds is not acted on** (valid decision, `action none`, `blocked enter_<side>`). | v2 asks a holding desk only EXIT/HOLD; a noise `funds_propose` must not add to a position. Held-desk replay: 8/8 direct garbage, **0 × EXIT**, so no spurious sells. Coded stops/preserver/exit lines keep managing positions. |
+| 4 | **Owner note and owner scalp directive are NOT in the model prompt.** Each ruling's `inputs.omitted_from_model_prompt` + `omitted_why` records it. | Measured: adding the directive (~100 tokens) flips routing to `shell_exec`/`memory_write` 10/10. Its hard half (never exit below entry) is enforced in code (`apply_discipline`) either way. **Cristian: say so if you want it back in the prompt; the cost is that Nexus then stops proposing.** |
+
+## Gates that still stand (nothing relaxed here)
+`apply_discipline` (edge ≥ 0.5 c after fees, |dist| ≥ 3 bps, no agent exit below entry), the stale check, the sign check,
+the Bank's `agentEntryLaw` (entry-price cap 85 c, window-loss cap, recovery caution, against-strike, price-ran, event
+blackout, **equity floor 400 c**, no re-entry after stop), the 6.25 % risk cap, coded stops, preserver, kill switch.
+
+## Forecast on the real checkpoint (30 synthetic states, through parse + `apply_discipline`)
+7 entries survive, 16 proposals are blocked by the discipline gate, 7 are invalid. Survivors include **cheap YES long-shots
+when BTC is slightly below the strike** (e.g. YES at 15–17 c with BTC −3.5 bps: the harness reads +5 c of edge). Those are
+exactly the entries the 400 c floor (≈23 c max contract at equity 428 c) lets through, so the first live Nexus trades are
+likely to be small long-shot YES buys. That is a property of the harness edge math + a YES-only proposer; watch it.
+
+## Runbook for Muse
+1. **Merge** needs Cristian (`.github/`). Merge commit 1 alone for observability only; commit 2 turns trading on.
+2. **First run after merge** — expected log lines: `{"think": …"task_tokens": ~56…}`; rulings with `valid:true`;
+   `acted` containing `enter` only when a proposal survives discipline AND the desk's law. `AGENT_MODE=shadow` (repo variable)
+   still makes it predict-and-log without sending.
+3. **Switch off, fastest first:** repo variable `AGENT_MODE=shadow` (no code) · `AGENT_STANDING=off` (stops the chain) ·
+   `NEXUS_ACT_ON_PROPOSALS = False` (strict grounding) · `git revert` commit 2.
+4. **Errors to look for** (all in `agent_rulings.output_json`): `failure.kind`, `notes[]` (every override), `blocked`,
+   `p_model` vs settlement (Brier), `valid`. Suggested read: group by `notes` present, then by outcome of entries Nexus
+   triggered. Compare entry P&L against the harness-only baseline (edge ≥ 0.5 c YES entries) to see whether Nexus adds or
+   subtracts anything.
+5. **Desk blockers outside this repo:** equity 428 c vs floor 400 c leaves 28 c headroom; entries above ~23 c are refused
+   `equity-floor` (lawful). Nexus will "trade" only long-shots until equity rises or the owner moves the floor.
+
+## "How long until Nexus can trade for real?" (owner question; estimate, low confidence)
+- **Plumbing to act at all:** done in this addendum (hours).
+- **A Nexus that conditions on the market** (Option B): needs (1) a training set in the desk register built from
+  `agent_rulings` + settlements (the Qwen-era valid rulings plus the new Nexus ones), ~1–2 days; (2) a training run on the
+  Run 26 VM (hours to a day per run; Run 26 is mid-run); (3) a new frozen desk suite graded against the market's Brier,
+  1–2 days. **First evidence of side/probability conditioning: ~1 week.** Whether a 4.5 M-parameter model can learn it is
+  **unknown**: Run 25's loop spent 16 runs plateauing at 70 % on short tool-routing suites. Treat "weeks, possibly never at
+  this scale" as the honest range; the live experiment above will give the real baseline error rate sooner.
+
+## Verification (this addendum, exact)
+- `python3 -B -m unittest test_trader_agent` (in `.github/scripts`): **138 tests, OK** (128 before; +10 `NexusActsTests`;
+  three old tests re-pointed to `build_nexus_task_v1` / strict mode); `py_compile` clean.
+- Real checkpoint: `probe.py` v2 task → `funds_propose` 10/10, 8/10 valid; held-desk replay 8/8 non-EXIT; end-to-end
+  parse + discipline over 30 states (above).
+- Not verified: a live Actions run; a real order reaching the Bank (the Bank's `enter` route and law are unchanged and
+  were not exercised); the desk-side floor/limits.
