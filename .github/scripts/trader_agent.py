@@ -408,17 +408,19 @@ def owner_note_lines(st):
 
 # OWNER DIRECTIVE (Cristian, 2026-11-10 18:20 CST, given in chat for the Trader agent): scalp the desk back to
 # double digits, and never exit below entry. This is HIS standing order, carried in code so it reaches the model
-# on every ruling whether or not a desk owner-note is set; it is deliberately worded as his directive and dated,
-# so the corpus can always tell it apart from model-authored strategy text (the agent's own adaptive strategy,
-# which he also ordered on 2026-11-10, lives in the model's rulings — never in this block). The no-exit-below-entry
-# half is ALSO enforced in code (apply_discipline), mirroring the desk's STOP law (dist157, nexus-trader PR #174:
+# on every ruling whether or not a desk owner-note is set; it is tagged and dated, so the corpus can always tell
+# it apart from model-authored strategy text (the agent's own adaptive strategy, which he also ordered on
+# 2026-11-10, lives in the model's rulings — never in this line).
+# FORM (grammar diagnosis, 2026-11-10 18:35 CST): the live frame proved that long prose in the task primes the
+# model's wrong register and gets trimmed mid-word, so his directive is carried as ONE compact desk-register
+# line — facts and imperative, no prose — for the frame to render through its compact slot. The substance is
+# his, complete: the targets, the expiry, the two scalp prints to bank (recovery-scalp +8c net on eligible
+# entries; per-contract recovery-trail, arm +15c, 8c give-back), and the hard rule. The no-exit-below-entry half
+# is ALSO enforced in code (apply_discipline), mirroring the desk's STOP law (dist157, nexus-trader PR #174:
 # a stop-due position exits only when its own-side bid is at or above its blended entry, else it rides).
 OWNER_SCALP_DIRECTIVE = (
-    "OWNER DIRECTIVE (Cristian, 2026-11-10 — his standing order until he changes it): Scalp the mandate back "
-    "above 1000c equity (double digits) and on to the 1500c goal before the 2026-11-13 09:17 CST expiry: bank "
-    "the recovery-scalp (+8c net on eligible entries) and the per-contract recovery-trail (arm +15c, 8c "
-    "give-back) wins whenever they print, instead of holding out for payout-sized moves. HARD RULE: never exit "
-    "a position below its blended entry — if the own-side bid is under the entry price, the exit does not fire.")
+    "OWNER 2026-11-10: EQUITY TARGET 1000c, GOAL 1500c, EXPIRES 2026-11-13 09:17 CST. "
+    "TAKE RECOVERY-SCALP +8c AND RECOVERY-TRAIL +15c/-8c WHEN THEY PRINT. NEVER EXIT BELOW ENTRY.")
 
 
 def owner_directive_lines():

@@ -1422,12 +1422,14 @@ class ConstantWatchTests(unittest.TestCase):
         obs = {"status": STATUS, "live": LIVE, "history": [], "record": {}, "fair": fair,
                "edges": ta.edges(fair, LIVE["snapshot"])}
         prompt = ta.build_user_prompt(obs)
-        self.assertIn("OWNER DIRECTIVE (Cristian, 2026-11-10", prompt)
+        self.assertIn("OWNER 2026-11-10:", prompt)
         task, _ = ta.build_nexus_task(obs)
-        self.assertIn("OWNER DIRECTIVE (Cristian, 2026-11-10", task)
-        self.assertIn("above 1000c equity", task)
-        self.assertIn("1500c goal", task)
-        self.assertIn("below its blended entry", task)
+        self.assertIn("OWNER 2026-11-10:", task)
+        self.assertIn("EQUITY TARGET 1000c, GOAL 1500c", task)
+        self.assertIn("NEVER EXIT BELOW ENTRY", task)
+        # One compact desk-register line (grammar diagnosis 2026-11-10): no prose, never trimmed mid-word.
+        self.assertNotIn("\n", ta.OWNER_SCALP_DIRECTIVE)
+        self.assertLess(len(ta.OWNER_SCALP_DIRECTIVE), 220)
         # The directive never crowds out the ruling: the whole task still fits the 640-token window
         # under the conservative chars/3 counter the budget uses.
         self.assertLessEqual(max(1, len(task) // 3), 640 - ta.NEXUS_MAX_NEW - 10)
