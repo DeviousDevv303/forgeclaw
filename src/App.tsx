@@ -1720,6 +1720,7 @@ function App() {
         sessionId,
         agentId: FORGECLAW_AGENT_ID,
         runId,
+        providerId: activeProvider,
         signal: controller.signal,
         guardianPosture,
         requestGuardianApproval,
@@ -1916,7 +1917,7 @@ function App() {
         }])
         emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
         emitForge({ type: 'TOOL_START', tool: call.name, iter: 0 })
-        const output = await executeTool(call, toolCtx)
+        const output = await executeTool(call, { ...toolCtx, actor: 'operator' })
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
 
         const isError = isToolFailureOutput(output)

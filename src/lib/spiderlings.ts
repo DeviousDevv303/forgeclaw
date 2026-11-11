@@ -34,6 +34,7 @@ const TOOLS: Record<string, { channel: SpiderChannel; timeoutMs: number }> = {
   sculpt_self: { channel: 'sandbox', timeoutMs: 12 * MIN },
   run_js: { channel: 'sandbox', timeoutMs: 2 * MIN },
   qwen_reason: { channel: 'network', timeoutMs: 31 * MIN },
+  nexus_reason: { channel: 'network', timeoutMs: 21 * MIN },
   ask_qwen: { channel: 'network', timeoutMs: 31 * MIN },
   deepseek_reason: { channel: 'network', timeoutMs: 31 * MIN },
   ask_deepseek: { channel: 'network', timeoutMs: 31 * MIN },
@@ -165,6 +166,28 @@ export interface SpiderCounters {
 
 export function isStale(run: SpiderRun, now: number): boolean {
   return run.endedAt === undefined && now - run.startedAt > run.timeoutMs
+}
+
+/**
+ * How long the spider panel stays on screen after the last tool activity (or after it first
+ * appears) before it hides. Owner's order (2026-11-10): the status strip must not sit over the
+ * composer constantly — show it when a run starts, then it goes away.
+ */
+export const SPIDER_PANEL_LINGER_MS = 5_000
+
+/**
+ * Whether the spider panel is on screen at `now`. Visible while any run is unanswered (in
+ * flight, or past its timeout and shown unknown), and for SPIDER_PANEL_LINGER_MS after the
+ * most recent ledger line — so a run's start raises it and its settled outcome lingers just
+ * long enough to be read. The same linger applies from the ledger's start, so the panel
+ * introduces itself at mount and then clears. Display timing only: the ledger and its
+ * counters are untouched.
+ */
+export function spiderPanelVisible(ledger: SpiderLedger, now: number, lingerMs: number = SPIDER_PANEL_LINGER_MS): boolean {
+  if (ledger.runs.some(r => r.endedAt === undefined)) return true
+  const lastLine = ledger.lines[ledger.lines.length - 1]
+  const lastActivity = Math.max(ledger.since, lastLine ? lastLine.at : Number.NEGATIVE_INFINITY)
+  return now - lastActivity < lingerMs
 }
 
 /** Counters are counted from the ledger lines and the unanswered runs, never from a separate tally. */

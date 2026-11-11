@@ -105,6 +105,48 @@ describe('Nexus Intelligence router loop', () => {
     if (result.success) expect(result.response.toolCalls?.[0]?.name).toBe('nexus_reason')
   })
 
+  it('routes an image request through the Nexus dispatch — no refusal, no intercept', async () => {
+    // Owner's correction (2026-11-11): "Nexus has an image generator." The generate-image
+    // workflow is part of Nexus Intelligence (ForgeClaw is its body), so an image request
+    // under the Nexus provider dispatches to Nexus like any other turn (bootstrap
+    // nexus_reason, the image request as the task). The retired behaviors: the refusal
+    // ('nexus-image-not-served') and the silent direct-image intercept that dispatched
+    // diffusion and attributed the turn to Nexus without Nexus deciding.
+    const request: AIRequest = { model: 'nexus-run25', systemPrompt: '', messages: [{ role: 'user', content: 'generate an image of a lighthouse' }], tools: TOOLS }
+    const result = await sendViaRouter(request, '', 'nexus-intelligence')
+    expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', stopReason: 'deterministic-nexus-reasoning' } })
+    if (result.success) {
+      expect(result.response.toolCalls?.[0]?.name).toBe('nexus_reason')
+      expect(result.response.toolCalls?.[0]?.input.task).toBe('generate an image of a lighthouse')
+      expect(result.response.text).not.toMatch(/can't generate images/)
+    }
+  })
+
+  it('executes a generate_image segment through the nexus-tool-call route', async () => {
+    const segment = '<|route:tool|><|call|>{"name":"generate_image","arguments":{"prompt":"a lighthouse at dusk"}}<|/call|>'
+    const request: AIRequest = {
+      model: 'nexus-run25', systemPrompt: '', tools: TOOLS,
+      messages: [
+        { role: 'user', content: 'generate an image of a lighthouse' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'b1', name: 'nexus_reason', input: { task: 'generate an image of a lighthouse' } }] },
+        { role: 'tool', tool_call_id: 'b1', content: nexusResult(segment) },
+      ],
+    }
+    const result = await sendViaRouter(request, '', 'nexus-intelligence')
+    expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', stopReason: 'nexus-tool-call' } })
+    if (result.success) {
+      expect(result.response.toolCalls?.[0]?.name).toBe('generate_image')
+      expect(result.response.toolCalls?.[0]?.input).toEqual({ prompt: 'a lighthouse at dusk' })
+    }
+  })
+
+  it('other providers still get the direct image dispatch', async () => {
+    const request: AIRequest = { model: 'qwen3-8b', systemPrompt: '', messages: [{ role: 'user', content: 'generate an image of a lighthouse' }], tools: [] }
+    const result = await sendViaRouter(request, '', 'qwen')
+    expect(result).toMatchObject({ success: true, response: { provider: 'qwen', stopReason: 'direct-image-intent' } })
+    if (result.success) expect(result.response.toolCalls?.[0]?.name).toBe('generate_image')
+  })
+
   it('refuses to pretend when the nexus_reason tool is unavailable', async () => {
     const request: AIRequest = { model: 'nexus-run25', systemPrompt: '', messages: [{ role: 'user', content: 'hello' }], tools: [] }
     const result = await sendViaRouter(request, '', 'nexus-intelligence')
