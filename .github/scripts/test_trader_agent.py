@@ -387,6 +387,38 @@ class StandingAgentTests(unittest.TestCase):
         self.assertEqual(ruled, 0)
         self.assertLessEqual(c.t, 10 * 60)
 
+    def test_stats_count_every_window_outcome(self):
+        # 2026-11-10: the Bank's MCP 503'd every window for a day and the loop exited green. The outcome
+        # counts are what main() now fails on, so they must classify recorded / skipped / errored exactly.
+        c = self.Clock()
+        n = []
+
+        def run(watch=None):
+            n.append(1)
+            k = len(n) % 3
+            if k == 1:
+                raise ta.McpError("initialize: HTTP 503 MCP is disabled")
+            if k == 2:
+                return {"skipped": "window nearly over", "fair": {"left_s": -19}}
+            return {"decision": {}, "fair": {"left_s": 800}}
+        stats = {}
+        ruled = ta.standing_loop(run, 30, log=lambda s: None, sleep=c.sleep, clock=c, stats=stats)
+        self.assertEqual(stats["attempted"], stats["recorded"] + stats["skipped"] + stats["errors"])
+        self.assertEqual(stats["recorded"], ruled)
+        self.assertGreaterEqual(stats["errors"], 1)
+        self.assertGreaterEqual(stats["skipped"], 1)
+
+    def test_stats_all_errors_records_zero(self):
+        c = self.Clock()
+
+        def run(watch=None):
+            raise ta.McpError("initialize: HTTP 503 MCP is disabled")
+        stats = {}
+        ruled = ta.standing_loop(run, 5, log=lambda s: None, sleep=c.sleep, clock=c, stats=stats)
+        self.assertEqual(ruled, 0)
+        self.assertEqual(stats.get("recorded", 0), 0)
+        self.assertEqual(stats["errors"], stats["attempted"])
+
 
 class ConstantPresenceTests(unittest.TestCase):
     """Owner 2026-11-09: "we need the AI to be there constantly"."""
@@ -1247,3 +1279,44 @@ class RolloverTests(unittest.TestCase):
         server, result = self.rollover({**st, "mandate": None})
         self.assertIsNone(result)
         self.assertEqual([a for n, a in server.calls if n == "start_mandate"], [])
+
+
+class MainLoopFailureTests(unittest.TestCase):
+    """2026-11-10 hardening: a standing loop that records ZERO rulings must fail the run (exit 1) and put
+    the outcome counts in the step summary — the day the Bank's MCP 503'd every window, the loop exited
+    green and the summary said nothing."""
+
+    def run_main(self, fill):
+        import tempfile
+        from unittest import mock
+        import nexus_model
+        fake_nx = type("Nx", (), {"name": "nexus-run25", "checkpoint_sha256": "x", "params": 1, "ctx_limit": 640})()
+
+        def fake_loop(run, minutes, log=None, peek=None, stats=None):
+            stats.update(fill)
+            return fill.get("recorded", 0)
+        fd, path = tempfile.mkstemp()
+        os.close(fd)
+        env = {"NEXUS_MCP_URL": "https://example.invalid/mcp", "NEXUS_OWNER_TOKEN": "test-token",
+               "AGENT_LOOP_MINUTES": "5", "GITHUB_STEP_SUMMARY": path}
+        with mock.patch.dict(os.environ, env), \
+                mock.patch.object(nexus_model, "load_nexus", return_value=fake_nx), \
+                mock.patch.object(ta, "NexusThink", return_value=lambda *a, **k: None), \
+                mock.patch.object(ta, "standing_loop", side_effect=fake_loop):
+            rc = ta.main()
+        with open(path) as f:
+            summary = f.read()
+        os.unlink(path)
+        return rc, summary
+
+    def test_zero_recorded_rulings_fail_the_run(self):
+        rc, summary = self.run_main({"attempted": 12, "errors": 12})
+        self.assertEqual(rc, 1)
+        self.assertIn("rulings recorded 0", summary)
+        self.assertIn("window errors 12", summary)
+
+    def test_recorded_rulings_pass_and_report_counts(self):
+        rc, summary = self.run_main({"attempted": 9, "recorded": 7, "skipped": 2})
+        self.assertEqual(rc, 0)
+        self.assertIn("rulings recorded 7", summary)
+        self.assertIn("skipped 2", summary)

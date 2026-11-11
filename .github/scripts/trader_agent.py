@@ -1345,21 +1345,32 @@ def watch_lines(watch, max_points=12):
     return lines
 
 
-def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, peek=None):
+def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, peek=None, stats=None):
     """Call run() once per window until `minutes` have passed. run() returns a run_once report. Returns the count of
-    windows ruled. An error in one window is logged and retried after a backoff; it never ends the loop."""
+    windows ruled. An error in one window is logged and retried after a backoff; it never ends the loop. When a
+    `stats` dict is passed it is filled with the per-window outcome counts (attempted / recorded / skipped /
+    errors): a loop whose every window errored or skipped records nothing, and the caller must be able to see
+    that — 2026-11-10 the Bank's MCP 503'd every window for a day while this loop exited green."""
     deadline = clock() + minutes * 60
     ruled = 0
     watch = None
     while clock() < deadline - NEXT_WINDOW_GRACE_S:
+        if stats is not None:
+            stats["attempted"] = stats.get("attempted", 0) + 1
         try:
             report = run(watch)
         except Exception as e:  # noqa: BLE001  (one bad window must not end the standing agent)
+            if stats is not None:
+                stats["errors"] = stats.get("errors", 0) + 1
             log(json.dumps({"window_error": str(e)[:300]}))
             sleep(min(LOOP_ERROR_BACKOFF_S, max(0, deadline - clock())))
             continue
         if "skipped" not in report:
             ruled += 1
+            if stats is not None:
+                stats["recorded"] = stats.get("recorded", 0) + 1
+        elif stats is not None:
+            stats["skipped"] = stats.get("skipped", 0) + 1
         left = (report.get("fair") or {}).get("left_s")
         if report.get("recheck_now"):
             pause = 0                         # the decision went stale while thinking: look again at once
@@ -1413,8 +1424,25 @@ def main():
         m.initialize()
         return live_view(m.tool("get_live_window")["data"])
 
-    ruled = standing_loop(one_window, minutes, log=log, peek=peek)
-    print(f"standing agent: ruled {ruled} windows in {minutes} minutes", flush=True)
+    stats = {}
+    ruled = standing_loop(one_window, minutes, log=log, peek=peek, stats=stats)
+    recorded = stats.get("recorded", 0)
+    print(f"standing agent: ruled {ruled} windows in {minutes} minutes "
+          f"(attempted {stats.get('attempted', 0)}, recorded {recorded}, "
+          f"skipped {stats.get('skipped', 0)}, errors {stats.get('errors', 0)})", flush=True)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write(f"### Trader agent — standing loop totals\n"
+                    f"- windows attempted {stats.get('attempted', 0)} · rulings recorded {recorded} · "
+                    f"skipped {stats.get('skipped', 0)} · window errors {stats.get('errors', 0)}\n")
+    if recorded == 0:
+        # Zero recorded rulings means the agent never reached the Bank (2026-11-10: MCP 503 on every
+        # window, loop green, a day of trading with no rulings). Fail the run so it is seen at once.
+        print(f"::error::standing agent recorded ZERO rulings in {minutes} minutes "
+              f"(attempted {stats.get('attempted', 0)}, skipped {stats.get('skipped', 0)}, "
+              f"errors {stats.get('errors', 0)})", flush=True)
+        return 1
     return 0
 
 
