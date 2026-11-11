@@ -1,0 +1,1 @@
+<|route:tool|><|call|>{"name":"espn_fight_stats","arguments":{"fighter":":","include_live":false}}<|/call|>
