@@ -960,7 +960,7 @@ class BootSmokeTests(unittest.TestCase):
             def count(self, t):
                 return max(1, len(t) // 3)
 
-            def generate(self, task):
+            def generate(self, task, max_new=None):
                 return "<|answer|>0.55 no clear edge in this window<|/answer|>"
         fake_nm = types.SimpleNamespace(load_nexus=lambda: FakeNexus())
         server = FakeServer()
@@ -1151,7 +1151,7 @@ class FakeNexusModel:
     def count(self, t):
         return max(1, len(t) // 3)
 
-    def generate(self, task):
+    def generate(self, task, max_new=None):
         return self.transcript
 
 
@@ -1325,6 +1325,107 @@ class MainLoopFailureTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("rulings recorded 7", summary)
         self.assertIn("skipped 2", summary)
+
+
+class NexusAuditTests(unittest.TestCase):
+    """2026-11-11 audit (381 live rulings, 0 valid, 0 actions, run green): the failure must name what Nexus did,
+    the 640-token window must never be overrun, and a ruler that never produces a valid decision must be loud."""
+
+    def test_an_off_task_tool_call_names_the_tool(self):
+        t = '<|route:tool|><|call|>{"name":"gmail_send","arguments":{"to":"x"}}<|/call|>'
+        d = ta.parse_nexus_transcript(t, nexus_obs(), 0.5)
+        self.assertFalse(d["valid"])
+        self.assertEqual(d["action"], "none")
+        self.assertEqual((d["failure"]["kind"], d["failure"]["tool"]), ("off_task_tool", "gmail_send"))
+        self.assertIn("gmail_send", d["failure"]["head"])
+
+    def test_every_invalid_shape_is_classified(self):
+        cases = {
+            "no_answer": "lorem ipsum",
+            "no_probability": "<|answer|>looks fine to me<|/answer|>",
+            "garbled_call": '<|call|>{"name": oops}<|/call|>',
+            "ungrounded_market": PROPOSE_YES.replace("KXBTC15M-T", "the live market on KXBTC15M-26NOV15"),
+            "ungrounded_price": PROPOSE_YES.replace('"price": 0.6', '"price": 0.3'),
+            "bad_proposal": PROPOSE_YES.replace('"side": "yes"', '"side": "maybe"'),
+        }
+        for kind, transcript in cases.items():
+            d = ta.parse_nexus_transcript(transcript, nexus_obs(), 0.5)
+            self.assertFalse(d["valid"], kind)
+            self.assertEqual(d["failure"]["kind"], kind)
+
+    def test_a_valid_decision_carries_no_failure(self):
+        self.assertNotIn("failure", ta.parse_nexus_transcript(PROPOSE_YES, nexus_obs(), 0.5))
+
+    def test_the_answer_reserve_shrinks_to_keep_the_prompt_plus_answer_inside_the_window(self):
+        seen = {}
+
+        class Model(FakeNexusModel):
+            ctx_limit = 640
+
+            def count(self, t):
+                return 500
+
+            def generate(self, task, max_new=None):
+                seen["max_new"] = max_new
+                return self.transcript
+        think = ta.NexusThink(Model("<|answer|>0.55 thin<|/answer|>"), log=lambda s: None)
+        think.prime(nexus_obs())
+        think("sys", "user")
+        self.assertEqual(seen["max_new"], 640 - 500 - 2)
+        self.assertLessEqual(500 + seen["max_new"], 640)
+
+    def test_a_task_that_leaves_no_room_for_an_answer_is_not_asked(self):
+        calls = []
+
+        class Model(FakeNexusModel):
+            ctx_limit = 640
+
+            def count(self, t):
+                return 600
+
+            def generate(self, task, max_new=None):
+                calls.append(max_new)
+                return "never"
+        logs = []
+        think = ta.NexusThink(Model("x"), log=logs.append)
+        think.prime(nexus_obs())
+        think("sys", "user")
+        self.assertEqual(calls, [])                      # the model was not asked: fail closed, not slid
+        self.assertEqual(think.last_decision["action"], "none")
+        self.assertEqual(think.last_decision["failure"]["kind"], "window_overflow")
+        self.assertFalse(json.loads(logs[0])["think"]["asked"])
+
+    def test_the_loop_tallies_valid_and_invalid_decisions_by_failure(self):
+        c = StandingAgentTests.Clock()
+        reports = iter([
+            {"decision": {"valid": False, "failure": {"kind": "off_task_tool"}}, "fair": {"left_s": 800}},
+            {"decision": {"valid": False, "failure": {"kind": "off_task_tool"}}, "fair": {"left_s": 800}},
+            {"decision": {"valid": False, "failure": {"kind": "no_probability"}}, "fair": {"left_s": 800}},
+            {"decision": {"valid": True}, "fair": {"left_s": 800}},
+        ])
+        stats = {}
+        ta.standing_loop(lambda watch=None: next(reports, {"skipped": "x", "fair": {"left_s": -19}}), 2,
+                         log=lambda s: None, sleep=c.sleep, clock=c, stats=stats)
+        self.assertEqual((stats["valid"], stats["invalid"]), (1, 3))
+        self.assertEqual(stats["failures"], {"off_task_tool": 2, "no_probability": 1})
+
+    def test_a_ruler_with_zero_valid_decisions_fails_the_run_loudly(self):
+        base = MainLoopFailureTests()
+        rc, summary = MainLoopFailureTests.run_main(base, {"attempted": 40, "recorded": 40, "invalid": 40,
+                                                          "failures": {"off_task_tool": 40}})
+        self.assertEqual(rc, 1)
+        self.assertIn("decisions: valid 0 · invalid 40", summary)
+        self.assertIn("off_task_tool", summary)
+
+    def test_a_few_invalid_rulings_among_valid_ones_do_not_fail_the_run(self):
+        base = MainLoopFailureTests()
+        rc, _ = MainLoopFailureTests.run_main(base, {"attempted": 40, "recorded": 40, "valid": 3, "invalid": 37})
+        self.assertEqual(rc, 0)
+
+    def test_too_few_rulings_to_judge_do_not_trip_the_alarm(self):
+        base = MainLoopFailureTests()
+        rc, _ = MainLoopFailureTests.run_main(base, {"attempted": 4, "recorded": 4, "invalid": 4})
+        self.assertEqual(rc, 0)
 
 
 class ConstantWatchTests(unittest.TestCase):
