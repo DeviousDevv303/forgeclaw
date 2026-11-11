@@ -117,11 +117,27 @@ is not evidence that Nexus can read the market. Every ruling is filed with `mode
 the Bank's `agentEntryLaw` (entry-price cap 85 c, window-loss cap, recovery caution, against-strike, price-ran, event
 blackout, **equity floor 400 c**, no re-entry after stop), the 6.25 % risk cap, coded stops, preserver, kill switch.
 
-## Forecast on the real checkpoint (30 synthetic states, through parse + `apply_discipline`)
-7 entries survive, 16 proposals are blocked by the discipline gate, 7 are invalid. Survivors include **cheap YES long-shots
-when BTC is slightly below the strike** (e.g. YES at 15–17 c with BTC −3.5 bps: the harness reads +5 c of edge). Those are
-exactly the entries the 400 c floor (≈23 c max contract at equity 428 c) lets through, so the first live Nexus trades are
-likely to be small long-shot YES buys. That is a property of the harness edge math + a YES-only proposer; watch it.
+## Forecast on the real checkpoint (CORRECTED 2026-11-11 — real journal states, Bank law included)
+**Correction:** the first version of this section (30 synthetic states) said the first live trades would likely be small
+long-shot YES buys. That was wrong: it stopped at `apply_discipline` and forgot the Bank's own entry law. The MCP `enter`
+passes `distanceBps`, and `agentEntryLaw` refuses a side BTC is already `STOP_CROSS_BPS` (0.5 bps) past the strike against
+(`against-strike`, `src/app/agentLaw.ts`, `src/observer.ts:146`). Re-measured on **200 real flat states** from the decision
+journal (`entryprobe.py` logic; v2 task; real checkpoint; parse -> `apply_discipline`):
+
+| BTC vs strike | n | Nexus said YES | said NO | no proposal | survives discipline | then refused by Bank law |
+|---|---|---|---|---|---|---|
+| above (d ≥ 0) | 105 | 74 | **0** | 31 | **0** (edge < 0.5c every time) | n/a |
+| below (d < 0) | 95 | 77 | **0** | 18 | 48 (YES at 0.6–8c lottery tickets) | **48 of 48 `against-strike`** (YES with BTC below strike) |
+
+**Expected live trades from this sample: ~0.** Nexus never chose NO in 200 states; every YES it proposes with BTC above the
+strike is blocked by the edge gate, and every YES with BTC below the strike is refused by the desk's own law. So "Nexus
+trades" currently yields **proposals and rulings (the error data), not fills**. A fill needs BTC above the strike *and* YES
+mispriced by ≥ 0.5c after fees — 0 of 105 in this sample. Cristian should know that the experiment is safe for exactly this
+reason, and that it will not produce trades until Nexus can say NO.
+
+**Held positions (real states, 160 sampled from the journal; 120 are `stop-below-entry-held` ticks, 79% have bid < entry):**
+v2 held prompt -> 160/160 direct garbage, **0 EXIT, 0 below entry**, 0 `funds_propose`. Safe by emptiness: it also cannot
+manage a position; exits stay with the coded stops, the preserver and the AI exit line.
 
 ## Runbook for Muse
 1. **Merge** needs Cristian (`.github/`). Merge commit 1 alone for observability only; commit 2 turns trading on.
@@ -135,7 +151,7 @@ likely to be small long-shot YES buys. That is a property of the harness edge ma
    triggered. Compare entry P&L against the harness-only baseline (edge ≥ 0.5 c YES entries) to see whether Nexus adds or
    subtracts anything.
 5. **Desk blockers outside this repo:** equity 428 c vs floor 400 c leaves 28 c headroom; entries above ~23 c are refused
-   `equity-floor` (lawful). Nexus will "trade" only long-shots until equity rises or the owner moves the floor.
+   `equity-floor` (lawful). The Bank's `against-strike` law additionally refuses the YES long-shots a YES-only Nexus proposes below the strike, so expect ~0 fills (see the corrected forecast).
 
 ## "How long until Nexus can trade for real?" (owner question; estimate, low confidence)
 - **Plumbing to act at all:** done in this addendum (hours).
