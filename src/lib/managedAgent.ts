@@ -11,6 +11,7 @@ import {
   toToolCalls,
 } from './ai/manualToolMode'
 import { boundPrefixByBudget, conservativeTokenCount } from './ai/nexusContext'
+import { callNexusViaRouter } from './ai/nexusAgentTransport'
 import { toolCallRefusal } from './toolExposure'
 
 // ─── Agent capability profiles ───────────────────────────────────────────────
@@ -33,6 +34,10 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   'github_run_workflow',
   'shell_exec',
   'browser_run',
+  // Spawning is write-class: the child receives a caller-chosen tool list and
+  // can be directed to write through it, so a read-only agent must never hold
+  // the power to delegate its way past its own profile.
+  'spawn_agent',
   'send_whatsapp',
   'gmail_send',
   'calendar_create',
@@ -51,6 +56,11 @@ export const CODING_TOOL_ORDER: readonly string[] = [
   // under the Nexus provider is rebuilt from this list, and without nexus_reason in it the router
   // fails that turn with nexus-not-dispatched exactly as the chat path did.
   'nexus_reason',
+  // Delegation, beside the other dispatch tools: the executor has always
+  // supported spawn_agent (forgeTools), but it was missing from this order,
+  // so no coding turn was ever offered it. Write-classified above, so the
+  // read-only profile still excludes it.
+  'spawn_agent',
   'github_repo_state',
   'github_read_file',
   'github_list_files',
@@ -157,7 +167,9 @@ export interface SubAgentOptions {
   /** Called with the factual budget decision so the UI can report it honestly. */
   onBudget?: (report: SubAgentBudgetReport) => void
   /**
-   * Provider transport seam. Production callers omit this and get `callProvider`.
+   * Provider transport seam. Production callers omit this and get the default
+   * transport (`callProvider`, or the Nexus router adapter under the Nexus
+   * provider, whose raw adapter throws by design).
    * Overriding it swaps only the transport; capability filtering, prompt
    * budgeting, manual-tool parsing, dispatch and Guardian behavior are identical,
    * so a test exercises the real routing decision rather than a copy of it.
@@ -188,7 +200,22 @@ export async function runSubAgent(
   // call naming a tool outside it is refused before dispatch (the same
   // toolCallRefusal admission the main chat loop applies), so a capability
   // profile binds what runs, not only what the prompt describes.
+  const isNexus = provider === 'nexus-intelligence'
   const offeredToolNames: ReadonlySet<string> = new Set(tools.map(t => t.name))
+  // Under the Nexus provider, nexus_reason is transport, not a capability
+  // grant: it is how a Nexus turn dispatches at all (the router refuses a
+  // Nexus request without it, and the provider adapter throws by design).
+  // The router's bootstrap call and any re-dispatch must therefore be
+  // admitted here, while every real tool call the model emits inside its
+  // segments is still refused unless the capability offered it.
+  const executionToolNames: ReadonlySet<string> = isNexus
+    ? new Set([...offeredToolNames, 'nexus_reason'])
+    : offeredToolNames
+  // The tool set placed on the router request for a Nexus turn: the agent's
+  // own tools plus the nexus_reason definition the router dispatches through.
+  const nexusDispatchTools: ToolDef[] = isNexus
+    ? [...tools, ...allTools.filter(t => t.name === 'nexus_reason' && !offeredToolNames.has(t.name))]
+    : tools
 
   const supportsNativeTools = modelSupportsTools(provider, model)
 
@@ -224,7 +251,15 @@ export async function runSubAgent(
 
   const messages: ChatMessage[] = [{ role: 'user', content: effectiveTask }]
   const maxIters = 8
-  const sendToProvider = options.callProviderFn ?? callProvider
+  // A Nexus turn goes through the provider router, never the raw adapter:
+  // the adapter throws for Nexus by design (its workflow dispatcher is the
+  // router's nexus_reason loop), so the default transport swaps in the
+  // router adapter for this provider. The capability filtering, prompt
+  // budgeting, dispatch and Guardian behavior around it are unchanged.
+  const sendToProvider = options.callProviderFn ?? (isNexus
+    ? (_provider: ProviderId, model: string, systemPrompt: string, msgs: ChatMessage[], apiKey: string, opts?: { tools?: ToolDef[]; signal?: AbortSignal; maxTokens?: number }) =>
+        callNexusViaRouter(model, systemPrompt, msgs, apiKey, { signal: opts?.signal, maxTokens: opts?.maxTokens }, nexusDispatchTools)
+    : callProvider)
 
   for (let i = 0; i < maxIters; i++) {
     if (toolCtx.signal?.aborted) return '[SUB-AGENT ABORTED]'
@@ -239,8 +274,10 @@ export async function runSubAgent(
 
     // Providers without native function calling emit the manual tool-call syntax
     // instead, so parse it here rather than ending the run with a description of
-    // the work the model wanted to do.
-    if (!supportsNativeTools && !calls.length && text) {
+    // the work the model wanted to do. Nexus is exempt: the router already
+    // extracted its segment's call structurally, and its final text is an
+    // answer, not unparsed tool syntax.
+    if (!supportsNativeTools && !isNexus && !calls.length && text) {
       const actions = parseManualToolCalls(text)
       if (actions.length) {
         calls = toToolCalls(actions)
@@ -254,7 +291,7 @@ export async function runSubAgent(
 
     const iterResults = await Promise.all(
       calls.map(async (tc: ToolCall) => {
-        const refusal = toolCallRefusal(tc.name, offeredToolNames, false, 0)
+        const refusal = toolCallRefusal(tc.name, executionToolNames, false, 0)
         return {
           toolCallId: tc.id,
           output: refusal ?? (await executeTool(tc, toolCtx)),
