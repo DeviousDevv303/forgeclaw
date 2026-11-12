@@ -139,6 +139,57 @@ const CANDIDATE_INDEX_KEY = 'forgeclaw_nexus_candidate_index_v1'
 /** Integrity hashes of auto-admitted entries the owner removed; they never converge again. */
 const DECLINED_KEY = 'forgeclaw_nexus_declined_v1'
 const MAX_INDEX_ENTRIES = 10_000
+/**
+ * The corpus's byte budget, in stored characters (localStorage quotas count UTF-16 units, i.e. string
+ * length). The browser's wall is roughly 5M units for the whole origin — shared with settings, the
+ * GitHub token and conversation history — so the corpus keeps its own footprint at or under 4M.
+ * Owner's ruling (2026-11-12): once the store is over this budget, the OLDEST knowledge records may
+ * be evicted to make room, newest learning first-preserved. Before that ruling, admitted knowledge
+ * was never removable (see pruneUnapproved) and a knowledge-full store simply failed every write.
+ */
+export const MAX_CORPUS_STORAGE_CHARS = 4_000_000
+
+/**
+ * Total characters held by the corpus's indexed footprint — its share of the origin's storage
+ * quota. Counted by walking the indexes, never by enumerating storage keys: key(i) enumeration
+ * is quadratic on some Storage implementations and this census runs on the append path's
+ * eviction check. A record orphaned from every index (corruption residue) is not counted;
+ * the reactive room-making ladder, which reads real write failures, remains the backstop.
+ */
+export function corpusStorageChars(): number {
+  let total = 0
+  const countKey = (key: string) => {
+    const value = safeGetItem(key)
+    if (value !== null) total += key.length + value.length
+  }
+  const countIndex = (indexKey: string, recordPrefix: string | null) => {
+    const raw = safeGetItem(indexKey)
+    if (raw === null) return
+    total += indexKey.length + raw.length
+    let ids: string[] = []
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        ids = parsed as string[]
+      } else {
+        const meta = parsed as { first: number; last: number }
+        for (let chunk = meta.first; chunk <= meta.last; chunk += 1) {
+          const chunkKey = `${indexKey}:chunk:${chunk}`
+          const chunkRaw = safeGetItem(chunkKey)
+          if (chunkRaw === null) continue
+          total += chunkKey.length + chunkRaw.length
+          ids.push(...(JSON.parse(chunkRaw) as string[]))
+        }
+      }
+    } catch { return }
+    if (recordPrefix) for (const id of ids) countKey(`${recordPrefix}${id}`)
+  }
+  countIndex(INDEX_KEY, RECORD_PREFIX)
+  countIndex(CANDIDATE_INDEX_KEY, CANDIDATE_PREFIX)
+  countIndex(DECLINED_KEY, null)
+  countKey(VERSION_KEY)
+  return total
+}
 
 /**
  * Index storage layout (v2, chunked). An index used to be one JSON array of up to MAX_INDEX_ENTRIES ids stored at the
@@ -503,11 +554,39 @@ function safeRecord(raw: string | null): CorpusRecord | null {
   }
 }
 
+export interface CorpusRepositoryOptions {
+  /** Byte budget for the corpus's own keys, in stored characters. Defaults to MAX_CORPUS_STORAGE_CHARS. */
+  maxStorageChars?: number
+}
+
 export class CorpusRepository {
   private readonly trustConfig: AdmissionTrustConfig
+  private readonly maxStorageChars: number
+  /** Cached corpus size in characters, anchored by exact censuses; null until first measured. */
+  private cachedChars: number | null = null
+  private appendsSinceAnchor = 0
 
-  constructor(trustConfig: AdmissionTrustConfig = {}) {
+  constructor(trustConfig: AdmissionTrustConfig = {}, options: CorpusRepositoryOptions = {}) {
     this.trustConfig = trustConfig
+    this.maxStorageChars = options.maxStorageChars ?? MAX_CORPUS_STORAGE_CHARS
+  }
+
+  /**
+   * Exact census of the corpus's stored characters, re-anchoring the cached size. Eviction —
+   * the irreversible act — always decides from this exact read, never from the cached estimate.
+   */
+  private anchorStorageChars(): number {
+    const exact = corpusStorageChars()
+    this.cachedChars = exact
+    this.appendsSinceAnchor = 0
+    return exact
+  }
+
+  /** Tracks a landed record write in the cached size (an estimate between anchors). */
+  private noteRecordWrite(key: string, value: string, previous: string | null): void {
+    if (this.cachedChars === null) return
+    this.cachedChars += (key.length + value.length) - (previous ? key.length + previous.length : 0) + 8
+    this.appendsSinceAnchor += 1
   }
 
   getVersion(): number {
@@ -524,12 +603,18 @@ export class CorpusRepository {
   private saveRecord(record: CorpusRecord, candidate = false): void {
     const prefix = candidate ? CANDIDATE_PREFIX : RECORD_PREFIX
     const indexKey = candidate ? CANDIDATE_INDEX_KEY : INDEX_KEY
-    const makeRoom = () => this.pruneUnapproved(PRUNE_BATCH)
+    // Room-making ladder: unapproved churn first (it costs no knowledge); only when that yields
+    // nothing may the oldest records be evicted, per the owner's 2026-11-12 byte-budget ruling.
+    const makeRoom = () => this.pruneUnapproved(PRUNE_BATCH) || this.pruneOldestRecords(PRUNE_BATCH, record.id)
+    this.evictOverBudget(record.id)
     // Record ids are content-derived, and prune/removal always delete a record and its index entry together, so a
     // stored record is indexed unless the index lost it (corruption) — the membership check heals that case exactly
     // as the old full-index scan did. A genuinely new id takes the append fast path (tail chunk only).
-    const alreadyIndexed = safeGetItem(`${prefix}${record.id}`) !== null && readIndex(indexKey).includes(record.id)
-    setWithRoom(`${prefix}${record.id}`, JSON.stringify(record), makeRoom)
+    const previous = safeGetItem(`${prefix}${record.id}`)
+    const alreadyIndexed = previous !== null && readIndex(indexKey).includes(record.id)
+    const value = JSON.stringify(record)
+    setWithRoom(`${prefix}${record.id}`, value, makeRoom)
+    this.noteRecordWrite(`${prefix}${record.id}`, value, previous)
     if (!alreadyIndexed) appendIndexId(indexKey, record.id, makeRoom)
   }
 
@@ -537,7 +622,8 @@ export class CorpusRepository {
    * Removes up to `count` of the oldest entries that are not knowledge. An unapproved candidate removes both its
    * candidate and raw interaction; an approved candidate first keeps the candidate for provenance/UI purposes while its
    * raw interaction is reclaimed, and only drops that redundant candidate metadata on a later pass if more room is needed.
-   * Auto-added and signed knowledge is never removed. Returns how many records were reclaimed.
+   * This pass itself never removes a knowledge record — knowledge eviction, authorized by the owner's
+   * 2026-11-12 byte-budget ruling, lives in pruneOldestRecords. Returns how many records were reclaimed.
    */
   private pruneUnapproved(count: number): number {
     const candidateIds = readIndex(CANDIDATE_INDEX_KEY)
@@ -586,10 +672,64 @@ export class CorpusRepository {
     return removed
   }
 
+  /**
+   * Removes up to `count` of the OLDEST records in the main index, oldest first, skipping
+   * `excludeId` — the record a write is currently landing, which its own append must never evict.
+   * The index is ordered oldest-first, and an intake writes its raw interaction before the
+   * knowledge it admits, so bulk raw records are reclaimed before the distilled knowledge that
+   * followed them. This is the owner's 2026-11-12 amendment to the store's oldest law (admitted
+   * knowledge was never removable): eviction is authorized only as room-making once the store is
+   * over its byte budget or at the browser's wall, and unapproved pruning always runs first.
+   * Returns how many records were removed.
+   */
+  private pruneOldestRecords(count: number, excludeId?: string): number {
+    const ids = readIndex(INDEX_KEY)
+    const removedIds: string[] = []
+    for (const id of ids) {
+      if (removedIds.length >= count) break
+      if (id === excludeId) continue
+      safeRemoveItem(`${RECORD_PREFIX}${id}`)
+      removedIds.push(id)
+    }
+    if (!removedIds.length) return 0
+    const removed = new Set(removedIds)
+    writeIndexChunks(INDEX_KEY, ids.filter(id => !removed.has(id)), QUIET_INDEX_OPS)
+    return removedIds.length
+  }
+
+  /**
+   * Evicts until the corpus is back under its byte budget (no-op under it). Uses the same
+   * room-making ladder as a failed write: unapproved churn first, then the oldest records.
+   * The stages feed each other — once a raw record is evicted, its approved candidate's
+   * metadata becomes the redundant kind pruneUnapproved drops on the next pass.
+   */
+  private evictOverBudget(excludeId?: string): void {
+    // Cheap path, the common case on every append: the cached estimate says the store is
+    // under budget and little has landed since the last exact census, so no census is run.
+    // (A per-append census would make appends O(store) — the tax the chunked index removed.)
+    if (this.cachedChars !== null && this.cachedChars <= this.maxStorageChars && this.appendsSinceAnchor < 1_000) return
+    for (let guard = 0; guard < 10_000; guard += 1) {
+      if (this.anchorStorageChars() <= this.maxStorageChars) return
+      const made = this.pruneUnapproved(PRUNE_BATCH) || this.pruneOldestRecords(PRUNE_BATCH, excludeId)
+      if (made === 0) return
+    }
+  }
+
   /** Strict variant for admission path — surfaces storage failures instead of swallowing them. */
   private saveRecordStrict(record: CorpusRecord): StorageResult<void> {
-    const writeResult = strictSetItem(`${RECORD_PREFIX}${record.id}`, JSON.stringify(record))
+    this.evictOverBudget(record.id)
+    const key = `${RECORD_PREFIX}${record.id}`
+    const previous = safeGetItem(key)
+    const value = JSON.stringify(record)
+    let writeResult = strictSetItem(key, value)
+    // The strictness is that a failure still surfaces — but room is made first, by the same
+    // ladder saveRecord uses, so admission only fails when nothing at all can be reclaimed.
+    for (let attempt = 0; !writeResult.ok && attempt < 200; attempt += 1) {
+      if ((this.pruneUnapproved(PRUNE_BATCH) || this.pruneOldestRecords(PRUNE_BATCH, record.id)) === 0) break
+      writeResult = strictSetItem(key, value)
+    }
     if (!writeResult.ok) return writeResult
+    this.noteRecordWrite(key, value, previous)
     return appendIndexIdStrict(INDEX_KEY, record.id)
   }
 

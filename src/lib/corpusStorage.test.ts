@@ -3,7 +3,7 @@
 // NEXUS stopped recording without saying so.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildLearningEvent, MAX_TOOL_RECORD_CHARS, recordLearningEvent } from './learningEvents'
-import { CorpusRepository } from './corpus'
+import { CorpusRepository, corpusStorageChars } from './corpus'
 
 /** A localStorage that is full at `limit` characters, like a phone browser's. */
 class LimitedStorage {
@@ -49,7 +49,7 @@ describe('when the browser\'s storage is full', () => {
     expect(candidates.some(c => c.input === 'question 0')).toBe(false) // the oldest made room
   })
 
-  it('never removes knowledge to make room', async () => {
+  it('spends unapproved churn before touching knowledge (knowledge eviction is the last resort)', async () => {
     const corpus = new CorpusRepository()
     await admittedChat(corpus, 0) // admitted knowledge — never removable to make room
     for (let i = 1; i < 40; i++) await corpus.appendInteraction(chat(i))
@@ -70,6 +70,47 @@ describe('when the browser\'s storage is full', () => {
     // The same recovery path keeps subsequent learning events recording instead of dropping them silently.
     expect(await recordLearningEvent(chat(2) as never, corpus)).toBe(true)
   })
+})
+
+describe('byte budget: the oldest records make room (owner ruling, 2026-11-12)', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('evicts the oldest knowledge once over budget and keeps the newest — no browser wall involved', async () => {
+    vi.stubGlobal('localStorage', new LimitedStorage(10_000_000)) // the wall never binds; only the budget can evict
+    // 8,000 sits below the floor that knowledge + its raw interactions alone occupy, so the
+    // ladder's earlier stages (candidate churn, raw reclaim) cannot hold the budget by
+    // themselves — the oldest knowledge itself has to go. (At a roomier budget the ladder
+    // correctly spends everything else first and the knowledge all survives.)
+    const corpus = new CorpusRepository({}, { maxStorageChars: 8_000 })
+    for (let i = 0; i < 6; i++) await admittedChat(corpus, i)
+    const knowledge = corpus.listKnowledge(20)
+    const inputs = knowledge.map(record => record.metadata.input)
+    expect(knowledge.length).toBeGreaterThan(0)
+    expect(knowledge.length).toBeLessThan(6)
+    expect(inputs).toContain('question 5') // the newest learning is preserved
+    expect(inputs).not.toContain('question 0') // the oldest was evicted to hold the budget
+    expect(corpusStorageChars()).toBeLessThan(11_000) // budget + the last intake's own writes
+  })
+
+  it('at a zero budget only the record just written survives its own append', async () => {
+    vi.stubGlobal('localStorage', new LimitedStorage(10_000_000))
+    const corpus = new CorpusRepository({}, { maxStorageChars: 0 })
+    await admittedChat(corpus, 0)
+    await admittedChat(corpus, 1)
+    const knowledge = corpus.listKnowledge(20)
+    expect(knowledge).toHaveLength(1)
+    expect(knowledge[0].metadata.input).toBe('question 1')
+  })
+
+  it('keeps admitting at the browser wall by evicting the oldest knowledge', async () => {
+    vi.stubGlobal('localStorage', new LimitedStorage(20_000))
+    const corpus = new CorpusRepository() // default budget: here the browser's wall is what binds
+    for (let i = 0; i < 8; i++) await admittedChat(corpus, i) // must not throw
+    const inputs = corpus.listKnowledge(20).map(record => record.metadata.input)
+    expect(inputs).toContain('question 7')
+    expect(inputs).not.toContain('question 0')
+  })
+
 })
 
 describe('tool and shell records stay small; chat answers keep their full bound', () => {
