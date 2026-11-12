@@ -216,6 +216,9 @@ import { heuristicsForPrompt } from './lib/nexusHeuristics'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
 import { isPublicVisitor } from './lib/publicRelay'
 import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, mergeChannelCalls, readPendingChannelCalls, savePendingChannelCalls, type ChannelCall } from './lib/channelCalls'
+
+/** Shown when the free model, /sculpt or /patch is used with no GitHub token: all three run on GitHub Actions. */
+const GITHUB_TOKEN_REQUIRED_MESSAGE = '⚠️ GitHub token required: the free Qwen model, /sculpt and /patch all run on GitHub Actions and need a GitHub token to dispatch. Add your token in Settings → GitHub, then try again.'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { ReasoningFrameworkPanel } from './components/ReasoningFrameworkPanel'
@@ -1293,13 +1296,15 @@ function App() {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: 'assistant',
-        content: '⚠️ GitHub token required: The Qwen reasoning workflow needs a GitHub token to dispatch. Please add your token in Settings → GitHub Token, then try again.',
+        content: GITHUB_TOKEN_REQUIRED_MESSAGE,
         timestamp: Date.now(),
       }
       setMessages(prev => [...prev,
         { id: (Date.now() - 1).toString(), role: 'user', content: promptText, timestamp: Date.now() },
         errorMsg,
       ])
+      // Ledgered like a missing provider key, so the Failures view shows it (audit 2026-11-12).
+      emitFailure({ source: 'forgemind', severity: 'warning', message: GITHUB_TOKEN_REQUIRED_MESSAGE })
       return
     }
     const hasAttachment = Boolean(options.attachmentName || imageUrl)

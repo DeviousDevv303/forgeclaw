@@ -36,6 +36,8 @@ ForgeClaw does not claim to be a general-purpose autonomous replacement for engi
 | Anthropic · Claude | Claude Haiku / Sonnet / Opus 5.5 | Anthropic API | An Anthropic key |
 | OpenRouter | Any tool-capable OpenRouter model (the Settings field lists the live catalogue with prices); default Claude Haiku 5.5 | OpenRouter API | An OpenRouter key (`sk-or-`) |
 | Local | llama.cpp server you run | Your machine | — |
+| Nexus Intelligence | The owner's own Run 25 checkpoint (4.48M parameters, 640-token window), served alone | `nexus-intelligence.yml` on a free CPU runner | A GitHub token. A tool-call specialist: not reliable on general questions; image requests are routed to the image generator |
+| Muse · Meta | Meta's hosted model | Meta API | A Meta key |
 
 Qwen3-8B was chosen by benchmark on the runner's 4 CPU threads (2026-10-20). The old `deepseek-llm-7b-chat` got a two-step time question wrong and looped on HTML; Qwen3-8B answered correctly and completely at 3.3–4.1 tokens/s. A short answer took 43 s with the model cached (run 39439006131). Long answers take minutes; the chat shows elapsed time.
 
@@ -75,7 +77,7 @@ Claude and Kimi receive the attached picture directly. With Qwen, the picture is
 
 ### NEXUS recursive learning
 
-The NEXUS page ("My Logic Is Undeniable") counts outcomes, tracks per-tool reliability and recurring failure lessons, and feeds those lessons back into prompts as labelled evidence. Every run, including failures and Guardian blocks, becomes an unapproved candidate. Knowledge converges on its own when a record passes the evidence gate on the owner's five phases (Assumptions, Heuristics, First Principles, Extension, Convergence) and is marked AUTO-ADDED (`nexus-convergence`); failed or blocked runs, visitors' input, and evidence-free answers never converge. The signed-admission path exists in code but has no trusted key in the app, so it is not the live route. NEXUS also mines the owner's own rules of thumb from what he types (approved ones are given to every model) and learns his visual taste from his 🔥 👍 👎 on pictures, measured in the browser with nothing to set up. The NEXUS tab is owner-only.
+The NEXUS page ("My Logic Is Undeniable") counts outcomes, tracks per-tool reliability and recurring failure lessons, and feeds those lessons back into prompts as labelled evidence. Every run, including failures and Guardian blocks, becomes an unapproved candidate. Knowledge converges on its own when a record passes the evidence gate on the owner's five phases (Assumptions, Heuristics, First Principles, Extension, Convergence) and is marked AUTO-ADDED (`nexus-convergence`); failed or blocked runs, visitors' input, and evidence-free answers never converge. The signed-admission path exists in code but has no trusted key in the app, so it is not the live route. NEXUS also mines the owner's own rules of thumb from what he types (approved ones are given to every model) and learns his visual taste from his 🔥 👍 👎 on pictures, measured in the browser with nothing to set up. The NEXUS tab is hidden from free-mode visitors; any other browser shows it with that browser's own data plus the records published on the `nexus-intake-data` branch.
 
 ### Free mode for visitors
 
@@ -96,11 +98,11 @@ Paths in `.github/protected-paths.txt` (workflows, manifests, build configs, Gua
 
 ### Failure visibility
 
-Failures are classified and surfaced in the Activity area. The current code distinguishes categories such as tool, authentication, network, dependency, invalid-assumption, user-constraint, and unknown failures.
+Failures are classified and surfaced in the Activity area (the Failures view lists tool, Guardian, missing-key and missing-token failures). The current code distinguishes categories such as tool, authentication, network, dependency, invalid-assumption, user-constraint, and unknown failures.
 
 ## Capability status
 
-Updated 2026-10-20. "Works" means it ran successfully end to end on GitHub Actions; run IDs are given. "Not verified live" means tested with mocks or in a container only.
+Table last verified 2026-10-20; audited 2026-11-12 (notes below the table). "Works" means it ran successfully end to end on GitHub Actions; run IDs are given. "Not verified live" means tested with mocks or in a container only.
 
 | Capability | Tool / workflow | Status |
 | --- | --- | --- |
@@ -124,6 +126,13 @@ Updated 2026-10-20. "Works" means it ran successfully end to end on GitHub Actio
 | Click and browse (cloud browser) | `browser_run` / `browser-agent.yml` | **New, not run live yet.** Free: it uses only GitHub Actions minutes (unlimited on a public repository, your monthly quota on a private one; a round takes a few minutes and a session is capped at 10 rounds) and no paid service. The runner is tested in a real Chromium (browse, click, type, follow links; refuses internal addresses, password fields, downloads); the workflow has never been dispatched. Clicking and typing need your co-sign. NEXUS keeps what worked as a playbook (typed text is never stored); once you approve it, it teaches the browsing agent and Qwen. Kimi/Claude only. |
 | Gmail, Calendar, WhatsApp | `gmail_*`, `calendar_*`, `send_whatsapp` | Need your own OAuth/API credentials in Settings; not verified here. |
 | `http_fetch`, `run_js` | browser-side | Work within browser limits (`http_fetch` is subject to CORS). |
+
+Audit notes, 2026-11-12 (run history and a browser pass of the built app):
+
+- `site-build.yml` and `browser-agent.yml` have never been dispatched. `shell-repair.yml`'s latest run (2026-10-21) failed.
+- Recent successful runs: `generate-image.yml` (2026-11-10), `nexus-intelligence.yml` (2026-11-12), `ddg_search.yml` (2026-11-08), `qwen3-8b.yml` (2026-11-09), `deep-research.yml` (2026-11-01).
+- Workflows not described above: `build-gate`, `deploy`, `channel-watch`, `forgeclaw-loop`, `nexus-loop`, `nexus-intelligence`, `trader-agent`, `owner-exit`, `kalshi-snapshot`, `mirofish-sim`, `qwen-bench`, `qwen-cache-keepwarm`, `cpu-image-benchmark`.
+- Hosted providers, Gmail/Calendar, WhatsApp, Kalshi funds, the relay and the merge tool were not exercised in this audit.
 
 ## Architecture
 
@@ -178,11 +187,12 @@ scripts/
 | Styling | Tailwind CSS |
 | State | Zustand |
 | AI runtime | Qwen3-8B (GGUF, llama.cpp) on GitHub Actions; Moonshot/Kimi and Anthropic/Claude adapters; optional local llama.cpp |
+| AI runtime (added since) | The Nexus Intelligence checkpoint on GitHub Actions; Meta and OpenRouter adapters |
 | GitHub API | Octokit REST |
 | Optional backend | Supabase Edge Function |
-| Browser automation | Playwright |
+| Browser automation | Playwright, installed inside the GitHub Actions workflows (not a dependency of the app) |
 | CI/CD | GitHub Actions |
-| Database support | SQLite audit logging in the application path; optional Supabase integration |
+| Database support | Browser storage in the app; SQLite only in the optional `engine/` server; optional Supabase integration |
 
 ## Quick start
 
