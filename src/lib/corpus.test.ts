@@ -276,7 +276,10 @@ describe('NEXUS / Corpus Local Mode', () => {
   })
 
   it('accommodates 10,000 interaction records in persistent local storage', async ({ signal }) => {
-    const repository = new CorpusRepository({ mode: 'test' })
+    // This test's subject is the count cap and the chunked index at scale, so the byte budget is
+    // lifted out of its way — the budget's own behavior is covered in corpusStorage.test.ts.
+    // (At the default 4M budget these 20,000 small records would be evicted down to it, by design.)
+    const repository = new CorpusRepository({ mode: 'test' }, { maxStorageChars: Number.MAX_SAFE_INTEGER })
     for (let index = 0; index < 10_000; index += 1) {
       // A timed-out test's promise keeps running: without this, its appends leaked into the next test's storage
       // (docs/flakes.md entry 6, "expected 9 to be 7" after entry 5 timed out in a shuffled run).
