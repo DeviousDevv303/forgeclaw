@@ -26,6 +26,10 @@ import { executeTool, FORGE_TOOLS, loadToolContext } from './forgeTools'
 import { injectToolSchema, injectToolSchemaWithinBudget, parseManualToolCalls, stripToolSyntax, toToolCalls } from './ai/manualToolMode'
 import { boundPrefixByBudget, MAX_NEXUS_CONTEXT_TOKENS, conservativeTokenCount, limitNexusContext } from './ai/nexusContext'
 import { PROVIDERS, modelSupportsTools } from './modelProviders'
+import { callNexusViaRouter } from './ai/nexusAgentTransport'
+
+vi.mock('./ai/nexusAgentTransport', () => ({ callNexusViaRouter: vi.fn() }))
+const nexusTransport = vi.mocked(callNexusViaRouter)
 import { hasSuccessfulRepositoryEvidence } from './codingAgentRuntime'
 
 class MemoryStorage implements Storage {
@@ -527,5 +531,90 @@ describe('enforcedCapability — runtime grants only what was saved', () => {
     expect(enforcedCapability({ capability: 'chat' })).toBe('chat')
     expect(enforcedCapability({ capability: 'coding-readonly' })).toBe('coding-readonly')
     expect(enforcedCapability({ capability: 'coding' })).toBe('coding')
+  })
+})
+
+describe('nexus provider routing for sub-agents', () => {
+  it('offers spawn_agent to coding agents but never to read-only agents', () => {
+    const coding = toolsForCapability('coding', FORGE_TOOLS).map(t => t.name)
+    expect(coding).toContain('spawn_agent')
+    expect(coding).toContain('nexus_reason')
+    const readonly = toolsForCapability('coding-readonly', FORGE_TOOLS).map(t => t.name)
+    expect(readonly).not.toContain('spawn_agent')
+    expect(readonly).toContain('nexus_reason')
+    expect(WRITE_TOOL_NAMES.has('spawn_agent')).toBe(true)
+    expect(CODING_READONLY_TOOL_NAMES).not.toContain('spawn_agent')
+    expect(CODING_TOOL_ORDER.indexOf('spawn_agent')).toBeGreaterThan(CODING_TOOL_ORDER.indexOf('nexus_reason'))
+  })
+
+  it('drives the router loop: bootstrap dispatch, parsed call executed under the allowlist, synthesis returned', async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input)
+      if (url === 'https://api.github.com/repos/DeviousDevv303/forgeclaw') {
+        return new Response(JSON.stringify({ default_branch: 'main', html_url: 'https://github.com/DeviousDevv303/forgeclaw', private: false, pushed_at: '2026-11-12T00:00:00Z' }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (url === 'https://api.github.com/repos/DeviousDevv303/forgeclaw/commits/main') {
+        return new Response(JSON.stringify({ sha: '46b9a76deadbeefcafe', html_url: 'https://github.com/DeviousDevv303/forgeclaw/commit/46b9a76', commit: { message: 'Merge pull request #417', author: { name: 'Cristian', date: '2026-11-12' } } }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response('not found', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const seen: Array<{ messages: Array<{ role: string; content: string; tool_call_id?: string }>; dispatchNames: string[] }> = []
+    const replies = [
+      { text: '', toolCalls: [{ id: 'bootstrap-nexus-1', name: 'nexus_reason', input: { task: 'inspect', mode: 'create' } }] },
+      { text: '', toolCalls: [{ id: 'nexus-call-1', name: 'github_repo_state', input: {} }] },
+      { text: 'Repo state read complete.', toolCalls: [] as Array<{ id: string; name: string; input: Record<string, unknown> }> },
+    ]
+    let index = 0
+    nexusTransport.mockImplementation(async (_model, _systemPrompt, messages, _apiKey, _options, dispatchTools) => {
+      seen.push({ messages: messages.map(m => ({ role: m.role, content: m.content, tool_call_id: m.tool_call_id })), dispatchNames: dispatchTools.map(t => t.name) })
+      const reply = replies[Math.min(index, replies.length - 1)]
+      index += 1
+      return { text: reply.text, provider: 'nexus-intelligence' as const, model: 'nexus-run25', toolCalls: reply.toolCalls }
+    })
+
+    const result = await runSubAgent(
+      'You are a repository agent.', 'Inspect the repository state', undefined,
+      'nexus-intelligence', 'nexus-run25', '', FORGE_TOOLS, ctx(), { capability: 'coding' },
+    )
+
+    expect(result).toBe('Repo state read complete.')
+    expect(nexusTransport).toHaveBeenCalledTimes(3)
+    // The router request carries the dispatch tool: the router refuses a
+    // Nexus turn whose tools lack nexus_reason.
+    expect(seen[0].dispatchNames).toContain('nexus_reason')
+    expect(seen[0].dispatchNames).toContain('github_repo_state')
+    expect(seen[0].dispatchNames).toContain('spawn_agent')
+    // The parsed call really executed (not refused): its genuine tool output
+    // reached the next router call as a tool message.
+    const toolResults = seen[2].messages.filter(m => m.role === 'tool')
+    const repoResult = toolResults.find(m => m.tool_call_id === 'nexus-call-1')
+    expect(repoResult?.content).toContain('HEAD: 46b9a76deadbeefcafe')
+    expect(fetchMock).toHaveBeenCalled()
+  })
+
+  it('refuses a parsed call outside the capability instead of executing it', async () => {
+    const seen: Array<{ messages: Array<{ role: string; content: string; tool_call_id?: string }> }> = []
+    const replies = [
+      { text: '', toolCalls: [{ id: 'nexus-call-9', name: 'shell_exec', input: { command: 'echo hi' } }] },
+      { text: 'Understood.', toolCalls: [] as Array<{ id: string; name: string; input: Record<string, unknown> }> },
+    ]
+    let index = 0
+    nexusTransport.mockImplementation(async (_model, _systemPrompt, messages) => {
+      seen.push({ messages: messages.map(m => ({ role: m.role, content: m.content, tool_call_id: m.tool_call_id })) })
+      const reply = replies[Math.min(index, replies.length - 1)]
+      index += 1
+      return { text: reply.text, provider: 'nexus-intelligence' as const, model: 'nexus-run25', toolCalls: reply.toolCalls }
+    })
+
+    const result = await runSubAgent(
+      'You are a chat agent.', 'Say hi', undefined,
+      'nexus-intelligence', 'nexus-run25', '', FORGE_TOOLS, ctx(), { capability: 'chat' },
+    )
+
+    expect(result).toBe('Understood.')
+    const refusal = seen[1].messages.find(m => m.role === 'tool' && m.tool_call_id === 'nexus-call-9')
+    expect(refusal?.content).toContain('[GUARDIAN BLOCKED] shell_exec was not offered')
   })
 })
