@@ -63,6 +63,18 @@ function latestCurrentToolResult(request: AIRequest): { name: string; content: s
   const result = [...turn].reverse().find(m => m.role === 'tool' && m.tool_call_id); if (!result?.tool_call_id) return undefined
   return { name: names.get(result.tool_call_id) || '', content: result.content }
 }
+/** Call-id prefix of a generate_image call the router issued under the Nexus provider (the image guarantee). */
+// The 'direct-image-' prefix is what the chat (App.tsx) keys on to attach the generated picture to the
+// reply and end the turn; without it the picture is generated and never shown (found by driving the
+// built app in a browser, 2026-11-12).
+const NEXUS_IMAGE_GUARANTEE_ID = 'direct-image-nexus-'
+/** The latest tool result of this turn when it answers a router-guaranteed generate_image call; otherwise undefined. */
+function guaranteedImageResult(request: AIRequest): { content: string } | undefined {
+  const turn = currentTurnMessages(request)
+  const result = [...turn].reverse().find(m => m.role === 'tool' && m.tool_call_id)
+  if (result?.role !== 'tool' || !result.tool_call_id?.startsWith(NEXUS_IMAGE_GUARANTEE_ID)) return undefined
+  return { content: result.content }
+}
 function failedQwenToolResult(request: AIRequest): { content: string } | undefined {
   const turn = currentTurnMessages(request); const names = new Map<string, string>()
   for (const message of turn) if (message.role === 'assistant') for (const call of message.tool_calls ?? []) names.set(call.id, call.name)
@@ -270,6 +282,13 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // deterministic intercept under this provider — the pre-correction behavior (diffusion
   // dispatched for every provider and the turn attributed to Nexus without Nexus deciding)
   // mislabelled the picture's maker, which the owner flagged on 2026-11-09.
+  // THE GUARANTEE (owner, 2026-11-11: "Need to make sure it actually calls on the Nexus
+  // Intelligence LLM image generator we made it"): Nexus still decides first, but an image
+  // request under this provider can no longer end without the generator being called. If the
+  // Nexus segment does not call generate_image (the Run 25 checkpoint answered an image request
+  // in its trading register, 2026-11-11 10:15 CST), the Nexus branch below issues the call
+  // itself (stopReason 'deterministic-nexus-image-generator') and the turn then says plainly
+  // that the generator was called by ForgeClaw's router, not by the language model.
   if (lastUser && isImageGenerationRequest(lastUser.content) && !isNexusIntelligenceProvider(selected)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `direct-image-${Date.now()}`, name: 'generate_image', input: { prompt: extractImagePrompt(lastUser.content), style: inferImageStyle(extractImagePrompt(lastUser.content)), width: 512, height: 512 } }], stopReason: 'direct-image-intent' })
   const prior = latestCurrentToolResult(request)
   // A picture comes first: greetings, repository evidence and research would all answer without it.
@@ -309,11 +328,17 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
     if (latest?.name === 'nexus_reason' && isSuccessfulNexusToolResult(latest.content)) {
       const segment = latest.content.split('\n\n').slice(1).join('\n\n').trim()
       const parsed = parseNexusSegment(segment)
+      // The image guarantee (see the note above the direct-image intercept): the request is for an
+      // image, no generate_image call has completed in this turn, and this segment is not one.
+      if (lastUser && isImageGenerationRequest(lastUser.content) && !hasToolResult(request, 'generate_image') && !(parsed.kind === 'call' && parsed.name === 'generate_image')) {
+        const imagePrompt = extractImagePrompt(lastUser.content)
+        return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: `${NEXUS_IMAGE_GUARANTEE_ID}${Date.now()}`, name: 'generate_image', input: { prompt: imagePrompt, style: inferImageStyle(imagePrompt), width: 512, height: 512 } }], stopReason: 'deterministic-nexus-image-generator' })
+      }
       if (parsed.kind === 'failed') return { success: false, error: classifyError(new Error(parsed.message), selected) }
       if (parsed.kind === 'call') {
         const { calls } = buildNexusTranscript(currentTurnMessages(request))
         if (calls < NEXUS_MAX_CALLS) {
-          return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: `nexus-call-${Date.now()}`, name: parsed.name, input: parsed.input }], stopReason: 'nexus-tool-call' })
+          return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: parsed.name === 'generate_image' ? `${NEXUS_IMAGE_GUARANTEE_ID}${Date.now()}` : `nexus-call-${Date.now()}`, name: parsed.name, input: parsed.input }], stopReason: 'nexus-tool-call' })
         }
         // The graded loop's call cap: the model still wants a tool, but the loop is over.
         // Show its last segment grammar-stripped instead of dispatching a fourth call.
@@ -323,6 +348,13 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
         ? 'Note: the 640-token window could not hold the whole conversation, so the oldest part was trimmed before this segment ran.'
         : ''
       return success({ text: trimNote ? `${parsed.text}\n\n${trimNote}` : parsed.text, provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-synthesis-complete' })
+    }
+    // A guaranteed image ends the turn here, truthfully attributed: re-dispatching the checkpoint
+    // that just declined the call would only append its off-task text under the picture.
+    const guaranteed = guaranteedImageResult(request)
+    if (guaranteed) {
+      if (/^\s*\[(?:TOOL ERROR|GUARDIAN (?:BLOCKED?|REJECTED))\]/i.test(guaranteed.content)) return { success: false, error: classifyError(new Error(guaranteed.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
+      return success({ text: "Generated by Nexus Intelligence's image generator (the Stable Diffusion pipeline in the generate-image workflow). The Nexus language model did not issue the call for this request, so ForgeClaw's router called the generator directly.", provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-image-generator-complete' })
     }
     if (request.tools?.some(t => t.name === 'nexus_reason')) {
       return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `bootstrap-nexus-${Date.now()}`, name: 'nexus_reason', input: buildNexusToolInput(request) }], stopReason: 'deterministic-nexus-reasoning' })
