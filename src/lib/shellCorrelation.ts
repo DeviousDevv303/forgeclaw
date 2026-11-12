@@ -84,6 +84,25 @@ export function resolveShellRun(
   return 'resolved'
 }
 
+/** Explain a common clone failure without claiming the requested clone succeeded. */
+export function shellCloneCollisionHint(command: string, commandOutput: string, owner: string, repo: string): string {
+  if (!/\bgit\s+clone\b/i.test(command)) return ''
+  const destination = commandOutput.match(/fatal:\s+destination path '([^']+)' already exists and is not an empty directory\.?/i)?.[1]
+  if (!destination) return ''
+
+  const normalizeRemote = (remote: string) => remote
+    .replace(/^git@github\.com:/i, 'https://github.com/')
+    .replace(/\.git\/?$/i, '')
+    .replace(/\/$/, '')
+    .toLowerCase()
+  const requestedRemote = command.match(/(?:https?:\/\/github\.com\/[^\s'";|&]+|git@github\.com:[^\s'";|&]+)/i)?.[0]
+  const currentRemote = normalizeRemote(`https://github.com/${owner}/${repo}`)
+  if (requestedRemote && normalizeRemote(requestedRemote) === currentRemote) {
+    return `The requested repository ${owner}/${repo} is already checked out at the runner workspace root. Use that existing checkout instead of cloning it into "${destination}"; if you need a second copy, specify a new empty destination such as /tmp/forgeclaw-copy.`
+  }
+  return `The clone destination "${destination}" already exists and is not empty. Choose a new empty destination, or inspect the existing directory before deciding whether it should be reused.`
+}
+
 function normalizePosixPath(path: string): string {
   const parts: string[] = []
   for (const part of path.split('/')) {

@@ -20,6 +20,14 @@ The failure occurred when the browser-local corpus contained approved NEXUS know
 
 The knowledge index and candidate index are rewritten after pruning, and the approved knowledge record is never evicted by quota recovery.
 
+## Follow-on image failure — 2026-11-12
+
+The owner reported that an explicit image request waited about 11 minutes and then ended with the same storage-full error. The image path had already dispatched `generate-image.yml`, downloaded the PNG, and registered it for the chat UI. It then awaited `appendImageGenerationLearning()`. When local browser storage could not accept that optional learning record, the exception escaped the image tool and ForgeClaw marked the entire tool call failed, discarding the successful image result from the visible turn.
+
+The image generator and its artifact path were working; the failure was coupling non-critical learning persistence to successful delivery. `generate_image` now catches that persistence error and returns the generated image as a success, with a separate `[NEXUS LEARNING WARNING]` that preserves the storage reason. For a router-issued image, the chat UI surfaces that warning next to the image. The corpus does not evict approved knowledge to make room, and image delivery no longer depends on weakening that preservation rule.
+
+The same debug session confirmed a separate shell-command failure: `git clone https://github.com/DeviousDevv303/forgeclaw.git` ran inside the GitHub Actions checkout, where the default `forgeclaw` clone destination already existed. The shell tool now appends targeted guidance for this exact collision; it still reports the command as failed and never claims a clone succeeded.
+
 ## Regression coverage
 
 `src/lib/corpusStorage.test.ts` now verifies that with a constrained 12,000-character browser storage:

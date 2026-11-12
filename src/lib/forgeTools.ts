@@ -25,7 +25,7 @@ import { requiresCoSign, type GuardianPosture, DEFAULT_GUARDIAN_POSTURE, posture
 import { isMcpToolName } from './mcp/mcpRegistry'
 import { mcpRegistry } from './mcp/mcpRuntime'
 import { runDdgWorkflowSearch } from './ddgWorkflowSearch'
-import { explainShellRunMismatch, isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, SHELL_LOG_POLL_INTERVAL_MS, SHELL_LOG_RETRIEVAL_TIMEOUT_MS, SHELL_RUN_LIST_TIMEOUT_MS, type ShellWorkflowRun } from './shellCorrelation'
+import { explainShellRunMismatch, isCorrelatedShellRun, normalizeShellWorkingDirectoryInput, parseShellExecutionLog, shellCloneCollisionHint, SHELL_LOG_POLL_INTERVAL_MS, SHELL_LOG_RETRIEVAL_TIMEOUT_MS, SHELL_RUN_LIST_TIMEOUT_MS, type ShellWorkflowRun } from './shellCorrelation'
 import { appendQwenLearning, appendImageGenerationLearning, corpusRepository, suggestImprovedPrompt } from './corpus'
 import { createShellRawExperience, shellExperienceAsCorpusInput } from './shellLearning'
 import { getShellExercise } from './shellCompetency'
@@ -2146,6 +2146,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         }
 
         if (exitCode !== 0 || finalRun.conclusion !== 'success') {
+          const cloneHint = shellCloneCollisionHint(command, commandOutput, sOwner, sRepo)
           return [
             `[TOOL ERROR] Shell execution failed.`,
             `Run #${finalRun.run_number} (id: ${finalRun.id})`,
@@ -2155,6 +2156,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
             `Conclusion: ${finalRun.conclusion ?? 'unknown'}`,
             '',
             commandOutput || '(no command output captured)',
+            ...(cloneHint ? ['', `Actionable guidance: ${cloneHint}`] : []),
           ].join('\n')
         }
 
@@ -2211,7 +2213,15 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         const image = await downloadImagePng(ctx, owner, repo, run.id, invocationId)
         registerGeneratedImage(invocationId, image.dataUrl)
 
-        await appendImageGenerationLearning({ prompt: improved.prompt, style, width, height, invocationId })
+        let learningWarning = ''
+        try {
+          await appendImageGenerationLearning({ prompt: improved.prompt, style, width, height, invocationId })
+        } catch (error) {
+          // Learning is optional telemetry; it must never turn an already generated and registered
+          // image into a failed tool call. Preserve the actual storage reason for the operator.
+          const reason = error instanceof Error ? error.message : String(error)
+          learningWarning = `[NEXUS LEARNING WARNING] Image generation succeeded, but NEXUS could not save this learning record: ${reason}`
+        }
 
         const pipelineLabel = IMAGE_MODEL_LABELS[model as (typeof IMAGE_MODELS)[number]]
         // A Nexus-dispatched image is credited to Nexus Intelligence's image generator — the
@@ -2225,6 +2235,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
           `Invocation: ${invocationId}`,
           `Enhanced prompt: "${improved.prompt}"`,
           `Run: ${run.html_url}`,
+          ...(learningWarning ? [learningWarning] : []),
         ].join('\n')
       }
 
