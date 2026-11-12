@@ -163,7 +163,7 @@ describe('Nexus Intelligence router loop', () => {
         expect(result.response.toolCalls).toHaveLength(1)
         expect(result.response.toolCalls?.[0]?.name).toBe('generate_image')
         expect(String(result.response.toolCalls?.[0]?.input.prompt)).toMatch(/lighthouse/)
-        expect(result.response.toolCalls?.[0]?.id.startsWith('direct-image-nexus-')).toBe(true)
+        expect(result.response.toolCalls?.[0]?.id.startsWith('direct-image-guaranteed-')).toBe(true)
         expect(isRouterIssued(result.response.stopReason)).toBe(true)
       }
     })
@@ -177,8 +177,8 @@ describe('Nexus Intelligence router loop', () => {
     it('ends the turn naming the generator and who called it, without re-dispatching Nexus', async () => {
       const request = afterNexus(ANSWER_SEGMENT)
       request.messages.push(
-        { role: 'assistant', content: '', tool_calls: [{ id: 'direct-image-nexus-1', name: 'generate_image', input: { prompt: 'a lighthouse' } }] },
-        { role: 'tool', tool_call_id: 'direct-image-nexus-1', content: 'Image generated with Stable Diffusion v1.5.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'direct-image-guaranteed-1', name: 'generate_image', input: { prompt: 'a lighthouse' } }] },
+        { role: 'tool', tool_call_id: 'direct-image-guaranteed-1', content: 'Image generated with Stable Diffusion v1.5.' },
       )
       const result = await sendViaRouter(request, '', 'nexus-intelligence')
       expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', stopReason: 'nexus-image-generator-complete' } })
@@ -189,11 +189,30 @@ describe('Nexus Intelligence router loop', () => {
       }
     })
 
+    it('never attributes a model-issued image call to the router', async () => {
+      const segment = '<|route:tool|><|call|>{"name":"generate_image","arguments":{"prompt":"a lighthouse at dusk"}}<|/call|>'
+      const first = await sendViaRouter(afterNexus(segment), '', 'nexus-intelligence')
+      expect(first).toMatchObject({ success: true, response: { stopReason: 'nexus-tool-call' } })
+      if (!first.success) return
+      const callId = first.response.toolCalls?.[0]?.id ?? ''
+      expect(callId.startsWith('direct-image-nexus-')).toBe(true)
+      const request = afterNexus(segment)
+      request.messages.push(
+        { role: 'assistant', content: '', tool_calls: [{ id: callId, name: 'generate_image', input: { prompt: 'a lighthouse at dusk' } }] },
+        { role: 'tool', tool_call_id: callId, content: 'Image generated with Stable Diffusion v1.5.' },
+      )
+      const result = await sendViaRouter(request, '', 'nexus-intelligence')
+      if (result.success) {
+        expect(result.response.stopReason).not.toBe('nexus-image-generator-complete')
+        expect(result.response.text ?? '').not.toMatch(/did not issue the call/)
+      }
+    })
+
     it('reports a failed generator call as a failure, not as a picture', async () => {
       const request = afterNexus(ANSWER_SEGMENT)
       request.messages.push(
-        { role: 'assistant', content: '', tool_calls: [{ id: 'direct-image-nexus-1', name: 'generate_image', input: { prompt: 'a lighthouse' } }] },
-        { role: 'tool', tool_call_id: 'direct-image-nexus-1', content: '[TOOL ERROR] No GitHub token configured.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'direct-image-guaranteed-1', name: 'generate_image', input: { prompt: 'a lighthouse' } }] },
+        { role: 'tool', tool_call_id: 'direct-image-guaranteed-1', content: '[TOOL ERROR] No GitHub token configured.' },
       )
       const result = await sendViaRouter(request, '', 'nexus-intelligence')
       expect(result.success).toBe(false)

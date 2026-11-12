@@ -63,11 +63,15 @@ function latestCurrentToolResult(request: AIRequest): { name: string; content: s
   const result = [...turn].reverse().find(m => m.role === 'tool' && m.tool_call_id); if (!result?.tool_call_id) return undefined
   return { name: names.get(result.tool_call_id) || '', content: result.content }
 }
-/** Call-id prefix of a generate_image call the router issued under the Nexus provider (the image guarantee). */
-// The 'direct-image-' prefix is what the chat (App.tsx) keys on to attach the generated picture to the
-// reply and end the turn; without it the picture is generated and never shown (found by driving the
-// built app in a browser, 2026-11-12).
-const NEXUS_IMAGE_GUARANTEE_ID = 'direct-image-nexus-'
+/** Call-id prefixes of generate_image calls under the Nexus provider. Both begin with 'direct-image-',
+ * the prefix the chat (App.tsx) keys on to attach the generated picture to the reply and end the turn;
+ * without it the picture is generated and never shown (found by driving the built app in a browser,
+ * 2026-11-12). The two prefixes are disjoint on purpose: the end-of-turn line for a router-guaranteed
+ * call states that the language model did not issue the call, which is true only of the guaranteed
+ * prefix — a call the model issued itself must never take that branch (review fix, Muse, 2026-11-11). */
+const NEXUS_IMAGE_GUARANTEE_ID = 'direct-image-guaranteed-'
+/** Call-id prefix of a generate_image call the Nexus model issued itself (the nexus-tool-call route). */
+const NEXUS_IMAGE_CALL_ID = 'direct-image-nexus-'
 /** The latest tool result of this turn when it answers a router-guaranteed generate_image call; otherwise undefined. */
 function guaranteedImageResult(request: AIRequest): { content: string } | undefined {
   const turn = currentTurnMessages(request)
@@ -338,7 +342,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
       if (parsed.kind === 'call') {
         const { calls } = buildNexusTranscript(currentTurnMessages(request))
         if (calls < NEXUS_MAX_CALLS) {
-          return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: parsed.name === 'generate_image' ? `${NEXUS_IMAGE_GUARANTEE_ID}${Date.now()}` : `nexus-call-${Date.now()}`, name: parsed.name, input: parsed.input }], stopReason: 'nexus-tool-call' })
+          return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: parsed.name === 'generate_image' ? `${NEXUS_IMAGE_CALL_ID}${Date.now()}` : `nexus-call-${Date.now()}`, name: parsed.name, input: parsed.input }], stopReason: 'nexus-tool-call' })
         }
         // The graded loop's call cap: the model still wants a tool, but the loop is over.
         // Show its last segment grammar-stripped instead of dispatching a fourth call.
