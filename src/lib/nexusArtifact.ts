@@ -140,23 +140,8 @@ export async function waitForNexusRun(ctx: ToolContext, owner: string, repo: str
   const started = Date.now()
   let statusAttempt = 0
   let finalRun = run
-  const mirrorUrl = nexusMirrorUrl(owner, repo, invocationId)
   while (Date.now() - started < NEXUS_MAX_WAIT_MS) {
     if (ctx.signal?.aborted) throw new DOMException('Nexus run aborted', 'AbortError')
-    // Prefer mirror-based completion check: if the result file exists, the run is done.
-    try {
-      const mirrorCheck = await toolFetch(
-        { ...ctx, timeoutMs: NEXUS_GITHUB_READ_TIMEOUT_MS },
-        mirrorUrl,
-        { method: 'HEAD', cache: 'no-store' },
-      )
-      if (mirrorCheck.ok) {
-        finalRun = { ...run, status: 'completed', conclusion: 'success' } as NexusWorkflowRun
-        break
-      }
-    } catch {
-      // Mirror check failed, fall back to GitHub API poll
-    }
     try {
       const response = await githubStage('nexus-run-poll GET /actions/runs/{run_id}', () => toolFetch(
         { ...ctx, timeoutMs: NEXUS_GITHUB_READ_TIMEOUT_MS },
@@ -174,7 +159,10 @@ export async function waitForNexusRun(ctx: ToolContext, owner: string, repo: str
     await new Promise(resolve => setTimeout(resolve, Math.min(statusDelays[Math.min(statusAttempt++, statusDelays.length - 1)], remaining)))
   }
   if (finalRun.status !== 'completed') throw new Error(`nexus-run-poll: Nexus timed out after ${Math.round(NEXUS_MAX_WAIT_MS / 60000)}m. Run #${finalRun.run_number} last status: ${finalRun.status}.`)
-  if (finalRun.conclusion !== 'success') throw new Error(`nexus-run-poll: Nexus run #${finalRun.run_number} concluded as "${finalRun.conclusion}". Run: ${finalRun.html_url}`)
+  // GitHub Actions is the source of truth for run status. The result mirror may
+  // be published before later required steps fail, so it must never synthesize
+  // a successful conclusion. Return failed runs too: the runner writes a small
+  // diagnostic result that waitForNexusResult can retrieve for the caller.
   return finalRun
 }
 
@@ -252,5 +240,11 @@ export async function downloadNexusResult(ctx: ToolContext, owner: string, repo:
 
 export async function waitForNexusResult(ctx: ToolContext, owner: string, repo: string, invocationId: string, dispatchedAt: number): Promise<{ run: NexusWorkflowRun } & NexusResultDelivery> {
   const run = await waitForNexusRun(ctx, owner, repo, invocationId, dispatchedAt)
-  return { run, ...await downloadNexusResult(ctx, owner, repo, run.id, invocationId) }
+  try {
+    return { run, ...await downloadNexusResult(ctx, owner, repo, run.id, invocationId) }
+  } catch (error) {
+    if (run.conclusion === 'success') throw error
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`nexus-result: Nexus run #${run.run_number} concluded as "${run.conclusion}" and its runner result could not be retrieved: ${detail}`)
+  }
 }

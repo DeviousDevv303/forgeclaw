@@ -1523,6 +1523,9 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {
           throw new Error('Invalid workflow ref.')
         }
+        if (ref !== 'main') {
+          throw new Error('Nexus Intelligence currently supports only the main workflow ref; custom refs cannot be correlated safely.')
+        }
         // Nexus serves ALONE here: no NEXUS guidance is attached, no corpus context is
         // retrieved, nothing is recorded for learning — the contrast with qwen_reason is
         // the point of the provider (the owner's order: test the model by itself).
@@ -1562,14 +1565,20 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         if (completed.runFailed || completed.result.startsWith('[NEXUS RUN FAILED]')) {
           return `[TOOL ERROR] Nexus Intelligence run ${completed.run.html_url} failed on the runner: ${completed.result.replace(/^\[NEXUS RUN FAILED\]\s*/, '').slice(0, 300)}`
         }
+        if (completed.run.conclusion !== 'success') {
+          return `[TOOL ERROR] Nexus Intelligence run ${completed.run.html_url} concluded as "${completed.run.conclusion}". Its result segment was withheld because the GitHub Actions run did not succeed.`
+        }
         if (!completed.result) {
           return `[TOOL ERROR] Nexus Intelligence run ${completed.run.html_url} finished but produced an empty segment, so there is no answer to show.`
         }
-        // Provider truth, app side: the segment is only attributed to the Run 25 checkpoint
-        // when the runner's own metadata names that checkpoint's sha256.
-        const checkpoint = completed.checkpointSha256 === NEXUS_CHECKPOINT_SHA256
-          ? `nexus-run25-sha256-${NEXUS_CHECKPOINT_SHA256.slice(0, 12)}`
-          : 'checkpoint metadata unavailable'
+        // Provider truth: never show a result as Run 25 unless the runner's
+        // metadata attests the pinned checkpoint hash. Missing/mismatched
+        // metadata is a failed verification, not a best-effort attribution.
+        if (completed.checkpointSha256 !== NEXUS_CHECKPOINT_SHA256) {
+          const observed = completed.checkpointSha256 ? `sha256=${completed.checkpointSha256}` : 'checkpoint metadata unavailable'
+          return `[TOOL ERROR] Nexus Intelligence run ${completed.run.html_url} did not verify the Run 25 checkpoint (${observed}); no answer was accepted.`
+        }
+        const checkpoint = `nexus-run25-sha256-${NEXUS_CHECKPOINT_SHA256.slice(0, 12)}`
         const trim = completed.promptTrimmed ? '; prompt-trimmed=true' : ''
         const stages = `Stages: dispatch=accepted; run-discovery=correlated; run-poll=completed-successfully; result-retrieval=${completed.source}; result-extraction=complete; checkpoint=${checkpoint}${trim}.`
         return formatNexusResultText(invocationId, owner, repo, ref, stages, completed.run.html_url, completed.result)
