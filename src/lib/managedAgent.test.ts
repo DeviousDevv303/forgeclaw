@@ -12,8 +12,10 @@
 // false); `local` is the native llama.cpp path. Both are exercised below.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  enforcedCapability,
   runSubAgent,
   toolsForCapability,
+  type AgentCapability,
   CODING_READONLY_TOOL_NAMES,
   CODING_TOOL_ORDER,
   WRITE_TOOL_NAMES,
@@ -508,5 +510,22 @@ describe('sub-agent offered-tool allowlist enforcement (J-01)', () => {
     const toolTurn = seen[1].messages.find(message => message.role === 'tool')
     expect(toolTurn?.content).not.toContain('was not offered')
     expect(fetchMock).toHaveBeenCalled()
+  })
+})
+
+describe('enforcedCapability — runtime grants only what was saved', () => {
+  it('resolves a legacy agent with no saved capability to chat, whatever its name or prompt says', () => {
+    // A pre-profiles agent whose text sounds like repository work must not
+    // gain tools from inference: enforcement reads the saved field only.
+    const legacy: { name: string; systemPrompt: string; capability?: AgentCapability } =
+      { name: 'Repo Reviewer', systemPrompt: 'read and review the repository code' }
+    expect(enforcedCapability(legacy)).toBe('chat')
+    expect(toolsForCapability(enforcedCapability(legacy), FORGE_TOOLS)).toHaveLength(0)
+  })
+
+  it('passes a saved capability through unchanged', () => {
+    expect(enforcedCapability({ capability: 'chat' })).toBe('chat')
+    expect(enforcedCapability({ capability: 'coding-readonly' })).toBe('coding-readonly')
+    expect(enforcedCapability({ capability: 'coding' })).toBe('coding')
   })
 })
