@@ -64,7 +64,10 @@ function latestCurrentToolResult(request: AIRequest): { name: string; content: s
   return { name: names.get(result.tool_call_id) || '', content: result.content }
 }
 /** Call-id prefix of a generate_image call the router issued under the Nexus provider (the image guarantee). */
-const NEXUS_IMAGE_GUARANTEE_ID = 'nexus-image-generator-'
+// The 'direct-image-' prefix is what the chat (App.tsx) keys on to attach the generated picture to the
+// reply and end the turn; without it the picture is generated and never shown (found by driving the
+// built app in a browser, 2026-11-12).
+const NEXUS_IMAGE_GUARANTEE_ID = 'direct-image-nexus-'
 /** The latest tool result of this turn when it answers a router-guaranteed generate_image call; otherwise undefined. */
 function guaranteedImageResult(request: AIRequest): { content: string } | undefined {
   const turn = currentTurnMessages(request)
@@ -335,7 +338,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
       if (parsed.kind === 'call') {
         const { calls } = buildNexusTranscript(currentTurnMessages(request))
         if (calls < NEXUS_MAX_CALLS) {
-          return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: `nexus-call-${Date.now()}`, name: parsed.name, input: parsed.input }], stopReason: 'nexus-tool-call' })
+          return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: parsed.name === 'generate_image' ? `${NEXUS_IMAGE_GUARANTEE_ID}${Date.now()}` : `nexus-call-${Date.now()}`, name: parsed.name, input: parsed.input }], stopReason: 'nexus-tool-call' })
         }
         // The graded loop's call cap: the model still wants a tool, but the loop is over.
         // Show its last segment grammar-stripped instead of dispatching a fourth call.

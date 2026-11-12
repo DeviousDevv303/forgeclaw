@@ -136,6 +136,8 @@ describe('Nexus Intelligence router loop', () => {
     expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', stopReason: 'nexus-tool-call' } })
     if (result.success) {
       expect(result.response.toolCalls?.[0]?.name).toBe('generate_image')
+      // The chat attaches the picture only for ids with this prefix (App.tsx), so the model-issued call needs it too.
+      expect(result.response.toolCalls?.[0]?.id.startsWith('direct-image-')).toBe(true)
       expect(result.response.toolCalls?.[0]?.input).toEqual({ prompt: 'a lighthouse at dusk' })
     }
   })
@@ -161,7 +163,7 @@ describe('Nexus Intelligence router loop', () => {
         expect(result.response.toolCalls).toHaveLength(1)
         expect(result.response.toolCalls?.[0]?.name).toBe('generate_image')
         expect(String(result.response.toolCalls?.[0]?.input.prompt)).toMatch(/lighthouse/)
-        expect(result.response.toolCalls?.[0]?.id.startsWith('nexus-image-generator-')).toBe(true)
+        expect(result.response.toolCalls?.[0]?.id.startsWith('direct-image-nexus-')).toBe(true)
         expect(isRouterIssued(result.response.stopReason)).toBe(true)
       }
     })
@@ -175,8 +177,8 @@ describe('Nexus Intelligence router loop', () => {
     it('ends the turn naming the generator and who called it, without re-dispatching Nexus', async () => {
       const request = afterNexus(ANSWER_SEGMENT)
       request.messages.push(
-        { role: 'assistant', content: '', tool_calls: [{ id: 'nexus-image-generator-1', name: 'generate_image', input: { prompt: 'a lighthouse' } }] },
-        { role: 'tool', tool_call_id: 'nexus-image-generator-1', content: 'Image generated with Stable Diffusion v1.5.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'direct-image-nexus-1', name: 'generate_image', input: { prompt: 'a lighthouse' } }] },
+        { role: 'tool', tool_call_id: 'direct-image-nexus-1', content: 'Image generated with Stable Diffusion v1.5.' },
       )
       const result = await sendViaRouter(request, '', 'nexus-intelligence')
       expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', stopReason: 'nexus-image-generator-complete' } })
@@ -190,8 +192,8 @@ describe('Nexus Intelligence router loop', () => {
     it('reports a failed generator call as a failure, not as a picture', async () => {
       const request = afterNexus(ANSWER_SEGMENT)
       request.messages.push(
-        { role: 'assistant', content: '', tool_calls: [{ id: 'nexus-image-generator-1', name: 'generate_image', input: { prompt: 'a lighthouse' } }] },
-        { role: 'tool', tool_call_id: 'nexus-image-generator-1', content: '[TOOL ERROR] No GitHub token configured.' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'direct-image-nexus-1', name: 'generate_image', input: { prompt: 'a lighthouse' } }] },
+        { role: 'tool', tool_call_id: 'direct-image-nexus-1', content: '[TOOL ERROR] No GitHub token configured.' },
       )
       const result = await sendViaRouter(request, '', 'nexus-intelligence')
       expect(result.success).toBe(false)
