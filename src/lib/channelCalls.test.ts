@@ -8,6 +8,7 @@ import {
   CHANNEL_CALL_PENDING_KEY,
   CHANNEL_CALL_WATERMARK_KEY,
   acknowledgeChannelCalls,
+  fetchNewChannelCalls,
   filterNewChannelCalls,
   mergeChannelCalls,
   parseChannelCall,
@@ -192,5 +193,30 @@ describe('pending calls survive a reload until dismissed', () => {
 
   it('merge is a union by call id, oldest first', () => {
     expect(mergeChannelCalls([call(5), call(2)], [call(5), call(9)]).map(c => c.commentId)).toEqual([2, 5, 9])
+  })
+})
+
+describe('tokenless reads stay inside the anonymous rate limit (audit 2026-11-12)', () => {
+  const stubPages = () => {
+    const pages: number[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const page = Number(/[?&]page=(\d+)/.exec(String(url))?.[1] ?? '1')
+      pages.push(page)
+      return new Response('[]', { status: 200, headers: { 'content-type': 'application/json', link: '<https://api.github.com/x?page=12>; rel="last"' } })
+    }))
+    return pages
+  }
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('reads only the first and the newest page without a token', async () => {
+    const pages = stubPages()
+    await fetchNewChannelCalls({ token: '' })
+    expect(pages).toEqual([1, 12])
+  })
+
+  it('still walks back through the pages with a token', async () => {
+    const pages = stubPages()
+    await fetchNewChannelCalls({ token: 'test-token' })
+    expect(pages.length).toBe(12)
   })
 })

@@ -206,7 +206,10 @@ async function fetchChannelComments(token: string, watermark: number): Promise<G
   const collected = [...first.items]
   const seenPages = new Set<number>([1])
   const lastPage = lastPageFromLink(first.link)
-  for (let page = lastPage; page >= 2 && seenPages.size < MAX_PAGES_PER_POLL; page--) {
+  // Without a token GitHub allows 60 reads an hour for the whole app: a tokenless browser reads the first
+  // and the newest page only (audit 2026-11-12: a load read all 12 pages and the next load was HTTP 403).
+  const maxPages = token ? MAX_PAGES_PER_POLL : 2
+  for (let page = lastPage; page >= 2 && seenPages.size < maxPages; page--) {
     const { items } = await getCommentsPage(token, page)
     seenPages.add(page)
     collected.push(...items)

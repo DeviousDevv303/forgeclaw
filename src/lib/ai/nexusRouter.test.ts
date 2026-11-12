@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { getBestProvider, isNexusIntelligenceProvider, sendViaRouter } from './providerRouter'
+import { getBestProvider, isNexusIntelligenceProvider, NEXUS_TEXT_ANSWER_NOTE, sendViaRouter } from './providerRouter'
 import type { AIRequest } from './types'
 import { FORGE_TOOLS } from '../forgeTools'
 import { isRouterIssued, nexusDispatchToolNames } from '../toolExposure'
@@ -76,7 +76,9 @@ describe('Nexus Intelligence router loop', () => {
       ],
     }
     const result = await sendViaRouter(request, '', 'nexus-intelligence')
-    expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', text: 'The package is named forgeclaw.', stopReason: 'nexus-synthesis-complete' } })
+    expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', stopReason: 'nexus-synthesis-complete' } })
+    // The answer is shown verbatim, followed by the standing capability note (owner report 2026-11-12).
+    if (result.success) expect(result.response.text).toBe(`The package is named forgeclaw.\n\n${NEXUS_TEXT_ANSWER_NOTE}`)
   })
 
   it('surfaces a failed nexus_reason dispatch as a terminal error', async () => {

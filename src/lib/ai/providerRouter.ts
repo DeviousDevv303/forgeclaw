@@ -23,6 +23,9 @@ import { qwenRunLabel } from '../qwenCheckpoints'
 import { extractSiteHtml, isSiteDeployRequest, parseCreatedRepo, parsePublishedCommit, siteGenerationTask, siteRepoName } from './qwenSite'
 
 /** True for providers that run Qwen/Qwen3-8B via GitHub Actions (provider ids 'corpus'/'qwen'; legacy 'deepseek'). */
+/** Appended to every plain-text Nexus answer: the checkpoint is a tool-call specialist, not a general chat model. */
+export const NEXUS_TEXT_ANSWER_NOTE = 'Note: this is the Nexus checkpoint answering alone. It is a small tool-call specialist and is not reliable on general questions yet; for those, switch to Qwen or Kimi in Settings.'
+
 export function isQwenProvider(providerId: string): boolean {
   return providerId === 'corpus' || providerId === 'qwen' || providerId === 'deepseek';  // 'deepseek' = the legacy id in saved sessions and stored records
 }
@@ -351,7 +354,9 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
       const trimNote = /\bprompt-trimmed=true\b/.test(latest.content.split('\n\n')[0] ?? '')
         ? 'Note: the 640-token window could not hold the whole conversation, so the oldest part was trimmed before this segment ran.'
         : ''
-      return success({ text: trimNote ? `${parsed.text}\n\n${trimNote}` : parsed.text, provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-synthesis-complete' })
+      // Shown verbatim (the owner's order: Nexus alone), with a standing note so an incoherent answer to a
+      // general question reads as the model's limit, not as a broken app (owner report 2026-11-12).
+      return success({ text: [parsed.text, trimNote, NEXUS_TEXT_ANSWER_NOTE].filter(Boolean).join('\n\n'), provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-synthesis-complete' })
     }
     // A guaranteed image ends the turn here, truthfully attributed: re-dispatching the checkpoint
     // that just declined the call would only append its off-task text under the picture.
