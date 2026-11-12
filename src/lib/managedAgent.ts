@@ -118,6 +118,19 @@ export function toolsForCapability(
   return capability === 'coding' ? selected : selected.filter(tool => !WRITE_TOOL_NAMES.has(tool.name))
 }
 
+/**
+ * The capability the runtime enforces for a saved agent. Only a capability
+ * the operator explicitly picked and saved counts. Agents saved before
+ * capability profiles existed carry none, and the runtime grants them the
+ * least-privilege profile ('chat') — enforcement never infers authority
+ * from an agent's name or prompt. Name/prompt inference exists only as an
+ * editor convenience (a starting value the operator can change before
+ * saving); it is not, and must never become, a grant.
+ */
+export function enforcedCapability(agent: { capability?: AgentCapability }): AgentCapability {
+  return agent.capability ?? 'chat'
+}
+
 // ─── Browser-local context budget ────────────────────────────────────────────
 // Non-native providers here are the browser-local WebGPU runtimes, which carry a
 // hard, small prompt budget. The tool catalog and the task are budgeted against it

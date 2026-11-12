@@ -7,7 +7,7 @@ import type { ProviderId } from '../lib/modelProviders'
 import { modelSupportsTools } from '../lib/modelProviders'
 import { FORGE_TOOLS, loadToolContext } from '../lib/forgeTools'
 import type { ToolCall } from '../lib/forgeTools'
-import { runSubAgent, toolsForCapability } from '../lib/managedAgent'
+import { enforcedCapability, runSubAgent, toolsForCapability } from '../lib/managedAgent'
 import { useI18n, type Key } from '../lib/i18n'
 import type { AgentCapability, SubAgentBudgetReport } from '../lib/managedAgent'
 import { resolveGithubToken } from '../lib/githubAuth'
@@ -170,7 +170,9 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
       const history = chatMessages.slice(-12).map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n')
       const task = history ? `${history}\n\nUSER: ${text}` : text
       const runId = `agent-run-${agent.id}-${Date.now()}`
-      const capability = resolveCapability(agent)
+      // Enforcement reads only the saved capability — the editor's
+      // name/prompt inference (resolveCapability) never grants tools.
+      const capability = enforcedCapability(agent)
       const toolCtx = {
         ...loadToolContext(),
         agentId: agent.id,
@@ -238,8 +240,9 @@ export function AgentsPanel({ activeProvider, activeModel, apiKey, guardianPostu
   })
 
   // ── Truthful capability facts ───────────────────────────────────────────────
-  // These describe the real runtime rather than the presence of a stored token.
-  const activeCapability: AgentCapability = activeAgent ? resolveCapability(activeAgent) : 'chat'
+  // These describe the real runtime rather than the presence of a stored token:
+  // the capability shown is the one the runtime will actually enforce.
+  const activeCapability: AgentCapability = activeAgent ? enforcedCapability(activeAgent) : 'chat'
   const providerToolMode: 'native' | 'manual' = modelSupportsTools(activeProvider, activeModel) ? 'native' : 'manual'
   const githubCredentialConfigured = Boolean(resolveGithubToken())
   const grantedToolCount = toolsForCapability(activeCapability, FORGE_TOOLS).length
