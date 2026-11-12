@@ -1,0 +1,8 @@
+model=Nexus Intelligence (Run 25 checkpoint)
+checkpoint_sha256=c41852fb0ac11f47c3ce2fc7715e816e95ec2e844e25881637eabaaac87f69b6
+params=4479234
+mode=create
+prompt_tokens=48
+completion_tokens=37
+prompt_trimmed=false
+elapsed_seconds=2
