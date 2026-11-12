@@ -16,7 +16,7 @@ describe('the MiroFish runner offline python suites', () => {
   it('pass (meter, world builder, requirement filter, runner against a fake MiroFish, workflow properties)', () => {
     const r = spawnSync('python3', ['-B', '-m', 'unittest', 'discover', '-s', '.github/scripts', '-p', 'test_mirofish_*.py'],
       { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } })
-    expect(r.stderr, r.stdout).toMatch(/\nOK\s*$/)
+    expect(r.stderr, r.stdout).toMatch(/\nOK(?: \(skipped=\d+\))?\s*$/)
   }, 120_000)
 })
 

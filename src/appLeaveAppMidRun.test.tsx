@@ -64,7 +64,7 @@ describe('the reconnect pop-up', () => {
       { choices: [{ message: { content: 'All done reading.' }, finish_reason: 'stop' }] },
     ]
     const fetchBefore = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
-    const inner = fetchBefore.getMockImplementation()!
+    const inner = fetchBefore.getMockImplementation()! as unknown as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
     fetchBefore.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === KIMI_URL && replies[0] === 'leave') {
         replies.shift()
