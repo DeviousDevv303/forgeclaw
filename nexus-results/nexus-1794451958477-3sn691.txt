@@ -1,0 +1,1 @@
+<|route:tool|><|call|>{"name":"memory_read","arguments":{"key":"brokenOVIDE.md"}}<|/call|>
