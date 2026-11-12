@@ -7,6 +7,7 @@ import {
   parseShellExecutionLog,
   resolveShellWorkingDirectory,
   resolveShellRun,
+  shellCloneCollisionHint,
   type ShellWorkflowRun,
 } from './shellCorrelation'
 
@@ -172,6 +173,37 @@ describe('Shell execution log parsing', () => {
       commandOutput: 'command output',
       exitCode: 1,
     })
+  })
+})
+
+describe('shell clone destination diagnostics', () => {
+  const collision = "fatal: destination path 'forgeclaw' already exists and is not an empty directory."
+
+  it('recognizes cloning the current repository into an existing checkout directory', () => {
+    const hint = shellCloneCollisionHint(
+      'git clone https://github.com/DeviousDevv303/forgeclaw.git',
+      collision,
+      'DeviousDevv303',
+      'forgeclaw',
+    )
+    expect(hint).toContain('already checked out at the runner workspace root')
+    expect(hint).toMatch(/use that existing checkout/i)
+    expect(hint).toContain('/tmp/forgeclaw-copy')
+  })
+
+  it('does not falsely identify another repository as the current checkout', () => {
+    const hint = shellCloneCollisionHint(
+      'git clone https://github.com/example/other.git',
+      collision,
+      'DeviousDevv303',
+      'forgeclaw',
+    )
+    expect(hint).toContain('Choose a new empty destination')
+    expect(hint).not.toContain('already checked out at the runner workspace root')
+  })
+
+  it('does not add clone guidance to unrelated failures', () => {
+    expect(shellCloneCollisionHint('npm test', 'fatal: unrelated failure', 'DeviousDevv303', 'forgeclaw')).toBe('')
   })
 })
 

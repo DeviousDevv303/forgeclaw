@@ -2357,8 +2357,13 @@ function App() {
       const authoritativeRepositoryAnswer = !requestLedger && isRepositoryHeadQuestion(promptText) && /^[0-9a-f]{40}$/i.test(verifiedRepoHead)
         ? `Current main commit SHA: ${verifiedRepoHead}`
         : ''
+      const imageLearningWarning = directImageCompleted
+        ? allToolResults.find(result => result.name === 'generate_image')?.output
+            .split('\n')
+            .find(line => line.startsWith('[NEXUS LEARNING WARNING]')) ?? ''
+        : ''
       const visibleText = directImageCompleted
-        ? ''
+        ? imageLearningWarning
         // A reply that rendered no numbered section at all (prose for a numbered coding task) is kept above the ledger, never replaced by it.
         : settledLedger && !settledLedger.items.some(item => item.status === 'rendered') && cleanText
           ? `${cleanText}\n\n${settledLedger.text}`
