@@ -1,0 +1,24 @@
+{
+  "prs_named": 2,
+  "verified": 1,
+  "rejected": {
+    "421": [
+      "not merged",
+      "no merge commit sha on the pull request object"
+    ]
+  },
+  "already_present": [],
+  "shaped": 1,
+  "leakage_drops": {},
+  "frozen_files_loaded": [
+    "starter-tasks.json",
+    "cases.jsonl",
+    "frozen-prompts.ts",
+    "scenarios.json",
+    "reviewer-v1.1-fixtures.jsonl",
+    "reviewer-benchmark-v1.md",
+    "reviewer-fixtures.jsonl",
+    "cases.jsonl"
+  ],
+  "intake_records": 1
+}
