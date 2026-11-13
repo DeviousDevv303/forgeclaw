@@ -59,6 +59,17 @@ ForgeMind and specialist agents use contracts, tool definitions, failure classif
 
 The GitHub integration supports repository metadata, file reads and writes, tree inspection, branch operations, pull requests, workflow dispatch, and workflow-run inspection. Repository writes should be performed on a reviewable branch whenever possible.
 
+### Shell commands
+
+`shell_exec` runs a command through `shell-exec.yml` on a GitHub Actions runner (`bash -c`, working directory repository-relative, 10-minute limit). Facts verified live on 2026-11-13 (run [43346840540](https://github.com/DeviousDevv303/forgeclaw/actions/runs/43346840540)):
+
+- The job starts in a **shallow checkout of `main`**: `pwd` is the repository root, `grep` over the checkout works, and `git diff HEAD~1` needs `git fetch --unshallow` first.
+- `git clone` works for public repositories into a **new** directory (`git clone --depth 1 <url> /tmp/x`). Cloning into the checkout itself fails with exit 128, and private repositories cannot be cloned: the runner holds no credential, so it also cannot push.
+- The command's own exit code is reported. Commands run with `pipefail` (since 2026-11-13), so `git clone … | tail` reports git's exit 128 instead of the last stage's 0. The runner starts steps with SIGPIPE ignored, so the workflow restores the default (`env --default-signal=PIPE`); a producer cut off by `| head` then exits 141, which is reported as 0 with a `note:` line in the output, so it is never silent.
+- Nothing persists between calls. Each call is a separate job (roughly 15 s to 2 minutes).
+
+An operator can type a command (`pwd`, `git diff HEAD~1 --stat`, `grep -rn "x" src`, `git clone …`, or `/shell <cmd>`) and it is dispatched **without a model turn**, under any provider. A prompt that asks for more than the command ("run git diff and tell me what changed") is a task for a tool-calling model (Claude or Kimi); the Nexus Intelligence provider is offered only `nexus_reason`, so it cannot run the shell itself. To change ForgeClaw's own code, edits go out as pull requests through `sculpt_self`, `shell_patch` or `github_write_file`; the shell is for running and inspecting.
+
 ### Websites to GitHub Pages
 
 `github_create_repo` → `github_publish_site` (all files in one commit, `.nojekyll`, Pages enabled) → `github_pages_status` (waits for the build). Sites that need a build step (npm, Vite, React) go through `site-build.yml`: a read-only build job, plus a separate mirror job that runs no model code. Publishing refuses `main`/`master`, `.github/`, and the ForgeClaw repository itself, and a truncated build listing publishes nothing.
@@ -86,6 +97,14 @@ A visitor with no GitHub token uses ForgeClaw's own model through the owner's re
 ### Browser automation
 
 Playwright scripts can be run through the repository's automation workflow. This keeps browser automation separate from the browser UI and makes the execution path easier to reproduce in CI.
+
+### Spiderlings (tool-activity display)
+
+The spiders on the throne rig are a display of **real tool events**, not decoration. A spider leaves the throne at a `TOOL_START`, returns on `TOOL_SUCCESS`, returns trailing red thread on `TOOL_FAILURE`, and is shown as *unresolved* or *unknown* (never "working") when a run ends or outlives its tool's timeout. Every counter on the panel is counted from ledger lines that each trace to one event, so `out = returned + flagged + unresolved + in flight + unknown`. The panel shows when a run starts and hides about 5 s after the last activity. Ambient spiders are a seeded animation, labelled "not tool events, not counted". `?spiders=demo` shows a scripted feed labelled DEMO. Code: `src/lib/spiderlings.ts`, `src/hooks/useSpiderlings.ts`, `src/components/Spider*.ts*`; design notes: `docs/display-layer/spiderlings/README.md`. Limitation: events carry no run id, so two concurrent runs of the same tool can swap outcomes (counts stay right).
+
+### MiroFish swarm simulation
+
+`mirofish_sim` dispatches `mirofish-sim.yml` to run an external MiroFish agent swarm over a seed packet of public pre-fight facts, then shows the illustrated world in chat (`mirofish_sim_result` re-opens a finished run). It spends money only through a metering proxy with a dollar ceiling, runs with the repository's own Moonshot and Zep secrets, never places a wager, and carries weight zero in fight research. Tested with mocks; not verified live.
 
 ### Safety and integrity checks
 
@@ -118,7 +137,9 @@ Table last verified 2026-10-20; audited 2026-11-12 (notes below the table). "Wor
 | Error reports to owner | `relay/` `/v1/errors` + Resend | Needs the relay and a Resend key. Not verified live. |
 | Web search | `web_search` / `ddg_search.yml` (or Brave with a key) | Works (15 of 15 on 2026-10-19). |
 | Image generation | `generate_image` / `generate-image.yml` | Works (28 of 30 on 2026-10-19). |
-| Shell commands | `shell_exec` / `shell-exec.yml` | Works. Runs report the command's own exit code. |
+| Shell commands | `shell_exec` / `shell-exec.yml` | **Works:** run 43346840540 (2026-11-13): `pwd`, shallow `git clone` into a new directory, `grep`, `git fetch --unshallow` + `git diff --stat`. Runs report the command's own exit code. `pipefail` was added after this run (2026-11-13). A live dispatch (run 43358671825) showed `seq | head` exiting 1 because the runner ignores SIGPIPE; fixed with `env --default-signal=PIPE` and re-verified live on the branch: run 43513771514 (`seq | head` → `exit_code=0` plus the SIGPIPE note) and run 43513775849 (failed `git clone … | tail` → `exit_code=128`, job failed, where it used to be masked as success). Not yet dispatched from `main`: the change lands only when the branch is merged. |
+| Spiderlings (tool-activity display) | `src/lib/spiderlings.ts` | Works in the app: 67 tests pass, and in a browser pass (GitHub stubbed) three failed shell calls showed as 3 out / 3 flagged / 0 in flight. |
+| MiroFish swarm sim | `mirofish_sim` / `mirofish-sim.yml` | Mocks only; the workflow was not dispatched (it spends money). Not verified live. |
 | GitHub repo read/write, issues, runs, logs | `github_*` tools | Works with a GitHub token. |
 | Code search proxy | `search-proxy.yml` | Works: run 39465089415, all 10 results scoped to DeviousDevv303/forgeclaw. |
 | Code review | `review_code` / `code-review.yml` | Returns the review to the chat (mirror branch). The workflow ran on main (run 39505268990); the review text and the app path end to end are not verified live. |
@@ -133,6 +154,8 @@ Audit notes, 2026-11-12 (run history and a browser pass of the built app):
 - Recent successful runs: `generate-image.yml` (2026-11-10), `nexus-intelligence.yml` (2026-11-12), `ddg_search.yml` (2026-11-08), `qwen3-8b.yml` (2026-11-09), `deep-research.yml` (2026-11-01).
 - Workflows not described above: `build-gate`, `deploy`, `channel-watch`, `forgeclaw-loop`, `nexus-loop`, `nexus-intelligence`, `trader-agent`, `owner-exit`, `kalshi-snapshot`, `mirofish-sim`, `qwen-bench`, `qwen-cache-keepwarm`, `cpu-image-benchmark`.
 - Hosted providers, Gmail/Calendar, WhatsApp, Kalshi funds, the relay and the merge tool were not exercised in this audit.
+
+Audit notes, 2026-11-13 (full-stack pass): lint, `tsc -b` and the full unit suite pass (247 files, 2731 tests); `vite build` was not run. `shell_exec` was dispatched live (see Shell commands). The latest `shell-repair.yml` failure (run 39561708765, 2026-10-21) was `error: corrupt patch at <stdin>:55`: the model wrote a malformed diff and the workflow correctly refused it; it is not a workflow defect. `shell_patch` now checks that every hunk's body matches its `@@` header before dispatching (`src/lib/unifiedDiffCheck.ts`), refusing a malformed diff with the counts instead of spending a runner job; `git apply` in the workflow remains the authority on whether a patch applies. The checker was run over the last 137 hunk-bearing commits (0 false rejections, 137 of 137 corrupted copies caught); `shell_patch` itself was not re-run live. A typed shell command's result bubble no longer carries the active provider/model label.
 
 ## Architecture
 
