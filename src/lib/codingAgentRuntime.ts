@@ -145,6 +145,12 @@ const COMMON_CLI = new Set(['echo', 'wc', 'tree', 'diff', 'which', 'whoami', 'da
 // Words that are also ordinary English. Without shell-looking arguments ("find a good restaurant",
 // "test my patience", "git gud") they are conversation, not commands.
 const UNAMBIGUOUS_EXECUTABLES = new Set(['pwd', 'ls', 'npm', 'pnpm', 'yarn', 'npx'])
+/**
+ * Commands that never take a plain-word operand. `pwd and git rev-parse in the repo` is a sentence, not a command:
+ * bash would run `pwd`, ignore the rest, exit 0, and the answer would silently lack the git half (found by the
+ * 2026-11-12 audit). With a prose tail these go to the model; flags (`pwd -P`) and shell operators stay commands.
+ */
+const OPERANDLESS_EXECUTABLES = new Set(['pwd', 'whoami', 'uptime', 'hostname'])
 const AMBIGUOUS_EXECUTABLES = new Set(['git', 'node', 'python', 'python3', 'cd', 'cat', 'head', 'tail', 'find', 'grep', 'sed', 'awk', 'sort', 'uniq', 'mkdir', 'cp', 'mv', 'test'])
 const GIT_SUBCOMMANDS = new Set(['status', 'log', 'diff', 'show', 'branch', 'checkout', 'switch', 'clone', 'fetch', 'pull', 'push', 'add', 'commit', 'merge', 'rebase', 'remote', 'stash', 'tag', 'reset', 'restore', 'rev-parse', 'ls-files', 'ls-remote', 'blame', 'grep', 'config', 'init', 'cherry-pick', 'revert', 'describe', 'worktree', 'submodule', 'apply'])
 
@@ -154,6 +160,7 @@ export function looksLikeShellCommand(command: string): boolean {
   if (!match) return false
   const executable = match[1].toLowerCase()
   const rest = (match[2] ?? '').trim()
+  if (OPERANDLESS_EXECUTABLES.has(executable) && rest && !rest.startsWith('-') && !/[|&;<>`]|\$\(/.test(rest)) return false
   if (UNAMBIGUOUS_EXECUTABLES.has(executable)) return true
   if (!AMBIGUOUS_EXECUTABLES.has(executable) || !rest) return false
   if (executable === 'git') return rest.startsWith('-') || GIT_SUBCOMMANDS.has(rest.split(/\s+/)[0].toLowerCase())
