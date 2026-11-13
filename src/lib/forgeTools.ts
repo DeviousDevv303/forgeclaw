@@ -7,6 +7,7 @@
 import { safeGetItem, verifiedSetItem } from './storage'
 import { resolveGithubToken } from './githubAuth'
 import { describeGithubDispatchFailure } from './githubDispatchErrors'
+import { checkUnifiedDiff } from './unifiedDiffCheck'
 import { describeGithubHttpFailure, describeGithubTransportFailure, toolFetch } from './githubFetch'
 import { normalizeKnownShellExecutable } from './shellCommand'
 import {
@@ -1661,6 +1662,10 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         if (!/^(?:diff --git |--- )/m.test(patch)) throw new Error('patch must be a unified diff (git apply format).')
         // The workflow refuses symlinks authoritatively; failing here saves a dispatch that cannot succeed.
         if (/^(?:new file mode|new mode|index [0-9a-f.]+) 120000\s*$/m.test(patch)) throw new Error('A patch may not create a symbolic link.')
+        // A hunk whose body contradicts its @@ header is "corrupt patch" to git apply (run 39561708765). Refuse it here,
+        // with the counts, instead of spending a runner job; git apply in the workflow stays the authority on applying.
+        const malformedHunk = checkUnifiedDiff(patch)
+        if (malformedHunk) throw new Error(`The patch is malformed: ${malformedHunk} Regenerate the diff so each hunk's line counts match its @@ header (for example from \`git diff\`), then call shell_patch again.`)
         if (!token) throw new Error('No GitHub token configured.')
         const invocationId = `repair-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const repairBranch = `forge/repair/${invocationId}`

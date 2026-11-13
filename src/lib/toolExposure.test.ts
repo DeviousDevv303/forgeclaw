@@ -32,6 +32,15 @@ describe('shell_exec guidance matches the workflow it describes', () => {
     expect(workflow).toMatch(/timeout-minutes:\s*10\b/)
     expect(SHELL_EXEC_GUIDANCE).toContain('limited to 10 minutes')
   })
+
+  // 2026-11-13 audit: `git clone ... | tail` reported exit 0 although git exited 128.
+  it('pipefail: a failing pipeline stage is not masked, and SIGPIPE from `| head` is not a failure', () => {
+    expect(workflow).toMatch(/bash -o pipefail -c "\$FORGE_COMMAND"/)
+    expect(workflow).not.toMatch(/^\s*bash -c "\$FORGE_COMMAND"/m)
+    expect(workflow).toMatch(/EXIT_CODE"? -eq 141/)
+    expect(workflow).toContain('reported as exit_code=0')
+    expect(SHELL_EXEC_GUIDANCE).toContain('pipefail')
+  })
 })
 
 describe('self-modification guidance', () => {

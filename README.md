@@ -65,7 +65,7 @@ The GitHub integration supports repository metadata, file reads and writes, tree
 
 - The job starts in a **shallow checkout of `main`**: `pwd` is the repository root, `grep` over the checkout works, and `git diff HEAD~1` needs `git fetch --unshallow` first.
 - `git clone` works for public repositories into a **new** directory (`git clone --depth 1 <url> /tmp/x`). Cloning into the checkout itself fails with exit 128, and private repositories cannot be cloned: the runner holds no credential, so it also cannot push.
-- The command's own exit code is reported. **Pipes hide failures** (no `pipefail`): `git clone … | tail` reports exit 0 even when git failed, so use `set -o pipefail` or avoid piping a command whose result matters.
+- The command's own exit code is reported. Commands run with `pipefail` (since 2026-11-13), so `git clone … | tail` reports git's exit 128 instead of the last stage's 0. A producer cut off by `| head` exits 141 (SIGPIPE); that is reported as 0 with a `note:` line in the output, so it is never silent.
 - Nothing persists between calls. Each call is a separate job (roughly 15 s to 2 minutes).
 
 An operator can type a command (`pwd`, `git diff HEAD~1 --stat`, `grep -rn "x" src`, `git clone …`, or `/shell <cmd>`) and it is dispatched **without a model turn**, under any provider. A prompt that asks for more than the command ("run git diff and tell me what changed") is a task for a tool-calling model (Claude or Kimi); the Nexus Intelligence provider is offered only `nexus_reason`, so it cannot run the shell itself. To change ForgeClaw's own code, edits go out as pull requests through `sculpt_self`, `shell_patch` or `github_write_file`; the shell is for running and inspecting.
@@ -137,7 +137,7 @@ Table last verified 2026-10-20; audited 2026-11-12 (notes below the table). "Wor
 | Error reports to owner | `relay/` `/v1/errors` + Resend | Needs the relay and a Resend key. Not verified live. |
 | Web search | `web_search` / `ddg_search.yml` (or Brave with a key) | Works (15 of 15 on 2026-10-19). |
 | Image generation | `generate_image` / `generate-image.yml` | Works (28 of 30 on 2026-10-19). |
-| Shell commands | `shell_exec` / `shell-exec.yml` | **Works:** run 43346840540 (2026-11-13): `pwd`, shallow `git clone` into a new directory, `grep`, `git fetch --unshallow` + `git diff --stat`. Runs report the command's own exit code; pipes mask it (see Shell commands). |
+| Shell commands | `shell_exec` / `shell-exec.yml` | **Works:** run 43346840540 (2026-11-13): `pwd`, shallow `git clone` into a new directory, `grep`, `git fetch --unshallow` + `git diff --stat`. Runs report the command's own exit code. `pipefail` was added after this run (2026-11-13): verified locally against the workflow's own step script and by tests, **not yet dispatched live**. |
 | Spiderlings (tool-activity display) | `src/lib/spiderlings.ts` | Works in the app: 67 tests pass, and in a browser pass (GitHub stubbed) three failed shell calls showed as 3 out / 3 flagged / 0 in flight. |
 | MiroFish swarm sim | `mirofish_sim` / `mirofish-sim.yml` | Mocks only; the workflow was not dispatched (it spends money). Not verified live. |
 | GitHub repo read/write, issues, runs, logs | `github_*` tools | Works with a GitHub token. |
@@ -155,7 +155,7 @@ Audit notes, 2026-11-12 (run history and a browser pass of the built app):
 - Workflows not described above: `build-gate`, `deploy`, `channel-watch`, `forgeclaw-loop`, `nexus-loop`, `nexus-intelligence`, `trader-agent`, `owner-exit`, `kalshi-snapshot`, `mirofish-sim`, `qwen-bench`, `qwen-cache-keepwarm`, `cpu-image-benchmark`.
 - Hosted providers, Gmail/Calendar, WhatsApp, Kalshi funds, the relay and the merge tool were not exercised in this audit.
 
-Audit notes, 2026-11-13 (full-stack pass): lint, `tsc -b` and the full unit suite pass (247 files, 2731 tests); `vite build` was not run. `shell_exec` was dispatched live (see Shell commands). The latest `shell-repair.yml` failure (run 39561708765, 2026-10-21) was `error: corrupt patch at <stdin>:55`: the model wrote a malformed diff and the workflow correctly refused it; it is not a workflow defect, and `shell_patch` itself was not re-run. A typed shell command's result bubble no longer carries the active provider/model label.
+Audit notes, 2026-11-13 (full-stack pass): lint, `tsc -b` and the full unit suite pass (247 files, 2731 tests); `vite build` was not run. `shell_exec` was dispatched live (see Shell commands). The latest `shell-repair.yml` failure (run 39561708765, 2026-10-21) was `error: corrupt patch at <stdin>:55`: the model wrote a malformed diff and the workflow correctly refused it; it is not a workflow defect. `shell_patch` now checks that every hunk's body matches its `@@` header before dispatching (`src/lib/unifiedDiffCheck.ts`), refusing a malformed diff with the counts instead of spending a runner job; `git apply` in the workflow remains the authority on whether a patch applies. The checker was run over the last 137 hunk-bearing commits (0 false rejections, 137 of 137 corrupted copies caught); `shell_patch` itself was not re-run live. A typed shell command's result bubble no longer carries the active provider/model label.
 
 ## Architecture
 

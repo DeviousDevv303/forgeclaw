@@ -71,6 +71,7 @@ export const SHELL_EXEC_GUIDANCE =
   'node_modules is not installed (run `npm ci` first in the same command, e.g. `npm ci && npx vitest run src/lib`); ' +
   'git history is one commit deep (run `git fetch --unshallow` first if you need it); there are no git credentials, so it cannot push; ' +
   'nothing persists between calls; each job is limited to 10 minutes. Chain related steps into one command with &&. ' +
+  'Pipelines run with pipefail: the exit code is that of the failing stage, not the last one (a producer cut off by `| head` is reported as 0 with a note). ' +
   'The runner holds no GitHub credential on purpose, so gh and the GitHub API fail there (gh exits 4: "set the GH_TOKEN environment variable"); ' +
   'for pull requests use github_list_prs, github_pr_info and github_merge_pr instead. Those run in the app with the owner\'s GitHub token, which is configured even though the runner has none: ' +
   'a missing token on the runner is never a reason to say merging is blocked, and never propose giving shell-exec.yml write permissions or a token (it runs arbitrary commands).'
