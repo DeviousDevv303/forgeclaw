@@ -1951,8 +1951,8 @@ function App() {
               ...message,
               content: output,
               streaming: false,
-              provider: activeProvider,
-              model: normalizedActiveModel,
+              // No provider/model on purpose: a typed shell command runs with no model turn, so the
+              // bubble must not credit the active model with tool output (nor feed the "last runtime" label).
               agentPhase: isError ? 'BLOCKED' : 'COMPLETE',
               toolResults: [result],
             }
