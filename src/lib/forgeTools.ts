@@ -34,6 +34,7 @@ import { buildSimDispatchInputs, dispatchSim, findActiveSimRun, findSimRunByInvo
 import { tasteForImagePrompt } from './nexusTaste'
 import { QWEN_GITHUB_READ_TIMEOUT_MS, isEmptyQwenResponse, waitForQwenResult } from './qwenArtifact'
 import { NEXUS_GITHUB_READ_TIMEOUT_MS, waitForNexusResult } from './nexusArtifact'
+import { preflightShellPatch } from './shellPatchPreflight'
 import { NEXUS_CHECKPOINT_SHA256 } from './ai/nexusIntelligenceContext'
 import { journalRecord, type RunJournal } from './runRollback'
 import { createRepo, publishSite, waitForPagesBuild, PAGES_WAIT_MAX_MS, type GithubRequest, type PublishFile } from './githubPublish'
@@ -1662,6 +1663,17 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         // The workflow refuses symlinks authoritatively; failing here saves a dispatch that cannot succeed.
         if (/^(?:new file mode|new mode|index [0-9a-f.]+) 120000\s*$/m.test(patch)) throw new Error('A patch may not create a symbolic link.')
         if (!token) throw new Error('No GitHub token configured.')
+        // Preflight with the real `git apply --check` on a runner (owner authorization, #235, 2026-11-12): a malformed
+        // model-written patch fails here, in the app, with git's own message, before any repair run is dispatched.
+        // It goes through shell_exec (same Guardian path). wait:false is the explicit dispatch-only mode, so it skips the wait.
+        let preflightNote = ''
+        if (input.wait === false) {
+          preflightNote = 'git apply --check was NOT run (wait:false is dispatch-only).'
+        } else {
+          const verdict = await preflightShellPatch(patch, command => executeTool({ id: `preflight-${Date.now()}`, name: 'shell_exec', input: { command, working_directory: '.', timeout_seconds: 300 } }, ctx))
+          if (verdict.kind === 'refused') throw new Error(verdict.message)
+          if (verdict.kind === 'skipped') preflightNote = verdict.note
+        }
         const invocationId = `repair-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const repairBranch = `forge/repair/${invocationId}`
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
@@ -1681,8 +1693,9 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         // Run-name is "Shell repair <invocation id>", so the id finds exactly this run.
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, label: `shell_patch ${repairBranch}` })
         if (!repairBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch: repairBranch, label: `shell_patch ${repairBranch}` })
-        if (input.wait === false) return `✓ Shell-patch ${invocationId} DISPATCHED, NOT VERIFIED. Look for the run named "Shell repair ${invocationId}".`
-        return await reportProposalRun(githubRequest, { owner, repo, token, workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, branch: repairBranch, label: `Shell-patch ${invocationId}`, signal: ctx.signal })
+        if (input.wait === false) return `✓ Shell-patch ${invocationId} DISPATCHED, NOT VERIFIED. Look for the run named "Shell repair ${invocationId}". ${preflightNote}`
+        const proposal = await reportProposalRun(githubRequest, { owner, repo, token, workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, branch: repairBranch, label: `Shell-patch ${invocationId}`, signal: ctx.signal })
+        return preflightNote ? `${proposal}\n${preflightNote}` : proposal
       }
 
       // ── HTTP fetch ───────────────────────────────────────────────────────────

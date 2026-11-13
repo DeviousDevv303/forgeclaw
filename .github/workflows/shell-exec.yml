@@ -56,7 +56,9 @@ jobs:
                   EXIT_CODE=2
                 else
                   cd -- "$TARGET_DIRECTORY"
-                  bash -c "$FORGE_COMMAND"
+                  # pipefail (owner authorization, forgeclaw #235, 2026-11-12): in `a | b` the exit code is the
+                  # failing command's, not the last command's, so `git clone ... | tail` can no longer report 0.
+                  bash -o pipefail -c "$FORGE_COMMAND"
                   EXIT_CODE=$?
                 fi
                 ;;

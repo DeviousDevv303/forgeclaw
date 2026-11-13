@@ -85,6 +85,16 @@ describe('workflow hardening', () => {
     expect(exec).toContain('persist-credentials: false')
   })
 
+  it('shell-exec runs the command under pipefail so a piped command reports the failing command\'s exit code', () => {
+    // Owner authorization, forgeclaw #235, 2026-11-12: `git clone ... | tail` used to report the pipe's 0.
+    expect(exec).toContain('bash -o pipefail -c "$FORGE_COMMAND"')
+    expect(exec).not.toMatch(/^\s*bash -c "\$FORGE_COMMAND"/m)
+    const plain = spawnSync('bash', ['-c', 'false | cat'])
+    const strict = spawnSync('bash', ['-o', 'pipefail', '-c', 'false | cat'])
+    expect(plain.status).toBe(0)
+    expect(strict.status).not.toBe(0)
+  })
+
   it('pushes explicitly authenticated instead of relying on a stored credential', () => {
     expect(sculpt).toContain('http.https://github.com/.extraheader')
     expect(repair).toContain('http.https://github.com/.extraheader')
