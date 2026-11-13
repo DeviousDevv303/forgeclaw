@@ -85,3 +85,22 @@ describe('looksLikeShellCommand', () => {
     expect(looksLikeShellCommand('echo hi')).toBe(false)
   })
 })
+
+describe('plain-English requests are not mistaken for a command (audit 2026-11-12)', () => {
+  it('sends a sentence that merely starts with an operand-less command to the model', () => {
+    for (const sentence of ['run pwd and git rev-parse in the repo', 'pwd and then list the files', 'whoami in this sandbox please']) {
+      expect(extractExplicitShellCommand(sentence), sentence).toBeNull()
+      expect(isExplicitShellRequest(sentence), sentence).toBe(false)
+    }
+  })
+
+  it('still runs the real forms', () => {
+    expect(extractExplicitShellCommand('pwd')).toBe('pwd')
+    expect(extractExplicitShellCommand('run pwd')).toBe('pwd')
+    expect(extractExplicitShellCommand('pwd -P')).toBe('pwd -P')
+    expect(extractExplicitShellCommand('run pwd && git rev-parse --short HEAD')).toBe('pwd && git rev-parse --short HEAD')
+    expect(extractExplicitShellCommand('run `pwd`')).toBe('pwd')
+    expect(extractExplicitShellCommand('git diff --stat')).toBe('git diff --stat')
+    expect(extractExplicitShellCommand('grep -rn shell_patch src/lib/forgeTools.ts')).toBe('grep -rn shell_patch src/lib/forgeTools.ts')
+  })
+})
