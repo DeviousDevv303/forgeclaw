@@ -215,6 +215,7 @@ import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
 import { isPublicVisitor } from './lib/publicRelay'
+import { toolArgumentRefusal } from './lib/toolArgumentValidation'
 import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, mergeChannelCalls, readPendingChannelCalls, savePendingChannelCalls, type ChannelCall } from './lib/channelCalls'
 
 /** Shown when the free model, /sculpt or /patch is used with no GitHub token: all three run on GitHub Actions. */
@@ -2171,6 +2172,18 @@ function App() {
     void recordLearning({ channel: 'tool', input: `${call.name} ${JSON.stringify(call.input)}`, result: refusal, outcome: 'blocked', toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
     toolAttempts.push({ name: call.name, input: JSON.stringify(call.input, Object.keys(call.input).sort()) })
     setActivityLog(prev => [...prev.slice(-99), { id: `act_${call.id}_${Date.now()}`, timestamp: Date.now(), tool: call.name, input: call.input, status: 'error', output: refusal.slice(0, 300) }])
+    continue
+  }
+  // Refusal-only argument check for the GitHub read tools (#235, owner directive 2026-11-13): a call such as
+  // github_read_file { path: ':', owner: '.', start_line: 257257207 } is answered with a legible failed result, not dispatched.
+  const argumentRefusal = toolArgumentRefusal(call.name, call.input)
+  if (argumentRefusal) {
+    iterResults.push({ toolCallId: call.id, name: call.name, output: argumentRefusal, isError: true })
+    void recordLearning({ channel: 'tool', input: `${call.name} ${JSON.stringify(call.input).slice(0, 500)}`, result: argumentRefusal, outcome: 'failed', toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
+    // Recorded like a call whose arguments were cut off (above): it never ran, so any later success of this tool resolves it.
+    // The completion guard's verdict logic is untouched; with no later success the turn still ends BLOCKED.
+    toolAttempts.push({ name: call.name, input: TRUNCATED_ATTEMPT })
+    setActivityLog(prev => [...prev.slice(-99), { id: `act_${call.id}_${Date.now()}`, timestamp: Date.now(), tool: call.name, input: call.input, status: 'error', output: argumentRefusal.slice(0, 300) }])
     continue
   }
   const callKey = `${call.name}:${JSON.stringify(call.input)}`
