@@ -100,6 +100,16 @@ describe('checkGithubReadArgs: sibling read tools', () => {
   })
 })
 
+describe('checkGithubReadArgs: a missing or non-object input is no arguments, never a throw', () => {
+  it('treats undefined, null, arrays and text as an empty input', () => {
+    for (const input of [undefined, null, [], 'x', 5]) {
+      expect(() => checkGithubReadArgs('github_read_file', input as unknown as Record<string, unknown>)).not.toThrow()
+      expect(checkGithubReadArgs('github_read_file', input as unknown as Record<string, unknown>)).toMatch(/path is required/)
+      expect(checkGithubReadArgs('github_list_prs', input as unknown as Record<string, unknown>)).toBeNull()
+    }
+  })
+})
+
 describe('checkGithubReadArgs: tools it must not touch', () => {
   it('ignores write tools and unrelated tools entirely (their gates are Guardian\'s, not this check\'s)', () => {
     expect(checkGithubReadArgs('github_write_file', { path: ':', owner: '.' })).toBeNull()
