@@ -55,6 +55,17 @@ describe('shell_patch', () => {
     expect(out).toContain(body.inputs.invocation_id)
   })
 
+  it('refuses a patch whose hunk contradicts its header before any network call (run 39561708765: corrupt patch)', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const corrupt = 'diff --git a/src/x.ts b/src/x.ts\n--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1,5 +1,5 @@\n one\n-two\n+TWO\n'
+    const out = await executeTool(call({ patch: corrupt, reason: 'fix typo' }), ctxWith(createRunJournal()))
+    expect(out).toMatch(/TOOL ERROR/)
+    expect(out).toContain('hunk 1 of src/x.ts')
+    expect(out).toMatch(/regenerate/i)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('refuses a model-supplied branch or invocation id and dispatches nothing', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)

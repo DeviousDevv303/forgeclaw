@@ -56,10 +56,18 @@ jobs:
                   EXIT_CODE=2
                 else
                   cd -- "$TARGET_DIRECTORY"
-                  # pipefail (owner authorization, forgeclaw #235, 2026-11-12): in `a | b` the exit code is the
-                  # failing command's, not the last command's, so `git clone ... | tail` can no longer report 0.
-                  bash -o pipefail -c "$FORGE_COMMAND"
+                  # pipefail: a failing stage of a pipeline (git clone ... | tail) must not be masked by the last stage.
+                  # The runner starts steps with SIGPIPE ignored and children inherit that, so `seq ... | head` would
+                  # print "write error: Broken pipe" and exit 1 instead of ending quietly. Restore the default
+                  # disposition (what any interactive shell has) so a cut-off producer ends by SIGPIPE (141) below.
+                  env --default-signal=PIPE bash -o pipefail -c "$FORGE_COMMAND"
                   EXIT_CODE=$?
+                  # With pipefail, `producer | head` exits 141 (SIGPIPE) when head closes the pipe early. That is
+                  # the pipeline working as intended, not a failure, so it is reported as 0 and said so in the log.
+                  if [[ "$EXIT_CODE" -eq 141 ]]; then
+                    echo "note: command exited 141 (SIGPIPE: a downstream stage such as head closed the pipe early); reported as exit_code=0"
+                    EXIT_CODE=0
+                  fi
                 fi
                 ;;
               *)

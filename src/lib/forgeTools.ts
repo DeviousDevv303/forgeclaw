@@ -7,6 +7,8 @@
 import { safeGetItem, verifiedSetItem } from './storage'
 import { resolveGithubToken } from './githubAuth'
 import { describeGithubDispatchFailure } from './githubDispatchErrors'
+import { checkUnifiedDiff } from './unifiedDiffCheck'
+import { checkGithubReadArgs } from './githubArgCheck'
 import { describeGithubHttpFailure, describeGithubTransportFailure, toolFetch } from './githubFetch'
 import { normalizeKnownShellExecutable } from './shellCommand'
 import {
@@ -1110,6 +1112,11 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
   const githubRequest: GithubRequest = (url, init) => toolFetch(ctx, url, init ?? {})
 
   try {
+    // Refusal-only pre-flight for the GitHub read tools (githubArgCheck.ts): an argument that cannot mean anything
+    // (owner ".", path ":", start_line 257257207) is refused with the field named, before any request is built.
+    // It runs after the Guardian, sculpt-key and abort checks above and grants nothing.
+    const unusableReadArgs = checkGithubReadArgs(name, input)
+    if (unusableReadArgs) throw new Error(unusableReadArgs)
     switch (name) {
 
       // ── GitHub: read file ────────────────────────────────────────────────────
@@ -1662,6 +1669,10 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         if (!/^(?:diff --git |--- )/m.test(patch)) throw new Error('patch must be a unified diff (git apply format).')
         // The workflow refuses symlinks authoritatively; failing here saves a dispatch that cannot succeed.
         if (/^(?:new file mode|new mode|index [0-9a-f.]+) 120000\s*$/m.test(patch)) throw new Error('A patch may not create a symbolic link.')
+        // A hunk whose body contradicts its @@ header is "corrupt patch" to git apply (run 39561708765). Refuse it here,
+        // with the counts, instead of spending a runner job; git apply in the workflow stays the authority on applying.
+        const malformedHunk = checkUnifiedDiff(patch)
+        if (malformedHunk) throw new Error(`The patch is malformed: ${malformedHunk} Regenerate the diff so each hunk's line counts match its @@ header (for example from \`git diff\`), then call shell_patch again.`)
         if (!token) throw new Error('No GitHub token configured.')
         // Preflight with the real `git apply --check` on a runner (owner authorization, #235, 2026-11-12): a malformed
         // model-written patch fails here, in the app, with git's own message, before any repair run is dispatched.

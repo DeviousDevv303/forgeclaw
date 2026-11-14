@@ -71,6 +71,7 @@ export const SHELL_EXEC_GUIDANCE =
   'node_modules is not installed (run `npm ci` first in the same command, e.g. `npm ci && npx vitest run src/lib`); ' +
   'git history is one commit deep (run `git fetch --unshallow` first if you need it); there are no git credentials, so it cannot push; ' +
   'nothing persists between calls; each job is limited to 10 minutes. Chain related steps into one command with &&. ' +
+  'Pipelines run with pipefail: the exit code is that of the failing stage, not the last one (a producer cut off by `| head` is reported as 0 with a note). ' +
   'The runner holds no GitHub credential on purpose, so gh and the GitHub API fail there (gh exits 4: "set the GH_TOKEN environment variable"); ' +
   'for pull requests use github_list_prs, github_pr_info and github_merge_pr instead. Those run in the app with the owner\'s GitHub token, which is configured even though the runner has none: ' +
   'a missing token on the runner is never a reason to say merging is blocked, and never propose giving shell-exec.yml write permissions or a token (it runs arbitrary commands).'
@@ -351,6 +352,17 @@ export function isFollowUp(text: string): boolean {
   const t = text.trim().toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'")
   if (!t || t.length > 80) return false
   return /^(?:ok(?:ay)?|yes|yeah|yep|sure|please|go|do it|go ahead|proceed|continue|resume|retry|try again|again|keep going|carry on|finish(?: it)?|same|next|now)\b/.test(t)
+}
+
+/**
+ * True when the assistant's latest message rendered a picture (a generated image, not a sim-world illustration).
+ * What the owner says next is then usually about that picture and need not name it: 2026-11-13, after a UFC picture,
+ * "search the web and then make them look like the actual fighters" matched web_search but not generate_image, so the
+ * model's generate_image call was refused as not offered. Offering a tool runs nothing; the model still decides, and
+ * every call still passes executeTool's Guardian and sculpt-key gates.
+ */
+export function continuesImageTurn(lastAssistant: { role?: string; imageUrl?: string; imageKind?: string } | undefined): boolean {
+  return lastAssistant?.role === 'assistant' && !!lastAssistant.imageUrl && lastAssistant.imageKind !== 'sim-world'
 }
 
 /**

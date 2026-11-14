@@ -137,6 +137,21 @@ describe('Shell execution log parsing', () => {
     expect(parsed).toEqual({ commandOutput: 'hello world', exitCode: 0 })
   })
 
+  it('keeps the workflow\'s SIGPIPE note in the output the model reads, with exit 0', () => {
+    const parsed = parseShellExecutionLog(
+      '2026-11-13T01:42:03.0000000Z === FORGECLAW EXECUTION ===\n' +
+      '2026-11-13T01:42:03.0000000Z start=2026-11-13T01:42:03Z\n' +
+      '2026-11-13T01:42:03.0000000Z first line\n' +
+      '2026-11-13T01:42:03.0000000Z note: command exited 141 (SIGPIPE: a downstream stage such as head closed the pipe early); reported as exit_code=0\n' +
+      '2026-11-13T01:42:03.0000000Z exit_code=0\n' +
+      '2026-11-13T01:42:03.0000000Z end=2026-11-13T01:42:03Z',
+      'success',
+    )
+    expect(parsed.exitCode).toBe(0)
+    expect(parsed.commandOutput).toContain('first line')
+    expect(parsed.commandOutput).toContain('SIGPIPE')
+  })
+
   it('bounds unusually large command output without changing exit metadata', () => {
     const output = 'x'.repeat(MAX_SHELL_OUTPUT_CHARS + 500)
     const parsed = parseShellExecutionLog(`=== FORGECLAW EXECUTION ===\nstart=now\n${output}\nexit_code=0`, 'success')
