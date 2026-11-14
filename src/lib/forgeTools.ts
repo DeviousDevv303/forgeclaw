@@ -9,6 +9,7 @@ import { resolveGithubToken } from './githubAuth'
 import { describeGithubDispatchFailure } from './githubDispatchErrors'
 import { checkUnifiedDiff } from './unifiedDiffCheck'
 import { checkGithubReadArgs } from './githubArgCheck'
+import { checkSpawnAgentArgs } from './spawnAgentArgCheck'
 import { describeGithubHttpFailure, describeGithubTransportFailure, toolFetch } from './githubFetch'
 import { normalizeKnownShellExecutable } from './shellCommand'
 import {
@@ -2487,6 +2488,10 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
 
 case 'spawn_agent': {
         if (!ctx.spawnAgent) throw new Error('Sub-agent support not initialized.')
+        // Refusal-only (spawnAgentArgCheck.ts): a spawn with no task, no role text or a non-string tools value never
+        // starts a child. Every spawn that works today is unchanged, and Guardian ran before this handler.
+        const malformedSpawn = checkSpawnAgentArgs(input)
+        if (malformedSpawn) throw new Error(malformedSpawn)
         const systemPrompt = input.system_prompt as string
         const task         = input.task          as string
         const toolsStr     = input.tools         as string | undefined
