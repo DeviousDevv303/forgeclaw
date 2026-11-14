@@ -214,6 +214,7 @@ import { HoldToConfirmButton } from './components/HoldToConfirmButton'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
+import { skillForPrompt } from './lib/skills'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
 import { isPublicVisitor } from './lib/publicRelay'
 import { checkGithubReadArgs } from './lib/githubArgCheck'
@@ -1666,7 +1667,9 @@ function App() {
     // The owner's approved heuristics (NEXUS page) apply to every model; visitors' browsers have none.
     const ownerHeuristics = isPublicVisitor(ghToken) ? '' : heuristicsForPrompt()
     const browsingPlaybooks = !isPublicVisitor(ghToken) && runtimeTools.some(tool => tool.name === 'browser_run') ? browserPlaybooksForPrompt(promptText) : ''
-    const lessonedSystemPrompt = [baseSystemPrompt, ownerHeuristics, nexusLessons, browsingPlaybooks].filter(Boolean).join('\n\n')
+    // A bundled skill (src/skills) whose triggers match this message: a reviewed procedure, text only (skills.ts).
+    const bundledSkill = skillForPrompt(promptText || '')
+    const lessonedSystemPrompt = [baseSystemPrompt, ownerHeuristics, nexusLessons, browsingPlaybooks, bundledSkill].filter(Boolean).join('\n\n')
     const finalSystemPrompt = relevant.length > 0
       ? lessonedSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
         relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
@@ -1676,7 +1679,7 @@ function App() {
     // manual protocol when runtimeTools are present and the App loop parses it.
     const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.\n${NO_TOOLS_NOTICE}`
     // A tool-less turn is still a NEXUS turn: the owner's approved heuristics apply to the plain chat answer too.
-    const conversationalPrompt = ownerHeuristics ? `${conversationalSystemPrompt}\n\n${ownerHeuristics}` : conversationalSystemPrompt
+    const conversationalPrompt = [conversationalSystemPrompt, ownerHeuristics, bundledSkill].filter(Boolean).join('\n\n')
     // A numbered request is a ledger: every item it enumerates is owed a section before the run may end (requestLedger.ts).
     const requestLedger = parseRequestLedger(promptText, FORGE_TOOLS.map(tool => tool.name))
     const ledgerInstruction = requestLedger ? `\n\n${reportFormatInstruction(requestLedger)}` : ''
