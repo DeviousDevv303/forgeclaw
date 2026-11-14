@@ -43,4 +43,14 @@ describe('NEXUS on a tool-less chat turn', () => {
     expect(system).toContain('OWNER HEURISTICS')
     expect(system).toContain('say plainly when a step failed')
   })
+
+  it('blocks an ungrounded repository investigation instead of presenting it as complete', async () => {
+    const { default: App } = await import('./App')
+    render(<App />)
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'Investigate both places in parallel and tell me how the warning travels through src/lib/forgeTools.ts and src/App.tsx' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await waitFor(() => expect(document.body.textContent).toContain('STATUS: BLOCKED'), { timeout: 8000 })
+    expect(document.body.textContent).toContain('Repository evidence was not obtained from an actual GitHub tool result')
+  })
 })
