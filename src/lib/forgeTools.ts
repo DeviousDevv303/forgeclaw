@@ -8,6 +8,7 @@ import { safeGetItem, verifiedSetItem } from './storage'
 import { resolveGithubToken } from './githubAuth'
 import { describeGithubDispatchFailure } from './githubDispatchErrors'
 import { checkUnifiedDiff } from './unifiedDiffCheck'
+import { checkGithubReadArgs } from './githubArgCheck'
 import { describeGithubHttpFailure, describeGithubTransportFailure, toolFetch } from './githubFetch'
 import { normalizeKnownShellExecutable } from './shellCommand'
 import {
@@ -1110,6 +1111,11 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
   const githubRequest: GithubRequest = (url, init) => toolFetch(ctx, url, init ?? {})
 
   try {
+    // Refusal-only pre-flight for the GitHub read tools (githubArgCheck.ts): an argument that cannot mean anything
+    // (owner ".", path ":", start_line 257257207) is refused with the field named, before any request is built.
+    // It runs after the Guardian, sculpt-key and abort checks above and grants nothing.
+    const unusableReadArgs = checkGithubReadArgs(name, input)
+    if (unusableReadArgs) throw new Error(unusableReadArgs)
     switch (name) {
 
       // ── GitHub: read file ────────────────────────────────────────────────────
