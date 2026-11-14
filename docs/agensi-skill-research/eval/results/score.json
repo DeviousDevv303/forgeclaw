@@ -1,0 +1,90 @@
+{
+  "A_none": {
+    "totals": {
+      "bugs": 15,
+      "tp": 15,
+      "assertive": 20,
+      "assertive_tp": 17,
+      "decoy_alarms": 1,
+      "clean_alarms": 0,
+      "unmatched": 3,
+      "invalid": 0,
+      "recall": 1.0,
+      "precision": 0.85
+    },
+    "per_fixture": {
+      "f1_orders_repo.py": "found 3/3 bugs; assertive=4 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f2_auth.js": "found 3/3 bugs; assertive=5 tp=3 decoy_alarms=1 clean_alarms=0",
+      "f3_billing.py": "found 3/3 bugs; assertive=4 tp=4 decoy_alarms=0 clean_alarms=0",
+      "f4_uploads.py": "found 3/3 bugs; assertive=3 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f5_stats.js": "found 3/3 bugs; assertive=4 tp=4 decoy_alarms=0 clean_alarms=0",
+      "f6_retry.py": "found 0/0 bugs; assertive=0 tp=0 decoy_alarms=0 clean_alarms=0"
+    }
+  },
+  "B_agensi": {
+    "totals": {
+      "bugs": 15,
+      "tp": 15,
+      "assertive": 23,
+      "assertive_tp": 16,
+      "decoy_alarms": 4,
+      "clean_alarms": 0,
+      "unmatched": 7,
+      "invalid": 0,
+      "recall": 1.0,
+      "precision": 0.696
+    },
+    "per_fixture": {
+      "f1_orders_repo.py": "found 3/3 bugs; assertive=5 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f2_auth.js": "found 3/3 bugs; assertive=6 tp=3 decoy_alarms=2 clean_alarms=0",
+      "f3_billing.py": "found 3/3 bugs; assertive=3 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f4_uploads.py": "found 3/3 bugs; assertive=4 tp=3 decoy_alarms=1 clean_alarms=0",
+      "f5_stats.js": "found 3/3 bugs; assertive=5 tp=4 decoy_alarms=1 clean_alarms=0",
+      "f6_retry.py": "found 0/0 bugs; assertive=0 tp=0 decoy_alarms=0 clean_alarms=0"
+    }
+  },
+  "C2_ours_hidden": {
+    "totals": {
+      "bugs": 15,
+      "tp": 12,
+      "assertive": 16,
+      "assertive_tp": 12,
+      "decoy_alarms": 2,
+      "clean_alarms": 0,
+      "unmatched": 4,
+      "invalid": 1,
+      "recall": 0.8,
+      "precision": 0.75
+    },
+    "per_fixture": {
+      "f1_orders_repo.py": "found 3/3 bugs; assertive=4 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f2_auth.js": "found 3/3 bugs; assertive=6 tp=3 decoy_alarms=2 clean_alarms=0",
+      "f3_billing.py": "INVALID/MISSING",
+      "f4_uploads.py": "found 3/3 bugs; assertive=3 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f5_stats.js": "found 3/3 bugs; assertive=3 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f6_retry.py": "found 0/0 bugs; assertive=0 tp=0 decoy_alarms=0 clean_alarms=0"
+    }
+  },
+  "C_ours": {
+    "totals": {
+      "bugs": 15,
+      "tp": 15,
+      "assertive": 17,
+      "assertive_tp": 15,
+      "decoy_alarms": 1,
+      "clean_alarms": 0,
+      "unmatched": 2,
+      "invalid": 0,
+      "recall": 1.0,
+      "precision": 0.882
+    },
+    "per_fixture": {
+      "f1_orders_repo.py": "found 3/3 bugs; assertive=4 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f2_auth.js": "found 3/3 bugs; assertive=4 tp=3 decoy_alarms=1 clean_alarms=0",
+      "f3_billing.py": "found 3/3 bugs; assertive=3 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f4_uploads.py": "found 3/3 bugs; assertive=3 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f5_stats.js": "found 3/3 bugs; assertive=3 tp=3 decoy_alarms=0 clean_alarms=0",
+      "f6_retry.py": "found 0/0 bugs; assertive=0 tp=0 decoy_alarms=0 clean_alarms=0"
+    }
+  }
+}
