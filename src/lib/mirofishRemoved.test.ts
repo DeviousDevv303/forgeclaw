@@ -4,6 +4,7 @@
 // be offered to any model.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { executeTool, FORGE_TOOLS, type ToolContext } from './forgeTools'
+import { createRunJournal } from './runRollback'
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -33,5 +34,14 @@ describe('MiroFish is gone', () => {
     const out = await executeTool({ id: '1', name, input: { card_id: 'X', market_ticker: 'Y', sides: 'A|B', packet: 'p'.repeat(300) } }, ctx)
     expect(out).toBe(`[TOOL ERROR] Unknown tool: ${name}`)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  // The dead mirofish_sim entry was removed from IRREVERSIBLE_TOOLS. A refused call is an error result, which the journal's
+  // irreversibility rule already excluded, so STOP must still report nothing for it.
+  it('a refused mirofish_sim call journals no irreversible action', async () => {
+    const journal = createRunJournal()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })))
+    await executeTool({ id: '1', name: 'mirofish_sim', input: {} }, { ...ctx, journal })
+    expect(journal.entries()).toEqual([])
   })
 })

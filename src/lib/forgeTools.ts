@@ -1005,7 +1005,7 @@ export function formatNexusResultText(
 /** Tools whose effects leave the repository or cannot be recalled; STOP reports them instead of claiming an undo. */
 const SHELL_PATCH_MAX_CHARS = 60_000
 
-const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set(['send_whatsapp', 'gmail_send', 'calendar_create', 'github_create_issue', 'github_create_repo', 'mirofish_sim'])
+const IRREVERSIBLE_TOOLS: ReadonlySet<string> = new Set(['send_whatsapp', 'gmail_send', 'calendar_create', 'github_create_issue', 'github_create_repo'])
 
 export async function executeTool(call: ToolCall, ctx: ToolContext): Promise<string> {
   const output = await executeToolCore(call, ctx)
