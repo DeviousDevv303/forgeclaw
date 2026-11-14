@@ -355,6 +355,17 @@ export function isFollowUp(text: string): boolean {
 }
 
 /**
+ * True when the assistant's latest message rendered a picture (a generated image, not a sim-world illustration).
+ * What the owner says next is then usually about that picture and need not name it: 2026-11-13, after a UFC picture,
+ * "search the web and then make them look like the actual fighters" matched web_search but not generate_image, so the
+ * model's generate_image call was refused as not offered. Offering a tool runs nothing; the model still decides, and
+ * every call still passes executeTool's Guardian and sculpt-key gates.
+ */
+export function continuesImageTurn(lastAssistant: { role?: string; imageUrl?: string; imageKind?: string } | undefined): boolean {
+  return lastAssistant?.role === 'assistant' && !!lastAssistant.imageUrl && lastAssistant.imageKind !== 'sim-world'
+}
+
+/**
  * The owner asks for a merge in their own words: "merge 208", "merge them", "go ahead and merge both", "merge PR #205".
  * The merge keywords were exact phrases ("merge pr", "merge #", "merge it"), so most of those offered no merge tool and
  * ForgeClaw had to say it could not merge (2026-10-21). Offering the tool runs nothing: a merge still needs the owner's tap.
