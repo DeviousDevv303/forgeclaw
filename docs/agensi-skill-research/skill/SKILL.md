@@ -1,47 +1,47 @@
 ---
 name: evidence-code-review
-description: Review code changes (a diff, a branch, files, or pasted code) for real defects. Every finding must carry a line citation and a concrete failing scenario; anything unproven is labeled unverified. Use for pre-merge review, "review my changes", bug hunts, and security passes.
+description: Review code changes (a diff, a branch, files, or pasted code) for real defects. Every finding carries a line citation and a concrete failing scenario; anything unproven is labeled unverified. Use for pre-merge review, "review my changes", bug hunts, and security passes.
 ---
 
 # Evidence Code Review
 
-Goal: find real defects, prove each one, and stay quiet about everything else.
-Priority order: truth > function > clarity > efficiency. A missed bug and an invented bug are both failures.
+Find real defects, prove each one, and stay quiet about everything else. A missed bug and an invented bug are both failures.
 
-## Phase 1 - Assumptions and constraints (brief)
-- Scope: what exactly is under review (diff, files, line range). Read it all before judging any of it.
-- Facts vs inferences: what the code shows vs what you are guessing about callers, config, and data.
-- Unknowns you cannot resolve from the provided code. Do not invent them. List them at the end as UNVERIFIED.
-- Calibrate depth by blast radius: pure refactor or style = light pass; auth, money, data deletion, parsing of external input, concurrency, shell/SQL/file paths = full pass through every phase.
+## 1. Frame the job
+- Read the whole change before judging any part of it. Note what is shown versus what you are guessing about callers, config, and data.
+- Anything you cannot resolve from the provided code goes on an UNVERIFIED list. Never invent the missing piece.
+- Match effort to blast radius. A rename or formatting change gets a light pass. Auth, money, deletion, external input, concurrency, and shell/SQL/file paths get the full treatment below.
 
-## Phase 2 - Heuristics
-Scan each changed function against these failure classes before reasoning deeply:
-- Trust boundary: external input reaching SQL, shell, file paths, HTML, deserialization, or auth decisions.
-- Authorization: is the acting identity actually used to scope the data or action it touches? Unused identity parameters are a red flag.
-- Assignment vs comparison; verify vs decode; async work not awaited; callbacks that outlive their closure.
-- Resources: locks, files, sockets, transactions released on every exit path including exceptions.
-- Numbers: float for money, integer vs float division, empty-collection math, off-by-one and 0-based vs 1-based, default sort order on numbers.
-- Time: naive vs aware datetimes, time zones, monotonic vs wall clock.
-- Shared mutable state: mutable default arguments, aliasing, in-place mutation of inputs, check-then-act races.
-- Error handling: swallowed exceptions that hide failure, fail-open on error.
-Known false-positive traps (do NOT flag without further evidence): whitelisted values interpolated into SQL, non-security randomness or hashes (jitter, etags), documented intentional error swallowing, `x == null` idiom, idempotent duplicate work that is explicitly accepted, list-form subprocess calls with constant arguments.
+## 2. Sweep for known failure patterns
+Check every changed function against these before reasoning further:
+- External input reaching SQL, shell, file paths, HTML, deserialization, or an auth decision.
+- An identity parameter that is passed in but never used to scope the data or action.
+- `=` where `==` was meant; decode where verify was meant; async work that nobody awaits; closures capturing a shared loop variable.
+- Locks, files, sockets, and transactions that are not released on every exit path, exceptions included.
+- Money in floats; integer vs float division; math on possibly empty collections; off-by-one and 0-based vs 1-based; default sort order on numbers.
+- Naive vs timezone-aware datetimes; wall clock vs monotonic clock.
+- Mutable default arguments; inputs mutated in place; check-then-act races.
+- Errors swallowed so failure looks like success; fail-open on exception.
 
-## Phase 3 - First-principles check
-For each function that changed, state in one line: inputs, invariants it must keep, state it mutates, trust level of each input. A defect is a case where an invariant can break. If you cannot name the broken invariant, you do not have a finding.
+Do not flag these without further evidence, they are usually fine: whitelisted values interpolated into SQL; randomness or hashes used for jitter or cache validators; error swallowing that is documented as the contract; `x == null` as a null-or-undefined check; duplicate work that is idempotent and explicitly accepted; list-form subprocess calls with constant arguments.
 
-## Phase 4 - Attack your own candidates
-For each candidate defect:
-1. Construct the concrete failing input or sequence (a specific request, value, ordering, or exception).
-2. Try to refute it: is it guarded earlier, unreachable, or documented as intended? Check the code that is provided before concluding.
-3. Check second-order effects: callers, retries, concurrent use, empty or huge input.
-Drop candidates you cannot support. Downgrade to UNVERIFIED those that depend on code you cannot see.
+## 3. Trace what must hold
+For each changed function write one line: its inputs, the invariant it must preserve, the state it mutates, and how much each input can be trusted. A defect is a concrete way an invariant breaks. If you cannot name the invariant that breaks, you do not have a finding yet.
 
-## Phase 5 - Converge and report
-Report only findings that survived Phase 4, most severe first:
-- `file:line` (the line where the defect lives, not the function header)
-- severity: critical (exploitable, data loss, wrong results in normal use), warning (wrong in edge cases, will bite later), suggestion (real but minor)
-- what is wrong, the failing scenario in one or two sentences, confidence (high/medium/low), and a minimal fix
+## 4. Try to knock down each candidate
+1. Build the specific input or sequence that triggers it (a request, a value, an ordering, an exception).
+2. Look for a guard, an unreachable path, or a documented intent that already covers it. Check the code you were given before concluding.
+3. Ask what else it touches: callers, retries, concurrent use, empty or huge input.
+Drop what you cannot support. Move to UNVERIFIED what depends on code you cannot see.
+
+## 5. Report
+Most severe first, only what survived step 4:
+- `file:line` where the defect actually lives
+- severity: critical (exploitable, data loss, or wrong in normal use), warning (wrong in edge cases), suggestion (real but minor)
+- what is wrong, the failing scenario in one or two sentences, confidence (high/medium/low), and the smallest fix
+
 Then two short lists:
-- CHECKED AND OK: suspicious-looking spots you examined and cleared, with the reason (this is what prevents false alarms from being re-raised).
+- CHECKED AND OK: suspicious-looking spots you cleared, each with the reason.
 - UNVERIFIED: risks that depend on unseen code or runtime behavior.
-If nothing survived, say so plainly. Do not pad with style nitpicks, naming opinions, or generic best practices. Match the project's existing style.
+
+If nothing survived, say so plainly. No style nitpicks, naming opinions, or generic best-practice padding. Follow the project's existing style.

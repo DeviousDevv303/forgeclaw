@@ -56,7 +56,7 @@ Why it is the target:
 Runners-up, if this one is rejected: `humanize-writing` (816), `prompt-engineer` (587), `git-commit-writer` (484, overlaps our attribution skill), and the top paid ones (`prompt-dataset-builder` 162, `incident-postmortem-1` 151, `temporal-reasoning-sleuth` 118).
 
 ## Our version
-`skill/SKILL.md` (`evidence-code-review`): the 5-phase protocol applied to review. Differentiators: every finding needs a line cite and concrete failing scenario; candidates are attacked before reporting; a CHECKED AND OK list suppresses known false-positive traps; unverifiable risks are labeled UNVERIFIED; depth scales with blast radius.
+`skill/SKILL.md` (`evidence-code-review`). Differentiators: every finding needs a line cite and concrete failing scenario; candidates are attacked before reporting; a CHECKED AND OK list suppresses known false-positive traps; unverifiable risks are labeled UNVERIFIED; depth scales with blast radius.
 
 ## Proof
 See `eval/README.md` and `eval/RESULTS.md`.
