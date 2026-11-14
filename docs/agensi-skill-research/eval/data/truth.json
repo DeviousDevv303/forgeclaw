@@ -1,0 +1,177 @@
+{
+  "f1_orders_repo.py": {
+    "bugs": [
+      {
+        "id": "b1",
+        "line": 18,
+        "note": "off-by-one: 1-based page skips the first page"
+      },
+      {
+        "id": "b2",
+        "line": 28,
+        "note": "sql injection"
+      },
+      {
+        "id": "b3",
+        "line": 38,
+        "note": "missing ownership check (customer_id unused)"
+      }
+    ],
+    "decoys": [
+      {
+        "id": "d1",
+        "line": 22,
+        "note": "column comes from a whitelist"
+      },
+      {
+        "id": "d2",
+        "line": 51,
+        "note": "random used for retry jitter, not security"
+      }
+    ]
+  },
+  "f2_auth.js": {
+    "bugs": [
+      {
+        "id": "b1",
+        "line": 14,
+        "note": "decode does not verify the signature"
+      },
+      {
+        "id": "b2",
+        "line": 24,
+        "note": "assignment instead of comparison"
+      },
+      {
+        "id": "b3",
+        "line": 35,
+        "note": "async callback not awaited; response sent before deletes finish, rejections unhandled"
+      }
+    ],
+    "decoys": [
+      {
+        "id": "d1",
+        "line": 6,
+        "note": "fails closed at startup"
+      },
+      {
+        "id": "d2",
+        "line": 31,
+        "note": "radix given, sane default"
+      }
+    ]
+  },
+  "f3_billing.py": {
+    "bugs": [
+      {
+        "id": "b1",
+        "line": 13,
+        "note": "mutable default argument is appended to below and leaks across calls"
+      },
+      {
+        "id": "b2",
+        "line": 19,
+        "note": "money converted to float for tax"
+      },
+      {
+        "id": "b3",
+        "line": 25,
+        "note": "naive now() compared to aware datetime raises TypeError"
+      }
+    ],
+    "decoys": [
+      {
+        "id": "d1",
+        "line": 10,
+        "note": "Decimal from str is correct"
+      },
+      {
+        "id": "d2",
+        "line": 32,
+        "note": "documented, intentional fallback"
+      }
+    ]
+  },
+  "f4_uploads.py": {
+    "bugs": [
+      {
+        "id": "b1",
+        "line": 14,
+        "note": "path traversal via ../ or absolute filename"
+      },
+      {
+        "id": "b2",
+        "line": 23,
+        "note": "if the write raises, the lock is never released and every later upload blocks"
+      },
+      {
+        "id": "b3",
+        "line": 32,
+        "note": "shell command injection through path"
+      }
+    ],
+    "decoys": [
+      {
+        "id": "d1",
+        "line": 28,
+        "note": "md5 for etag"
+      },
+      {
+        "id": "d2",
+        "line": 36,
+        "note": "list form, constant argument"
+      }
+    ]
+  },
+  "f5_stats.js": {
+    "bugs": [
+      {
+        "id": "b1",
+        "line": 4,
+        "note": "default sort is lexicographic on numbers and mutates the caller's array"
+      },
+      {
+        "id": "b2",
+        "line": 17,
+        "note": "empty array gives NaN that propagates to the UI"
+      },
+      {
+        "id": "b3",
+        "line": 22,
+        "note": "var is shared; every callback sees i === jobs.length and runs undefined"
+      }
+    ],
+    "decoys": [
+      {
+        "id": "d1",
+        "line": 10,
+        "note": "copied and numerically sorted"
+      },
+      {
+        "id": "d2",
+        "line": 27,
+        "note": "== null idiom covers null and undefined"
+      }
+    ]
+  },
+  "f6_retry.py": {
+    "bugs": [],
+    "decoys": [
+      {
+        "id": "d1",
+        "line": 16,
+        "note": ""
+      },
+      {
+        "id": "d2",
+        "line": 28,
+        "note": "logs then re-raises on the final attempt"
+      },
+      {
+        "id": "d3",
+        "line": 42,
+        "note": "documented contract"
+      }
+    ]
+  }
+}
