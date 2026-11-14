@@ -46,12 +46,12 @@ describe('isSimulationRequest: ordinary talk is left alone', () => {
   })
 })
 
-describe('SIMULATION_UNAVAILABLE_NOTICE', () => {
-  it('says plainly that nothing ran, why, and what works now, without claiming Nexus answered', () => {
-    expect(SIMULATION_UNAVAILABLE_NOTICE).toMatch(/No simulation was run/)
-    expect(SIMULATION_UNAVAILABLE_NOTICE).toMatch(/MiroFish/)
+describe('SIMULATION_UNAVAILABLE_NOTICE (the router backstop)', () => {
+  it('says plainly that nothing ran on Nexus, that Nexus was not asked, and where a simulation does run', () => {
+    expect(SIMULATION_UNAVAILABLE_NOTICE).toMatch(/No simulation was run on the Nexus checkpoint/)
     expect(SIMULATION_UNAVAILABLE_NOTICE).toMatch(/Nexus was not asked/)
-    expect(SIMULATION_UNAVAILABLE_NOTICE).toMatch(/Kimi or Claude/)
-    expect(SIMULATION_UNAVAILABLE_NOTICE.length).toBeLessThan(800)
+    expect(SIMULATION_UNAVAILABLE_NOTICE).toMatch(/Kimi or OpenRouter/)
+    expect(SIMULATION_UNAVAILABLE_NOTICE).not.toMatch(/no simulation tool/i)
+    expect(SIMULATION_UNAVAILABLE_NOTICE.length).toBeLessThan(600)
   })
 })

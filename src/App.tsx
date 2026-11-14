@@ -184,6 +184,8 @@ import { extractThinking, DEFAULT_GUARDIAN_POSTURE, type GuardianPosture } from 
 import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { takeGeneratedImage } from './lib/imageArtifact'
 import { runSubAgent, toolsForCapability } from './lib/managedAgent'
+import { isSimulationRequest } from './lib/simulationRequest'
+import { runSimulationRequest } from './lib/simulationRunner'
 import {
   MAX_AGENT_ITERATIONS,
   classifyToolFailure,
@@ -1780,6 +1782,38 @@ function App() {
         emitForge(fundsOk ? { type: 'MISSION_COMPLETE' } : { type: 'MISSION_BLOCKED', reason: fundsReply.slice(0, 140) })
         setRequestStatus(fundsOk ? 'success' : 'blocked')
         setLastRequestError(fundsOk ? '' : fundsReply)
+        setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+        resolveTask(taskId)
+        return
+      }
+
+      // An explicit "run a simulation" request: the in-house fight simulation (fightSimulation.ts), which replaced MiroFish. It runs on a
+      // capable HOSTED model by the keys in Settings, whichever provider is selected for chat (the Nexus checkpoint cannot run it and is
+      // not asked). Its report says it is not evidence about the fight; it moves no stake, weight or position.
+      if (!imageUrl && isSimulationRequest(promptText)) {
+        const simulation = await runSimulationRequest(promptText, {
+          active: activeProvider,
+          keys: { moonshot: moonshotApiKey, openrouter: openrouterApiKey },
+          models: { moonshot: moonshotModel, openrouter: openrouterModel.trim() },
+          allTools: ATTRIBUTED_TOOLS,
+          toolCtx,
+          signal: controller.signal,
+        }).catch((error: unknown): { ok: boolean; text: string; provider?: string; model?: string } =>
+          ({ ok: false, text: `No simulation was completed: ${error instanceof Error ? error.message : String(error)}` }))
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        setMessages(prev => prev.map(message => message.id === msgId
+          ? {
+              ...message,
+              content: withForgeClawSignature(simulation.text),
+              streaming: false,
+              // Attributed to a model only when a hosted model actually ran the personas.
+              ...(simulation.provider ? { provider: simulation.provider, model: simulation.model } : {}),
+              agentPhase: simulation.ok ? 'COMPLETE' : 'BLOCKED',
+            }
+          : message))
+        emitForge(simulation.ok ? { type: 'MISSION_COMPLETE' } : { type: 'MISSION_BLOCKED', reason: simulation.text.slice(0, 140) })
+        setRequestStatus(simulation.ok ? 'success' : 'blocked')
+        setLastRequestError(simulation.ok ? '' : simulation.text)
         setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
         resolveTask(taskId)
         return

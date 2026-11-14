@@ -28,9 +28,11 @@ export function isSimulationRequest(text: string): boolean {
   return RUN_A_SIMULATION.test(message) || SIMULATE_A_FIGHT.test(message)
 }
 
-/** What the Nexus router says instead of dispatching the checkpoint. Provider truth: Nexus was not asked, so it says nothing. */
+/**
+ * What the Nexus router says instead of dispatching the checkpoint, when a simulation request reaches it. In the chat box the request
+ * is run by the in-house fight simulation (App.tsx, simulationRunner.ts) on a hosted model before it ever gets here; this is the
+ * backstop for any path that does reach the checkpoint. Provider truth: Nexus was not asked, so it says nothing.
+ */
 export const SIMULATION_UNAVAILABLE_NOTICE =
-  'No simulation was run. ForgeClaw has no simulation tool any more: the MiroFish swarm simulation was removed on 2026-11-14, ' +
-  'and the Nexus checkpoint cannot run the in-house swarm (spawn_agent) yet, because its first controlled swarm baseline did not ' +
-  'get it to spawn a working sub-agent. Nexus was not asked, so no model answer is shown here. For a fight read now, switch to ' +
-  'Kimi or Claude in Settings and ask for the matchup research: they can use web research, ESPN fight stats and Kalshi prices.'
+  'No simulation was run on the Nexus checkpoint: it cannot run one, and Nexus was not asked. The in-house fight simulation runs on a ' +
+  'hosted model (a Kimi or OpenRouter key set in Settings) and is started from the chat box.'
