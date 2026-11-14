@@ -183,7 +183,6 @@ import { ledgerContinuationLimit, ledgerContinuationPrompt, owedItems, parseRequ
 import { extractThinking, DEFAULT_GUARDIAN_POSTURE, type GuardianPosture } from './lib/guardianGate'
 import type { ToolCall, ToolResult } from './lib/forgeTools'
 import { takeGeneratedImage } from './lib/imageArtifact'
-import { SIM_WORLD_MARKER_RE } from './lib/mirofishSim'
 import { runSubAgent, toolsForCapability } from './lib/managedAgent'
 import {
   MAX_AGENT_ITERATIONS,
@@ -1566,8 +1565,6 @@ function App() {
       // A sim is asked for in many words ("run the sim", "show me the swarm"); a false match only offers a read-only viewer.
       // The paid tool only on words that mean this sim; the read-only viewer on looser ones.
       // The owner writes it several ways ("Myrofish", "miro fish"); a follow-up without the name inherits it from his last messages.
-      'mirofish_sim': ['mirofish', 'myrofish', 'miro fish', 'myro fish', 'swarm sim', 'run the sim', 'run a sim', 'start the sim', 'rerun the sim', 'sim on', 'seed packet'],
-      'mirofish_sim_result': ['mirofish', 'myrofish', 'miro fish', 'myro fish', 'swarm', 'simulation', 'the sim', 'a sim', 'sim result', 'sim world'],
       'espn_fight_stats': ['ufc', 'mma', 'fight stats', 'fightcenter', 'strikes landed', 'significant strikes', 'striking accuracy', 'takedown', 'fight card', 'bantamweight', 'featherweight', 'lightweight', 'welterweight', 'middleweight', 'heavyweight', 'flyweight'],
       'kalshi_markets': ['kalshi', 'prediction market', 'polymarket odds', 'contract price', 'implied probability', 'multiply', 'my funds', 'my money', 'bankroll', 'master plan', 'game plan', 'betting', 'bets'],
       'kalshi_owner_prices': ['kalshi', 'prediction market', 'contract price', 'my prices', 'the prices are', 'priced at', 'betting', 'bets'],
@@ -2002,7 +1999,6 @@ function App() {
       let finalReasoning = ''
       let secondarySynthesisNotice = ''
       let generatedImageUrl: string | undefined
-      let generatedImageKind: 'sim-world' | undefined
       let directImageCompleted = false
       const toolRetryCounts = new Map<string, number>()
       // Loop detection is per run. It was module-level and never cleared, so the same harmless call
@@ -2265,11 +2261,6 @@ function App() {
           break
         }
 
-        // A sim tool registered its illustrated world: attach it to this reply (the model only ever saw the text summary).
-        const simWorld = iterResults.map(toolResult => toolResult.output).join('\n').match(SIM_WORLD_MARKER_RE)
-        const simWorldUrl = simWorld?.[1] ? takeGeneratedImage(simWorld[1]) : undefined
-        if (simWorldUrl) { generatedImageUrl = simWorldUrl; generatedImageKind = 'sim-world' }
-
         // Show progress in the streaming message
         setMessages(prev => prev.map(m => m.id === msgId ? { ...m, content: 'Processing…', streaming: true } : m))
 
@@ -2381,7 +2372,7 @@ function App() {
         ?? buildMessageTrace({ id: msgId, role: 'assistant', content: messageContent, timestamp: Date.now(), plan, agentPhase: effectiveAgentPhase, toolResults: messageToolResults, reasoning: messageReasoning })
 
       setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, content: messageContent, imageUrl: generatedImageUrl, imageKind: generatedImageKind, plan, agentPhase: effectiveAgentPhase, reportLedger: settledLedger?.items, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: resolvedProvider, model: resolvedModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
+        ? { ...m, content: messageContent, imageUrl: generatedImageUrl, plan, agentPhase: effectiveAgentPhase, reportLedger: settledLedger?.items, streaming: false, activeTags: tagsFound, thinking, trace: messageTrace, provider: resolvedProvider, model: resolvedModel, toolResults: messageToolResults, showReasoning: false, reasoning: messageReasoning }
         : m
       ))
       setRequestStatus(completionBlocked || hasUnresolvedToolFailure || ledgerIncomplete ? 'blocked' : 'success')
