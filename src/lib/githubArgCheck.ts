@@ -89,8 +89,10 @@ function checkStartLine(input: Record<string, unknown>, problems: string[]): voi
 }
 
 /** Returns null when the call is fine, otherwise one short paragraph naming every bad field and how to recover. */
-export function checkGithubReadArgs(tool: string, input: Record<string, unknown>): string | null {
+export function checkGithubReadArgs(tool: string, rawInput: Record<string, unknown> | undefined): string | null {
   if (!OWNER_REPO_TOOLS.has(tool)) return null
+  // A missing or non-object input is "no arguments" (so a read with no path is refused, not a TypeError).
+  const input: Record<string, unknown> = rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput) ? rawInput : {}
   const problems: string[] = []
   checkOwnerRepo(input, problems)
   if (tool === 'github_read_file') {

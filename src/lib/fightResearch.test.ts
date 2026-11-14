@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   FIGHTER_STATE_MAX_WEIGHT_PCT, FIGHT_RATIONALE_MAX_CHARS, FIGHT_SECTIONS, FUNDS_SENTIMENT_MAX_WEIGHT_PCT, SENTIMENT_MAX_LINKS, allowedSentimentWeightPct, checkFightRationale,
-  crowdLeanFromScan, extractSentimentSnapshot, fightRefusal, fightTemplateSkeleton, isFightMarket, parseFightRationale, swarmSimFromFusion,
+  crowdLeanFromScan, extractSentimentSnapshot, fightRefusal, fightTemplateSkeleton, isFightMarket, parseFightRationale,
 } from './fightResearch'
 
 const BARS = { minNetEdgeCents: 5, minNetEdgeExtremeCents: 10, extremeLowCents: 15, extremeHighCents: 85 }
@@ -273,45 +273,14 @@ describe('FIGHTER STATE: the fighters\' own posts, at a small fixed weight (owne
   })
 })
 
-describe('the optional swarm sim line in FUSION (MiroFish lane)', () => {
-  const withSim = (line: string) => GOOD.replace('fighter-state weight: 0%.', `fighter-state weight: 0%. ${line}`)
-  const checkSim = (rationale: string, expectedSimWeightPct?: number) =>
-    checkFightRationale({ rationale, probability: 0.62, price: 0.55, expectedSimWeightPct }, BARS)
-
-  it('a rationale without the line is complete — its absence never fails', () => {
-    expect(checkSim(GOOD).ok).toBe(true)
-    expect(checkSim(GOOD, 0).ok).toBe(true)
+describe('the swarm sim lane is gone (MiroFish removed 2026-11-14)', () => {
+  it('a rationale needs no swarm sim line and the check never asks for one', () => {
+    expect(checkFightRationale({ rationale: GOOD, probability: 0.62, price: 0.55 }, BARS).ok).toBe(true)
   })
 
-  it('a well-formed line at the earned weight passes, and parses back', () => {
-    const rationale = withSim('swarm sim: 62% YES (weight 0%, run sim-20261024-yan)')
-    expect(checkSim(rationale, 0)).toEqual({ ok: true, problems: [] })
-    const fusion = parseFightRationale(rationale).get('fusion')!
-    expect(swarmSimFromFusion(fusion)).toEqual({ medianPct: 62, side: 'YES', weightPct: 0, runId: 'sim-20261024-yan' })
-  })
-
-  it('a weight-0 line validates: the run is recorded for calibration even when it moves nothing', () => {
-    expect(checkSim(withSim('swarm sim: 44% NO (weight 0%, run sim-20261024-merab)'), 0).ok).toBe(true)
-  })
-
-  it('a stated weight that is not the lane\'s earned weight is refused', () => {
-    const result = checkSim(withSim('swarm sim: 62% YES (weight 10%, run sim-20261024-yan)'), 0)
-    expect(result.ok).toBe(false)
-    expect(result.problems.join('\n')).toContain('swarm sim weight 10% is not the sim lane\'s earned weight (0%)')
-    const earned = checkSim(withSim('swarm sim: 62% YES (weight 10%, run sim-20261024-yan)'), 10)
-    expect(earned.ok).toBe(true)
-  })
-
-  it('a malformed swarm sim line fails the check — present means held to the format', () => {
-    const prose = checkSim(withSim('swarm sim: the swarm liked Yan here (weight 0%)'), 0)
-    expect(prose.ok).toBe(false)
-    expect(prose.problems.join('\n')).toContain('swarm sim line is malformed')
-    const impossible = checkSim(withSim('swarm sim: 140% YES (weight 0%, run sim-x)'), 0)
-    expect(impossible.ok).toBe(false)
-    expect(impossible.problems.join('\n')).toContain('swarm sim line is malformed')
-  })
-
-  it('with no earned weight passed in, only the format is held (the checker stays pure)', () => {
-    expect(checkSim(withSim('swarm sim: 62% YES (weight 10%, run sim-20261024-yan)')).ok).toBe(true)
+  it('the remaining lanes\' caps are unchanged: the fighter-state read still tops out at 3%', () => {
+    expect(FIGHTER_STATE_MAX_WEIGHT_PCT).toBe(3)
+    const over = GOOD.replace('fighter-state weight: 0%', 'fighter-state weight: 9%')
+    expect(checkFightRationale({ rationale: over, probability: 0.62, price: 0.55 }, BARS).ok).toBe(false)
   })
 })

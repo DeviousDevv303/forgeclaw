@@ -214,7 +214,7 @@ import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
 import { isPublicVisitor } from './lib/publicRelay'
-import { toolArgumentRefusal } from './lib/toolArgumentValidation'
+import { checkGithubReadArgs } from './lib/githubArgCheck'
 import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, mergeChannelCalls, readPendingChannelCalls, savePendingChannelCalls, type ChannelCall } from './lib/channelCalls'
 
 /** Shown when the free model, /sculpt or /patch is used with no GitHub token: all three run on GitHub Actions. */
@@ -2177,7 +2177,10 @@ function App() {
   }
   // Refusal-only argument check for the GitHub read tools (#235, owner directive 2026-11-13): a call such as
   // github_read_file { path: ':', owner: '.', start_line: 257257207 } is answered with a legible failed result, not dispatched.
-  const argumentRefusal = toolArgumentRefusal(call.name, call.input)
+  // The one validator (githubArgCheck.ts) is also the backstop inside executeTool, which covers sub-agents and other callers;
+  // here, in the main loop, a refusal must additionally be recorded as a call that never ran so a corrected call can resolve it.
+  const argumentProblem = checkGithubReadArgs(call.name, call.input)
+  const argumentRefusal = argumentProblem ? `[TOOL ERROR] ${argumentProblem}` : null
   if (argumentRefusal) {
     iterResults.push({ toolCallId: call.id, name: call.name, output: argumentRefusal, isError: true })
     void recordLearning({ channel: 'tool', input: `${call.name} ${JSON.stringify(call.input).slice(0, 500)}`, result: argumentRefusal, outcome: 'failed', toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })
