@@ -1,0 +1,801 @@
+{
+  "row_id": "sw-016",
+  "evidence_type": "Manus-run deployed live UI, Run 25 checkpoint",
+  "end_to_end": true,
+  "prompt_verbatim": "Something is wrong with image generation learning records. The warning text is '[NEXUS LEARNING WARNING] Image generation succeeded, but NEXUS could not save this learning record' and it is built in src/lib/forgeTools.ts around line 2237 and surfaced in src/App.tsx around line 2363. Investigate both places in parallel and tell me how the warning travels.",
+  "started_at": "2026-11-14T00:59:34.218919+00:00",
+  "deployed_version": {
+    "commit": "117375062fdf",
+    "builtAt": "2026-11-14T00:54:48.283Z"
+  },
+  "root_invocation_ids": [
+    "nexus-1794617974818-5ka0ug"
+  ],
+  "invocations": [
+    {
+      "workflow": "nexus-intelligence.yml",
+      "inputs": {
+        "task": "Something is wrong with image generation learning records. The warning text is '[NEXUS LEARNING WARNING] Image generation succeeded, but NEXUS could not save this learning record' and it is built in src/lib/forgeTools.ts around line 2237 and surfaced in src/App.tsx around line 2363. Investigate both places in parallel and tell me how the warning travels.",
+        "context": "",
+        "mode": "create",
+        "invocation_id": "nexus-1794617974818-5ka0ug"
+      },
+      "status": 204
+    }
+  ],
+  "raw_nexus_segments": [
+    {
+      "invocation_id": "nexus-1794617974818-5ka0ug",
+      "status": 200,
+      "raw_segment": "<|route:direct|><|ev:not_verified|><|answer|>Kalshi lists threo vs generRMED — src/lib/fundsLED — # in a read of exactly (<|/answer|><|end|>"
+    }
+  ],
+  "parent_segments": [
+    "<|route:direct|><|ev:not_verified|><|answer|>Kalshi lists threo vs generRMED — src/lib/fundsLED — # in a read of exactly (<|/answer|><|end|>"
+  ],
+  "parent_contexts": [],
+  "child_segments": [],
+  "child_returns": [],
+  "parent_final_answer": "Kalshi lists threo vs generRMED — src/lib/fundsLED — # in a read of exactly (",
+  "rendered_answer": "Kalshi lists threo vs generRMED — src/lib/fundsLED — # in a read of exactly (\nNote: this is the Nexus checkpoint answering alone. It is a small tool-call specialist and is not reliable on general questions yet; for those, switch to Qwen or Kimi in Settings.\n\n— ForgeClaw",
+  "ui_before_prompt": "⚙\nFORGECLAW\nEnglish\nEspañol\nРусский\n中文\nGH\nWA\nNexus Intelligence · Run 25 checkpoint\nWIPE\nEXPORT\nFORGE\nAGENTS\nNEXUS\nACTIVITY\nSETTINGS\n🕷 in flight 0 · returned 0 · flagged 0 · unknown 0\n▸\nas of 00:59:34 · counting since 00:59:34 (this session)\nambient life · seed 11 · not tool events, not counted\n\nSystem initialized. Awaiting input...\n\n💤\nCristian's Computer\nSystem idle\n▶\n⚡ AUTONOMOUS\nall operations run without co-sign\n📎\n🛠️\nTEXT\nSEND\nMADE IN COLORADO WITH LOVE\nFORGECLAW · AUTONOMOUS REASONING ENGINE · BUILT BY DEVIOUSDEVV303",
+  "blocked_requests": [],
+  "workflow_run_snapshots": [
+    {
+      "path": "/repos/DeviousDevv303/forgeclaw/actions/workflows/nexus-intelligence.yml/runs",
+      "status": 200,
+      "runs": [
+        {
+          "id": 43537651946,
+          "name": "Nexus Intelligence nexus-1794617913098-cjx9l4",
+          "display_title": "Nexus Intelligence nexus-1794617913098-cjx9l4",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43537651946",
+          "run_number": 25
+        },
+        {
+          "id": 43534087232,
+          "name": "Nexus Intelligence nexus-1794615925208-dd7c4k",
+          "display_title": "Nexus Intelligence nexus-1794615925208-dd7c4k",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43534087232",
+          "run_number": 24
+        },
+        {
+          "id": 43531568037,
+          "name": "Nexus Intelligence nexus-1794614615239-k3v3mv",
+          "display_title": "Nexus Intelligence nexus-1794614615239-k3v3mv",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43531568037",
+          "run_number": 23
+        },
+        {
+          "id": 43529590869,
+          "name": "Nexus Intelligence nexus-1794613585856-cixxzx",
+          "display_title": "Nexus Intelligence nexus-1794613585856-cixxzx",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43529590869",
+          "run_number": 22
+        },
+        {
+          "id": 43174789736,
+          "name": "Nexus Intelligence nexus-audit-20261112-0118",
+          "display_title": "Nexus Intelligence nexus-audit-20261112-0118",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43174789736",
+          "run_number": 21
+        },
+        {
+          "id": 43171149625,
+          "name": "Nexus Intelligence nexus-1794466330007-pxznhh",
+          "display_title": "Nexus Intelligence nexus-1794466330007-pxznhh",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43171149625",
+          "run_number": 20
+        },
+        {
+          "id": 43170633841,
+          "name": "Nexus Intelligence nexus-1794466058897-kvkilf",
+          "display_title": "Nexus Intelligence nexus-1794466058897-kvkilf",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43170633841",
+          "run_number": 19
+        },
+        {
+          "id": 43169112133,
+          "name": "Nexus Intelligence nexus-1794465286349-g1v1ov",
+          "display_title": "Nexus Intelligence nexus-1794465286349-g1v1ov",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43169112133",
+          "run_number": 18
+        },
+        {
+          "id": 43168995835,
+          "name": "Nexus Intelligence nexus-1794465225553-f0znss",
+          "display_title": "Nexus Intelligence nexus-1794465225553-f0znss",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43168995835",
+          "run_number": 17
+        },
+        {
+          "id": 43168870548,
+          "name": "Nexus Intelligence nexus-1794465158829-rle2di",
+          "display_title": "Nexus Intelligence nexus-1794465158829-rle2di",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43168870548",
+          "run_number": 16
+        },
+        {
+          "id": 43167442233,
+          "name": "Nexus Intelligence nexus-1794464423213-rcr8f8",
+          "display_title": "Nexus Intelligence nexus-1794464423213-rcr8f8",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43167442233",
+          "run_number": 15
+        },
+        {
+          "id": 43165589710,
+          "name": "Nexus Intelligence nexus-1794463472985-z2sfds",
+          "display_title": "Nexus Intelligence nexus-1794463472985-z2sfds",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43165589710",
+          "run_number": 14
+        },
+        {
+          "id": 43163713374,
+          "name": "Nexus Intelligence nexus-1794462447807-sa8ucs",
+          "display_title": "Nexus Intelligence nexus-1794462447807-sa8ucs",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43163713374",
+          "run_number": 13
+        },
+        {
+          "id": 43144975862,
+          "name": "Nexus Intelligence nexus-1794452284320-dfd3f4",
+          "display_title": "Nexus Intelligence nexus-1794452284320-dfd3f4",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144975862",
+          "run_number": 12
+        },
+        {
+          "id": 43144786608,
+          "name": "Nexus Intelligence nexus-1794452177430-ufn395",
+          "display_title": "Nexus Intelligence nexus-1794452177430-ufn395",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144786608",
+          "run_number": 11
+        },
+        {
+          "id": 43144478034,
+          "name": "Nexus Intelligence nexus-1794452009293-ffzt0r",
+          "display_title": "Nexus Intelligence nexus-1794452009293-ffzt0r",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144478034",
+          "run_number": 10
+        },
+        {
+          "id": 43144385076,
+          "name": "Nexus Intelligence nexus-1794451958477-3sn691",
+          "display_title": "Nexus Intelligence nexus-1794451958477-3sn691",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144385076",
+          "run_number": 9
+        },
+        {
+          "id": 43132723642,
+          "name": "Nexus Intelligence nexus-1794445873409-2re6x2",
+          "display_title": "Nexus Intelligence nexus-1794445873409-2re6x2",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132723642",
+          "run_number": 8
+        },
+        {
+          "id": 43132601209,
+          "name": "Nexus Intelligence nexus-1794445811399-mf8b7h",
+          "display_title": "Nexus Intelligence nexus-1794445811399-mf8b7h",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132601209",
+          "run_number": 7
+        },
+        {
+          "id": 43132275810,
+          "name": "Nexus Intelligence nexus-1794445647696-34ohie",
+          "display_title": "Nexus Intelligence nexus-1794445647696-34ohie",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132275810",
+          "run_number": 6
+        }
+      ]
+    },
+    {
+      "path": "/repos/DeviousDevv303/forgeclaw/actions/workflows/nexus-intelligence.yml/runs",
+      "status": 200,
+      "runs": [
+        {
+          "id": 43537651946,
+          "name": "Nexus Intelligence nexus-1794617913098-cjx9l4",
+          "display_title": "Nexus Intelligence nexus-1794617913098-cjx9l4",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43537651946",
+          "run_number": 25
+        },
+        {
+          "id": 43534087232,
+          "name": "Nexus Intelligence nexus-1794615925208-dd7c4k",
+          "display_title": "Nexus Intelligence nexus-1794615925208-dd7c4k",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43534087232",
+          "run_number": 24
+        },
+        {
+          "id": 43531568037,
+          "name": "Nexus Intelligence nexus-1794614615239-k3v3mv",
+          "display_title": "Nexus Intelligence nexus-1794614615239-k3v3mv",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43531568037",
+          "run_number": 23
+        },
+        {
+          "id": 43529590869,
+          "name": "Nexus Intelligence nexus-1794613585856-cixxzx",
+          "display_title": "Nexus Intelligence nexus-1794613585856-cixxzx",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43529590869",
+          "run_number": 22
+        },
+        {
+          "id": 43174789736,
+          "name": "Nexus Intelligence nexus-audit-20261112-0118",
+          "display_title": "Nexus Intelligence nexus-audit-20261112-0118",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43174789736",
+          "run_number": 21
+        },
+        {
+          "id": 43171149625,
+          "name": "Nexus Intelligence nexus-1794466330007-pxznhh",
+          "display_title": "Nexus Intelligence nexus-1794466330007-pxznhh",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43171149625",
+          "run_number": 20
+        },
+        {
+          "id": 43170633841,
+          "name": "Nexus Intelligence nexus-1794466058897-kvkilf",
+          "display_title": "Nexus Intelligence nexus-1794466058897-kvkilf",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43170633841",
+          "run_number": 19
+        },
+        {
+          "id": 43169112133,
+          "name": "Nexus Intelligence nexus-1794465286349-g1v1ov",
+          "display_title": "Nexus Intelligence nexus-1794465286349-g1v1ov",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43169112133",
+          "run_number": 18
+        },
+        {
+          "id": 43168995835,
+          "name": "Nexus Intelligence nexus-1794465225553-f0znss",
+          "display_title": "Nexus Intelligence nexus-1794465225553-f0znss",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43168995835",
+          "run_number": 17
+        },
+        {
+          "id": 43168870548,
+          "name": "Nexus Intelligence nexus-1794465158829-rle2di",
+          "display_title": "Nexus Intelligence nexus-1794465158829-rle2di",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43168870548",
+          "run_number": 16
+        },
+        {
+          "id": 43167442233,
+          "name": "Nexus Intelligence nexus-1794464423213-rcr8f8",
+          "display_title": "Nexus Intelligence nexus-1794464423213-rcr8f8",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43167442233",
+          "run_number": 15
+        },
+        {
+          "id": 43165589710,
+          "name": "Nexus Intelligence nexus-1794463472985-z2sfds",
+          "display_title": "Nexus Intelligence nexus-1794463472985-z2sfds",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43165589710",
+          "run_number": 14
+        },
+        {
+          "id": 43163713374,
+          "name": "Nexus Intelligence nexus-1794462447807-sa8ucs",
+          "display_title": "Nexus Intelligence nexus-1794462447807-sa8ucs",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43163713374",
+          "run_number": 13
+        },
+        {
+          "id": 43144975862,
+          "name": "Nexus Intelligence nexus-1794452284320-dfd3f4",
+          "display_title": "Nexus Intelligence nexus-1794452284320-dfd3f4",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144975862",
+          "run_number": 12
+        },
+        {
+          "id": 43144786608,
+          "name": "Nexus Intelligence nexus-1794452177430-ufn395",
+          "display_title": "Nexus Intelligence nexus-1794452177430-ufn395",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144786608",
+          "run_number": 11
+        },
+        {
+          "id": 43144478034,
+          "name": "Nexus Intelligence nexus-1794452009293-ffzt0r",
+          "display_title": "Nexus Intelligence nexus-1794452009293-ffzt0r",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144478034",
+          "run_number": 10
+        },
+        {
+          "id": 43144385076,
+          "name": "Nexus Intelligence nexus-1794451958477-3sn691",
+          "display_title": "Nexus Intelligence nexus-1794451958477-3sn691",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144385076",
+          "run_number": 9
+        },
+        {
+          "id": 43132723642,
+          "name": "Nexus Intelligence nexus-1794445873409-2re6x2",
+          "display_title": "Nexus Intelligence nexus-1794445873409-2re6x2",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132723642",
+          "run_number": 8
+        },
+        {
+          "id": 43132601209,
+          "name": "Nexus Intelligence nexus-1794445811399-mf8b7h",
+          "display_title": "Nexus Intelligence nexus-1794445811399-mf8b7h",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132601209",
+          "run_number": 7
+        },
+        {
+          "id": 43132275810,
+          "name": "Nexus Intelligence nexus-1794445647696-34ohie",
+          "display_title": "Nexus Intelligence nexus-1794445647696-34ohie",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132275810",
+          "run_number": 6
+        }
+      ]
+    },
+    {
+      "path": "/repos/DeviousDevv303/forgeclaw/actions/workflows/nexus-intelligence.yml/runs",
+      "status": 200,
+      "runs": [
+        {
+          "id": 43537651946,
+          "name": "Nexus Intelligence nexus-1794617913098-cjx9l4",
+          "display_title": "Nexus Intelligence nexus-1794617913098-cjx9l4",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43537651946",
+          "run_number": 25
+        },
+        {
+          "id": 43534087232,
+          "name": "Nexus Intelligence nexus-1794615925208-dd7c4k",
+          "display_title": "Nexus Intelligence nexus-1794615925208-dd7c4k",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43534087232",
+          "run_number": 24
+        },
+        {
+          "id": 43531568037,
+          "name": "Nexus Intelligence nexus-1794614615239-k3v3mv",
+          "display_title": "Nexus Intelligence nexus-1794614615239-k3v3mv",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43531568037",
+          "run_number": 23
+        },
+        {
+          "id": 43529590869,
+          "name": "Nexus Intelligence nexus-1794613585856-cixxzx",
+          "display_title": "Nexus Intelligence nexus-1794613585856-cixxzx",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43529590869",
+          "run_number": 22
+        },
+        {
+          "id": 43174789736,
+          "name": "Nexus Intelligence nexus-audit-20261112-0118",
+          "display_title": "Nexus Intelligence nexus-audit-20261112-0118",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43174789736",
+          "run_number": 21
+        },
+        {
+          "id": 43171149625,
+          "name": "Nexus Intelligence nexus-1794466330007-pxznhh",
+          "display_title": "Nexus Intelligence nexus-1794466330007-pxznhh",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43171149625",
+          "run_number": 20
+        },
+        {
+          "id": 43170633841,
+          "name": "Nexus Intelligence nexus-1794466058897-kvkilf",
+          "display_title": "Nexus Intelligence nexus-1794466058897-kvkilf",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43170633841",
+          "run_number": 19
+        },
+        {
+          "id": 43169112133,
+          "name": "Nexus Intelligence nexus-1794465286349-g1v1ov",
+          "display_title": "Nexus Intelligence nexus-1794465286349-g1v1ov",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43169112133",
+          "run_number": 18
+        },
+        {
+          "id": 43168995835,
+          "name": "Nexus Intelligence nexus-1794465225553-f0znss",
+          "display_title": "Nexus Intelligence nexus-1794465225553-f0znss",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43168995835",
+          "run_number": 17
+        },
+        {
+          "id": 43168870548,
+          "name": "Nexus Intelligence nexus-1794465158829-rle2di",
+          "display_title": "Nexus Intelligence nexus-1794465158829-rle2di",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43168870548",
+          "run_number": 16
+        },
+        {
+          "id": 43167442233,
+          "name": "Nexus Intelligence nexus-1794464423213-rcr8f8",
+          "display_title": "Nexus Intelligence nexus-1794464423213-rcr8f8",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43167442233",
+          "run_number": 15
+        },
+        {
+          "id": 43165589710,
+          "name": "Nexus Intelligence nexus-1794463472985-z2sfds",
+          "display_title": "Nexus Intelligence nexus-1794463472985-z2sfds",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43165589710",
+          "run_number": 14
+        },
+        {
+          "id": 43163713374,
+          "name": "Nexus Intelligence nexus-1794462447807-sa8ucs",
+          "display_title": "Nexus Intelligence nexus-1794462447807-sa8ucs",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43163713374",
+          "run_number": 13
+        },
+        {
+          "id": 43144975862,
+          "name": "Nexus Intelligence nexus-1794452284320-dfd3f4",
+          "display_title": "Nexus Intelligence nexus-1794452284320-dfd3f4",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144975862",
+          "run_number": 12
+        },
+        {
+          "id": 43144786608,
+          "name": "Nexus Intelligence nexus-1794452177430-ufn395",
+          "display_title": "Nexus Intelligence nexus-1794452177430-ufn395",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144786608",
+          "run_number": 11
+        },
+        {
+          "id": 43144478034,
+          "name": "Nexus Intelligence nexus-1794452009293-ffzt0r",
+          "display_title": "Nexus Intelligence nexus-1794452009293-ffzt0r",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144478034",
+          "run_number": 10
+        },
+        {
+          "id": 43144385076,
+          "name": "Nexus Intelligence nexus-1794451958477-3sn691",
+          "display_title": "Nexus Intelligence nexus-1794451958477-3sn691",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144385076",
+          "run_number": 9
+        },
+        {
+          "id": 43132723642,
+          "name": "Nexus Intelligence nexus-1794445873409-2re6x2",
+          "display_title": "Nexus Intelligence nexus-1794445873409-2re6x2",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132723642",
+          "run_number": 8
+        },
+        {
+          "id": 43132601209,
+          "name": "Nexus Intelligence nexus-1794445811399-mf8b7h",
+          "display_title": "Nexus Intelligence nexus-1794445811399-mf8b7h",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132601209",
+          "run_number": 7
+        },
+        {
+          "id": 43132275810,
+          "name": "Nexus Intelligence nexus-1794445647696-34ohie",
+          "display_title": "Nexus Intelligence nexus-1794445647696-34ohie",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132275810",
+          "run_number": 6
+        }
+      ]
+    },
+    {
+      "path": "/repos/DeviousDevv303/forgeclaw/actions/workflows/nexus-intelligence.yml/runs",
+      "status": 200,
+      "runs": [
+        {
+          "id": 43537752436,
+          "name": "Nexus Intelligence nexus-1794617974818-5ka0ug",
+          "display_title": "Nexus Intelligence nexus-1794617974818-5ka0ug",
+          "status": "queued",
+          "conclusion": null,
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43537752436",
+          "run_number": 26
+        },
+        {
+          "id": 43537651946,
+          "name": "Nexus Intelligence nexus-1794617913098-cjx9l4",
+          "display_title": "Nexus Intelligence nexus-1794617913098-cjx9l4",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43537651946",
+          "run_number": 25
+        },
+        {
+          "id": 43534087232,
+          "name": "Nexus Intelligence nexus-1794615925208-dd7c4k",
+          "display_title": "Nexus Intelligence nexus-1794615925208-dd7c4k",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43534087232",
+          "run_number": 24
+        },
+        {
+          "id": 43531568037,
+          "name": "Nexus Intelligence nexus-1794614615239-k3v3mv",
+          "display_title": "Nexus Intelligence nexus-1794614615239-k3v3mv",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43531568037",
+          "run_number": 23
+        },
+        {
+          "id": 43529590869,
+          "name": "Nexus Intelligence nexus-1794613585856-cixxzx",
+          "display_title": "Nexus Intelligence nexus-1794613585856-cixxzx",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43529590869",
+          "run_number": 22
+        },
+        {
+          "id": 43174789736,
+          "name": "Nexus Intelligence nexus-audit-20261112-0118",
+          "display_title": "Nexus Intelligence nexus-audit-20261112-0118",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43174789736",
+          "run_number": 21
+        },
+        {
+          "id": 43171149625,
+          "name": "Nexus Intelligence nexus-1794466330007-pxznhh",
+          "display_title": "Nexus Intelligence nexus-1794466330007-pxznhh",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43171149625",
+          "run_number": 20
+        },
+        {
+          "id": 43170633841,
+          "name": "Nexus Intelligence nexus-1794466058897-kvkilf",
+          "display_title": "Nexus Intelligence nexus-1794466058897-kvkilf",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43170633841",
+          "run_number": 19
+        },
+        {
+          "id": 43169112133,
+          "name": "Nexus Intelligence nexus-1794465286349-g1v1ov",
+          "display_title": "Nexus Intelligence nexus-1794465286349-g1v1ov",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43169112133",
+          "run_number": 18
+        },
+        {
+          "id": 43168995835,
+          "name": "Nexus Intelligence nexus-1794465225553-f0znss",
+          "display_title": "Nexus Intelligence nexus-1794465225553-f0znss",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43168995835",
+          "run_number": 17
+        },
+        {
+          "id": 43168870548,
+          "name": "Nexus Intelligence nexus-1794465158829-rle2di",
+          "display_title": "Nexus Intelligence nexus-1794465158829-rle2di",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43168870548",
+          "run_number": 16
+        },
+        {
+          "id": 43167442233,
+          "name": "Nexus Intelligence nexus-1794464423213-rcr8f8",
+          "display_title": "Nexus Intelligence nexus-1794464423213-rcr8f8",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43167442233",
+          "run_number": 15
+        },
+        {
+          "id": 43165589710,
+          "name": "Nexus Intelligence nexus-1794463472985-z2sfds",
+          "display_title": "Nexus Intelligence nexus-1794463472985-z2sfds",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43165589710",
+          "run_number": 14
+        },
+        {
+          "id": 43163713374,
+          "name": "Nexus Intelligence nexus-1794462447807-sa8ucs",
+          "display_title": "Nexus Intelligence nexus-1794462447807-sa8ucs",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43163713374",
+          "run_number": 13
+        },
+        {
+          "id": 43144975862,
+          "name": "Nexus Intelligence nexus-1794452284320-dfd3f4",
+          "display_title": "Nexus Intelligence nexus-1794452284320-dfd3f4",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144975862",
+          "run_number": 12
+        },
+        {
+          "id": 43144786608,
+          "name": "Nexus Intelligence nexus-1794452177430-ufn395",
+          "display_title": "Nexus Intelligence nexus-1794452177430-ufn395",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144786608",
+          "run_number": 11
+        },
+        {
+          "id": 43144478034,
+          "name": "Nexus Intelligence nexus-1794452009293-ffzt0r",
+          "display_title": "Nexus Intelligence nexus-1794452009293-ffzt0r",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144478034",
+          "run_number": 10
+        },
+        {
+          "id": 43144385076,
+          "name": "Nexus Intelligence nexus-1794451958477-3sn691",
+          "display_title": "Nexus Intelligence nexus-1794451958477-3sn691",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43144385076",
+          "run_number": 9
+        },
+        {
+          "id": 43132723642,
+          "name": "Nexus Intelligence nexus-1794445873409-2re6x2",
+          "display_title": "Nexus Intelligence nexus-1794445873409-2re6x2",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132723642",
+          "run_number": 8
+        },
+        {
+          "id": 43132601209,
+          "name": "Nexus Intelligence nexus-1794445811399-mf8b7h",
+          "display_title": "Nexus Intelligence nexus-1794445811399-mf8b7h",
+          "status": "completed",
+          "conclusion": "success",
+          "html_url": "https://github.com/DeviousDevv303/forgeclaw/actions/runs/43132601209",
+          "run_number": 7
+        }
+      ]
+    }
+  ],
+  "metadata_results": {
+    "nexus-1794617974818-5ka0ug.meta.txt": {
+      "status": 200,
+      "raw": "model=Nexus Intelligence (Run 25 checkpoint)\ncheckpoint_sha256=c41852fb0ac11f47c3ce2fc7715e816e95ec2e844e25881637eabaaac87f69b6\nparams=4479234\nmode=create\nprompt_tokens=135\ncompletion_tokens=33\nprompt_trimmed=false\nelapsed_seconds=2\n"
+    }
+  },
+  "notes": [
+    "The token was injected into a fresh in-memory browser context and is excluded from evidence files.",
+    "Every non-GET/HEAD/OPTIONS request was blocked except dispatches to nexus-intelligence.yml, ddg_search.yml and deep-research.yml.",
+    "No benchmark write/create action is authorized by this harness."
+  ],
+  "screenshot": "sw-016-ui.png"
+}
