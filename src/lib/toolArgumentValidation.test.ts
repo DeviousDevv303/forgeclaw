@@ -1,99 +1,50 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { MAX_PLAUSIBLE_LINE, toolArgumentRefusal } from './toolArgumentValidation'
+import { checkGithubReadArgs } from './githubArgCheck'
+import { toolArgumentRefusal } from './toolArgumentValidation'
 
-describe('toolArgumentRefusal: the call the owner saw under the Nexus provider', () => {
-  it('refuses path ":", owner "." and start_line 257257207, naming all three', () => {
-    const refusal = toolArgumentRefusal('github_read_file', { path: ':', owner: '.', start_line: 257257207 })
-    expect(refusal).toMatch(/^\[TOOL ERROR\] github_read_file was NOT run: /)
-    expect(refusal).toContain('path is ":"')
-    expect(refusal).toContain('owner is "."')
-    expect(refusal).toContain('start_line is 257257207')
-    expect(refusal).toContain('Correct the argument and call again.')
+// The rules and their exhaustive tests live in githubArgCheck(.test).ts. This module only asks that checker early, in the
+// main tool loop, so a refused call can be recorded as a call that never ran.
+
+describe('toolArgumentRefusal delegates to the one rule set', () => {
+  it('refuses the call the owner saw under the Nexus provider, naming path, owner and start_line', () => {
+    const input = { path: ':', owner: '.', start_line: 257257207 }
+    const refusal = toolArgumentRefusal('github_read_file', input)
+    expect(refusal).toMatch(/^\[TOOL ERROR\] github_read_file was refused before it was sent/)
+    expect(refusal).toContain('owner "."')
+    expect(refusal).toContain('path ":"')
+    expect(refusal).toContain('start_line "257257207"')
+    expect(refusal).toBe(`[TOOL ERROR] ${checkGithubReadArgs('github_read_file', input)}`)
   })
 
-  it('stays short enough for a 640-token window', () => {
-    const refusal = toolArgumentRefusal('github_read_file', { path: ':', owner: '.', repo: 'a/b', start_line: 257257207 })!
-    expect(refusal.length).toBeLessThan(600)
-  })
-})
-
-describe('github_read_file', () => {
-  const ok = (input: Record<string, unknown>) => expect(toolArgumentRefusal('github_read_file', input)).toBeNull()
-  const refused = (input: Record<string, unknown>, text: string) => expect(toolArgumentRefusal('github_read_file', input)).toContain(text)
-
-  it('accepts every call that works today', () => {
-    ok({ path: 'src/App.tsx' })
-    ok({ path: '/src/App.tsx' })
-    ok({ path: '.gitignore' })
-    ok({ path: '.github/workflows/shell-exec.yml' })
-    ok({ path: 'README.md', start_line: 1 })
-    ok({ path: 'README.md', start_line: 0 })
-    ok({ path: 'README.md', start_line: '120' })
-    ok({ path: 'README.md', start_line: MAX_PLAUSIBLE_LINE })
-    ok({ path: 'README.md', start_line: null })
-    ok({ path: 'README.md', start_line: '' })
-    ok({ path: 'README.md', owner: 'DeviousDevv303', repo: 'forgeclaw' })
-    ok({ path: 'README.md', owner: '', repo: '' })
-    ok({ path: 'docs/a b.md' })
-    ok({ path: 'nexus-llm/runs/run25/verdict.md', owner: 'a', repo: 'my.repo_name-2' })
+  it('never disagrees with executeTool\'s checker, so the two layers cannot drift', () => {
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ['github_read_file', { path: 'README.md' }], ['github_read_file', { path: ':' }], ['github_read_file', {}],
+      ['github_list_files', { path: '' }], ['github_list_files', { path: ':' }], ['github_search_code', { query: '' }],
+      ['github_get_run_logs', { run_id: 'abc' }], ['github_pr_info', { owner: '.' }], ['shell_exec', { path: ':' }],
+    ]
+    for (const [name, input] of calls) expect(toolArgumentRefusal(name, input) === null).toBe(checkGithubReadArgs(name, input) === null)
   })
 
-  it('refuses a path no request can satisfy', () => {
-    for (const path of [':', '.', '..', './', '/', '///', '-', '   ']) refused({ path }, 'path')
-    refused({}, 'path is missing')
-    refused({ path: null }, 'path is missing')
-    refused({ path: 42 }, 'path is 42')
-    refused({ path: ['a'] }, 'not text')
-    refused({ path: 'src/../etc/passwd' }, '".."')
-    refused({ path: 'a\nb' }, 'control character')
-    refused({ path: 'a'.repeat(501) }, 'over 500 characters')
+  it('accepts what works today (these were wrongly refused by the first copy of the rules)', () => {
+    expect(toolArgumentRefusal('github_read_file', { path: 'README.md', owner: 'acme_corp', repo: 'forgeclaw' })).toBeNull()
+    expect(toolArgumentRefusal('github_read_file', { path: 'README.md', owner: `${'a'.repeat(39)}_shortcode` })).toBeNull()
+    expect(toolArgumentRefusal('github_read_file', { path: 'README.md', start_line: 0 })).toBeNull()
+    expect(toolArgumentRefusal('github_read_file', { path: 'README.md', start_line: -1 })).toBeNull()
+    expect(toolArgumentRefusal('github_read_file', { path: 'README.md', start_line: 2.5 })).toBeNull()
+    expect(toolArgumentRefusal('github_read_file', { path: '/src/App.tsx', start_line: '120' })).toBeNull()
   })
 
-  it('refuses a start_line that is not a whole line number', () => {
-    for (const start_line of [257257207, MAX_PLAUSIBLE_LINE + 1, -1, 2.5, 'abc', '1e9', NaN, Infinity, {}, true]) {
-      refused({ path: 'README.md', start_line }, 'start_line is')
-    }
-  })
-
-  it('refuses an owner or repo that is not a GitHub name', () => {
-    for (const owner of ['.', '..', '-a', 'a-', 'a/b', 'a b', 5, 'x'.repeat(40)]) refused({ path: 'a.md', owner }, 'owner is')
-    for (const repo of ['.', '..', 'a/b', 'a b', 5, 'x'.repeat(101)]) refused({ path: 'a.md', repo }, 'repo is')
-  })
-
-  it('reports at most four problems', () => {
-    const refusal = toolArgumentRefusal('github_read_file', { path: ':', start_line: -1, owner: '.', repo: '..' })!
-    expect(refusal.split('; ').length).toBeLessThanOrEqual(4)
-  })
-})
-
-describe('sibling read tools', () => {
-  it('github_list_files accepts the root and an omitted path, refuses a garbage directory', () => {
-    for (const path of [undefined, '', '.', '/', './', 'src', 'src/lib/', '.github']) expect(toolArgumentRefusal('github_list_files', path === undefined ? {} : { path })).toBeNull()
-    expect(toolArgumentRefusal('github_list_files', { path: ':' })).toContain('directory path')
-    expect(toolArgumentRefusal('github_list_files', { path: '..' })).toContain('".."')
-    expect(toolArgumentRefusal('github_list_files', { path: 'src', owner: '.' })).toContain('owner is "."')
-  })
-
-  it('github_search_code needs a real query', () => {
-    expect(toolArgumentRefusal('github_search_code', { query: 'useState' })).toBeNull()
-    expect(toolArgumentRefusal('github_search_code', { query: 'TODO fixme', owner: 'a', repo: 'b' })).toBeNull()
-    for (const query of [undefined, '', '   ', 5]) expect(toolArgumentRefusal('github_search_code', { query })).toContain('query is missing or empty')
-    expect(toolArgumentRefusal('github_search_code', { query: 'x'.repeat(1001) })).toContain('1001 characters')
-  })
-})
-
-describe('everything else is untouched', () => {
-  it('other tools, and write tools in particular, are never validated here', () => {
-    for (const name of ['shell_exec', 'github_write_file', 'github_create_repo', 'sculpt_self', 'shell_patch', 'nexus_reason', 'qwen_reason', 'unknown_tool']) {
+  it('leaves every other tool alone and never throws on a missing input', () => {
+    for (const name of ['shell_exec', 'github_write_file', 'github_create_repo', 'sculpt_self', 'shell_patch', 'nexus_reason', 'unknown_tool']) {
       expect(toolArgumentRefusal(name, { path: ':', owner: '.', start_line: 257257207 })).toBeNull()
     }
+    expect(toolArgumentRefusal('github_read_file', undefined)).toContain('path is required')
+    expect(toolArgumentRefusal('shell_exec', undefined)).toBeNull()
   })
 
-  it('a missing input object is treated as no arguments, never a throw', () => {
-    expect(toolArgumentRefusal('github_read_file', undefined)).toContain('path is missing')
-    expect(toolArgumentRefusal('github_list_files', undefined)).toBeNull()
-    expect(toolArgumentRefusal('shell_exec', undefined)).toBeNull()
+  it('stays short enough to read back through a 640-token window', () => {
+    expect(toolArgumentRefusal('github_read_file', { path: ':', owner: '.', repo: 'a/b', start_line: 257257207 })!.length).toBeLessThan(900)
   })
 })
 
