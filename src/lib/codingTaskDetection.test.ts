@@ -16,6 +16,8 @@ describe('isCodingTaskRequest: website and deploy requests', () => {
     'Investigate both places in parallel and tell me how the warning travels through src/lib/forgeTools.ts and src/App.tsx',
     'Trace the repository error through the source files and explain what should change',
     'Review the ForgeClaw codebase and analyze the failing workflow path',
+    'Examine src/App.tsx and tell me what this path does',
+    'src/lib/forgeTools.ts contains the shell dispatcher; summarize the relevant branch',
   ])('treats repository investigations as coding tasks: %s', prompt => {
     expect(isCodingTaskRequest(prompt)).toBe(true)
   })
@@ -24,6 +26,7 @@ describe('isCodingTaskRequest: website and deploy requests', () => {
     "what's a good site for recipes",
     'make me laugh',
     'what is the weather today',
+    'what is a .json file?',
   ])('leaves %s as chat', prompt => {
     expect(isCodingTaskRequest(prompt)).toBe(false)
   })
