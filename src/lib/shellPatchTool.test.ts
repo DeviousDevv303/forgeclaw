@@ -7,6 +7,14 @@ import { executeTool, FORGE_TOOLS, type ToolContext } from './forgeTools'
 import { requiresCoSign } from './guardianGate'
 import { CODING_TOOL_ORDER, toolsForCapability } from './managedAgent'
 import { createRunJournal } from './runRollback'
+import { preflightShellPatch, type PreflightVerdict } from './shellPatchPreflight'
+
+// The git apply --check preflight has its own tests (shellPatchPreflight.test.ts). These tests are about what
+// shell-repair.yml does, so the preflight is stubbed to "applies cleanly" here and asserted explicitly below.
+vi.mock('./shellPatchPreflight', async importOriginal => ({
+  ...(await importOriginal<typeof import('./shellPatchPreflight')>()),
+  preflightShellPatch: vi.fn<typeof preflightShellPatch>(async (): Promise<PreflightVerdict> => ({ kind: 'ok' })),
+}))
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -192,3 +200,30 @@ describe('shell_patch gating and exposure', () => {
   })
 })
 
+
+describe('shell_patch preflight wiring (git apply --check before any repair run)', () => {
+  beforeEach(() => { vi.stubGlobal('localStorage', new MemoryStorage()) })
+  afterEach(() => { vi.unstubAllGlobals(); vi.mocked(preflightShellPatch).mockClear() })
+
+  it('refuses before dispatching shell-repair.yml when the preflight says the patch does not apply', async () => {
+    vi.mocked(preflightShellPatch).mockResolvedValueOnce({ kind: 'refused', message: 'shell_patch refused before any repair run: git apply --check says this patch does not apply to main.' })
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(async () => new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const out = await executeTool(call({ patch: PATCH, reason: 'bad patch' }), ctxWith(createRunJournal()))
+    expect(out).toMatch(/TOOL ERROR.*git apply --check/)
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('shell-repair.yml'))).toBe(false)
+  })
+
+  it('does not run the preflight in the explicit dispatch-only mode, and says so', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => init?.method === 'POST' ? new Response(null, { status: 204 }) : json({ url }, 404)))
+    const out = await executeTool(call({ patch: PATCH, reason: 'fix typo', wait: false }), ctxWith(createRunJournal()))
+    expect(preflightShellPatch).not.toHaveBeenCalled()
+    expect(out).toContain('git apply --check was NOT run')
+  })
+
+  it('passes the model-written patch itself to the preflight', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => init?.method === 'POST' ? new Response(null, { status: 204 }) : json({ url }, 404)))
+    await executeTool(call({ patch: PATCH, reason: 'fix typo' }), ctxWith(createRunJournal())).catch(() => undefined)
+    expect(vi.mocked(preflightShellPatch).mock.calls[0]?.[0]).toBe(PATCH)
+  })
+})
