@@ -234,7 +234,7 @@ import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/p
 import { QWEN_RUN_EXPIRED_NOTE, isQwenRunResumable } from './lib/qwenRunResume'
 import { ConnectionToast, type ConnectionNotice } from './components/ConnectionToast'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
-import { baselineToolNames, BROWSER_GUIDANCE, isFollowUp, mergeRequested, nexusDispatchToolNames, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
+import { baselineToolNames, BROWSER_GUIDANCE, continuesImageTurn, isFollowUp, mergeRequested, nexusDispatchToolNames, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 import { attestedUrlsForConversation, isAttestedLink } from './lib/linkAttestation'
 import { compactToolHistory } from './lib/historyCompaction'
@@ -1558,7 +1558,7 @@ function App() {
       'github_repo_state': ['state', 'status', 'head', 'branch'],
       'github_pr_info': ['pull request', 'pull/', 'pr #', 'merge status', 'is pr'],
       'github_list_prs': ['pull request', 'open pr', 'open prs', 'the prs', 'my prs', 'list pr', 'merge pr', 'merge the pr', 'merge all', 'merge them'],
-      'generate_image': ['generate', 'image', 'logo', 'illustration', 'picture', 'artwork'],
+      'generate_image': ['generate', 'image', 'logo', 'illustration', 'picture', 'artwork', 'photo', 'portrait'],
       'analyze_image': ['analyze', 'image', 'photo', 'picture', 'vision'],
       // Not a bare 'review': that would offer it for "review my workflows".
       'review_code': ['code review', 'review this code', 'review my code'],
@@ -1586,7 +1586,12 @@ function App() {
       : ''
     // Curly apostrophes from a phone keyboard (what’s) must match the straight ones in the keyword lists.
     const messageLower = `${promptText || ''}\n${recentOwnerText}`.toLowerCase().replace(/[\u2018\u2019\u02bc]/g, "'")
+    // A message right after a rendered picture is usually about that picture and need not name it ("make them look like
+    // the actual fighters"), so the image tool is offered then too. The placeholder for this turn's reply is added
+    // later, so the last assistant message here is the previous turn's.
+    const followsRenderedPicture = continuesImageTurn([...messagesRef.current].reverse().find(m => m.role === 'assistant'))
     const relevantTools = FORGE_TOOLS.filter(tool => {
+      if (followsRenderedPicture && tool.name === 'generate_image') return true
       const toolKeywords = keywords[tool.name] || []
       return toolKeywords.some((kw: string) => messageLower.includes(kw))
     })
