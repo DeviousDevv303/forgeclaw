@@ -93,15 +93,17 @@ export { CANONICAL_IDENTITY }
 
 /**
  * A request is treated as a coding task only when it names a code/repo target AND
- * an action. This keeps ordinary conversation from opening repository work.
+ * an action. Investigation verbs belong here too: repository diagnosis must not
+ * bypass the evidence gate merely because it asks for findings instead of edits.
+ * The target requirement still keeps ordinary conversation from opening repository work.
  */
 export function isCodingTaskRequest(prompt: string, options?: { hasAttachment?: boolean }): boolean {
   if (options?.hasAttachment) return false
   const t = prompt.toLowerCase()
   // Website targets and deploy actions: "build me a portfolio site and deploy it to GitHub Pages"
   // previously matched neither list, so it ran as plain chat with no repository tools.
-  const hasTarget = /\b(repo|repository|codebase|forgeclaw|source|file|files|branch|commit|head|github|website|site|webpage|landing page|github pages|gh-pages|html|css)\b/.test(t)
-  const hasAction = /\b(check|inspect|read|fix|implement|add|change|modify|update|refactor|test|build|lint|commit|push|verify|debug|repair|write|create|feedback|make|deploy|publish|ship|scaffold|launch)\b/.test(t)
+  const hasTarget = /\b(repo|repository|codebase|forgeclaw|source|file|files|branch|commit|head|github|website|site|webpage|landing page|github pages|gh-pages|html|css)\b|(?:\bsrc\/|\.(?:ts|tsx|js|jsx|py|yml|yaml|json)\b)/.test(t)
+  const hasAction = /\b(check|inspect|read|fix|implement|add|change|modify|update|refactor|test|build|lint|commit|push|verify|debug|repair|write|create|feedback|make|deploy|publish|ship|scaffold|launch|investigate|trace|explain|analyze|analyse|review)\b/.test(t)
   return hasTarget && hasAction
 }
 

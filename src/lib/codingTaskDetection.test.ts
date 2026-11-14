@@ -13,6 +13,14 @@ describe('isCodingTaskRequest: website and deploy requests', () => {
   })
 
   it.each([
+    'Investigate both places in parallel and tell me how the warning travels through src/lib/forgeTools.ts and src/App.tsx',
+    'Trace the repository error through the source files and explain what should change',
+    'Review the ForgeClaw codebase and analyze the failing workflow path',
+  ])('treats repository investigations as coding tasks: %s', prompt => {
+    expect(isCodingTaskRequest(prompt)).toBe(true)
+  })
+
+  it.each([
     "what's a good site for recipes",
     'make me laugh',
     'what is the weather today',
