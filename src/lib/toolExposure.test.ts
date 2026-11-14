@@ -46,6 +46,19 @@ describe('shell_exec guidance matches the workflow it describes', () => {
   })
 })
 
+describe('continuesImageTurn', () => {
+  it('is true only when the latest assistant message rendered a generated picture', async () => {
+    const { continuesImageTurn } = await import('./toolExposure')
+    expect(continuesImageTurn({ role: 'assistant', imageUrl: 'data:image/png;base64,AAAA' })).toBe(true)
+    expect(continuesImageTurn({ role: 'assistant', imageUrl: 'https://x/y.png', imageKind: undefined })).toBe(true)
+    expect(continuesImageTurn({ role: 'assistant' })).toBe(false)
+    expect(continuesImageTurn({ role: 'assistant', imageUrl: '' })).toBe(false)
+    expect(continuesImageTurn({ role: 'assistant', imageUrl: 'data:image/svg+xml,x', imageKind: 'sim-world' })).toBe(false)
+    expect(continuesImageTurn({ role: 'user', imageUrl: 'data:image/png;base64,AAAA' })).toBe(false) // the owner's own attachment
+    expect(continuesImageTurn(undefined)).toBe(false)
+  })
+})
+
 describe('self-modification guidance', () => {
   it('tells the model to diagnose failed runs itself and never to trust a step name', async () => {
     const { SELF_SCULPT_GUIDANCE } = await import('./toolExposure')
