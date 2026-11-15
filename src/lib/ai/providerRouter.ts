@@ -311,8 +311,14 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // A website request on Qwen runs the fixed generate -> repo -> publish -> verify chain.
   const siteStep = isQwenProvider(selected) ? nextSiteStep(request, choice.model, selected) : undefined
   if (siteStep) return siteStep
-  // "Improve <file>" on Qwen runs the fixed read -> rewrite -> sculpt_self chain.
-  const sculptStep = isQwenProvider(selected) ? nextSculptStep(request, choice.model, selected) : undefined
+  // "Improve <file>" on Qwen runs the fixed read -> rewrite -> sculpt_self chain. Nexus has only a
+  // 640-token window, so self-sculpt requests explicitly hand off to that same Qwen chain instead of
+  // asking Nexus to emit a whole-file rewrite. The returned provider is Qwen, so the UI and learning
+  // lineage name the engine that actually performed the work.
+  const nexusSculptHandoff = isNexusIntelligenceProvider(selected) && !!sculptTarget(latestUserTask(request))
+  const sculptStep = isQwenProvider(selected) || nexusSculptHandoff
+    ? nextSculptStep(request, nexusSculptHandoff ? 'qwen3-8b' : choice.model, nexusSculptHandoff ? 'qwen' : selected)
+    : undefined
   if (sculptStep) return sculptStep
   // Research before repository evidence: a research question that mentions GitHub needs sources, not HEAD.
   if (shouldBootstrapResearch(request, selected)) {

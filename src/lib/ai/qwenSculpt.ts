@@ -6,7 +6,7 @@
 // The model never sees a partial file: a file github_read_file had to truncate is refused, because a
 // rewrite of a truncated file would delete its tail.
 
-const SCULPT_INTENT_RE = /\b(sculpt|self[- ]?improve|improve yourself|upgrade yourself|modify yourself|self[- ]?modify|evolve yourself|refactor yourself)\b/i
+const SCULPT_INTENT_RE = /\b(sculpt|improve|self[- ]?improve|improve yourself|upgrade yourself|modify yourself|self[- ]?modify|evolve yourself|refactor yourself)\b/i
 const PATH_RE = /(?:^|[\s`'"(])((?:src|docs|public|test|tests|nexus|database)\/[A-Za-z0-9._/-]+\.[A-Za-z0-9]+|README\.md)\b/
 
 /** The repository file a self-sculpt request names, or null when it is not one. */

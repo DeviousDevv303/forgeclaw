@@ -11,6 +11,7 @@ const qwenOk = (text: string) => `✓ Qwen/Qwen3-8B completed as qwen-1 on o/r@m
 describe('sculpt helpers', () => {
   it('needs both self-sculpt intent and a repository file path', () => {
     expect(sculptTarget('sculpt src/lib/elapsed.ts so it shows milliseconds under one second')).toBe('src/lib/elapsed.ts')
+    expect(sculptTarget('improve src/lib/elapsed.ts so it shows milliseconds under one second')).toBe('src/lib/elapsed.ts')
     expect(sculptTarget('improve yourself: tidy `src/lib/i18n.ts`')).toBe('src/lib/i18n.ts')
     expect(sculptTarget('what does src/lib/elapsed.ts do?')).toBeNull()
     expect(sculptTarget('sculpt yourself')).toBeNull()
@@ -83,5 +84,35 @@ describe('Qwen self-sculpt chain in the router', () => {
     ]), '', 'qwen')
     expect(r.success).toBe(false)
     if (!r.success) expect(r.error.message).toMatch(/did not go through.*concluded "failure"/)
+  })
+
+  it('hands Nexus self-sculpt to Qwen and labels the completed result as Qwen', async () => {
+    const nexusTools = ['github_read_file', 'qwen_reason', 'sculpt_self'].map(name => ({ name, description: name, parameters: {} }))
+    const nexusTurn = (results: Array<[string, string]>): AIRequest => ({
+      model: 'nexus-run25', systemPrompt: '', tools: nexusTools,
+      messages: [{ role: 'user', content: 'Improve src/lib/elapsed.ts so it shows milliseconds under one second' }, ...results.flatMap(([name, content], i) => [
+        { role: 'assistant' as const, content: '', tool_calls: [{ id: `n${i}`, name, input: {} }] },
+        { role: 'tool' as const, content, tool_call_id: `n${i}` },
+      ])],
+    })
+    const step = async (results: Array<[string, string]>) => {
+      const r = await sendViaRouter(nexusTurn(results), '', 'nexus-intelligence')
+      if (!r.success) throw new Error(r.error.message)
+      return r.response
+    }
+
+    expect((await step([])).toolCalls?.[0]).toMatchObject({ name: 'github_read_file', input: { path: 'src/lib/elapsed.ts' } })
+    const rewrite = await step([['github_read_file', readResult(ORIGINAL)]])
+    expect(rewrite.toolCalls?.[0]).toMatchObject({ name: 'qwen_reason', input: { profile: 'code' } })
+    const propose = await step([['github_read_file', readResult(ORIGINAL)], ['qwen_reason', qwenOk('```ts\n' + UPDATED + '```')]])
+    expect(propose.toolCalls?.[0]).toMatchObject({ name: 'sculpt_self', input: { file_path: 'src/lib/elapsed.ts', content: UPDATED } })
+    const done = await step([
+      ['github_read_file', readResult(ORIGINAL)], ['qwen_reason', qwenOk('```ts\n' + UPDATED + '```')],
+      ['sculpt_self', '✓ Self-sculpt of src/lib/elapsed.ts: build-validated and proposed as pull request #10 on sculpt/x (not merged; review it).\n  pr: https://github.com/o/r/pull/10'],
+    ])
+    expect(done.provider).toBe('qwen')
+    expect(done.model).toBe('Qwen/Qwen3-8B self-sculpt chain')
+    expect(done.stopReason).toBe('qwen-sculpt-complete')
+    expect(done.text).toContain('pull request #10')
   })
 })
