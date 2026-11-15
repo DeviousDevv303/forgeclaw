@@ -1,0 +1,103 @@
+name: Code Review
+
+# Code review with a 4-bit DeepSeek-Coder-6.7B-Instruct GGUF on llama.cpp (see .github/scripts/review_code.py).
+# The previous version loaded a full-precision 7B model (~28 GB) on a 16 GB runner and was killed.
+# Failures are printed as ::error:: annotations. Result artifact: code-review-<invocation_id> (1 day).
+on:
+  workflow_dispatch:
+    inputs:
+      code_content:
+        description: 'Code to review'
+        required: true
+      language:
+        description: 'Programming language'
+        default: 'typescript'
+      invocation_id:
+        description: 'Unique ID'
+        required: true
+      mirror:
+        description: "Publish the review to the browsable review-results branch ('false' to skip)"
+        required: false
+        default: 'true'
+
+run-name: Code Review ${{ inputs.invocation_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Restore review model cache
+        id: gguf_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/forgeclaw-review-gguf
+          key: review-gguf-v1-${{ runner.os }}
+      - name: Install deps (exact pins; prebuilt CPU wheel, no compiling)
+        run: |
+          pip install huggingface_hub==1.33.0
+          pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+      - name: Review code
+        env:
+          CODE: ${{ inputs.code_content }}
+          REVIEW_LANGUAGE: ${{ inputs.language }}
+        run: python .github/scripts/review_code.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-review-${{ inputs.invocation_id }}
+          path: |
+            review.txt
+            review_meta.txt
+          if-no-files-found: ignore
+          retention-days: 1
+      - name: Check model file is present
+        id: gguf_present
+        if: ${{ steps.gguf_cache.outputs.cache-hit != 'true' }}
+        run: |
+          if ls ~/.cache/forgeclaw-review-gguf/*.gguf >/dev/null 2>&1; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Save review model cache
+        if: ${{ steps.gguf_cache.outputs.cache-hit != 'true' && steps.gguf_present.outputs.present == 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/forgeclaw-review-gguf
+          key: review-gguf-v1-${{ runner.os }}
+
+  # Publishes the review where the app can read it (artifact zips are not readable from the browser).
+  # Write access lives only here; this job runs no model code. Failures are published too.
+  mirror:
+    needs: review
+    if: ${{ always() && inputs.mirror != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # Checkout first: it cleans the workspace, which would delete a result downloaded before it.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: code-review-${{ inputs.invocation_id }}
+          path: result
+      - name: Publish the review
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          REVIEW_RESULT: ${{ needs.review.result }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export GIT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          bash .github/scripts/review_mirror.sh "https://github.com/$REPO.git" "$INVOCATION_ID" result "$REVIEW_RESULT"

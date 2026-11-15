@@ -1,0 +1,17 @@
+{
+  "exams": [
+    {
+      "name": "reviewer-v1",
+      "dir": "nexus-llm/eval/reviewer-v1/",
+      "frozen_at": "c8d6cc53bf18c94e85966b20e76f2c3e68568cb8",
+      "files": {
+        "nexus-llm/eval/reviewer-v1/reviewer-fixtures.jsonl": "5fb658b9b3077f6aa183b82a177dcd0d5c191291eb014eb94183b85280039ceb",
+        "nexus-llm/eval/reviewer-v1/reviewer-benchmark-v1.md": "64aeeb356d956dd84f05cfb25b0ebbbd028992a2af40cfbd100b84cbc7cfd064",
+        "nexus-llm/eval/reviewer-v1/build-fixtures.py": "6008028c78cc1cab791291ad4497e0fe551407728703e922b2f4a6e6b3b01cfa"
+      },
+      "allow_new": [
+        "AMENDMENTS-*.md"
+      ]
+    }
+  ]
+}

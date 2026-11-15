@@ -1,0 +1,1 @@
+{"prompt_tokens": 5261, "time_to_first_token_s": 410.2, "total_s": 895.4, "new_tokens": 429, "finish_reason": "stop", "json_parses_after_fence_strip": true, "parse_error": null, "output_chars": 1604}

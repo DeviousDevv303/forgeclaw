@@ -1,0 +1,64 @@
+#!/usr/bin/env sh
+set -eu
+
+msg_file="$1"
+subject="$(sed -n '1p' "$msg_file")"
+
+fail() {
+  printf '%s\n' "Commit rejected: $1" >&2
+  printf '%s\n' "Use the repo commit template and include WHY, FILES, VALIDATION, Contract, and Co-authored-by lines." >&2
+  exit 1
+}
+
+case "$subject" in
+  merge*|Merge*|revert*|Revert*) exit 0 ;;
+esac
+
+printf '%s\n' "$subject" | grep -Eq "^(MANUS — .{8,} — .{8,}|(feat|fix|docs|chore|refactor|test|build|ci|perf|style)\\([a-z0-9._-]+\\): .{8,})$" \
+  || fail "subject must be 'MANUS — <what changed> — <why>' or the repository conventional format."
+
+grep -Eq '^WHY:' "$msg_file" || fail "missing WHY section."
+grep -Eq '^FILES:' "$msg_file" || fail "missing FILES section."
+grep -Eq '^VALIDATION:' "$msg_file" || fail "missing VALIDATION section."
+grep -Eq '^Contract: v1\.1, override by Cristian$' "$msg_file" || fail "missing contract line."
+grep -Eq '^Co-authored-by: Cristian <towerslutz@gmail\.com>$' "$msg_file" || fail "missing Cristian co-author line."
+
+provider_router="src/lib/ai/providerRouter.ts"
+app_file="src/App.tsx"
+
+# Check that providerRouter imports from providers/ directory, not hardcoded to one
+# Match the provider filename after the directory slash; the old expression
+# incorrectly required a quote immediately after ./providers/ and rejected every
+# valid import such as './providers/nexusProvider'.
+grep -Eq "import .* from '\./providers/[^']+'" "$provider_router" \
+  || fail "providerRouter must import from providers directory."
+
+if git diff --cached --name-only -- "$provider_router" | grep -q .; then
+  grep -Eq "import .* from '\./providers/[^']+'" "$provider_router" \
+    || fail "providerRouter must retain provider adapters behind the provider directory."
+fi
+
+if git diff --cached --name-only -- "$app_file" | grep -q .; then
+  grep -Eq "activeProvider" "$app_file" \
+    || fail "App.tsx must retain active-provider selection."
+fi
+
+# Documentation may name legacy systems for audit/negative-acceptance evidence;
+# the source safety check applies to executable additions, not REVIEWS records.
+added_lines="$(git diff --cached -U0 -- . ':(exclude).githooks/commit-msg' ':(exclude)REVIEWS/**' | grep -E '^\+[^+]' || true)"
+
+bad_a="cl""aude"
+bad_b="anth""ropic"
+bad_c="Open""AI"
+bad_d="open""ai"
+bad_e="Oll""ama"
+bad_f="oll""ama"
+bad_g="sk-""ant"
+
+for blocked in "$bad_a" "$bad_b" "$bad_c" "$bad_d" "$bad_e" "$bad_f" "$bad_g"; do
+  if printf '%s\n' "$added_lines" | grep -Fq "$blocked"; then
+    fail "staged diff adds blocked legacy provider text: $blocked"
+  fi
+done
+
+exit 0

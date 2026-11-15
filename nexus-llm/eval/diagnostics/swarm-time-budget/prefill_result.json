@@ -1,0 +1,1 @@
+{"prompt_chars": 18677, "prompt_tokens": 5261, "load_s": 71.3, "time_to_first_token_s": 382.2, "tokens_after_first": 24, "decode_s_per_token_after_first": 0.32, "first_24_text": "```json\n{\n  \"seat\": \"TAPE\",\n  \"round\": 2,\n  \"status\": \""}

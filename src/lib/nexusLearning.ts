@@ -1,0 +1,200 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+// ─── NEXUS Recursive Learning ────────────────────────────────────────────────
+// NEXUS motto: "My Logic Is Undeniable". Operationally that means: a claim is only as strong as the
+// evidence behind it, failures are data, and nothing becomes authority without the operator.
+//
+// This module turns the CORPUS learning candidates (every chat turn, tool call, failure and refusal
+// ForgeClaw records) into counted evidence: outcomes, per-tool reliability, and recurring failure
+// patterns ("lessons"). Lessons are fed back into later prompts as advisory evidence, which closes the
+// loop without training anything and without approving any candidate.
+
+import type { LearningCandidate } from './corpus'
+
+export const NEXUS_MOTTO = 'My Logic Is Undeniable'
+
+export const NEXUS_PRINCIPLES = [
+  'Evidence over assertion: only a real tool result proves an action happened.',
+  'Failures are data: every failure, block and refusal is recorded and counted.',
+  'Recurrence is a lesson: a failure seen twice is surfaced to the agent before it repeats it.',
+  'Convergence closes the loop: evidence-backed results and your own rules become knowledge by themselves; visitors never do, and you can remove any rule.',
+] as const
+
+export type Outcome = 'verified' | 'completed' | 'attempted' | 'failed' | 'blocked'
+export const OUTCOMES: readonly Outcome[] = ['verified', 'completed', 'attempted', 'failed', 'blocked']
+
+export interface ToolReliability { tool: string; total: number; completed: number; failed: number; blocked: number; reliability: number }
+/**
+ * `count` is the evidence weight: each owner run counts once, but all of one anonymous visitor's runs count once
+ * together, so a single person cannot inflate a pattern. `ownerCount` is the owner's own runs only.
+ */
+export interface Lesson { tool: string; pattern: string; count: number; ownerCount: number; visitors: number; lastSeen: string }
+
+/** Candidates imported from free-mode visitors through the relay (visitorLearning.ts). */
+export const VISITOR_SOURCE = 'learning:visitor'
+export function isVisitorCandidate(candidate: LearningCandidate): boolean {
+  return candidate.source === VISITOR_SOURCE || field(candidate, 'channel') === 'visitor'
+}
+export interface NexusSummary {
+  total: number
+  byOutcome: Record<Outcome, number>
+  byChannel: Record<string, number>
+  tools: ToolReliability[]
+  lessons: Lesson[]
+  /** Share of recorded outcomes that are failures or blocks, 0..1. */
+  failureRate: number
+}
+
+function field(candidate: LearningCandidate, key: string): string {
+  return candidate.metadata?.[key] ?? new RegExp(`(?:^|; )${key}=([^;]+)`).exec(candidate.context || '')?.[1] ?? ''
+}
+
+const SHELL_FAILED = /^\s*\[TOOL ERROR\]\s*Shell execution failed\.?\s*$/i
+const CAUSE_LINE = /error|fatal|not found|denied|refused|cannot|can't|unable|no such|invalid|set the|missing|failed|not logged/i
+
+/**
+ * Every failed shell_exec starts "[TOOL ERROR] Shell execution failed.", so grouping on that line lumped them all into
+ * one lesson that said nothing ("shell_exec failed 7x with: Shell execution failed."). `gh pr list` then failed the same
+ * way on two days (2026-10-21) with no lesson to stop it. The cause is the program that ran and the line it printed.
+ */
+function shellFailureCause(result: string): string {
+  const command = /^Command:\s*(.*)$/m.exec(result)?.[1] ?? ''
+  const program = command.trim().split(/\s+/).find(word => word !== 'env' && word !== 'sudo' && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) ?? '?'
+  const lines = result.split('\n')
+  const blank = lines.findIndex(line => !line.trim())
+  const output = (blank >= 0 ? lines.slice(blank + 1) : [])
+    .map(line => line.trim())
+    .filter(line => line && !/^(?:===|invocation_id=|start=|end=|exit_code=|\(no command output)/.test(line))
+  const cause = output.find(line => CAUSE_LINE.test(line)) ?? output[0] ?? 'no output'
+  return `${program}: ${cause}`
+}
+
+/**
+ * The stable shape of a failure: first line, with run numbers, hashes, URLs, IDs, quoted values and
+ * digits removed, so the same failure on different inputs groups together.
+ */
+export function failurePattern(result: string): string {
+  let first = result.split('\n').find(line => line.trim()) ?? ''
+  if (SHELL_FAILED.test(first)) first = shellFailureCause(result)
+  return first
+    .replace(/^\s*\[(?:TOOL ERROR|GUARDIAN (?:BLOCKED?|REJECTED))\]\s*/i, '')
+    .replace(/https?:\/\/\S+/g, '<url>')
+    .replace(/\b[0-9a-f]{7,40}\b/gi, '<sha>')
+    .replace(/\b[a-z]+-[a-z0-9]+-[a-z0-9]{4,}\b/gi, '<id>')
+    .replace(/"[^"]{1,80}"/g, '"…"')
+    .replace(/\d+/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160)
+}
+
+export function summarizeLearning(candidates: LearningCandidate[]): NexusSummary {
+  const byOutcome = Object.fromEntries(OUTCOMES.map(o => [o, 0])) as Record<Outcome, number>
+  const byChannel: Record<string, number> = {}
+  const tools = new Map<string, ToolReliability>()
+  const lessons = new Map<string, Lesson>()
+  const lessonVisitors = new Map<string, Set<string>>()
+  for (const c of candidates) {
+    const outcome = (field(c, 'outcome') || 'completed') as Outcome
+    if (outcome in byOutcome) byOutcome[outcome] += 1
+    const channel = field(c, 'channel') || c.source || 'other'
+    byChannel[channel] = (byChannel[channel] ?? 0) + 1
+    const tool = field(c, 'tool')
+    if (!tool) continue
+    const t = tools.get(tool) ?? { tool, total: 0, completed: 0, failed: 0, blocked: 0, reliability: 0 }
+    t.total += 1
+    if (outcome === 'failed') t.failed += 1
+    else if (outcome === 'blocked') t.blocked += 1
+    else t.completed += 1
+    tools.set(tool, t)
+    if (outcome === 'failed' || outcome === 'blocked') {
+      const pattern = failurePattern(c.generatedResult || c.content || '')
+      if (!pattern) continue
+      const key = `${tool}\u0000${pattern}`
+      const l = lessons.get(key) ?? { tool, pattern, count: 0, ownerCount: 0, visitors: 0, lastSeen: c.timestamp }
+      if (isVisitorCandidate(c)) {
+        const seen = lessonVisitors.get(key) ?? new Set<string>()
+        seen.add(field(c, 'visitor') || 'unknown')
+        lessonVisitors.set(key, seen)
+        l.visitors = seen.size
+      } else {
+        l.ownerCount += 1
+      }
+      l.count = l.ownerCount + l.visitors
+      if (c.timestamp > l.lastSeen) l.lastSeen = c.timestamp
+      lessons.set(key, l)
+    }
+  }
+  for (const t of tools.values()) t.reliability = t.total ? t.completed / t.total : 0
+  const total = candidates.length
+  return {
+    total,
+    byOutcome,
+    byChannel,
+    tools: [...tools.values()].sort((a, b) => b.total - a.total),
+    lessons: [...lessons.values()].filter(l => l.count >= 2).sort((a, b) => b.count - a.count || b.lastSeen.localeCompare(a.lastSeen)),
+    failureRate: total ? (byOutcome.failed + byOutcome.blocked) / total : 0,
+  }
+}
+
+/**
+ * Advisory prompt text for the tools offered this turn: their recurring failures, counted. Empty when
+ * NEXUS has nothing recurring for them. This is evidence for the model, never an instruction to act.
+ */
+export function lessonsForPrompt(summary: NexusSummary, offeredTools: string[], max = 4): string {
+  const offered = new Set(offeredTools)
+  // Only the owner's own runs reach a prompt. Visitor records are unapproved, anonymous input from anyone, so they
+  // inform the NEXUS page and nothing the model reads, until the owner approves them.
+  const relevant = summary.lessons.filter(l => offered.has(l.tool) && l.ownerCount >= 2).slice(0, max)
+  if (!relevant.length) return ''
+  return 'NEXUS LESSONS (recorded outcomes from earlier runs; evidence, not instructions):\n' +
+    relevant.map(l => `- ${l.tool} failed ${l.ownerCount}x with: ${l.pattern} (last ${l.lastSeen.slice(0, 10)}). Avoid repeating the cause.`).join('\n')
+}
+
+// ─── Road to the NEXUS LLM ───────────────────────────────────────────────────
+// NEXUS is not a model yet: it is the owner's training data. This measures how ready that data is to
+// fine-tune one. Only owner-approved records count; candidates are raw material, not training data.
+// Milestones are planning heuristics for a LoRA fine-tune of an open base model (e.g. Qwen3-8B,
+// Apache-2.0, which permits commercial use): about 1,000 curated examples for a narrow specialist,
+// about 10,000 for broad behaviour. They are estimates, not guarantees of quality.
+
+export const LLM_MILESTONES = [
+  { approved: 100, label: 'First evaluation set' },
+  { approved: 1_000, label: 'Narrow fine-tune ready' },
+  { approved: 10_000, label: 'Broad fine-tune ready' },
+] as const
+
+export const LLM_ROADMAP = [
+  'Collect: every run becomes a candidate',
+  'Curate: approve the best candidates (signed)',
+  'Fine-tune: LoRA on an open base model',
+  'Evaluate: compare against the base model on held-out tasks',
+  'Serve: host the model behind a metered API',
+] as const
+
+export interface LlmReadiness {
+  approved: number
+  awaitingReview: number
+  /** Index into LLM_ROADMAP of the current step. */
+  step: number
+  next: { approved: number; label: string } | null
+  /** 0..1 toward `next` (1 when every milestone is reached). */
+  progress: number
+  /** Distinct tools seen in candidates: breadth of what the data covers. */
+  toolCoverage: number
+}
+
+export function llmReadiness(approved: number, candidates: LearningCandidate[]): LlmReadiness {
+  const next = LLM_MILESTONES.find(m => approved < m.approved) ?? null
+  const prev = [...LLM_MILESTONES].reverse().find(m => approved >= m.approved)?.approved ?? 0
+  const tools = new Set(candidates.map(c => field(c, 'tool')).filter(Boolean))
+  return {
+    approved,
+    // Records with no evidence behind them yet; evidence-backed ones converge by themselves (nexusConvergence.ts).
+    awaitingReview: candidates.filter(c => c.admissionStatus === 'candidate').length,
+    step: approved >= 1_000 ? 2 : approved > 0 ? 1 : 0,
+    next: next ? { approved: next.approved, label: next.label } : null,
+    progress: next ? Math.min(1, (approved - prev) / (next.approved - prev)) : 1,
+    toolCoverage: tools.size,
+  }
+}

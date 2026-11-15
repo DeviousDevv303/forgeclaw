@@ -1,0 +1,111 @@
+{
+ "task": "merge_intervals",
+ "seed": 20261114,
+ "candidates": 13,
+ "mutants": [
+  {
+   "id": "m01",
+   "op": "CMP",
+   "lines": [
+    8
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m02",
+   "op": "CONST",
+   "lines": [
+    10
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m03",
+   "op": "CONST",
+   "lines": [
+    10
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m04",
+   "op": "CONST",
+   "lines": [
+    10
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m05",
+   "op": "CONST",
+   "lines": [
+    9
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m06",
+   "op": "CONST",
+   "lines": [
+    9
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m07",
+   "op": "CMP",
+   "lines": [
+    9
+   ],
+   "class": "MAY"
+  },
+  {
+   "id": "m08",
+   "op": "DROP_IF",
+   "lines": [
+    9
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m09",
+   "op": "CONST",
+   "lines": [
+    8
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m10",
+   "op": "CONST",
+   "lines": [
+    8
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m11",
+   "op": "BOOL",
+   "lines": [
+    8
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m12",
+   "op": "CMP",
+   "lines": [
+    3
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m13",
+   "op": "DROP_IF",
+   "lines": [
+    3
+   ],
+   "class": "MUST"
+  }
+ ]
+}

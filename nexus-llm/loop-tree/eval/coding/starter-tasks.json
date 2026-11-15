@@ -1,0 +1,106 @@
+[
+  {
+    "id": "clamp",
+    "authored": "claude",
+    "prompt": "clamp(15, 0, 10) should return 10 but returns 15. Fix src/clamp.mjs.",
+    "files": {
+      "src/clamp.mjs": "export function clamp(n, min, max) {\n  if (n < min) return min\n  return n\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { clamp } from './src/clamp.mjs'\nassert.strictEqual(clamp(15, 0, 10), 10)\nassert.strictEqual(clamp(-3, 0, 10), 0)\nassert.strictEqual(clamp(5, 0, 10), 5)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/clamp.mjs",
+      "content": "export function clamp(n, min, max) {\n  if (n < min) return min\n  if (n > max) return max\n  return n\n}\n"
+    }
+  },
+  {
+    "id": "sum-evens",
+    "authored": "claude",
+    "prompt": "sumEvens([1,2,3,4]) should be 6 but it is 4. Fix src/sumEvens.mjs.",
+    "files": {
+      "src/sumEvens.mjs": "export function sumEvens(xs) {\n  let s = 0\n  for (let i = 0; i < xs.length - 1; i++) if (xs[i] % 2 === 0) s += xs[i]\n  return s\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { sumEvens } from './src/sumEvens.mjs'\nassert.strictEqual(sumEvens([1, 2, 3, 4]), 6)\nassert.strictEqual(sumEvens([]), 0)\nassert.strictEqual(sumEvens([2]), 2)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/sumEvens.mjs",
+      "content": "export function sumEvens(xs) {\n  let s = 0\n  for (let i = 0; i < xs.length; i++) if (xs[i] % 2 === 0) s += xs[i]\n  return s\n}\n"
+    }
+  },
+  {
+    "id": "slugify",
+    "authored": "claude",
+    "prompt": "slugify(\" Hello, World! \") should give \"hello-world\" but leaves stray dashes. Fix src/slugify.mjs.",
+    "files": {
+      "src/slugify.mjs": "export function slugify(s) {\n  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-')\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { slugify } from './src/slugify.mjs'\nassert.strictEqual(slugify(' Hello, World! '), 'hello-world')\nassert.strictEqual(slugify('A--B'), 'a-b')\nassert.strictEqual(slugify('!!!'), '')\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/slugify.mjs",
+      "content": "export function slugify(s) {\n  return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')\n}\n"
+    }
+  },
+  {
+    "id": "chunk",
+    "authored": "claude",
+    "prompt": "chunk([1,2,3,4,5], 2) should be [[1,2],[3,4],[5]] but drops the last piece. Fix src/chunk.mjs.",
+    "files": {
+      "src/chunk.mjs": "export function chunk(xs, n) {\n  const out = []\n  for (let i = 0; i + n <= xs.length; i += n) out.push(xs.slice(i, i + n))\n  return out\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { chunk } from './src/chunk.mjs'\nassert.deepStrictEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]])\nassert.deepStrictEqual(chunk([], 3), [])\nassert.deepStrictEqual(chunk([1, 2], 5), [[1, 2]])\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/chunk.mjs",
+      "content": "export function chunk(xs, n) {\n  const out = []\n  for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n))\n  return out\n}\n"
+    }
+  },
+  {
+    "id": "uniq",
+    "authored": "claude",
+    "prompt": "uniq([3,1,3,2,1]) should keep first-seen order: [3,1,2]. It sorts instead. Fix src/uniq.mjs.",
+    "files": {
+      "src/uniq.mjs": "export function uniq(xs) {\n  return [...new Set(xs)].sort()\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { uniq } from './src/uniq.mjs'\nassert.deepStrictEqual(uniq([3, 1, 3, 2, 1]), [3, 1, 2])\nassert.deepStrictEqual(uniq([]), [])\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/uniq.mjs",
+      "content": "export function uniq(xs) {\n  return [...new Set(xs)]\n}\n"
+    }
+  },
+  {
+    "id": "palindrome",
+    "authored": "claude",
+    "prompt": "isPalindrome(\"A man, a plan, a canal: Panama\") should be true. Fix src/isPalindrome.mjs.",
+    "files": {
+      "src/isPalindrome.mjs": "export function isPalindrome(s) {\n  const r = s.split('').reverse().join('')\n  return r === s\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { isPalindrome } from './src/isPalindrome.mjs'\nassert.strictEqual(isPalindrome('A man, a plan, a canal: Panama'), true)\nassert.strictEqual(isPalindrome('hello'), false)\nassert.strictEqual(isPalindrome(''), true)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/isPalindrome.mjs",
+      "content": "export function isPalindrome(s) {\n  const c = s.toLowerCase().replace(/[^a-z0-9]/g, '')\n  return c === c.split('').reverse().join('')\n}\n"
+    }
+  },
+  {
+    "id": "snake",
+    "authored": "claude",
+    "prompt": "camelToSnake(\"userID\") should be \"user_id\"; it gives \"user_i_d\". Fix src/camelToSnake.mjs.",
+    "files": {
+      "src/camelToSnake.mjs": "export function camelToSnake(s) {\n  return s.replace(/[A-Z]/g, c => '_' + c.toLowerCase())\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { camelToSnake } from './src/camelToSnake.mjs'\nassert.strictEqual(camelToSnake('userID'), 'user_id')\nassert.strictEqual(camelToSnake('camelCaseName'), 'camel_case_name')\nassert.strictEqual(camelToSnake('already'), 'already')\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/camelToSnake.mjs",
+      "content": "export function camelToSnake(s) {\n  return s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2').toLowerCase()\n}\n"
+    }
+  },
+  {
+    "id": "bsearch",
+    "authored": "claude",
+    "prompt": "binarySearch([1,3,5,7], 7) should return 3 but returns -1. Fix src/binarySearch.mjs.",
+    "files": {
+      "src/binarySearch.mjs": "export function binarySearch(xs, x) {\n  let lo = 0, hi = xs.length - 1\n  while (lo < hi) {\n    const mid = (lo + hi) >> 1\n    if (xs[mid] === x) return mid\n    if (xs[mid] < x) lo = mid + 1\n    else hi = mid - 1\n  }\n  return -1\n}\n"
+    },
+    "test": "import assert from 'node:assert'\nimport { binarySearch } from './src/binarySearch.mjs'\nassert.strictEqual(binarySearch([1, 3, 5, 7], 7), 3)\nassert.strictEqual(binarySearch([1, 3, 5, 7], 1), 0)\nassert.strictEqual(binarySearch([1, 3, 5, 7], 4), -1)\nassert.strictEqual(binarySearch([], 1), -1)\nconsole.log('ok')\n",
+    "solution": {
+      "path": "src/binarySearch.mjs",
+      "content": "export function binarySearch(xs, x) {\n  let lo = 0, hi = xs.length - 1\n  while (lo <= hi) {\n    const mid = (lo + hi) >> 1\n    if (xs[mid] === x) return mid\n    if (xs[mid] < x) lo = mid + 1\n    else hi = mid - 1\n  }\n  return -1\n}\n"
+    }
+  }
+]

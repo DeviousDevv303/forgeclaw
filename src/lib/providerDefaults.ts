@@ -1,0 +1,15 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+
+export const PROVIDER_IDS = ['moonshot', 'corpus', 'qwen', 'local', 'anthropic', 'muse', 'openrouter', 'nexus', 'nexus-intelligence'] as const
+export type ProviderId = typeof PROVIDER_IDS[number]
+
+/** Qwen/Qwen3-8B (via GitHub Actions, provider id 'qwen') is the default — no API key needed.
+ * New users get working AI immediately; Moonshot/Kimi remains selectable
+ * for those with a key. */
+export const DEFAULT_PROVIDER: ProviderId = 'qwen'
+
+export function resolveInitialProvider(savedProvider: string | null): ProviderId {
+  if (savedProvider === 'nexus' || savedProvider === 'deepseek') return DEFAULT_PROVIDER  // legacy saved ids resolve to the Qwen route
+  return PROVIDER_IDS.includes(savedProvider as ProviderId) ? savedProvider as ProviderId : DEFAULT_PROVIDER
+}

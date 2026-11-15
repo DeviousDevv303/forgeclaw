@@ -1,0 +1,97 @@
+# Measures the Qwen3-8B engine ON THE RUNNER, so engine settings (threads, flash attention, batch size) can be chosen from runner numbers
+# instead of guessed from another machine. Manual only. It writes the result to the run summary and prints one JSON line.
+# It loads the same GGUF as qwen3-8b.yml (restored from the same cache; downloaded, not saved, on a miss) and does not touch any result branch.
+name: Qwen engine benchmark (manual)
+run-name: Qwen engine benchmark threads=${{ inputs.threads }} flash=${{ inputs.flash_attn }} batch=${{ inputs.batch }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      threads:
+        description: 'n_threads for llama.cpp (the runner has 4 vCPUs, probably 2 physical cores)'
+        required: false
+        default: '4'
+        type: string
+      flash_attn:
+        description: 'flash attention (true or false)'
+        required: false
+        default: 'false'
+        type: string
+      batch:
+        description: 'n_batch and n_ubatch'
+        required: false
+        default: '512'
+        type: string
+      prompt_tokens:
+        description: 'prompt length in tokens (a chat message is about 700, a swarm round-2 cell 5000 or more)'
+        required: false
+        default: '700'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Restore GGUF model cache
+        id: gguf_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/forgeclaw-gguf
+          key: deepseek-gguf-v2-qwen3-8b-${{ runner.os }}
+
+      - name: Install llama.cpp
+        run: |
+          pip install huggingface_hub
+          pip install llama-cpp-python==0.3.36 --only-binary=llama-cpp-python --extra-index-url "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
+      - name: Benchmark
+        env:
+          THREADS: ${{ inputs.threads }}
+          FLASH_ATTN: ${{ inputs.flash_attn }}
+          BATCH: ${{ inputs.batch }}
+          PROMPT_TOKENS: ${{ inputs.prompt_tokens }}
+        run: |
+          python - <<'PY'
+          import json, os, sys, time
+          sys.path.insert(0, '.github/scripts')
+          import qwen_gguf as g
+          from huggingface_hub import hf_hub_download, list_repo_files
+          from llama_cpp import Llama
+          local = os.path.expanduser('~/.cache/forgeclaw-gguf')
+          name = g.pick_gguf_file(list_repo_files(g.GGUF_REPO), g.QUANT)
+          path = hf_hub_download(repo_id=g.GGUF_REPO, filename=name, local_dir=local)
+          threads, batch, want = int(os.environ['THREADS']), int(os.environ['BATCH']), int(os.environ['PROMPT_TOKENS'])
+          flash = os.environ['FLASH_ATTN'].strip().lower() == 'true'
+          t0 = time.monotonic()
+          llm = Llama(model_path=path, n_ctx=g.N_CTX, n_threads=threads, n_batch=batch, n_ubatch=batch, flash_attn=flash, n_gpu_layers=0, verbose=False)
+          load_s = time.monotonic() - t0
+          words = ('The quick brown fox jumps over the lazy dog while the engine reads a long prompt. ' * 400).encode()
+          ids = llm.tokenize(words, add_bos=False)[:want]
+          text = llm.detokenize(ids).decode('utf-8', 'ignore')
+          t1 = time.monotonic(); first = None; n = 0
+          for _ in llm.create_completion(text, max_tokens=40, temperature=0.0, stream=True):
+              n += 1
+              if first is None: first = time.monotonic() - t1
+          total = time.monotonic() - t1
+          out = {'threads': threads, 'flash_attn': flash, 'batch': batch, 'prompt_tokens': len(ids), 'load_s': round(load_s, 1),
+                 'prefill_s': round(first, 1), 'prefill_tok_s': round(len(ids) / first, 1), 'decode_s_per_tok': round((total - first) / max(n - 1, 1), 3)}
+          print(json.dumps(out))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write('| threads | flash | batch | prompt tokens | load s | prefill s | prefill tok/s | decode s/tok |\n|---|---|---|---|---|---|---|---|\n')
+              f.write(f"| {threads} | {flash} | {batch} | {len(ids)} | {out['load_s']} | {out['prefill_s']} | {out['prefill_tok_s']} | {out['decode_s_per_tok']} |\n")
+          PY

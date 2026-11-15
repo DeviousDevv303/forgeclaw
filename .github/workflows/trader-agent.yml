@@ -1,0 +1,117 @@
+# The Nexus Trader agent: once per 15-minute window, Nexus Intelligence (the owner's Run 25 checkpoint) reads the
+# desk over MCP and decides (owner order 2026-11-08: "They can do everything. Kill switch, hold, exit, entry, bet
+# down, bet up. They do everything autonomously."; owner order 2026-11-10: Nexus replaces Qwen3-8B as the model —
+# the checkpoint is committed under .github/nexus-runtime/, reassembled and sha256-verified at load against
+# run25/verdict.md, and served by the checkpoint's own constrained-decoding path in-process).
+# It runs LIVE by default. The repository variable AGENT_MODE=shadow is an operator switch only (predict + log, no action).
+# Every action goes through the Bank's /mcp server, which runs it through the Bank's own routes and journals it with its reason,
+# so the owner watches the agent live on the desk. The step summary of each run records the decision too.
+#
+# Without the NEXUS_OWNER_TOKEN secret the job says so and stops before loading the model: nothing is sent.
+#
+# STANDING AGENT (owner order 2026-11-09: "The AI starts itself"). GitHub's cron below has never fired this workflow, so
+# a run no longer decides once and exits: it loads the model once and rules every window for AGENT_LOOP_MINUTES (320),
+# then queues its own successor with workflow_dispatch (the one event GITHUB_TOKEN may start; actions: write is for
+# that call only). Concurrency keeps exactly one agent running and at most one queued. Guards on the chain:
+#   - a run that ended in under 20 minutes (a crash) does NOT re-queue itself, so a broken build cannot loop;
+#   - the repository variable AGENT_STANDING=off stops the chain at the end of the current run;
+#   - the cron stays as a backup starter, and a manual dispatch restarts the chain at any time.
+name: Nexus Trader agent
+run-name: Nexus Trader agent ${{ github.event_name }}
+
+on:
+  schedule:
+    - cron: '1,16,31,46 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: nexus-trader-agent
+  cancel-in-progress: false
+
+jobs:
+  decide:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Record the start time
+        id: start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Stop here if the owner token is not configured
+        id: gate
+        env:
+          HAS_TOKEN: ${{ secrets.NEXUS_OWNER_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::notice::NEXUS_OWNER_TOKEN is not set in this repository's Actions secrets, so the trader agent did not run."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out repository
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+            .github/nexus-runtime
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Set up Python
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install inference dependencies
+        if: steps.gate.outputs.run == 'true'
+        # Retried (owner-authorized protected-path change, 2026-11-09): run 32 died in 94 s on a one-off HTTP 504 fetching
+        # the wheel, the under-20-minute crash guard rightly did not re-queue it, and the desk ran without the AI for ~70 min.
+        # The Nexus checkpoint is committed in the repo (.github/nexus-runtime), so there is no model download and no
+        # GGUF cache any more: the wheels below are the whole install (same set nexus-intelligence.yml uses).
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if pip install --index-url https://download.pytorch.org/whl/cpu torch \
+              && pip install sentencepiece; then
+              exit 0
+            fi
+            echo "::warning::dependency install attempt $attempt failed; retrying in $((attempt * 15))s"
+            sleep $((attempt * 15))
+          done
+          echo "::error::dependency install failed after 5 attempts"
+          exit 1
+
+      - name: Plan, act, check
+        if: steps.gate.outputs.run == 'true'
+        env:
+          NEXUS_MCP_URL: https://nexus-bank.towerslutz.workers.dev/mcp
+          NEXUS_OWNER_TOKEN: ${{ secrets.NEXUS_OWNER_TOKEN }}
+          AGENT_MODE: ${{ vars.AGENT_MODE || 'live' }}
+          AGENT_LOOP_MINUTES: '320'
+          # The Nexus shadow seat retired with the 2026-11-10 swap: Nexus is the ruler now, not the
+          # ruler's shadow, so the shadow endpoint and its token are no longer read by this workflow.
+        run: python -B .github/scripts/trader_agent.py
+
+      - name: Queue the next standing run
+        if: always() && steps.gate.outputs.run == 'true' && vars.AGENT_STANDING != 'off'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STARTED: ${{ steps.start.outputs.epoch }}
+        run: |
+          ran=$(( $(date +%s) - STARTED ))
+          if [ "$ran" -lt 1200 ]; then
+            echo "::warning::this run lasted only ${ran}s (under 20 minutes): not re-queuing, so a crash cannot loop. A manual dispatch restarts the agent."
+            exit 0
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/trader-agent.yml/dispatches" \
+            -d '{"ref":"main"}')
+          echo "re-queued the standing agent: HTTP $code"
+          [ "$code" = "204" ] || { echo "::error::could not queue the next standing run (HTTP $code)"; exit 1; }

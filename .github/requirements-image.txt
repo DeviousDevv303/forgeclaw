@@ -1,0 +1,9 @@
+# Pinned to the exact versions the CPU benchmark verified on ubuntu-24.04 / Python 3.11
+# (forgeclaw-cpu-image-benchmark @ c1a6cd1). Torch is installed separately from the CPU index.
+accelerate==1.15.0
+diffusers==0.41.0
+huggingface_hub==1.33.0
+numpy==2.4.6
+Pillow==13.0.0
+safetensors==0.8.0
+transformers==5.20.1

@@ -1,0 +1,197 @@
+# Directive item 5 — Self-sculpting workflow for autonomous code modification.
+# Design decisions: every proposal starts from origin/main, uses a sculpt/* branch,
+# blocks Guardian/workflow/package-control paths, validates and builds before push,
+# and opens a reviewable pull request instead of mutating main.
+# Remaining: repository branch protection and required reviewers remain the final
+# authority for merging; this workflow does not auto-merge or run arbitrary tests
+# supplied by the model.
+
+name: Self Sculpt
+run-name: Self Sculpt ${{ inputs.branch }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      file_path:
+        description: Repository-relative source file path to update
+        required: true
+        type: string
+      content:
+        description: Complete replacement file content (maximum 60000 characters)
+        required: true
+        type: string
+      reason:
+        description: One-line reason for the proposed change
+        required: true
+        type: string
+      branch:
+        description: New feature branch; must match sculpt/*
+        required: true
+        type: string
+
+concurrency:
+  group: self-sculpt-${{ inputs.branch }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sculpt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # Hardening: do not leave a write-capable token in .git/config while `npm run build`
+          # runs. The push step authenticates explicitly instead.
+          persist-credentials: false
+
+      - name: Load protected-path policy from main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git show origin/main:.github/scripts/check-protected.py > "$RUNNER_TEMP/check-protected.py"
+          git show origin/main:.github/protected-paths.txt > "$RUNNER_TEMP/protected-paths.txt"
+
+      - name: Validate proposal inputs
+        env:
+          SCULPT_PATH: ${{ inputs.file_path }}
+          SCULPT_CONTENT: ${{ inputs.content }}
+          SCULPT_BRANCH: ${{ inputs.branch }}
+          SCULPT_REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path_text = os.environ['SCULPT_PATH'].strip()
+          branch = os.environ['SCULPT_BRANCH'].strip()
+          content = os.environ['SCULPT_CONTENT']
+          reason = os.environ['SCULPT_REASON'].strip()
+          path = Path(path_text)
+
+          if not path_text or path.is_absolute() or '..' in path.parts:
+              raise SystemExit('Refusing an empty, absolute, or traversal path.')
+          if any(part in {'.git', ''} for part in path.parts):
+              raise SystemExit('Refusing a hidden or Git-internal path.')
+          normalized = path.as_posix()
+          if not re.fullmatch(r'sculpt/[a-z0-9][a-z0-9._/-]{0,60}', branch) or '..' in branch or branch.endswith('/'):
+              raise SystemExit('Branch must match sculpt/<lowercase-safe-name>.')
+          if not content or len(content) > 60000:
+              raise SystemExit('Content must contain 1-60000 characters.')
+          if not reason or len(reason) > 240 or any(ord(char) < 32 and char not in '\t' for char in reason):
+              raise SystemExit('Reason must be a one-line message of at most 240 characters.')
+          print(f'Validated {normalized} -> {branch}')
+          PY
+          # Shared policy (.github/protected-paths.txt, read from main): workflows, hooks, manifests,
+          # build/lint/test configs, Guardian and tool-dispatch code.
+          printf '%s\0' "$SCULPT_PATH" | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
+
+      - name: Create isolated sculpt branch
+        env:
+          SCULPT_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git switch --create "$SCULPT_BRANCH" origin/main
+
+      - name: Write proposal and validate build
+        id: proposal
+        env:
+          SCULPT_PATH: ${{ inputs.file_path }}
+          SCULPT_CONTENT: ${{ inputs.content }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          root = Path.cwd().resolve()
+          path = (root / os.environ['SCULPT_PATH']).resolve()
+          if root not in path.parents:
+              raise SystemExit('Resolved path escapes repository.')
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(os.environ['SCULPT_CONTENT'], encoding='utf-8')
+          PY
+          git add -- "$SCULPT_PATH"
+          # Re-check what Git actually staged (covers symlinks and path tricks) BEFORE any build runs.
+          git diff --cached --no-renames --name-only -z | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
+          if git diff --cached --quiet; then
+            echo 'changed=false' >> "$GITHUB_OUTPUT"
+            echo 'No file changes detected.'
+            exit 0
+          fi
+          npm ci --ignore-scripts
+          npm run build
+          echo 'changed=true' >> "$GITHUB_OUTPUT"
+
+      # Optional: act as the ForgeClaw GitHub App (own name and avatar; its pull requests also get the normal
+      # build check, which pull requests opened with the default token do not). Skipped, with the default
+      # token as the fallback, until the repository variable FORGECLAW_APP_ID and the secret
+      # FORGECLAW_APP_PRIVATE_KEY exist.
+      - name: Sign in as the ForgeClaw app
+        id: app
+        if: vars.FORGECLAW_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FORGECLAW_APP_ID }}
+          private-key: ${{ secrets.FORGECLAW_APP_PRIVATE_KEY }}
+
+      - name: Commit and push proposal branch
+        if: steps.proposal.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          AS_APP: ${{ steps.app.outputs.token != '' && 'true' || '' }}
+          APP_ID: ${{ vars.FORGECLAW_APP_ID }}
+          APP_SLUG: ${{ vars.FORGECLAW_APP_SLUG || 'forgeclaw' }}
+          SCULPT_REASON: ${{ inputs.reason }}
+          SCULPT_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          reason="$(printf '%s' "$SCULPT_REASON" | tr '\n\r' '  ' | cut -c1-240)"
+          git config user.name 'ForgeClaw'
+          git config user.email 'forgeclaw@local'
+          if [[ -n "${AS_APP:-}" ]]; then
+            git config user.name "${APP_SLUG}[bot]"
+            git config user.email "${APP_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
+          fi
+          git commit -m "sculpt: $reason"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push --set-upstream origin "$SCULPT_BRANCH"
+
+      - name: Open pull request for review
+        if: steps.proposal.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          APP_REPO: ${{ github.repository }}
+          APP_SERVER: ${{ github.server_url }}
+          SCULPT_BRANCH: ${{ inputs.branch }}
+          SCULPT_REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          reason = ' '.join(os.environ['SCULPT_REASON'].split())[:240]
+          Path('/tmp/self-sculpt-pr-body.md').write_text(
+              f'<img src="{os.environ["APP_SERVER"]}/{os.environ["APP_REPO"]}/raw/main/docs/brand/forgeclaw-avatar.png" width="64" align="right" alt="ForgeClaw">\n\n'
+              '**ForgeClaw** · autonomous agent · self-sculpt proposal\n\n'
+              f'Reason: {reason}\n\n'
+              'Build validation passed. Review the diff and required checks before merging; this workflow never auto-merges.\n',
+              encoding='utf-8',
+          )
+          PY
+          gh pr create \
+            --base main \
+            --head "$SCULPT_BRANCH" \
+            --title "[ForgeClaw] sculpt: $(printf '%s' "$SCULPT_REASON" | tr '\n\r' '  ' | cut -c1-240)" \
+            --body-file /tmp/self-sculpt-pr-body.md

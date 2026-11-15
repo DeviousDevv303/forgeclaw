@@ -1,0 +1,257 @@
+import { describe, expect, it } from 'vitest'
+import {
+  explainShellRunMismatch,
+  isCorrelatedShellRun,
+  MAX_SHELL_OUTPUT_CHARS,
+  normalizeShellWorkingDirectoryInput,
+  parseShellExecutionLog,
+  resolveShellWorkingDirectory,
+  resolveShellRun,
+  shellCloneCollisionHint,
+  type ShellWorkflowRun,
+} from './shellCorrelation'
+
+const dispatchedAt = Date.parse('2026-09-30T13:54:20.000Z')
+const now = Date.parse('2026-09-30T13:54:30.000Z')
+const invocationId = 'shell-1790776461550-82cdf286'
+
+function run(overrides: Partial<ShellWorkflowRun> = {}): ShellWorkflowRun {
+  return {
+    id: 36725078486,
+    name: `Shell exec ${invocationId}`,
+    display_title: `Shell exec ${invocationId}`,
+    event: 'workflow_dispatch',
+    status: 'queued',
+    conclusion: null,
+    created_at: '2026-09-30T13:54:24.000Z',
+    head_branch: 'main',
+    html_url: 'https://github.com/DeviousDevv303/forgeclaw/actions/runs/36725078486',
+    run_number: 42,
+    ...overrides,
+  }
+}
+
+describe('Shell workflow correlation', () => {
+  it('accepts the live GitHub run-name shape for the matching invocation', () => {
+    expect(isCorrelatedShellRun(run(), invocationId, dispatchedAt, now)).toBe(true)
+  })
+
+  it('fails closed when required payload fields are missing', () => {
+    const missingEvent = run() as Partial<ShellWorkflowRun>
+    delete missingEvent.event
+    const missingBranch = run() as Partial<ShellWorkflowRun>
+    delete missingBranch.head_branch
+    const missingTitle = run() as Partial<ShellWorkflowRun>
+    delete missingTitle.display_title
+    delete missingTitle.name
+    const missingTimestamp = run() as Partial<ShellWorkflowRun>
+    delete missingTimestamp.created_at
+
+    expect(isCorrelatedShellRun(missingEvent, invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(missingBranch, invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(missingTitle, invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(missingTimestamp, invocationId, dispatchedAt, now)).toBe(false)
+  })
+
+  it('rejects an unrelated run even when it is the newest listed run', () => {
+    expect(isCorrelatedShellRun(run({ name: 'Shell exec another-invocation', display_title: 'Shell exec another-invocation' }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ display_title: undefined }), invocationId, dispatchedAt, now)).toBe(true)
+  })
+
+  it('correlates concurrent dispatches independently regardless of result ordering', () => {
+    const invocationA = 'shell-concurrent-a'
+    const invocationB = 'shell-concurrent-b'
+    const runA = run({ id: 101, display_title: `Shell exec ${invocationA}`, name: `Shell exec ${invocationA}` })
+    const runB = run({ id: 102, display_title: `Shell exec ${invocationB}`, name: `Shell exec ${invocationB}` })
+    const unrelated = run({ id: 103, display_title: 'Shell exec unrelated', name: 'Shell exec unrelated' })
+    const results = [unrelated, runB, runA]
+
+    expect(results.find(candidate => isCorrelatedShellRun(candidate, invocationA, dispatchedAt, now))?.id).toBe(101)
+    expect(results.find(candidate => isCorrelatedShellRun(candidate, invocationB, dispatchedAt, now))?.id).toBe(102)
+    expect(results.some(candidate => isCorrelatedShellRun(candidate, 'shell-concurrent-c', dispatchedAt, now))).toBe(false)
+  })
+
+  it('rejects stale, future, wrong-event, wrong-ref, malformed, and invalid runs', () => {
+    expect(isCorrelatedShellRun(run({ created_at: '2026-09-30T11:00:00.000Z' }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ created_at: '2026-09-30T17:00:00.000Z' }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ event: 'push' }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ head_branch: 'feature/other' }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ id: 0 }), invocationId, dispatchedAt, now)).toBe(false)
+    expect(isCorrelatedShellRun(run({ created_at: 'not-a-date' }), invocationId, dispatchedAt, now)).toBe(false)
+  })
+})
+
+
+describe('Shell run resolution states', () => {
+  const runDeadline = now + 1_000
+  const logDeadline = now + 2_000
+
+  it('keeps a missing run pending until the run-list deadline', () => {
+    expect(resolveShellRun(undefined, false, runDeadline, logDeadline, now)).toBe('pending_run')
+    expect(resolveShellRun(undefined, false, runDeadline, logDeadline, runDeadline)).toBe('run_timeout')
+  })
+
+  it('distinguishes a discovered run with delayed logs from log timeout', () => {
+    expect(resolveShellRun(run(), false, runDeadline, logDeadline, now)).toBe('pending_log')
+    expect(resolveShellRun(run(), false, runDeadline, logDeadline, logDeadline)).toBe('log_timeout')
+    expect(resolveShellRun(run(), true, runDeadline, logDeadline, now)).toBe('resolved')
+  })
+})
+
+describe('Shell working-directory boundary', () => {
+  const workspace = '/home/runner/work/forgeclaw/forgeclaw'
+
+  it('allows the repository root and valid nested directories', () => {
+    expect(resolveShellWorkingDirectory('.', workspace)).toBe(workspace)
+    expect(resolveShellWorkingDirectory('src/lib', workspace)).toBe(`${workspace}/src/lib`)
+  })
+
+  it('rejects parent traversal, absolute paths, and traversal outside the workspace', () => {
+    expect(resolveShellWorkingDirectory('..', workspace)).toBeNull()
+    expect(resolveShellWorkingDirectory('/tmp', workspace)).toBeNull()
+    expect(resolveShellWorkingDirectory('src/../../outside', workspace)).toBeNull()
+  })
+
+  it('normalizes local-model workspace aliases while preserving path traversal protection', () => {
+    expect(normalizeShellWorkingDirectoryInput('/workspace', 'forgeclaw')).toBe('.')
+    expect(normalizeShellWorkingDirectoryInput('/workspace/forgeclaw', 'forgeclaw')).toBe('.')
+    expect(normalizeShellWorkingDirectoryInput('/workspace/forgeclaw/src/lib', 'forgeclaw')).toBe('src/lib')
+    expect(normalizeShellWorkingDirectoryInput('/workspace/src/lib', 'forgeclaw')).toBe('src/lib')
+    expect(normalizeShellWorkingDirectoryInput('/workspace/../outside', 'forgeclaw')).toBeNull()
+    expect(normalizeShellWorkingDirectoryInput('/tmp', 'forgeclaw')).toBeNull()
+    expect(normalizeShellWorkingDirectoryInput('../outside', 'forgeclaw')).toBeNull()
+  })
+})
+
+describe('Shell execution log parsing', () => {
+  it('retains human-readable command output and exposes exit metadata', () => {
+    const parsed = parseShellExecutionLog(
+      '2026-09-30T13:54:28.0000000Z  === FORGECLAW EXECUTION ===\n' +
+      '2026-09-30T13:54:28.0000000Z  invocation_id=shell-1\n' +
+      '2026-09-30T13:54:28.0000000Z  start=2026-09-30T13:54:28Z\n' +
+      '2026-09-30T13:54:28.0000000Z  hello world\n' +
+      '2026-09-30T13:54:28.0000000Z  exit_code=0\n' +
+      '2026-09-30T13:54:28.0000000Z  end=2026-09-30T13:54:28Z',
+      'success',
+    )
+    expect(parsed).toEqual({ commandOutput: 'hello world', exitCode: 0 })
+  })
+
+  it('keeps the workflow\'s SIGPIPE note in the output the model reads, with exit 0', () => {
+    const parsed = parseShellExecutionLog(
+      '2026-11-13T01:42:03.0000000Z === FORGECLAW EXECUTION ===\n' +
+      '2026-11-13T01:42:03.0000000Z start=2026-11-13T01:42:03Z\n' +
+      '2026-11-13T01:42:03.0000000Z first line\n' +
+      '2026-11-13T01:42:03.0000000Z note: command exited 141 (SIGPIPE: a downstream stage such as head closed the pipe early); reported as exit_code=0\n' +
+      '2026-11-13T01:42:03.0000000Z exit_code=0\n' +
+      '2026-11-13T01:42:03.0000000Z end=2026-11-13T01:42:03Z',
+      'success',
+    )
+    expect(parsed.exitCode).toBe(0)
+    expect(parsed.commandOutput).toContain('first line')
+    expect(parsed.commandOutput).toContain('SIGPIPE')
+  })
+
+  it('bounds unusually large command output without changing exit metadata', () => {
+    const output = 'x'.repeat(MAX_SHELL_OUTPUT_CHARS + 500)
+    const parsed = parseShellExecutionLog(`=== FORGECLAW EXECUTION ===\nstart=now\n${output}\nexit_code=0`, 'success')
+    expect(parsed.exitCode).toBe(0)
+    expect(parsed.commandOutput.startsWith('x'.repeat(MAX_SHELL_OUTPUT_CHARS))).toBe(true)
+    expect(parsed.commandOutput).toContain('[truncated 500 more characters]')
+  })
+
+  it('keeps the command output\'s own leading indentation (only the log timestamp is stripped)', () => {
+    const log = [
+      '2026-10-18T15:14:00.1234567Z === FORGECLAW EXECUTION ===',
+      '2026-10-18T15:14:00.1234567Z start=now',
+      '2026-10-18T15:14:00.1234567Z {',
+      '2026-10-18T15:14:00.1234567Z   "name": "forgeclaw",',
+      '2026-10-18T15:14:00.1234567Z     "nested": true',
+      '2026-10-18T15:14:00.1234567Z }',
+      '2026-10-18T15:14:00.1234567Z exit_code=0',
+      '2026-10-18T15:14:00.1234567Z end=now',
+    ].join('\n')
+    expect(parseShellExecutionLog(log, 'success').commandOutput).toBe('{\n  "name": "forgeclaw",\n    "nested": true\n}')
+  })
+
+  it('uses the workflow\'s LAST exit_code line, so command output cannot spoof the exit code', () => {
+    const log = '=== FORGECLAW EXECUTION ===\nstart=now\nexit_code=0\nreal failure\nexit_code=1\nend=now'
+    const parsed = parseShellExecutionLog(log, 'failure')
+    expect(parsed.exitCode).toBe(1)
+    expect(parsed.commandOutput).toBe('exit_code=0\nreal failure')
+    const ok = parseShellExecutionLog('=== FORGECLAW EXECUTION ===\nstart=now\nexit_code=1 is just text\nexit_code=0\nend=now', 'success')
+    expect(ok.exitCode).toBe(0)
+  })
+
+  it('uses a nonzero fallback when a failed run has no exit marker', () => {
+    expect(parseShellExecutionLog('=== FORGECLAW EXECUTION ===\nstart=2026-09-30T13:54:28Z\ncommand output', 'failure')).toEqual({
+      commandOutput: 'command output',
+      exitCode: 1,
+    })
+  })
+})
+
+describe('shell clone destination diagnostics', () => {
+  const collision = "fatal: destination path 'forgeclaw' already exists and is not an empty directory."
+
+  it('recognizes cloning the current repository into an existing checkout directory', () => {
+    const hint = shellCloneCollisionHint(
+      'git clone https://github.com/DeviousDevv303/forgeclaw.git',
+      collision,
+      'DeviousDevv303',
+      'forgeclaw',
+    )
+    expect(hint).toContain('already checked out at the runner workspace root')
+    expect(hint).toMatch(/use that existing checkout/i)
+    expect(hint).toContain('/tmp/forgeclaw-copy')
+  })
+
+  it('does not falsely identify another repository as the current checkout', () => {
+    const hint = shellCloneCollisionHint(
+      'git clone https://github.com/example/other.git',
+      collision,
+      'DeviousDevv303',
+      'forgeclaw',
+    )
+    expect(hint).toContain('Choose a new empty destination')
+    expect(hint).not.toContain('already checked out at the runner workspace root')
+  })
+
+  it('does not add clone guidance to unrelated failures', () => {
+    expect(shellCloneCollisionHint('npm test', 'fatal: unrelated failure', 'DeviousDevv303', 'forgeclaw')).toBe('')
+  })
+})
+
+describe('explainShellRunMismatch', () => {
+  it('returns null exactly when the run is accepted', () => {
+    expect(explainShellRunMismatch(run(), invocationId, dispatchedAt, now)).toBeNull()
+  })
+
+  it('agrees with isCorrelatedShellRun for every rejection it explains', () => {
+    const cases: Array<Partial<ShellWorkflowRun>> = [
+      run({ event: 'push' }),
+      run({ head_branch: 'feature' }),
+      run({ name: 'other', display_title: 'other' }),
+      run({ created_at: 'not a date' }),
+      run({ created_at: '2026-09-30T10:00:00.000Z' }),
+      run({ created_at: '2026-09-30T18:00:00.000Z' }),
+      run({ id: 0 }),
+    ]
+    for (const candidate of cases) {
+      expect(explainShellRunMismatch(candidate, invocationId, dispatchedAt, now)).toEqual(expect.any(String))
+      expect(isCorrelatedShellRun(candidate, invocationId, dispatchedAt, now)).toBe(false)
+    }
+  })
+
+  it('does NOT reject the right run for ordinary device clock drift (the Oct 16 failure class)', () => {
+    for (const created_at of ['2026-09-30T13:44:00.000Z', '2026-09-30T14:04:00.000Z']) {
+      expect(explainShellRunMismatch(run({ created_at }), invocationId, dispatchedAt, now)).toBeNull()
+      expect(isCorrelatedShellRun(run({ created_at }), invocationId, dispatchedAt, now)).toBe(true)
+    }
+  })
+
+  it('still rejects an hours-old run and says how old it is', () => {
+    expect(explainShellRunMismatch(run({ created_at: '2026-09-30T10:00:00.000Z' }), invocationId, dispatchedAt, now)).toContain('before dispatch')
+    expect(explainShellRunMismatch(run({ created_at: '2026-09-30T18:00:00.000Z' }), invocationId, dispatchedAt, now)).toContain('future')
+  })
+})

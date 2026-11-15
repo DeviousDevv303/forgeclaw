@@ -1,0 +1,29 @@
+# Cloudflare Worker config for the ForgeClaw public relay. See relay/README.md.
+name = "forgeclaw-relay"
+main = "worker.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+REPO = "DeviousDevv303/forgeclaw"
+ALLOWED_ORIGINS = "https://deviousdevv303.github.io"
+MAX_PER_HOUR = "10"
+MAX_CONCURRENT = "3"
+
+# Per-IP hourly quota. Create it with: npx wrangler kv namespace create RATE
+# then paste the id it prints here.
+# [[kv_namespaces]]
+# binding = "RATE"
+# id = "<paste id>"
+
+# Visitor conversations (for NEXUS) and error reports from every user.
+# Create it with: npx wrangler kv namespace create LEARN
+# [[kv_namespaces]]
+# binding = "LEARN"
+# id = "<paste id>"
+
+# Secrets (never in this file): npx wrangler secret put <NAME>
+#   GITHUB_TOKEN    fine-grained, forgeclaw only, Actions: Read and write
+#   OWNER_KEY       a long random phrase; paste the same into ForgeClaw → NEXUS → relay owner key
+#   RESEND_API_KEY  from resend.com (free); error reports are emailed to REPORT_EMAIL
+#   REPORT_EMAIL    the address you signed up to Resend with
+

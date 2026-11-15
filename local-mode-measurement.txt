@@ -1,0 +1,18 @@
+ForgeClaw Local Mode v0.1 combined workload measurement
+host=0f5379ece420
+               total        used        free      shared  buff/cache   available
+Mem:            23Gi       3.5Gi        20Gi        10Mi       1.2Gi        20Gi
+Swap:          2.0Gi          0B       2.0Gi
+2026-09-20T07:27:00+00:00 label=baseline total_used_mib=3542 swap_used_mib=0 llama_rss_mib=1314 vite_rss_mib=184
+vite_ready=true
+llama_ready=true
+2026-09-20T07:27:00+00:00 label=runtime_ready total_used_mib=3542 swap_used_mib=0 llama_rss_mib=1314 vite_rss_mib=185
+inference_1=completed
+2026-09-20T07:27:02+00:00 label=inference_1 total_used_mib=3546 swap_used_mib=0 llama_rss_mib=1320 vite_rss_mib=185
+inference_2=completed
+2026-09-20T07:27:07+00:00 label=inference_2 total_used_mib=3545 swap_used_mib=0 llama_rss_mib=1308 vite_rss_mib=188
+inference_3=completed
+2026-09-20T07:27:11+00:00 label=inference_3 total_used_mib=3546 swap_used_mib=0 llama_rss_mib=1311 vite_rss_mib=188
+2026-09-20T07:27:16+00:00 label=tool_inference total_used_mib=3577 swap_used_mib=0 llama_rss_mib=1341 vite_rss_mib=188
+peak_total_used_mib=3577
+peak_swap_used_mib=0

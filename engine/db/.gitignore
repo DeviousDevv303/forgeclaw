@@ -1,0 +1,5 @@
+*
+!.gitignore
+!db.ts
+!migrate.ts
+!schema.sql

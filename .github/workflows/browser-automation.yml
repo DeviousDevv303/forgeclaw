@@ -1,0 +1,54 @@
+name: Browser Automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Target URL'
+        required: true
+      task:
+        description: 'Task type'
+        required: true
+        type: choice
+        options:
+          - screenshot
+          - scrape
+          - test
+          - audit
+      selector:
+        description: 'CSS selector (optional)'
+        required: false
+
+jobs:
+  automate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Playwright is not an app dependency, so it is installed here in its own directory (exact pin)
+      # instead of `npm ci` (which installed the whole app and never provided `playwright` anyway).
+      - name: Install Playwright and Chromium
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw"
+          cd "$RUNNER_TEMP/pw"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+          echo "NODE_PATH=$RUNNER_TEMP/pw/node_modules" >> "$GITHUB_ENV"
+      - run: node scripts/browser-automation.cjs
+        env:
+          TARGET_URL: ${{ github.event.inputs.url }}
+          TASK: ${{ github.event.inputs.task }}
+          SELECTOR: ${{ github.event.inputs.selector }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: automation-results
+          path: |
+            result.json
+            screenshot.png
+            logs.txt
+          if-no-files-found: ignore

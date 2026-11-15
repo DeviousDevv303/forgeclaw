@@ -1,0 +1,215 @@
+// @vitest-environment node
+// Updated by MANUS: two assertions in this file called a real local inference server server on
+// 127.0.0.1:8080, so the suite failed with "fetch failed" on any machine without
+// local inference server running — including CI. The local runtime is untouched; the network tests
+// now skip when no endpoint is reachable instead of reporting a false failure.
+import { describe, expect, it } from 'vitest'
+import { localInferenceProvider, routeLocalTask, shouldCheckNexusKnowledge, shouldUseLocalModel } from './localInferenceProvider'
+import { callProvider } from '../../modelProviders'
+import { runSubAgent } from '../../managedAgent'
+import { FORGE_TOOLS, executeTool } from '../../forgeTools'
+import { parseManualToolCalls } from '../manualToolMode'
+import { classifyFailure, classifyToolFailure, extractStatus, decideRetry } from '../../agentCore'
+
+const endpoint = process.env.FORGECLAW_LOCAL_ENDPOINT || 'http://127.0.0.1:8080/v1'
+
+/** Probe the local endpoint so an absent local inference server skips instead of failing. */
+async function localServerReachable(): Promise<boolean> {
+  try {
+    const response = await fetch(`${endpoint.replace(/\/+$/, '')}/models`)
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+const reachable = await localServerReachable()
+
+describe('ForgeClaw Local Mode v0.1 smoke path', () => {
+  it('routes both routine and complex prompts to Qwen', () => {
+    expect(shouldUseLocalModel([{ role: 'user', content: 'pwd' }])).toBe(false)
+    expect(routeLocalTask([{ role: 'user', content: 'pwd' }])).toBe('qwen')
+    expect(routeLocalTask([{ role: 'user', content: 'Design a robust migration plan for the repository and explain tradeoffs.' }])).toBe('qwen')
+  })
+
+  it('skips NEXUS knowledge matching for complex tasks', () => {
+    expect(shouldCheckNexusKnowledge('Analyze the architecture and explain trade-offs')).toBe(false)
+    expect(shouldCheckNexusKnowledge('What is the capital of France?')).toBe(true)
+    expect(shouldCheckNexusKnowledge('Analyze this image', true)).toBe(false)
+  })
+
+  it('does not send custom grammar with image tool requests', async () => {
+    const originalFetch = globalThis.fetch
+    let captured: Record<string, unknown> | undefined
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      captured = JSON.parse(String(init?.body)) as Record<string, unknown>
+      return new Response(JSON.stringify({ choices: [{ message: { tool_calls: [] }, finish_reason: 'stop' }] }), { status: 200 })
+    }) as typeof fetch
+    try {
+      await localInferenceProvider.send({
+        systemPrompt: 'system',
+        messages: [{ role: 'user', content: 'Generate an image', image_url: 'data:image/png;base64,abc' }],
+        model: 'local-model',
+        tools: [{ name: 'analyze_image', description: 'Analyze', parameters: { type: 'object' } }],
+      }, 'http://127.0.0.1:8080/v1')
+      expect(captured).toBeDefined()
+      expect(captured).not.toHaveProperty('grammar')
+      expect(captured?.tool_choice).toEqual({ type: 'function', function: { name: 'analyze_image' } })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('parses the model toolcalls envelope and normalizes generateimage', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: '{"toolcalls":[{"id":"call1","type":"function","function":{"name":"generateimage","arguments":"{\\"prompt\\":\\"Rick and Morty\\",\\"style\\":\\"cartoon\\",\\"width\\":256,\\"height\\":256}"}}]}',
+        },
+        finish_reason: 'stop',
+      }],
+    }), { status: 200 })) as typeof fetch
+    try {
+      const result = await localInferenceProvider.send({
+        systemPrompt: 'system',
+        messages: [{ role: 'user', content: 'Generate an image' }],
+        model: 'local-model',
+        tools: [{ name: 'generate_image', description: 'Generate', parameters: { type: 'object' } }],
+      }, 'http://127.0.0.1:8080/v1')
+      expect(result.toolCalls).toEqual([{
+        id: 'call1',
+        name: 'generate_image',
+        input: { prompt: 'Rick and Morty', style: 'cartoon', width: 256, height: 256 },
+      }])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('parses streamed toolcalls before returning text to the renderer', async () => {
+    const originalFetch = globalThis.fetch
+    const payload = '{"toolcalls":[{"id":"call1","type":"function","function":{"name":"generateimage","arguments":"{\\"prompt\\":\\"Rick and Morty\\",\\"style\\":\\"cartoon\\",\\"width\\":256,\\"height\\":256}"}}]}'
+    globalThis.fetch = (async () => new Response([
+      `data: ${JSON.stringify({ choices: [{ delta: { content: payload } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n'), { status: 200 })) as typeof fetch
+    try {
+      const result = await localInferenceProvider.send({
+        systemPrompt: 'system',
+        messages: [{ role: 'user', content: 'Generate an image' }],
+        model: 'local-model',
+        tools: [{ name: 'generate_image', description: 'Generate', parameters: { type: 'object' } }],
+        onToken: () => undefined,
+      }, 'http://127.0.0.1:8080/v1')
+      expect(result.toolCalls?.[0]?.name).toBe('generate_image')
+      expect(parseManualToolCalls(payload)[0]?.toolName).toBe('generate_image')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('normalizes qwenreason and nexuslearn aliases', async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: '{"toolcalls":[{"id":"call1","type":"function","function":{"name":"qwenreason","arguments":"{\\"task\\":\\"find capital of France\\",\\"context\\":\\"The user asked for the capital of France.\\",\\"nexuslearn\\":false,\\"ref\\":\\"main\\"}"}}]}',
+        },
+        finish_reason: 'stop',
+      }],
+    }), { status: 200 })) as typeof fetch
+    try {
+      const result = await localInferenceProvider.send({
+        systemPrompt: 'system',
+        messages: [{ role: 'user', content: 'What is the capital of France?' }],
+        model: 'local-model',
+        tools: [{ name: 'qwen_reason', description: 'Reason', parameters: { type: 'object' } }],
+      }, 'http://127.0.0.1:8080/v1')
+      expect(result.toolCalls).toEqual([{
+        id: 'call1',
+        name: 'qwen_reason',
+        input: {
+          task: 'find capital of France',
+          context: 'The user asked for the capital of France.',
+          nexuslearn: false,
+          nexus_learn: false,
+          ref: 'main',
+        },
+      }])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('blocks self-sculpt changes to protected paths and unsafe branches', async () => {
+    const context = { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw', guardianPosture: 'autonomous' as const, sculptUnlocked: true }
+    const protectedPath = await executeTool({
+      id: 'sculpt-protected',
+      name: 'sculpt_self',
+      input: { file_path: 'src/lib/guardianGate.ts', content: 'tamper', reason: 'test', branch: 'sculpt/test' },
+    }, context)
+    const unsafeBranch = await executeTool({
+      id: 'sculpt-branch',
+      name: 'sculpt_self',
+      input: { file_path: 'src/lib/example.ts', content: 'change', reason: 'test', branch: 'main' },
+    }, context)
+    expect(protectedPath).toContain('unsafe or Guardian-protected')
+    expect(unsafeBranch).toContain('unsafe or protected')
+  })
+
+  it('exercises the agent-core classification, verification fields, and retry policy', () => {
+    expect(classifyFailure('local tool execution failed')).toBe('TOOL_FAILURE')
+    expect(classifyFailure('GitHub API rate limit exceeded')).toBe('RATE_LIMIT')
+    expect(classifyToolFailure('GitHub HTTP 403: API rate limit exceeded')).toBe('RATE_LIMIT')
+    expect(extractStatus('STATUS: COMPLETE\nNEXT_ACTION: none')).toBe('COMPLETE')
+    expect(decideRetry('NETWORK_FAILURE', 1, false).shouldRetry).toBe(true)
+    expect(decideRetry('RATE_LIMIT', 1, false).alternativeStrategy).toContain('Back off')
+    // A failed shell command is fixed by the agent; it never stops to ask the owner (Guardian asks when a call needs it).
+    const shell = decideRetry('TOOL_FAILURE', 1, true)
+    expect(shell.shouldRetry).toBe(false)
+    expect(shell.requiresUserApproval).toBeFalsy()
+    expect(shell.alternativeStrategy).toMatch(/keep going/)
+    expect(decideRetry('UNKNOWN', 1, false).requiresUserApproval).toBeFalsy()
+    expect(decideRetry('AUTH_FAILURE', 1, true).alternativeStrategy).toMatch(/shell_exec job has no GitHub credential/)
+    expect(classifyToolFailure('gh: To use GitHub CLI in a GitHub Actions workflow, set the GH_TOKEN environment variable.')).toBe('AUTH_FAILURE')
+    expect(decideRetry('TOOL_FAILURE', 3, true).alternativeStrategy).toMatch(/another tool/)
+  })
+
+  it('exercises an offline local tool without external credentials', async () => {
+    const output = await executeTool(
+      { id: 'smoke-run-js', name: 'run_js', input: { code: 'return 6 * 7' } },
+      { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw', guardianPosture: 'autonomous' as const },
+    )
+    expect(output).toBe('42')
+  })
+
+  it.skipIf(!reachable)('connects to local inference server and completes inference through the provider bridge', async () => {
+    await localInferenceProvider.test(endpoint)
+    const result = await callProvider(
+      'local',
+      'local-model',
+      'Reply with exactly the word VERIFIED.',
+      [{ role: 'user', content: 'Confirm the local inference path.' }],
+      endpoint,
+      { maxTokens: 16 },
+    )
+    expect(result.provider).toBe('local')
+    expect(result.text.trim().length).toBeGreaterThan(0)
+  }, 120_000)
+
+  it.skipIf(!reachable)('runs the bounded managed-agent loop through the local provider', async () => {
+    const output = await runSubAgent(
+      'You are a local smoke-test agent. Answer concisely and do not use network tools.',
+      'State the result of a local execution check in one sentence.',
+      ['run_js'],
+      'local',
+      'local-model',
+      endpoint,
+      FORGE_TOOLS,
+      { ghToken: '', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw', guardianPosture: 'autonomous' as const },
+    )
+    expect(output.trim().length).toBeGreaterThan(0)
+  }, 120_000)
+})

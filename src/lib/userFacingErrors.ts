@@ -1,0 +1,95 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+
+/** Remove internal model/runtime protocol text before content reaches the normal chat bubble. */
+export function sanitizeChatText(text: string): string {
+  const withoutInternalTail = text
+    // Application identity and verified-context blocks are runtime instructions,
+    // not user-facing answer content. They commonly appear after a useful answer.
+    .replace(/\[APPLICATIONIDENTITY[\s\S]*$/i, '')
+    .replace(/\[TOOLFAILURE\][^\n]*/gi, '')
+    .replace(/\[TOOLFAILURE\][\s\S]*$/gi, '')
+    .replace(/\[RETRY:(?:YES|NO)\][^\n]*/gi, '')
+    .replace(/\[ERROR\]:\s*/gi, '')
+    .replace(/\[SYSTEM(?:_NOTICE)?\][\s\S]*$/gi, '')
+  return withoutInternalTail
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** The real cause, short and with anything token-shaped removed, so a generic line never hides what happened. */
+export function errorDetail(rawMessage: string): string {
+  const clean = rawMessage.replace(/\s+/g, ' ').replace(/\b(?:sk-[\w-]{8,}|gh[pousr]_\w{8,}|github_pat_\w{8,}|eyJ[\w-]{10,}\.[\w-]{10,}\.[\w-]{5,})|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[redacted]').trim()
+  return clean.length > 160 ? `${clean.slice(0, 157)}...` : clean
+}
+
+/** A request that died because the connection dropped (typically the phone paused the page): worth one automatic retry. */
+export function isTransientNetworkError(rawMessage: string): boolean {
+  return /network|failed to fetch|load failed|econnrefused|enotfound|etimedout|timeout|timed out|connection (?:reset|closed|lost)|aborted/i.test(rawMessage)
+}
+
+/** Convert technical runtime failures into concise, actionable chat responses. */
+export function formatUserFacingError(rawMessage: string): string {
+  const message = rawMessage.trim()
+  const qwen = formatQwenStageError(message)
+  if (qwen) return qwen
+  if (/shell execution dispatched but correlated run|correlated run .* not found/i.test(message)) {
+    return 'GitHub accepted the shell request, but its workflow run was not visible yet. Nothing was reported as completed. Please try again in a moment; the execution panel will keep the technical run details.'
+  }
+  if (/401|403|unauthorized|authentication|invalid.*(?:token|key)|token.*(?:invalid|rejected)/i.test(message)) {
+    return 'GitHub rejected the saved credential, so I couldn’t complete that request. Check the GitHub token in Settings, then try again.'
+  }
+  if (/network|failed to fetch|econnrefused|enotfound|etimedout|timeout|timed out/i.test(message)) {
+    // Extract tool name if present in the message for a more specific error
+    const toolMatch = message.match(/(github_\w+|shell_exec|qwen_reason)/i)
+    const toolName = toolMatch ? toolMatch[1] : null
+    if (toolName) {
+      return `Connection failed during ${toolName}. This usually means GitHub's API is rate-limiting or having issues. Wait 30 seconds and try again. If it keeps happening, check the execution panel for details.`
+    }
+    return `I hit a temporary connection problem while processing that request (${errorDetail(message)}). Please try again in a moment.`
+  }
+  if (/guardian|co-sign|approval/i.test(message)) {
+    return 'That action is waiting for the required approval. Review the Guardian Gate in the execution panel before trying again.'
+  }
+  return `I couldn’t complete that request because an internal tool failed (${errorDetail(message)}). The detailed failure is also in the execution panel; please try again.`
+}
+
+/**
+ * One message per Qwen/Qwen3-8B stage, keyed on the stage label the tool and router put on the error.
+ * Each says what is known about the run, so a dispatch that never happened, a run that is still
+ * executing on GitHub, and a reply the model gave never collapse into the same "can't reach" text.
+ */
+function formatQwenStageError(message: string): string | undefined {
+  if (/^qwen-not-dispatched\b/i.test(message)) {
+    return 'Qwen/Qwen3-8B was not started for this message: ForgeClaw did not offer it the qwen_reason tool, so nothing was sent to GitHub Actions. This is a ForgeClaw routing error, not a connection problem.'
+  }
+  if (/qwen-dispatch\b/i.test(message)) {
+    const auth = /\b(?:401|403|404)\b/.test(message)
+    return auth
+      ? 'Qwen/Qwen3-8B was not started: GitHub refused the workflow dispatch for the saved token. Nothing ran. Check the GitHub token in Settings (Actions: Read and write on this repository), then try again.'
+      : 'Qwen/Qwen3-8B was not started: the workflow dispatch did not reach GitHub. Nothing ran. Please try again in a moment.'
+  }
+  if (/qwen-run-discovery[\s\S]*was not found within/i.test(message)) {
+    return 'Qwen/Qwen3-8B was dispatched, but its workflow run did not appear on GitHub within 2 minutes. It may still run: check GitHub Actions before asking again so it does not run twice.'
+  }
+  if (/qwen-run-discovery[\s\S]*\b(?:401|403|404)\b/i.test(message)) {
+    return 'Qwen/Qwen3-8B was dispatched, but GitHub refused to list its workflow runs for the saved token. Check the GitHub token in Settings (Actions: Read on this repository).'
+  }
+  if (/qwen-run-discovery/i.test(message)) {
+    return 'Qwen/Qwen3-8B was dispatched, but I couldn’t reach GitHub Actions in time to find its run. The job may still finish on GitHub. If it keeps happening, open Settings and run “TEST GITHUB READ” to check the connection.'
+  }
+  if (/qwen-run-poll[\s\S]*timed out after/i.test(message)) {
+    return 'Qwen/Qwen3-8B’s workflow run was still not finished when ForgeClaw stopped waiting. Open the run in GitHub Actions to see whether it completed.'
+  }
+  const concluded = message.match(/qwen-run-poll[\s\S]*concluded as "([^"]*)"/i)
+  if (concluded) {
+    return `Qwen/Qwen3-8B’s workflow run finished as “${concluded[1]}” on GitHub, so there is no answer. The run log in GitHub Actions shows the failing step.`
+  }
+  if (/qwen-(?:artifact|result)[\w-]*/i.test(message) && !/quality validation|empty response|without a non-empty result/i.test(message)) {
+    return 'Qwen/Qwen3-8B’s workflow run finished, but I couldn’t read its result from GitHub. The answer is stored with the run in GitHub Actions.'
+  }
+  if (/Qwen\/Qwen3-8B[\s\S]*(?:quality validation|empty response|without a non-empty result|empty or garbled)/i.test(message)) {
+    return 'Qwen/Qwen3-8B ran and replied, but its reply was empty or unusable, so there is no answer to show. Try rephrasing the question.'
+  }
+  return undefined
+}

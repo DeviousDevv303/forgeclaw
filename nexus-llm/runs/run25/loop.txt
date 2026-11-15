@@ -1,0 +1,20 @@
+pass   img-1   calls=[generate_image] ev=verified
+pass   img-2   calls=[generate_image] ev=verified
+pass   img-3   calls=[generate_image] ev=verified
+pass   img-4   calls=[generate_image] ev=verified
+pass   img-5   calls=[generate_image] ev=verified
+pass   img-6   calls=[] ev=not_verified
+FAIL   trd-1   calls=[kalshi_markets] ev=verified | call argument query lacks ["fed"] (got "E cutting rates in Dece in De")
+pass   trd-2   calls=[kalshi_markets] ev=verified
+pass   trd-3   calls=[funds_status] ev=completed
+pass   trd-4   calls=[funds_status] ev=completed
+pass   trd-5   calls=[funds_propose] ev=failed
+pass   trd-6   calls=[funds_propose] ev=failed
+pass   trd-7   calls=[kalshi_owner_prices] ev=completed
+FAIL   trd-8   calls=[kalshi_markets] ev=verified | first call kalshi_markets, expected funds_settle; call argument id lacks ["all"] (got null)
+pass   trd-9   calls=[] ev=not_verified
+pass   trd-10  calls=[] ev=not_verified
+pass   trd-11  calls=[] ev=not_verified
+pass   trd-12  calls=[] ev=not_verified
+
+closed loop: 16/18 scenarios pass (88.9%)

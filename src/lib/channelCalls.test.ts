@@ -1,0 +1,222 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+// Built with love for Cristian Jr., Layla, and Jozae.
+
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  CHANNEL_CALL_PENDING_KEY,
+  CHANNEL_CALL_WATERMARK_KEY,
+  acknowledgeChannelCalls,
+  fetchNewChannelCalls,
+  filterNewChannelCalls,
+  mergeChannelCalls,
+  parseChannelCall,
+  parseChannelCalls,
+  parseChannelCallsInComment,
+  readChannelCallWatermark,
+  readPendingChannelCalls,
+  savePendingChannelCalls,
+  type GithubIssueCommentLike,
+} from './channelCalls'
+
+const MARKER = '<!-- forgeclaw-call:v1 id=call-1 -->'
+
+function comment(overrides: Partial<GithubIssueCommentLike> = {}): GithubIssueCommentLike {
+  return {
+    id: 101,
+    body: `@ForgeClaw\n\nCheck the relay and report back.\n\n${MARKER}`,
+    created_at: '2026-10-23T06:30:00Z',
+    user: { login: 'DeviousDevv303' },
+    ...overrides,
+  }
+}
+
+describe('parseChannelCall', () => {
+  it('parses an owner comment carrying the v1 marker', () => {
+    const call = parseChannelCall(comment())
+    expect(call).not.toBeNull()
+    expect(call?.callId).toBe('call-1')
+    expect(call?.commentId).toBe(101)
+    expect(call?.createdAt).toBe('2026-10-23T06:30:00Z')
+  })
+
+  it('strips the marker line from the task text and trims', () => {
+    const call = parseChannelCall(comment())
+    expect(call?.taskText).toBe('@ForgeClaw\n\nCheck the relay and report back.')
+    expect(call?.taskText).not.toContain('forgeclaw-call')
+  })
+
+  it('ignores a comment with no marker, even from the owner', () => {
+    expect(parseChannelCall(comment({ body: '@ForgeClaw please look at this' }))).toBeNull()
+    expect(parseChannelCall(comment({ body: 'ordinary channel traffic' }))).toBeNull()
+    expect(parseChannelCall(comment({ body: null }))).toBeNull()
+  })
+
+  it('ignores a marked comment from any other author', () => {
+    expect(parseChannelCall(comment({ user: { login: 'someone-else' } }))).toBeNull()
+    expect(parseChannelCall(comment({ user: null }))).toBeNull()
+    expect(parseChannelCall(comment({ user: undefined }))).toBeNull()
+  })
+
+  it('ignores a marker for a different format version', () => {
+    expect(parseChannelCall(comment({ body: '<!-- forgeclaw-call:v2 id=x -->\nDo things.' }))).toBeNull()
+  })
+})
+
+describe('F-027: one comment can carry more than one call', () => {
+  const twoMarker = () => comment({
+    id: 9001,
+    body: '@ForgeClaw do A\n<!-- forgeclaw-call:v1 id=call-a-001 -->\nand also B\n<!-- forgeclaw-call:v1 id=call-b-002 -->',
+  })
+
+  it('parses every marker in a comment, in marker order', () => {
+    const calls = parseChannelCallsInComment(twoMarker())
+    expect(calls.map(c => c.callId)).toEqual(['call-a-001', 'call-b-002'])
+    expect(calls.map(c => c.commentId)).toEqual([9001, 9001])
+  })
+
+  it('strips every marker from the shared task text', () => {
+    for (const call of parseChannelCallsInComment(twoMarker())) {
+      expect(call.taskText).not.toContain('forgeclaw-call')
+      expect(call.taskText).toContain('do A')
+      expect(call.taskText).toContain('and also B')
+    }
+  })
+
+  it('parseChannelCalls surfaces both calls from the one comment', () => {
+    expect(parseChannelCalls([twoMarker()]).map(c => c.callId)).toEqual(['call-a-001', 'call-b-002'])
+    // parseChannelCall stays the first-call convenience.
+    expect(parseChannelCall(twoMarker())?.callId).toBe('call-a-001')
+  })
+
+  it('merge keeps both calls from one comment (union by call id)', () => {
+    const [a, b] = parseChannelCalls([twoMarker()])
+    const merged = mergeChannelCalls([a], [b])
+    expect(merged.map(c => c.callId)).toEqual(['call-a-001', 'call-b-002'])
+  })
+})
+
+describe('parseChannelCalls + filterNewChannelCalls', () => {
+  it('keeps only real calls, oldest first', () => {
+    const calls = parseChannelCalls([
+      comment({ id: 105, body: `later task\n<!-- forgeclaw-call:v1 id=b -->` }),
+      comment({ id: 99, body: 'no marker here' }),
+      comment({ id: 103, body: `earlier task\n<!-- forgeclaw-call:v1 id=a -->` }),
+      comment({ id: 104, user: { login: 'intruder' }, body: `forged\n${MARKER}` }),
+    ])
+    expect(calls.map(c => c.commentId)).toEqual([103, 105])
+    expect(calls.map(c => c.callId)).toEqual(['a', 'b'])
+  })
+
+  it('watermark filtering keeps only calls strictly above the watermark', () => {
+    const calls = parseChannelCalls([
+      comment({ id: 100, body: `old\n<!-- forgeclaw-call:v1 id=old -->` }),
+      comment({ id: 101, body: `edge\n<!-- forgeclaw-call:v1 id=edge -->` }),
+      comment({ id: 102, body: `new\n<!-- forgeclaw-call:v1 id=new -->` }),
+    ])
+    expect(filterNewChannelCalls(calls, 101).map(c => c.callId)).toEqual(['new'])
+    expect(filterNewChannelCalls(calls, 0)).toHaveLength(3)
+    expect(filterNewChannelCalls(calls, 102)).toHaveLength(0)
+  })
+})
+
+describe('watermark storage (strict read-back)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('starts at 0 with nothing stored', () => {
+    expect(readChannelCallWatermark()).toBe(0)
+  })
+
+  it('acknowledge writes the highest comment id and reads it back', () => {
+    const calls = parseChannelCalls([
+      comment({ id: 140, body: `a\n<!-- forgeclaw-call:v1 id=a -->` }),
+      comment({ id: 142, body: `b\n<!-- forgeclaw-call:v1 id=b -->` }),
+    ])
+    expect(acknowledgeChannelCalls(calls)).toBe(true)
+    expect(localStorage.getItem(CHANNEL_CALL_WATERMARK_KEY)).toBe('142')
+    expect(readChannelCallWatermark()).toBe(142)
+  })
+
+  it('acknowledge never moves the watermark backwards', () => {
+    localStorage.setItem(CHANNEL_CALL_WATERMARK_KEY, '200')
+    const calls = parseChannelCalls([comment({ id: 150, body: `a\n<!-- forgeclaw-call:v1 id=a -->` })])
+    expect(acknowledgeChannelCalls(calls)).toBe(true)
+    expect(readChannelCallWatermark()).toBe(200)
+  })
+
+  it('acknowledge of an empty list is a no-op success', () => {
+    expect(acknowledgeChannelCalls([])).toBe(true)
+    expect(readChannelCallWatermark()).toBe(0)
+  })
+
+  it('a corrupt stored watermark reads as 0, never as a phantom position', () => {
+    localStorage.setItem(CHANNEL_CALL_WATERMARK_KEY, 'not-a-number')
+    expect(readChannelCallWatermark()).toBe(0)
+  })
+})
+
+describe('pending calls survive a reload until dismissed', () => {
+  const call = (id: number) => ({ callId: `c${id}`, commentId: id, createdAt: '2026-10-23T06:30:00Z', taskText: `task ${id}` })
+  beforeEach(() => { localStorage.clear() })
+  afterEach(() => { vi.restoreAllMocks() })
+
+  it('round-trips through storage, oldest first', () => {
+    expect(readPendingChannelCalls()).toEqual([])
+    expect(savePendingChannelCalls([call(7), call(3)])).toBe(true)
+    expect(readPendingChannelCalls().map(c => c.commentId)).toEqual([3, 7])
+    expect(savePendingChannelCalls([])).toBe(true)
+    expect(readPendingChannelCalls()).toEqual([])
+  })
+
+  it('reports a refused write instead of pretending the calls are held', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('full', 'QuotaExceededError') })
+    expect(savePendingChannelCalls([call(1)])).toBe(false)
+    expect(readPendingChannelCalls()).toEqual([])
+  })
+
+  it('corrupt or malformed stored data reads as no pending calls', () => {
+    localStorage.setItem(CHANNEL_CALL_PENDING_KEY, '{not json')
+    expect(readPendingChannelCalls()).toEqual([])
+    localStorage.setItem(CHANNEL_CALL_PENDING_KEY, JSON.stringify([call(1), { commentId: 'x' }, null]))
+    expect(readPendingChannelCalls().map(c => c.commentId)).toEqual([1])
+  })
+
+  it('keeps only the newest 50', () => {
+    savePendingChannelCalls(Array.from({ length: 60 }, (_, i) => call(i + 1)))
+    const kept = readPendingChannelCalls()
+    expect(kept).toHaveLength(50)
+    expect(kept[0].commentId).toBe(11)
+  })
+
+  it('merge is a union by call id, oldest first', () => {
+    expect(mergeChannelCalls([call(5), call(2)], [call(5), call(9)]).map(c => c.commentId)).toEqual([2, 5, 9])
+  })
+})
+
+describe('tokenless reads stay inside the anonymous rate limit (audit 2026-11-12)', () => {
+  const stubPages = () => {
+    const pages: number[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const page = Number(/[?&]page=(\d+)/.exec(String(url))?.[1] ?? '1')
+      pages.push(page)
+      return new Response('[]', { status: 200, headers: { 'content-type': 'application/json', link: '<https://api.github.com/x?page=12>; rel="last"' } })
+    }))
+    return pages
+  }
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('reads only the first and the newest page without a token', async () => {
+    const pages = stubPages()
+    await fetchNewChannelCalls({ token: '' })
+    expect(pages).toEqual([1, 12])
+  })
+
+  it('still walks back through the pages with a token', async () => {
+    const pages = stubPages()
+    await fetchNewChannelCalls({ token: 'test-token' })
+    expect(pages.length).toBe(12)
+  })
+})

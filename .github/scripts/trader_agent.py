@@ -1,0 +1,1694 @@
+"""The Nexus Trader agent: plan -> act -> check -> adjust, once per 15-minute window, with nobody there.
+
+Owner order (2026-11-08, verbatim): "They can do everything. Kill switch, hold, exit, entry, bet down, bet up.
+They do everything autonomously. That's the whole point." and "I wanted to enter, hold, exit, bet down, bet up,
+everything, predict, kill switch, everything." So the agent runs LIVE by default: it acts through every desk tool
+with no stage to graduate from and no owner tap. AGENT_MODE=shadow exists only as an operator/test switch (it
+predicts and logs, but sends no action); a test locks the default to live.
+
+How it acts: over MCP (Streamable HTTP JSON-RPC) against the Nexus Trader server (nexus-trader POST /mcp), which runs
+every action through the Bank's own routes, so the desk's reflexes (cross-stop, floor guard, order gate) stay
+underneath. Every action carries a reason and is journaled on the Bank, so the owner watches the agent work live.
+
+How it thinks: Nexus Intelligence (the owner's Run 25 checkpoint, loaded by nexus_model.py and sha256-verified
+against run25/verdict.md before it answers anything) reads a compact picture of the desk in its own trained
+grammar and decides there: a funds_propose call is an entry, a direct answer is its call on the window (owner
+order 2026-11-10: Nexus replaces Qwen3-8B as this agent's model). The harness code around it — the fair-value
+math, the discipline gates, the grounding and stale checks — is unchanged, and an answer with no usable decision
+is never guessed at: the agent records the market's own probability as its prediction and takes no action, and
+says so. Every ruling is filed with the owner's 5-phase trace (build_nexus_phases).
+
+The owner token is read from the environment and is never printed (every outbound text passes through redact()).
+"""
+import hashlib
+import json
+import math
+import os
+import re
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+DEFAULT_AGENT_MODE = "live"
+AGENT_MODES = ("live", "shadow")
+ACTIONS = {
+    "none": None,
+    "enter_yes": ("enter", {"side": "yes"}),
+    "enter_no": ("enter", {"side": "no"}),
+    "exit": ("exit", {}),
+    # Named for what they do: the desk's "hold" pauses NEW ENTRIES; it is not "hold the position" (run 42534021710
+    # read it that way). Doing nothing, and letting an open position ride, is "none".
+    "pause_entries": ("set_hold", {"phase": "held"}),
+    "resume_entries": ("set_hold", {"phase": "done"}),
+    "kill": ("set_kill_switch", {"killed": True}),
+    "unkill": ("set_kill_switch", {"killed": False}),
+}
+USER_AGENT = "forgeclaw-trader-agent/1"
+
+
+def agent_mode(env=os.environ):
+    mode = (env.get("AGENT_MODE") or DEFAULT_AGENT_MODE).strip().lower()
+    return mode if mode in AGENT_MODES else DEFAULT_AGENT_MODE
+
+
+def redact(text, secret):
+    return text.replace(secret, "[redacted]") if secret and len(secret) >= 4 else text
+
+
+class McpError(Exception):
+    pass
+
+
+class McpSession:
+    """A minimal MCP Streamable HTTP client: initialize, notifications/initialized, tools/call."""
+
+    def __init__(self, url, token, post=None, timeout_s=30):
+        self.url, self.token, self.timeout_s = url, token, timeout_s
+        self.session_id = None
+        self.protocol = "2025-06-18"
+        self._id = 0
+        self._post = post or self._http_post
+
+    def _http_post(self, body, headers):
+        req = urllib.request.Request(self.url, data=json.dumps(body).encode(), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
+                return r.status, dict(r.headers), r.read().decode()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers or {}), e.read().decode(errors="replace")
+
+    def _headers(self, initialized):
+        h = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "User-Agent": USER_AGENT,
+             "Authorization": f"Bearer {self.token}"}
+        if self.session_id:
+            h["Mcp-Session-Id"] = self.session_id
+        if initialized:
+            h["MCP-Protocol-Version"] = self.protocol
+        return h
+
+    def rpc(self, method, params=None, initialized=True):
+        self._id += 1
+        status, headers, raw = self._post({"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or {}}, self._headers(initialized))
+        if status != 200:
+            raise McpError(redact(f"{method}: HTTP {status} {raw[:200]}", self.token))
+        sid = headers.get("Mcp-Session-Id") or headers.get("mcp-session-id")
+        if sid:
+            self.session_id = sid
+        try:
+            msg = json.loads(raw)
+        except ValueError:
+            # An SSE reply: take the data line carrying our id.
+            msg = None
+            for line in raw.splitlines():
+                if line.startswith("data:"):
+                    try:
+                        cand = json.loads(line[5:].strip())
+                    except ValueError:
+                        continue
+                    if isinstance(cand, dict) and cand.get("id") == self._id:
+                        msg = cand
+            if msg is None:
+                raise McpError(f"{method}: unreadable reply")
+        if "error" in msg:
+            raise McpError(redact(f"{method}: {msg['error'].get('message')}", self.token))
+        return msg.get("result")
+
+    def initialize(self):
+        r = self.rpc("initialize", {"protocolVersion": self.protocol, "capabilities": {}, "clientInfo": {"name": "forgeclaw-trader-agent", "version": "1"}}, initialized=False)
+        self.protocol = (r or {}).get("protocolVersion", self.protocol)
+        try:
+            self._post({"jsonrpc": "2.0", "method": "notifications/initialized"}, self._headers(True))
+        except Exception:
+            pass
+
+    def tool(self, name, args=None):
+        r = self.rpc("tools/call", {"name": name, "arguments": args or {}}) or {}
+        text = "\n".join(c.get("text", "") for c in r.get("content", []) if isinstance(c, dict))
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = text
+        return {"ok": not r.get("isError"), "data": data, "text": text}
+
+
+def observe(mcp):
+    obs = {
+        "status": mcp.tool("get_status")["data"],
+        "live": mcp.tool("get_live_window")["data"],
+        "history": mcp.tool("get_trade_history", {"limit": 8})["data"],
+        "record": mcp.tool("get_prediction_record", {"limit": 5})["data"],
+    }
+    live = obs["live"] if isinstance(obs["live"], dict) else {}
+    obs["fair"] = fair_value(live)
+    obs["edges"] = edges(obs["fair"], live.get("snapshot"))
+    return obs
+
+
+def market_p_yes(live):
+    snap = (live or {}).get("snapshot") or {}
+    yb, ya = snap.get("yesBidCents"), snap.get("yesAskCents")
+    if isinstance(yb, (int, float)) and isinstance(ya, (int, float)):
+        return round((yb + ya) / 200, 3)
+    return None
+
+
+IV_MULT = 1.15            # implied-vol multiplier fitted to Kalshi minute marks (the desk's benchmark)
+DEFAULT_SIGMA_1M_BPS = 6.0  # typical 1-minute BTC move when the tape is too short to measure
+MIN_EDGE_CENTS = 0.5      # owner order 2026-11-08: take the best edge each window, even if thin — an entry needs a positive edge after fees
+# The 150 s below was Qwen-era: that model thought for up to ~110 s on the CPU runner (run 42534021710: 108 s), so a
+# decision begun with less time left would land after the close (that run's prediction was refused: "no open window"),
+# and it waited for the next window instead (owner order 2026-11-08: the AI rules every window; run 42541804428 landed
+# 36 s before a close, skipped, and the desk went unruled for two windows).
+# Nexus (2026-11-10) is not that model: measured live on its first day (D1 agent_rulings ids 365-393, windows 1915/1930),
+# consecutive rulings inside a window landed 21-34 s apart end to end — observe + think + act + the inter-ruling pause —
+# so a full cycle is ~28 s, not ~2 minutes. 60 s is two full cycles of headroom: a decision begun at 60 s left lands
+# with ~30 s to spare, and the stale check still voids any order whose picture moved while it thought. The lower
+# floor hands back 90 s of ruled time at the end of every window (owner order 2026-11-10: watch as constant as
+# possibly capable).
+MIN_SECONDS_TO_DECIDE = 60
+# The recorded prediction is pulled halfway to the blended fair value (formula + market). 2045 on 2026-11-08: BTC 20 bps
+# above the strike with 5 minutes left, market 0.85, the model said 0.56; across its first 7 graded windows its Brier was
+# 0.0727 vs the market's 0.0690. Playbook 9 asked for this; code now does it.
+PREDICTION_ANCHOR = 0.5
+WINDOW_ROLL_S = 10        # after a window closes, give the Bank a few seconds to roll to the next one
+MAX_WINDOW_WAIT_S = 300   # total wait budget: setup (~70 s) + model load + this + think (<=300 s) stays inside the 12-min job
+
+
+def phi(x):
+    return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+
+def kalshi_fee_cents(price_cents):
+    """Kalshi's taker fee per contract, about 7% of p(1-p)."""
+    p = max(0.0, min(100.0, float(price_cents))) / 100
+    return 7 * p * (1 - p)
+
+
+def sigma_1m_bps(samples, now_s):
+    """RMS of the last five 1-minute distance changes (bps), from the window tape [[seconds, bps], ...]."""
+    pts = sorted((float(t), float(d)) for t, d in (samples or []) if isinstance(t, (int, float)) and isinstance(d, (int, float)))
+    if not pts:
+        return None, 0
+
+    def at(sec):
+        best = None
+        for t, d in pts:
+            if t <= sec:
+                best = d
+        return best
+    moves = []
+    for k in range(5):
+        a, b = at(now_s - 60 * k), at(now_s - 60 * (k + 1))
+        if a is not None and b is not None and now_s - 60 * (k + 1) >= pts[0][0]:
+            moves.append(a - b)
+    if len(moves) < 2:
+        return None, len(moves)
+    return math.sqrt(sum(m * m for m in moves) / len(moves)), len(moves)
+
+
+def fair_value(live):
+    """The desk's fair P(YES): Phi(distance / (sigma * sqrt(time left))), sigma from the window's own tape (x1.15)."""
+    w = (live or {}).get("window") or {}
+    snap = (live or {}).get("snapshot") or {}
+    now_ms, close_ms, start_ms = live.get("now") if live else None, w.get("closeTimeMs"), w.get("startedAtMs")
+    d = snap.get("distanceBps")
+    if not all(isinstance(x, (int, float)) for x in (now_ms, close_ms, d)):
+        return None
+    left_s = max(1.0, (close_ms - now_ms) / 1000 + 20)  # +20 s: the settlement averages the final minute
+    now_s = (now_ms - start_ms) / 1000 if isinstance(start_ms, (int, float)) else None
+    s1m, n = sigma_1m_bps(w.get("samples"), now_s) if now_s is not None else (None, 0)
+    measured = s1m is not None and s1m > 0
+    # Fewer than five 1-minute moves (the first minutes of a window) under-measure a jumpy market: 1930 on 2026-11-08 swung
+    # -8.6 -> +21.5 bps in two minutes while a 3-move tape read calm, and the fair said 0.96 against the market's 0.59.
+    # A short tape may raise sigma above the default, never lower it.
+    if not measured:
+        s1m = DEFAULT_SIGMA_1M_BPS
+    elif n < 5:
+        s1m = max(s1m, DEFAULT_SIGMA_1M_BPS)
+    sigma_per_s = max(s1m, 0.5) / math.sqrt(60) * IV_MULT
+    return {"p_yes": phi(d / (sigma_per_s * math.sqrt(left_s))), "sigma_1m_bps": round(s1m, 2), "sigma_measured": measured, "left_s": round(left_s - 20)}
+
+
+MARKET_WEIGHT = 0.75  # playbook 1: the market mid out-predicts the formula (341 windows). 0.5 let the formula drive trades: 2115 (2026-11-08) priced YES 0.67 vs a 0.80 market, read +4.4c NO edge, bought NO and was stopped out
+
+
+def blended_p_yes(fair, snap):
+    """The probability the edge is priced on: half the formula, half the market mid (when the book has one)."""
+    yb, ya = (snap or {}).get("yesBidCents"), (snap or {}).get("yesAskCents")
+    if not fair:
+        return None
+    if isinstance(yb, (int, float)) and isinstance(ya, (int, float)) and 0 < yb <= ya < 100:
+        return MARKET_WEIGHT * (yb + ya) / 200 + (1 - MARKET_WEIGHT) * fair["p_yes"]
+    return fair["p_yes"]
+
+
+def edges(fair, snap):
+    """Cents of edge per contract after the entry fee, for buying each side at its ask (held to settlement), priced on
+    the formula blended with the market mid."""
+    p_yes = blended_p_yes(fair, snap)
+    if p_yes is None:
+        return {"yes": None, "no": None}
+    out = {}
+    for side, ask_key, p in (("yes", "yesAskCents", p_yes), ("no", "noAskCents", 1 - p_yes)):
+        ask = (snap or {}).get(ask_key)
+        out[side] = round(100 * p - ask - kalshi_fee_cents(ask), 1) if isinstance(ask, (int, float)) else None
+    return out
+
+
+def trend(live, seconds):
+    w = (live or {}).get("window") or {}
+    pts = [(t, d) for t, d in (w.get("samples") or []) if isinstance(t, (int, float)) and isinstance(d, (int, float))]
+    if len(pts) < 2:
+        return None
+    t_now, d_now = pts[-1]
+    past = [d for t, d in pts if t <= t_now - seconds]
+    return round(d_now - past[-1], 1) if past else None
+
+
+SYSTEM = """You run the Nexus Trader desk on Kalshi's 15-minute BTC markets, with full authority over the book.
+A window pays $1 per contract on the right side: YES if BTC settles at or above the strike, NO if below.
+
+THE DESK'S PLAYBOOK (learned from its own money; the numbers are measured, not opinions):
+1. The market price is about as good a forecast as exists. Over 341 real settled windows the market mid beat a model
+   trained on 10 years of BTC. You only have an edge when the FAIR value below differs from the ask by more than fees.
+2. Fees eat careless trading: about 1.7c per contract each way at a 50c price. The desk has paid over $7.80 in fees
+   today. The owner's order (2026-11-08): take the best edge each window, even if it is thin — when either side's
+   edge after fees is positive, the better side is a trade. "none" is for when neither side beats its ask after fees.
+3. Never sell a winning position whose thesis is intact. When the desk sold positions while BTC was still on their
+   side of the strike, 11 of 11 were eventual winners (-$69 in replay). But you rule the book (owner order 2026-11-08):
+   when an open position's thesis breaks or its profit peak is rolling over, exit it yourself to save the profit —
+   that call is yours, over the sheet. The desk's stop sells at 2 bps past the strike; your exit is for before that,
+   while there is still profit to save.
+4. Chop near the strike kills both sides. With BTC within ~3 bps of the strike, entries get stopped out on each side
+   (window 1730: -$2.46 from one YES and one NO). Do not enter when |distance| < 3 bps.
+5. Never chase: no entry above 85c (window 0330 re-bought at 91.8c and 97.5c and lost $11.83). After two losing
+   positions in a window, stop for that window (window 0500: five round trips). The desk enforces these, but do not try.
+6. Late in a window with BTC far from the strike, the price already says so: there is nothing left to win.
+7. Kill switch: only for a broken desk (no prices, wrong data, orders failing). Unkill it if the data is healthy again.
+8. The Observer and the Preserver are trading again (owner order 2026-11-08) and you work as a team: the sheet is
+   fast and takes its own entries, the Preserver guards the sheet's exits, and you are the judgment over the book.
+   Protect any open position — yours or the Observer's — when you see its profit bleeding, and enter yourself
+   whenever you see an edge the sheet cannot see. Your call on a position overrides the sheet's.
+9. Your scorecard compares your calls with the market's. If your Brier score is worse than the market's, stay closer to
+   the market price in your p_yes.
+
+10. "none" means change nothing: an open position keeps riding to settlement. "pause_entries" stops the desk's NEW entries
+   (it never closes a position); "resume_entries" lifts that pause. Do not use them to mean "keep my position".
+11. You think for a minute or two; the market can turn in seconds (window 2200: entry to stop-out in 48 s). So whenever the
+   desk holds a position, set "exit_line_bps": where the desk should sell it the moment BTC gets there, before you look
+   again. It is in bps past the strike AGAINST the position: -3 = sell if BTC comes within 3 bps of the strike while still
+   on our side, 0 = sell at the strike. Range -15..2; null = leave it to the desk's own stop (2 bps past the strike).
+   Remember lesson 3: a line too close sells winners on noise, so tighten it only when momentum is turning against us.
+12. You rule the desk. Its Observer enters on its own every tick and its stops sell on their own; you see their trades
+   below. In "review", say in one sentence what THEIR TRADES LISTED BELOW show they did right or wrong -- name the side,
+   price and what happened from that list; if the list says the desk has not traded, say exactly that and nothing more.
+   An OPEN position has not been "held to settlement" -- the window has not closed; say it is open. Apply the 80c hold
+   only to a position the list says was bought at 80c or more.
+   In "directives", steer the Observer for THIS window: block_entry_side ("yes",
+   "no", "both" or null), min_entry_bps (only enter when BTC is at least this far from the strike, 3..30, or null),
+   max_contracts (1..100 or null). They can only make it more careful, and they end with the window. Use them when the
+   tape is choppy or the desk keeps getting stopped; leave them null when it is trading well.
+13. RECOVERY MODE (owner order 2026-11-08): the desk's floor is gone and the book is rebuilding from a hole. While
+   the equity shown below is under 1000c ($10): enter only at |distance| >= 5 bps, set your directives'
+   min_entry_bps to 5 or higher, set an exit line on every held position from your first look at it, and treat the
+   stake as precious — one bad window is a large share of the book. The desk itself refuses closer entries in
+   recovery; work with that, not against it. At 1000c or more, trade the playbook exactly as written above.
+14. Ground every claim: say only what the desk's trades and the feed below actually show. Never state a window's
+   result — won, lost, settled, or a net — unless the feed shows that window CLOSED with its net; a window still
+   open has no result yet, and a review written before settlement that names one is a fabrication. When you are
+   unsure what happened, describe what you saw, not what you assume. The same law covers the distance: your
+   analysis restates the feed's distance with its sign intact — if the feed says BTC is -10 bps from the strike,
+   your analysis says 10 bps BELOW the strike. A flipped sign is a fabrication (caught live 2026-11-08: the feed
+   said -10.0, the analysis wrote "10.0 above", and the ruling anchored on the wrong side of the strike).
+15. Exit lines are a duty, not an option (this sharpens 11): while the desk holds a position, never leave
+   exit_line_bps null on two looks in a row. If its profit is fading or momentum turns against it, set the line at
+   that same look — do not wait for the position to reach the desk's stop. A position left unguarded can go from
+   up to stopped out in under a minute (window 2200: 48 seconds).
+16. SECURING THE VICTORIES — STINGY TRIGGER (owner order 2026-11-08, tightened the same night after the team
+   Monte Carlo showed the loose trigger fires on noise and pays for itself on no axis): while equity is under
+   1000c, bank a held position ONLY when BOTH hold at the same look: (a) it is up at least 10c per contract net
+   of fees, AND (b) the move has genuinely stalled — the distance has shrunk toward the strike on TWO
+   consecutive looks, or momentum has turned against the held side — not a single flat look, not a one-tick
+   pause. Below 10c per contract of profit, or on any single-look stall, HOLD: small greens are settlement
+   tickets, not exits — the book reaches $10 by letting some positions live to settlement, and every early exit
+   pays the fee round-trip. Never secure a position whose distance is still widening in its favor. This
+   overrides rule 3 while in recovery only when both conditions hold. At 1000c or more, rule 3 governs: never
+   sell a winning position whose thesis is intact.
+17. THE OWNER'S STANDING NOTE (owner order 2026-11-08): when the prompt carries the owner's standing note at its
+   top, that note is his direct word — follow it as a plan adjustment to this playbook, and quote it in your
+   reason when it changes your ruling. It stands until he changes it; do not treat an old note as expired. It
+   does not lift the hard gates — the fees/edge math, the 85c entry cap, the two-loss window cap, the recovery
+   entry line — unless the note says so in plain words; a note that only steers judgment (when to secure, which
+   side to prefer, how patient to be) never overrides a gate.
+
+18. THE MONEY PLAN (owner 2026-11-09: "check the live funds, what we officially have, and try to get us up out the hole
+   ... strategize"). The money lines below are the desk's official figures. Each ruling, write "plan": one sentence on
+   where the money stands and the risk you allow for it (how many contracts, which distance), and carry it out with your
+   directives (max_contracts, min_entry_bps). Climb out by compounding small, high-quality wins: size so one stop-out
+   costs a small part of the money, and grow size only as equity grows. Never chase losses -- a bigger or worse bet to win
+   it back fast is how the rest is lost; after a loss, size down or wait for a cleaner setup.
+
+Think first, then decide. Answer with ONE JSON object and nothing else:
+{"analysis": "<1-2 short sentences: where BTC is vs the strike and trending, the edge after fees, the risk>",
+ "p_yes": <your probability 0..1 that this window settles YES>,
+ "action": "none" | "enter_yes" | "enter_no" | "exit" | "pause_entries" | "resume_entries" | "kill" | "unkill",
+ "reason": "<one sentence the owner will read>",
+ "exit_line_bps": <number -15..2 or null; only matters while the desk holds a position>,
+ "review": "<one sentence: what the Observer/Preserver did right or wrong lately>",
+ "plan": "<one sentence: where the money stands and the risk you allow for it>",
+ "directives": {"block_entry_side": "yes" | "no" | "both" | null, "min_entry_bps": <3..30 or null>, "max_contracts": <1..100 or null>} or null}"""
+# Which playbook a ruling was made under (the corpus records it, so rulings from different playbooks are told apart).
+SYSTEM_SHA = hashlib.sha256(SYSTEM.encode()).hexdigest()[:12]
+
+
+def build_user_prompt(obs):
+    st = obs.get("status") or {}
+    live = obs.get("live") or {}
+    w = (live.get("window") or {})
+    snap = (live.get("snapshot") or {})
+    fair, edge = obs.get("fair"), obs.get("edges") or {}
+    rec = obs.get("record") or {}
+    lines = [
+        *owner_note_lines(st),
+        *owner_directive_lines(),
+        f"Window {w.get('ticker')}: {fair['left_s'] if fair else '?'}s left, strike ${w.get('strikeUsd')}, BTC {snap.get('distanceBps') if snap.get('distanceBps') is None else round(snap['distanceBps'], 1)} bps "
+        f"from the strike (positive = above). Change: {trend(live, 60)} bps in the last minute, {trend(live, 180)} bps in the last 3 minutes.",
+        f"Book: YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c, NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c. Market P(YES) = {market_p_yes(live)}.",
+        (f"Fair P(YES) = {fair['p_yes']:.3f} by formula (1-minute BTC move {fair['sigma_1m_bps']} bps, {'measured' if fair['sigma_measured'] else 'default'}); "
+         f"blended with the market: {blended_p_yes(fair, snap):.3f}. "
+         f"Edge after fees if you buy now: YES {edge.get('yes')}c, NO {edge.get('no')}c per contract (need +{MIN_EDGE_CENTS:g}c)." if fair else "Fair value: unavailable (no distance or clock)."),
+        f"Desk: equity {st.get('equityCents')}c, kill switch {'ON' if st.get('killed') else 'off'}, hold {json.dumps(st.get('hold'))}, "
+        f"open position {json.dumps(st.get('openMark'))}.",
+        *money_lines(st),
+        observer_line(live),
+        *last_window_lines(obs),
+        f"Recent trades: {json.dumps(obs.get('history'))[:700]}",
+        f"Your scorecard: {json.dumps({k: rec.get(k) for k in ('graded', 'agentBrier', 'marketBrier')})}",
+        *desk_trades_lines(live),
+        *obs.get("memory", []),
+        "Decide now.",
+    ]
+    return "\n".join(lines)
+
+
+def owner_note_lines(st):
+    """The owner's standing note (owner order 2026-11-08), FIRST in the prompt when one is set: the desk's
+    get_status surfaces it as status.ownerNote ({text, setAtMs}, written by the owner from his page through
+    the desk's owner_note tool). His direct word — playbook rule 17 gives it its force. Absent or malformed
+    notes add no line: the prompt is then exactly the playbook's."""
+    note = (st or {}).get("ownerNote")
+    text = note.get("text") if isinstance(note, dict) else note
+    text = str(text).strip() if text is not None else ""
+    if not text:
+        return []
+    return [f"OWNER'S STANDING NOTE (his word — follow it; it overrides your playbook defaults until he changes it): \"{text}\""]
+
+
+# OWNER DIRECTIVE (Cristian, 2026-11-10 18:20 CST, given in chat for the Trader agent): scalp the desk back to
+# double digits, and never exit below entry. This is HIS standing order, carried in code so it reaches the model
+# on every ruling whether or not a desk owner-note is set; it is tagged and dated, so the corpus can always tell
+# it apart from model-authored strategy text (the agent's own adaptive strategy, which he also ordered on
+# 2026-11-10, lives in the model's rulings — never in this line).
+# FORM (grammar diagnosis, 2026-11-10 18:35 CST): the live frame proved that long prose in the task primes the
+# model's wrong register and gets trimmed mid-word, so his directive is carried as ONE compact desk-register
+# line — facts and imperative, no prose — for the frame to render through its compact slot. The substance is
+# his, complete: the targets, the expiry, the two scalp prints to bank (recovery-scalp +8c net on eligible
+# entries; per-contract recovery-trail, arm +15c, 8c give-back), and the hard rule. The no-exit-below-entry half
+# is ALSO enforced in code (apply_discipline), mirroring the desk's STOP law (dist157, nexus-trader PR #174:
+# a stop-due position exits only when its own-side bid is at or above its blended entry, else it rides).
+OWNER_SCALP_DIRECTIVE = (
+    "OWNER 2026-11-10: EQUITY TARGET 1000c, GOAL 1500c, EXPIRES 2026-11-13 09:17 CST. "
+    "TAKE RECOVERY-SCALP +8c AND RECOVERY-TRAIL +15c/-8c WHEN THEY PRINT. NEVER EXIT BELOW ENTRY.")
+
+
+def owner_directive_lines():
+    """The owner's standing scalp directive (2026-11-10), in every task the model is asked — right after his
+    desk note when one is set. Never trimmed: it is his word, not context."""
+    return [OWNER_SCALP_DIRECTIVE]
+
+
+def money_lines(st):
+    """The desk's official money, in plain words, for the money plan (rule 18)."""
+    def usd(c):
+        return f"${c / 100:.2f}" if isinstance(c, (int, float)) else "?"
+    eq, cash = st.get("equityCents"), st.get("kalshiBalanceCents")
+    if not isinstance(eq, (int, float)):
+        return []
+    parts = [f"Money (official): equity {usd(eq)}, Kalshi cash {usd(cash)}"]
+    to_line, line = st.get("toRecoveryLineCents"), st.get("recoveryLineCents")
+    if isinstance(to_line, (int, float)) and isinstance(line, (int, float)):
+        parts.append(f"{usd(to_line)} under the {usd(line)} recovery line" if to_line > 0 else f"above the {usd(line)} recovery line")
+    if isinstance(st.get("toGoalCents"), (int, float)):
+        parts.append(f"{usd(st['toGoalCents'])} from the goal")
+    if isinstance(st.get("daySettledPnlCents"), (int, float)):
+        parts.append(f"today's settled P&L {'+' if st['daySettledPnlCents'] >= 0 else '-'}{usd(abs(st['daySettledPnlCents']))}")
+    risk = st.get("maxStopRiskPerContractCents")
+    if isinstance(risk, (int, float)) and risk > 0:
+        parts.append(f"a stopped contract costs up to {risk:.0f}c, so {int(eq // risk)} stop-outs at one contract each would take it all")
+    return ["; ".join(parts) + "."]
+
+
+def desk_trades_lines(live, max_rows=8):
+    """This window's fills, in plain words, so the agent can review and direct the desk."""
+    rows = []
+    for i in sorted(((live or {}).get("intents") or []), key=lambda x: x.get("created_at_ms") or 0):
+        n = (i.get("filled_hundredths") or 0) / 100
+        yes = i.get("avg_yes_price_micros")
+        if not n or yes is None or i.get("side") not in ("yes", "no"):
+            continue
+        price = yes / 1e4 if i["side"] == "yes" else 100 - yes / 1e4
+        iid = str(i.get("intent_id") or "")
+        who = ("your " if "crew-lead" in iid else "") + (
+            "strike-cross stop" if ":stop10" in iid or "exit-retry" in iid else
+            "Preserver exit" if ":preserver:" in iid else
+            ("entry" if "crew-lead" in iid else "Observer entry") if i.get("purpose") == "entry" else
+            "exit")
+        rows.append(f"{who} {i['side'].upper()} x{n:g} @ {price:.0f}c")
+    if not rows:
+        return ["The desk has not traded in this window yet."]
+    return ["The desk's trades this window (oldest first): " + "; ".join(rows[-max_rows:]) + ". " + open_position_fact(live)]
+
+
+def open_position_fact(live):
+    """The position open right now, as a fact the review must not contradict (2026-11-09 00:08-00:40 CST: four reviews
+    said "held the position to settlement" while it was still open, two applied the 80c hold to a 78c entry)."""
+    view = live_view(live)
+    yes, no = view["position"]
+    side = "yes" if yes > 0 else "no" if no > 0 else None
+    if side is None:
+        return "Nothing is open now."
+    n = (yes if side == "yes" else no) / 100
+    cost = qty = 0.0
+    for i in sorted(((live or {}).get("intents") or []), key=lambda x: x.get("created_at_ms") or 0):
+        f, y = i.get("filled_hundredths") or 0, i.get("avg_yes_price_micros")
+        if i.get("side") != side or not f or y is None:
+            continue
+        if i.get("purpose") in ("exit", "flip-close"):
+            cost = qty = 0.0  # a later entry starts a new position
+        elif i.get("purpose") in ("entry", "flip-open"):
+            px = y / 1e4 if side == "yes" else 100 - y / 1e4
+            cost, qty = cost + px * f, qty + f
+    at = f" bought at {cost / qty:.0f}c" if qty else ""
+    band = "" if not qty else (" (80c or more: the strong-side hold applies)" if cost / qty >= 80 else " (under 80c: not an 80c+ hold)")
+    return f"OPEN NOW: {side.upper()} x{n:g}{at}{band}; the window has not closed, so it has NOT been held to settlement."
+
+
+def parse_decision(text, fallback_p):
+    """Strictly parse the model's JSON decision. Anything invalid becomes 'none' with the market's probability."""
+    m = re.search(r"\{.*\}", text or "", re.S)
+    try:
+        d = json.loads(m.group(0)) if m else None
+    except ValueError:
+        d = None
+    if not isinstance(d, dict):
+        cut = "{" in (text or "") and "}" not in (text or "").split("{", 1)[1]
+        why = "model answer was cut off before its JSON closed; no action taken" if cut else "model answer was not valid JSON; no action taken"
+        return {"p_yes": fallback_p, "action": "none", "reason": why, "valid": False}
+    action = d.get("action") if d.get("action") in ACTIONS else None
+    p = d.get("p_yes")
+    p = float(p) if isinstance(p, (int, float)) and 0 <= float(p) <= 1 else fallback_p
+    reason = str(d.get("reason") or "").strip()[:280]
+    analysis = str(d.get("analysis") or "").strip()[:600]
+    if action is None or not reason:
+        return {"p_yes": p, "action": "none", "reason": reason or "model named no valid action; no action taken", "valid": False, "analysis": analysis}
+    line = d.get("exit_line_bps")
+    line = float(line) if isinstance(line, (int, float)) and not isinstance(line, bool) and -15 <= float(line) <= 2 else None
+    review = str(d.get("review") or "").strip()[:400] or None
+    plan = str(d.get("plan") or "").strip()[:400] or None
+    return {"p_yes": p, "action": action, "reason": reason, "valid": True, "analysis": analysis, "exit_line_bps": line,
+            "review": review, "plan": plan, "directives": parse_directives(d.get("directives"))}
+
+
+def observer_line(live):
+    """The Observer's last decision; a hold caused by the agent's own directive is labelled so, never evidence."""
+    d = (live or {}).get("lastDecision") or {}
+    reason = str(d.get("reason") or "")
+    if reason.startswith("agent-directive"):
+        return (f"Observer's last decision: holding because of YOUR OWN directive ({reason}). That is your effect, not "
+                f"evidence about the market; do not cite it as a reason.")
+    return f"Observer's last decision: {json.dumps(d or None)}."
+
+
+def window_losses_by_side(live):
+    """Positions the desk closed at a loss in this window, per side (fill prices; a stopped or sold position counts)."""
+    rows = sorted(((live or {}).get("intents") or []), key=lambda x: x.get("created_at_ms") or 0)
+    losses, net, cost = {"yes": 0, "no": 0}, {"yes": 0.0, "no": 0.0}, {"yes": 0.0, "no": 0.0}
+    for i in rows:
+        side, n, yes = i.get("side"), (i.get("filled_hundredths") or 0) / 100, i.get("avg_yes_price_micros")
+        if side not in losses or not n or yes is None:
+            continue
+        own = yes / 1e4 if side == "yes" else 100 - yes / 1e4
+        if i.get("purpose") == "entry":
+            net[side] += n
+            cost[side] += own * n
+        elif i.get("purpose") == "exit" and net[side] > 0:
+            avg = cost[side] / net[side]
+            sold = min(n, net[side])
+            if own < avg:
+                losses[side] += 1
+            cost[side] -= avg * sold
+            net[side] -= sold
+    return losses
+
+
+def ground_directives(directives, live):
+    """CODE, NOT THE MODEL, decides whether a block is earned (Muse's audit, 2026-11-09 23:23 CST: a block-both directive
+    justified by "Observer held position due to agent-directive-block" -- its own effect -- held the 0030 window 107
+    ticks with 0 entries). A side may be blocked only after the desk actually lost on that side in this window; 'both'
+    needs a loss on each side. An unearned block is dropped (the other directive fields stand) and the reason is kept."""
+    if not directives or not directives.get("block_entry_side"):
+        return directives, None
+    losses = window_losses_by_side(live)
+    block = directives["block_entry_side"]
+    earned = (losses["yes"] > 0 and losses["no"] > 0) if block == "both" else losses.get(block, 0) > 0
+    if earned:
+        return directives, None
+    why = f"block {block} dropped: the desk has not lost on {'both sides' if block == 'both' else block.upper()} in this window"
+    return dict(directives, block_entry_side=None), why
+
+
+_SIGN_CLAIM = re.compile(r"(\d+(?:\.\d+)?)\s*bps\s+(above|below)\s+the\s+strike", re.I)
+
+
+SETTLED_CLAIM = re.compile(r"\b(held|holding|kept)\b[^.]{0,60}\b(to|until|through)\s+(settlement|the payout|expiry|the close)", re.I)
+
+
+def review_contradiction(review, position):
+    """A review that says the position was held to settlement while it is still open, or None. The tag goes into the
+    review itself, so the corpus never files the false claim untagged (2026-11-09 00:08-01:39 CST: seven reviews said
+    "held the position to settlement" with the position still open, even after #394 stated it in the prompt)."""
+    if not review or not position or not any(x > 0 for x in position):
+        return None
+    if SETTLED_CLAIM.search(review):
+        return "not so: the position is still open and the window has not settled"
+    return None
+
+
+def sign_contradiction(analysis, distance_bps):
+    """The analysis says "N bps above/below the strike" with the wrong side of the live feed (21:40 audit: the feed read
+    -10.0 bps and the analysis said 10.0 bps above). Returns a note, or None. Tiny distances are not judged."""
+    if not analysis or not isinstance(distance_bps, (int, float)) or abs(distance_bps) < 1.0:
+        return None
+    for num, word in _SIGN_CLAIM.findall(analysis):
+        if (word.lower() == "above") != (distance_bps > 0):
+            return f"the analysis says {num} bps {word.lower()} the strike but the feed reads {distance_bps:+.1f} bps"
+    return None
+
+
+def last_window_lines(obs):
+    """The last graded window's real outcome, so a review cannot invent one (2215 was reviewed as a loss; it won)."""
+    rec = obs.get("record") if isinstance(obs.get("record"), dict) else {}
+    recent = (rec or {}).get("recent") or []
+    if not recent:
+        return []
+    r = recent[-1]
+    return [f"Last graded window {str(r.get('ticker'))[-7:]}: settled {str(r.get('result')).upper()} "
+            f"(your call was P(yes) {r.get('pYes')}, the market's {r.get('marketPYes')}). Review only what is shown here and below."]
+
+
+def parse_directives(raw):
+    """The model's directives to the Observer, validated; anything out of bounds is dropped, not guessed at."""
+    if not isinstance(raw, dict):
+        return None
+    block = raw.get("block_entry_side")
+    block = block if block in ("yes", "no", "both") else None
+    mn = raw.get("min_entry_bps")
+    mn = float(mn) if isinstance(mn, (int, float)) and not isinstance(mn, bool) and 3 <= float(mn) <= 30 else None
+    mx = raw.get("max_contracts")
+    mx = int(mx) if isinstance(mx, (int, float)) and not isinstance(mx, bool) and float(mx).is_integer() and 1 <= mx <= 100 else None
+    return {"block_entry_side": block, "min_entry_bps": mn, "max_contracts": mx}
+
+
+def anchored_p_yes(model_p, obs):
+    """The probability recorded for grading: half the model's, half the blended fair value (when there is one)."""
+    target = blended_p_yes(obs.get("fair"), ((obs.get("live") or {}).get("snapshot") or {}))
+    if target is None or model_p is None:
+        return model_p
+    return round(PREDICTION_ANCHOR * target + (1 - PREDICTION_ANCHOR) * model_p, 3)
+
+
+# ── Nexus Intelligence as the ruler (owner order 2026-11-10: "Let's wire nexus to trade instead of Qwen then") ──
+# Nexus (the Run 25 checkpoint, .github/scripts/nexus_model.py) replaces Qwen3-8B as the model behind every ruling.
+# It cannot be handed the Qwen contract: its window is 640 tokens total (the playbook above is ~2,500) and it was
+# never trained on the desk's ruling JSON. Its trained decision surface is the ForgeClaw funds grammar, so the
+# harness asks it a compact question in its own frame and translates its native answer into the decision dict the
+# rest of this file already validates, disciplines, grounds and acts on:
+#   - a funds_propose call  -> an entry: side, its own probability for that side, its rationale. The named price is
+#     checked against the live book (an ungrounded price voids the call, the same spirit as the sign check).
+#   - a direct answer       -> no entry; its stated P(YES) is the prediction. While the desk holds a position, an
+#     answer beginning EXIT is its exit call; anything else rides (the desk's coded stop/preserver stay underneath).
+# Channels Nexus's grammar does not carry — exit_line_bps, directives, kill/pause — come back null/absent: the
+# model never steers them, and the record says so. An answer with no usable decision fails closed exactly like a
+# malformed Qwen answer: the market's probability is recorded and nothing is acted on.
+# The 5-phase scaffold is the loop's standing frame; build_nexus_phases files it with every ruling, each phase
+# labelled by who actually produced it (nexus = the model's own words/numbers, harness = the code around it).
+
+NEXUS_TASK_VERSION = "nexus-trader-task-v2"
+NEXUS_FRAME_SHA = hashlib.sha256(NEXUS_TASK_VERSION.encode()).hexdigest()[:12]
+NEXUS_MAX_NEW = 160
+# The checkpoint's window is 640 tokens TOTAL (prompt + generation), and its next_logprobs silently slides the
+# window (ids[-ctx:]) when exceeded, shifting every learned absolute position. A task is therefore only asked when
+# it leaves room for at least NEXUS_MIN_NEW generated tokens (a funds_propose call measures ~75 tokens, a direct
+# answer less); the reserve is shrunk to fit, never overrun. 2026-11-11 audit: live tasks ran 471-513 tokens, so
+# the old fixed 160 reserve overran the window by up to 33 tokens whenever a long answer was generated.
+NEXUS_CTX_DEFAULT = 640
+NEXUS_MIN_NEW = 96
+# A standing run that produces this many rulings and not ONE valid decision is a broken ruler, not a quiet one
+# (2026-11-10 22:43 -> 2026-11-11 04:03 CST: 381 rulings, 0 valid, run green).
+VALIDITY_ALARM_MIN_RULINGS = 10
+_PRICE_GROUND_CENTS = 3.0   # a proposed price further than this from the side's live ask is not grounded in the book
+# OWNER ORDER 2026-11-11 (Cristian, after the audit in docs/nexus-trader-audit-2026-11-11/): "let's just have Nexus trade
+# and then we'll see what errors it has as it trades." Measured on the real Run 25 checkpoint, its funds_propose calls are
+# well-formed but its market, price and rationale fields are noise (the ticker comes back mangled, the price is unrelated to
+# the book, the rationale is the template "Owner order."), so a strict-grounding gate voided 381 of 381 rulings. With this
+# flag on, a well-formed proposal is ACTED ON for what it reliably carries -- side and probability -- while the harness
+# pins the market to the live window (the order can only ever go to the live window anyway), ignores the model's price
+# (the desk fills at the book; the price never reaches the order), and writes the reason itself from the desk's own math
+# instead of relaying the model's text as if it were evidence. Every override is recorded on the ruling (decision.notes),
+# so the errors Nexus makes stay visible and gradable. EVERY OTHER GATE STANDS: discipline (edge after fees, 3 bps chop
+# line, no exit below entry), stale check, sign check, the desk's floor / caps / stops / blackout, and the Bank's own
+# route law underneath. Set False to restore strict grounding (a proposal on another market or an ungrounded price is void).
+NEXUS_ACT_ON_PROPOSALS = True
+_P_DEC = re.compile(r"(?<![\d.])0\.\d+(?![\d.])|(?<![\d.])1\.0+(?![\d.])")
+_P_PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+_CALL_SPAN = re.compile(r"<\|call\|>\s*(\{.*?\})\s*<\|/call\|>", re.S)
+_ANSWER_SPAN = re.compile(r"<\|answer\|>(.*?)<\|/answer\|>", re.S)
+
+
+def position_fact(live):
+    """The open position as data (side, contracts, average own-side price in cents), or None. Same intent walk as
+    open_position_fact, which renders the same facts as text for the Qwen-era prompt."""
+    live = live if isinstance(live, dict) else {}
+    view = live_view(live)
+    yes, no = view["position"]
+    side = "yes" if yes > 0 else "no" if no > 0 else None
+    if side is None:
+        return None
+    cost = qty = 0.0
+    for i in sorted((live.get("intents") or []), key=lambda x: x.get("created_at_ms") or 0):
+        f, y = i.get("filled_hundredths") or 0, i.get("avg_yes_price_micros")
+        if i.get("side") != side or not f or y is None:
+            continue
+        if i.get("purpose") in ("exit", "flip-close"):
+            cost = qty = 0.0
+        elif i.get("purpose") in ("entry", "flip-open"):
+            px = y / 1e4 if side == "yes" else 100 - y / 1e4
+            cost, qty = cost + px * f, qty + f
+    return {"side": side, "contracts": (yes if side == "yes" else no) / 100,
+            "avg_cents": round(cost / qty, 1) if qty else None}
+
+
+def _nexus_facts_lines(obs):
+    """The desk picture in Nexus-sized lines: (priority, text) — priority 0 lines are never trimmed."""
+    st = obs.get("status") or {}
+    live = obs.get("live") or {}
+    w = live.get("window") or {}
+    snap = live.get("snapshot") or {}
+    fair, edge = obs.get("fair"), obs.get("edges") or {}
+    d = snap.get("distanceBps")
+    side_word = "above" if isinstance(d, (int, float)) and d >= 0 else "below"
+    lines = [
+        (0, f"Window {w.get('ticker')}: {fair['left_s'] if fair else '?'}s left, strike ${w.get('strikeUsd')}. "
+            f"BTC is {round(d, 1) if isinstance(d, (int, float)) else '?'} bps {side_word} the strike. "
+            f"Change: {trend(live, 60)} bps in the last minute, {trend(live, 180)} bps in the last 3 minutes."),
+        (0, f"Book: YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c, NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c. "
+            f"Market P(YES) = {market_p_yes(live)}."),
+        (0, (f"Fair P(YES) = {fair['p_yes']:.3f} by formula (1-minute BTC move {fair['sigma_1m_bps']} bps, "
+             f"{'measured' if fair['sigma_measured'] else 'default'}). Edge after fees if the desk buys now: "
+             f"YES {edge.get('yes')}c, NO {edge.get('no')}c per contract." if fair else "Fair value: unavailable.")),
+    ]
+    goal = f" Mandate goal ${st['goalCents'] / 100:.2f}, {st['toGoalCents']}c to go." if isinstance(st.get('goalCents'), (int, float)) and isinstance(st.get('toGoalCents'), (int, float)) else ""
+    lines.append((0, f"Desk: equity {st.get('equityCents')}c, kill switch {'ON' if st.get('killed') else 'off'}.{goal}"))
+    pos = position_fact(live)
+    if pos:
+        bid = snap.get('yesBidCents') if pos['side'] == 'yes' else snap.get('noBidCents')
+        lines.append((0, f"The desk holds {pos['side'].upper()} x{pos['contracts']:g} bought at {pos['avg_cents']}c; "
+                         f"its bid is now {bid}c."))
+    else:
+        lines.append((0, "The desk holds no position in this window."))
+    rec = obs.get("record") or {}
+    if isinstance(rec, dict) and rec.get('graded'):
+        lines.append((2, f"Your scorecard: your Brier {rec.get('agentBrier')} vs the market's {rec.get('marketBrier')} "
+                         f"over {rec.get('graded')} graded calls."))
+    trades = desk_trades_lines(live)
+    if trades and "has not traded" not in trades[0]:
+        lines.append((3, trades[0][:300]))
+    return lines, pos
+
+
+def build_nexus_task_v1(obs, count=None):
+    """RETAINED FOR REFERENCE (task v1, 2026-11-10; replaced by build_nexus_task v2 on 2026-11-11 after the audit: 436-513
+    tokens, routed to shell_exec/gmail_send/http_fetch and never to funds_propose on the real checkpoint). The compact ruling question in Nexus's native frame size. Returns (task, trimmed): the owner's standing
+    note rides first (his word), trimmed at a sentence boundary when the window cannot hold it whole — the trim
+    is marked in the task itself, never silent. count(text)->tokens decides the budget (the model's own counter
+    in production; a conservative estimate in tests)."""
+    if count is None:
+        count = lambda t: max(1, len(t) // 3)  # noqa: E731  (sentencepiece on number-dense text: chars/3 is safely over)
+    budget = 640 - NEXUS_MAX_NEW - 10
+    lines, pos = _nexus_facts_lines(obs)
+    note_lines = owner_note_lines(obs.get("status") or {})
+    note = note_lines[0] if note_lines else None
+    if pos:
+        ask = ("The desk holds this position now. If it should be sold now, answer directly and begin with EXIT. "
+               "If it should ride, answer directly and begin with HOLD and give your P(YES) as a decimal. "
+               "Propose with funds_propose only if you would add to the position.")
+    else:
+        ask = ("The desk may enter this window once, through Kalshi, with the owner's funds. Propose the position "
+               "you would take with funds_propose, or answer directly if you would not trade; if you answer "
+               "directly, give your P(YES) as a decimal first.")
+    trimmed = False
+
+    def assemble(note_text, kept):
+        # The owner's standing directive (2026-11-10) rides in every Nexus task too, right after his desk note.
+        # The trims below only ever shorten the desk note or drop low-priority fact lines — the directive is
+        # never trimmed (owner_directive_lines).
+        parts = ([note_text] if note_text else []) + owner_directive_lines() + [t for _, t in sorted(kept, key=lambda x: x[0])] + [ask]
+        return "\n".join(parts)
+
+    task = assemble(note, lines)
+    if count(task) > budget and note:
+        # Trim the note at sentence boundaries until it fits; the trim is marked in the task, never silent.
+        text = note
+        while count(assemble(text, lines)) > budget and ". " in text:
+            text = text.rsplit(". ", 1)[0] + "."
+            trimmed = True
+        if count(assemble(text, lines)) > budget:
+            text = text[:400]
+            trimmed = True
+        if trimmed:
+            text = text + " [the owner's note was shortened to fit your window]"
+        note = text
+        task = assemble(note, lines)
+    for prio in (3, 2):
+        if count(task) <= budget:
+            break
+        lines = [(p, t) for p, t in lines if p != prio]
+        trimmed = True
+        task = assemble(note, lines)
+    return task, trimmed
+
+
+def build_nexus_task(obs, count=None):
+    """Task v2 (2026-11-11): the question in the register the Run 25 checkpoint was trained on -- one short imperative
+    sentence, ~55 tokens -- because on the real checkpoint the 436-513 token v1 task routed to shell_exec / gmail_send /
+    http_fetch and never to funds_propose (docs/nexus-trader-audit-2026-11-11/probe.py: v2-style prompts route to
+    funds_propose 12 of 12). Returns (task, trimmed) like v1; v2 is never trimmed.
+    DELIBERATELY NOT IN THE MODEL PROMPT: the owner's desk note and the owner's scalp directive. Measured: adding the
+    directive (~100 tokens) flips routing to shell_exec / memory_write 10 of 10. They are not lost -- the directive's
+    hard half (never exit below entry) is enforced in code by apply_discipline, the desk note is shown to the owner's
+    page and journal, and each ruling's inputs record exactly what was omitted from the model's prompt and why."""
+    live = obs.get("live") or {}
+    w = live.get("window") or {}
+    snap = live.get("snapshot") or {}
+    d = snap.get("distanceBps")
+    dist = f"{d:+.1f}" if isinstance(d, (int, float)) else "?"
+    ticker = w.get("ticker")
+    pos = position_fact(live)
+    if pos:
+        bid = snap.get("yesBidCents") if pos["side"] == "yes" else snap.get("noBidCents")
+        avg = f" bought at {pos['avg_cents']:g}c" if pos.get("avg_cents") is not None else ""
+        return (f"The desk holds {pos['side'].upper()} in {ticker}{avg}; its bid is {bid}c and BTC is {dist} bps vs the strike. "
+                f"Sell it now? Answer EXIT, or HOLD with your P(YES)."), False
+    return f"Propose a trade on {ticker}: BTC is {dist} bps vs the strike, YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c", False
+
+
+def _nexus_answer_text(transcript):
+    m = _ANSWER_SPAN.search(transcript or "")
+    return m.group(1).strip() if m else ""
+
+
+def _nexus_stated_p_yes(text):
+    """The model's own P(YES) from its direct answer: a decimal probability, else a percent, else None."""
+    m = _P_DEC.search(text or "")
+    if m:
+        return float(m.group(0))
+    m = _P_PCT.search(text or "")
+    if m:
+        p = float(m.group(1)) / 100
+        return p if 0 <= p <= 1 else None
+    return None
+
+
+def parse_nexus_transcript(transcript, obs, fallback_p):
+    """Translate Nexus's native transcript into the decision dict parse_decision produces for Qwen (same keys,
+    same fail-closed shape). See the section header for the mapping and the grounding rule."""
+    live = obs.get("live") or {}
+    snap = live.get("snapshot") or {}
+    ticker = (live.get("window") or {}).get("ticker")
+    pos = position_fact(live)
+    def invalid(why, kind, tool=None):
+        # `failure` says WHAT Nexus did (2026-11-11 audit: "called a tool that is not a desk decision" hid whether it
+        # called shell_exec, gmail_send or http_fetch). It rides the log line and the filed ruling; never acted on.
+        return {"p_yes": fallback_p, "action": "none", "reason": why, "valid": False,
+                "analysis": _nexus_answer_text(transcript)[:600], "exit_line_bps": None,
+                "review": None, "plan": None, "directives": None,
+                "failure": {"kind": kind, **({"tool": tool} if tool else {}), "head": (transcript or "")[:160]}}
+    m = _CALL_SPAN.search(transcript or "")
+    if m:
+        try:
+            call = json.loads(m.group(1))
+        except ValueError:
+            call = None
+        if isinstance(call, dict) and call.get("name") == "funds_propose":
+            a = call.get("arguments") or {}
+            side = a.get("side")
+            prob = a.get("probability")
+            price = a.get("price")
+            notes = []
+            if a.get("market") != ticker:
+                if not NEXUS_ACT_ON_PROPOSALS:
+                    return invalid(f"nexus proposed on {a.get('market')!r}, not this window; no action taken", "ungrounded_market", "funds_propose")
+                notes.append(f"market pinned to the live window {ticker} (model wrote {str(a.get('market'))[:60]!r})")
+            if side not in ("yes", "no") or not isinstance(prob, (int, float)) or isinstance(prob, bool) or not 0 <= float(prob) <= 1:
+                return invalid("nexus proposal carried no usable side/probability; no action taken", "bad_proposal", "funds_propose")
+            ask = snap.get("yesAskCents") if side == "yes" else snap.get("noAskCents")
+            if isinstance(price, (int, float)) and isinstance(ask, (int, float)) and abs(float(price) * 100 - ask) > _PRICE_GROUND_CENTS:
+                if not NEXUS_ACT_ON_PROPOSALS:
+                    return invalid(f"nexus named a {side} price of {float(price) * 100:.0f}c but the book asks {ask}c; no action taken", "ungrounded_price", "funds_propose")
+                notes.append(f"model price {float(price) * 100:.0f}c ignored (the {side} book asks {ask:g}c; the desk fills at the book)")
+            p_yes = round(float(prob) if side == "yes" else 1 - float(prob), 3)
+            stated = str(a.get("rationale") or "").strip()[:280]
+            if NEXUS_ACT_ON_PROPOSALS:
+                # The reason the owner reads is written from the desk's own numbers; the model's rationale is quoted, never
+                # relayed as evidence (it measured as the template "Owner order.", which claims an order nobody gave).
+                edge = (obs.get("edges") or {}).get(side)
+                d = snap.get("distanceBps")
+                rationale = (f"Nexus proposed {side.upper()} at P(YES) {p_yes:g}. Desk math: edge {edge}c after fees, BTC "
+                             f"{round(d, 1) if isinstance(d, (int, float)) else '?'} bps from the strike. Nexus's own rationale: {stated!r}.")[:280]
+            else:
+                rationale = stated or f"nexus proposed {side.upper()} on this window"
+            if pos:
+                # The task for a holding desk asks only EXIT/HOLD. A funds_propose there is noise-adding to a position the
+                # desk's coded stops and preserver are already guarding: the proposal is a decision, but it is not acted on.
+                return {"p_yes": p_yes, "action": "none", "reason": f"{rationale} [not acted on: the desk already holds a position in this window]",
+                        "valid": True, "analysis": rationale, "exit_line_bps": None, "review": None, "plan": None,
+                        "directives": None, "blocked": f"enter_{side}", "notes": notes}
+            return {"p_yes": p_yes, "action": f"enter_{side}", "reason": rationale, "valid": True,
+                    "analysis": rationale, "exit_line_bps": None, "review": None, "plan": None, "directives": None,
+                    **({"notes": notes} if notes else {})}
+        called = call.get("name") if isinstance(call, dict) else None
+        return invalid("nexus called a tool that is not a desk decision; no action taken",
+                       "off_task_tool" if called else "garbled_call", str(called)[:40] if called else None)
+    text = _nexus_answer_text(transcript)
+    if not text:
+        return invalid("nexus answer carried no usable decision; no action taken", "no_answer")
+    if pos and text.upper().startswith("EXIT"):
+        p = _nexus_stated_p_yes(text)
+        return {"p_yes": p if p is not None else fallback_p, "action": "exit",
+                "reason": text[:280], "valid": True, "analysis": text[:600],
+                "exit_line_bps": None, "review": None, "plan": None, "directives": None}
+    p = _nexus_stated_p_yes(text)
+    if p is None:
+        return invalid("nexus answer stated no probability; no action taken", "no_probability")
+    return {"p_yes": p, "action": "none", "reason": text[:280], "valid": True, "analysis": text[:600],
+            "exit_line_bps": None, "review": None, "plan": None, "directives": None}
+
+
+def build_nexus_phases(obs, decision):
+    """The owner's 5-phase scaffold, filed with every Nexus ruling. Each phase names who produced it:
+    nexus (the model's own numbers/words) or harness (the deterministic code around it). Nothing the model
+    did not say is dressed as its thought."""
+    live = obs.get("live") or {}
+    snap = live.get("snapshot") or {}
+    fair = obs.get("fair") or {}
+    edge = obs.get("edges") or {}
+    d = snap.get("distanceBps")
+    phases = [
+        {"phase": "assumptions", "by": "harness",
+         "text": (f"Facts as read from the desk this look: BTC {d} bps from the strike, "
+                  f"book YES {snap.get('yesBidCents')}/{snap.get('yesAskCents')}c NO {snap.get('noBidCents')}/{snap.get('noAskCents')}c, "
+                  f"{fair.get('left_s')}s left. The playbook gates stand as coded: +{MIN_EDGE_CENTS:g}c edge after fees, "
+                  "no entry inside 3 bps of the strike, 85c cap, two-loss window cap.")},
+        {"phase": "heuristics", "by": "nexus" if decision.get("valid") else "harness",
+         "text": (decision.get("analysis") or decision.get("reason") or "")[:400] or
+                 "The model's answer carried no usable read; the weakest link is the answer itself."},
+        {"phase": "first_principles", "by": "harness",
+         "text": (f"Fair P(YES) = {fair.get('p_yes')} from distance {d} bps with sigma {fair.get('sigma_1m_bps')} bps/min "
+                  f"over {fair.get('left_s')}s; market {market_p_yes(live)}; edges after fees YES {edge.get('yes')}c / NO {edge.get('no')}c. "
+                  "The model's own probability is graded against the settlement, the market's beside it.")},
+        {"phase": "extension", "by": "harness",
+         "text": (f"Code checks around the model: price grounding on any proposal; the discipline gate "
+                  f"({'blocked: ' + str(decision.get('blocked')) if decision.get('blocked') else 'passed'}); "
+                  "a fresh book read before any order (stale check); the desk's coded stop, preserver and caps run underneath regardless."
+                  + (" Overrides on this proposal: " + "; ".join(decision["notes"]) + "." if decision.get("notes") else ""))},
+        {"phase": "convergence", "by": "nexus" if decision.get("valid") else "harness",
+         "text": f"{decision.get('action')}: {decision.get('reason')}"[:400]},
+    ]
+    return phases
+
+
+class NexusThink:
+    """think(system, user) for run_once, served by the Run 25 checkpoint. run_once primes it with the
+    observation; the Qwen-era (system, user) text is not used — Nexus is asked its own compact question.
+    Sets last_decision / last_native / last_task for the ruling record (the corpus keeps the model's raw
+    transcript, never a translation dressed as its words)."""
+
+    is_nexus = True
+
+    def __init__(self, model, log=print):
+        self.model = model
+        self.log = log
+        self.obs = None
+        self.last_decision = None
+        self.last_native = None
+        self.last_task = None
+
+    def prime(self, obs):
+        self.obs = obs
+
+    def __call__(self, system, user):
+        obs = self.obs or {}
+        task, trimmed = build_nexus_task(obs, count=self.model.count)
+        self.last_task = task
+        t0 = time.monotonic()
+        used = self.model.count(task)
+        ctx = int(getattr(self.model, "ctx_limit", NEXUS_CTX_DEFAULT) or NEXUS_CTX_DEFAULT)
+        room = ctx - used - 2   # BOS/EOS slack: the window is prompt + generation, nothing may slide
+        fallback = market_p_yes(obs.get("live"))
+        fallback = fallback if fallback is not None else 0.5
+        if room < NEXUS_MIN_NEW:
+            # Asking would overrun the 640-token window (next_logprobs would silently slide it). Fail closed and say so.
+            native = ""
+            decision = parse_nexus_transcript("", obs, fallback)
+            decision.update({"reason": f"nexus task needs {used} of {ctx} tokens, leaving {room} for the answer "
+                                       f"(need {NEXUS_MIN_NEW}); not asked, no action taken",
+                             "failure": {"kind": "window_overflow", "head": ""}})
+            self.last_decision, self.last_native = decision, native
+            self.log(json.dumps({"think": {"engine": "nexus-run25", "task_tokens": used, "room": room, "asked": False,
+                                           "trimmed": trimmed}}))
+            return native
+        max_new = min(NEXUS_MAX_NEW, room)
+        native = self.model.generate(task, max_new=max_new)
+        self.last_decision = parse_nexus_transcript(native, obs, fallback)
+        self.last_native = native
+        self.log(json.dumps({"think": {"engine": "nexus-run25", "task_tokens": used, "max_new": max_new,
+                                       "seconds": round(time.monotonic() - t0, 1), "trimmed": trimmed}}))
+        return native
+
+
+def memory_lines(obs, earlier):
+    """What the agent remembers: its recent graded calls (scorecard) and its earlier check-ins in this window."""
+    out = []
+    recent = ((obs.get("record") or {}).get("recent") or [])[-5:] if isinstance(obs.get("record"), dict) else []
+    if recent:
+        calls = "; ".join(f"{str(r.get('ticker'))[-7:]}: you {r.get('pYes')} vs market {r.get('marketPYes')} -> settled {str(r.get('result')).upper()}" for r in recent)
+        out.append(f"Your last graded calls: {calls}.")
+    if earlier:
+        out.append("Your earlier check-ins this window: " + "; ".join(f"{e['at_left_s']}s left: {e['action']} ({e['reason'][:80]})" for e in earlier[-3:]) + ".")
+    return out
+
+
+def apply_discipline(decision, obs):
+    """Code, not the model, holds the playbook's money rules the desk does not enforce itself: an entry needs at least
+    MIN_EDGE_CENTS of edge after fees (playbook 2) and BTC at least 3 bps from the strike (playbook 4). A blocked
+    entry becomes "none" and says why; the prediction is kept.
+    OWNER HARD RULE (Cristian, 2026-11-10): no agent exit sells below the position's blended entry — the same line
+    the desk's STOP law holds (dist157). An exit whose own-side bid reads under the entry is blocked to "none";
+    an exit whose bid or entry cannot be read is NOT blocked on a guess — the rule binds on evidence, the way the
+    desk's own stop-below-entry hold does."""
+    if decision["action"] == "exit":
+        pos = position_fact(obs.get("live"))
+        snap = ((obs.get("live") or {}).get("snapshot") or {})
+        if pos and pos.get("avg_cents") is not None:
+            bid = snap.get("yesBidCents") if pos["side"] == "yes" else snap.get("noBidCents")
+            if isinstance(bid, (int, float)) and bid < pos["avg_cents"]:
+                return {**decision, "action": "none", "blocked": "exit",
+                        "reason": f"{decision['reason']} [owner hard rule 2026-11-10: no exit below entry — "
+                                  f"{pos['side'].upper()} bid {bid:g}c is under the {pos['avg_cents']:g}c blended entry; "
+                                  f"the exit does not fire]"}
+        return decision
+    side = {"enter_yes": "yes", "enter_no": "no"}.get(decision["action"])
+    if side is None:
+        return decision
+    edge = (obs.get("edges") or {}).get(side)
+    dist = ((obs.get("live") or {}).get("snapshot") or {}).get("distanceBps")
+    why = None
+    if edge is None:
+        why = "no fair value to price the entry"
+    elif edge < MIN_EDGE_CENTS:
+        why = f"edge {edge}c after fees is under +{MIN_EDGE_CENTS:g}c"
+    elif isinstance(dist, (int, float)) and abs(dist) < 3:
+        why = f"BTC is {abs(dist):.1f} bps from the strike (chop zone, under 3 bps)"
+    if why is None:
+        return decision
+    return {**decision, "action": "none", "blocked": decision["action"], "reason": f"{decision['reason']} [discipline: {decision['action']} blocked, {why}]"}
+
+
+NEXUS_SHADOW_TIMEOUT_S = 90
+
+
+def shadow_ruling(shadow, record, user, obs, fallback, log=print):
+    """Ask Nexus the ruler's question and file its answer in the corpus as a shadow ruling. Never trades; never raises."""
+    try:
+        name, answer = shadow(SYSTEM, user)
+        d = parse_decision(answer, fallback if fallback is not None else 0.5)
+        record({"model": f"shadow:{name}"[:80], "action": d["action"], "p_model": d["p_yes"], "p_yes": d["p_yes"],
+                "inputs": {"system_sha": SYSTEM_SHA, "prompt": user, "fair": obs.get("fair"), "edges": obs.get("edges")},
+                "output": {"shadow": True, "raw": (answer or "")[:2000], "analysis": d.get("analysis"), "reason": d["reason"], "valid": d.get("valid")}})
+        log(json.dumps({"nexus_shadow": {"model": name, "action": d["action"], "p_yes": d["p_yes"], "valid": d.get("valid")}}))
+    except Exception as e:  # noqa: BLE001  (shadow is best effort: it must never touch the ruler)
+        log(json.dumps({"nexus_shadow_error": str(e)[:200]}))
+
+
+def chat_completions_shadow(url, token=None, model="nexus", timeout_s=NEXUS_SHADOW_TIMEOUT_S, post=None):
+    """A shadow caller for an chat-completions-compatible chat endpoint (the packaged Nexus standalone API)."""
+    # Both request shapes: a ".../v1/completions" address takes a plain prompt and answers choices[0].text (the Nexus
+    # shadow Muse exposed on 2026-11-09 is that shape); any other address gets the chat shape. Either reply shape is read.
+    plain = url.rstrip("/").endswith("/completions") and not url.rstrip("/").endswith("/chat/completions")
+
+    def call(system, user):
+        if plain:
+            body = {"model": model, "prompt": f"{system}\n\n{user}\n\nAnswer:", "max_tokens": MAX_ANSWER_TOKENS, "temperature": 0.2}
+        else:
+            body = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                    "max_tokens": MAX_ANSWER_TOKENS, "temperature": 0.2}
+        headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if post is not None:
+            data = post(url, body, headers)
+        else:
+            req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="POST")
+            with urllib.request.urlopen(req, timeout=timeout_s) as r:
+                data = json.loads(r.read().decode())
+        choice = (data.get("choices") or [{}])[0] or {}
+        text = (choice.get("message") or {}).get("content") or choice.get("text") or ""
+        return data.get("model") or model, text
+    return call
+
+
+BLIND_REREADS = 3
+BLIND_REREAD_S = 5
+
+
+def blind_reason(obs):
+    """Why this observation is no picture to rule on (no window, no distance to the strike), or None."""
+    live = obs.get("live") if isinstance(obs.get("live"), dict) else {}
+    if not (live.get("window") or {}).get("ticker"):
+        return "the feed gave no window"
+    d = (live.get("snapshot") or {}).get("distanceBps")
+    if not isinstance(d, (int, float)) or isinstance(d, bool):
+        return "the feed gave no distance to the strike"
+    return None
+
+
+
+# ---------------------------------------------------------------------------
+# MANDATE ROLLOVER (owner order 2026-11-10): when the active mandate ends
+# (goal hit / expired / completed), the agent sets its successor itself instead
+# of leaving the desk idle. THE TERMS BELOW ARE THE OWNER'S WORDS — this block
+# is the single plug-in place for them:
+#   stake  = the desk's CURRENT EQUITY at rollover (status equityCents)
+#   goal   = stake + 200c
+#   expiry = 4 days from rollover
+# The desk refuses a second live mandate and the kill switch always wins; this
+# mechanism only ever runs when no mandate is live.
+MANDATE_ROLLOVER_GOAL_BUMP_CENTS = 200          # goal = stake + 200c
+MANDATE_ROLLOVER_EXPIRY_MINUTES = 4 * 24 * 60   # 4 days from rollover
+
+
+def maybe_rollover_mandate(mcp, log=print):
+    """Issue the successor mandate when none is live. Returns the MCP result, or None when no rollover applies
+    (a mandate is live, the desk is killed, or equity is unreadable). Mandate states (brain/mandate.ts):
+    live = issued/active; ended = goal-banked/expired/killed, or no mandate on the status at all."""
+    st = mcp.tool("get_status")["data"]
+    if not isinstance(st, dict) or st.get("killed"):
+        return None
+    m = st.get("mandate")
+    if isinstance(m, dict) and str(m.get("state") or "").lower() in ("issued", "active"):
+        return None
+    equity = st.get("equityCents")
+    if not isinstance(equity, (int, float)) or isinstance(equity, bool) or equity <= 0:
+        return None
+    stake_c = int(round(equity))
+    goal_c = stake_c + MANDATE_ROLLOVER_GOAL_BUMP_CENTS
+    r = mcp.tool("start_mandate", {
+        "stake_usd": stake_c / 100.0, "goal_usd": goal_c / 100.0,
+        "expiry_minutes": MANDATE_ROLLOVER_EXPIRY_MINUTES,
+        "reason": "mandate rollover (owner standing order 2026-11-10): the previous mandate ended; "
+                  f"stake = current equity {stake_c}c, goal = stake + 200c = {goal_c}c, expiry 4 days"})
+    log(json.dumps({"mandate_rollover": {"ok": r["ok"], "stake_c": stake_c, "goal_c": goal_c,
+                                          "expiry_minutes": MANDATE_ROLLOVER_EXPIRY_MINUTES}}))
+    return r
+
+
+def stance_signature(report, decision):
+    """What a ruling SAYS, for the ruling-row dedupe: window, action, the directives actually sent, the exit line.
+    The probability is deliberately out — it is graded once per window by the predict call however often the
+    stance repeats, and its jitter alone does not make a new ruling row. A new row is earned by a changed stance
+    (this signature) or a materially changed picture (material_change against the last recorded ruling's seen)."""
+    return (report.get("ticker"), decision.get("action"),
+            json.dumps(decision.get("directives_sent"), sort_keys=True), decision.get("exit_line_bps"))
+
+
+def run_once(mcp, think, mode=DEFAULT_AGENT_MODE, log=print, sleep=time.sleep, predicted=None, earlier=None, watch=None, model_name=None,
+             shadow=None, record=None, spawn=None, ruling_state=None):
+    """One plan -> act -> check cycle. `think(system, user) -> str` is the model. Returns a report dict.
+
+    A run that lands too late in a window waits for the next window to open and decides on that
+    one; it goes home silent only when the total wait would exceed MAX_WINDOW_WAIT_S (e.g. the
+    live feed is stuck on a dead window).
+    """
+    if spawn is None:
+        spawn = lambda f: threading.Thread(target=f, daemon=True).start()  # noqa: E731
+    if record is None:
+        record = lambda args: mcp.tool("record_ruling", args)  # noqa: E731
+    mcp.initialize()
+    # Mandate rollover (owner order 2026-11-10): if the previous mandate has ended, set its successor BEFORE
+    # ruling so the new mandate is live for this cycle. A rollover failure never blocks the ruling itself.
+    try:
+        maybe_rollover_mandate(mcp, log)
+    except Exception as e:  # noqa: BLE001
+        log(json.dumps({"mandate_rollover_error": str(e)[:200]}))
+    obs = observe(mcp)
+    waited_s = 0
+    while True:
+        fair = obs.get("fair")
+        if not fair or fair.get("left_s") is None or fair["left_s"] >= MIN_SECONDS_TO_DECIDE:
+            break
+        wait_s = max(fair["left_s"], 0) + WINDOW_ROLL_S
+        if waited_s + wait_s > MAX_WINDOW_WAIT_S:
+            report = {"mode": mode, "skipped": f"{fair['left_s']}s left in the window: a decision would land after the close", "fair": fair, "acted": [], "checked": None, "waited_s": waited_s}
+            log(json.dumps(report))
+            return report
+        log(json.dumps({"mode": mode, "waiting": f"{fair['left_s']}s left in this window: waiting {wait_s}s for the next window", "fair": fair}))
+        sleep(wait_s)
+        waited_s += wait_s
+        obs = observe(mcp)
+    # NO BLIND RULINGS (2026-11-09 23:48 CST: a ruling read "BTC is None bps from the strike ... fair value is unavailable"
+    # -- the feed's status section had timed out on that read -- and spent minutes of thinking on no picture). Re-read a few
+    # times; if the distance is still missing, skip this check-in instead of ruling on nothing.
+    for _ in range(BLIND_REREADS):
+        if not blind_reason(obs):
+            break
+        sleep(BLIND_REREAD_S)
+        obs = observe(mcp)
+    why_blind = blind_reason(obs)
+    if why_blind:
+        report = {"mode": mode, "skipped": f"{why_blind} after {BLIND_REREADS + 1} reads: not ruling blind", "fair": obs.get("fair"), "acted": [], "checked": None, "waited_s": waited_s}
+        log(json.dumps(report))
+        return report
+    fallback = market_p_yes(obs.get("live"))
+    ticker = ((obs.get("live") or {}).get("window") or {}).get("ticker")
+    window_earlier = (earlier or {}).get(ticker, []) if earlier is not None else []
+    obs["memory"] = watch_lines(watch) + memory_lines(obs, window_earlier)
+    user = build_user_prompt(obs)
+    if getattr(think, "prime", None):
+        think.prime(obs)
+    t0 = time.monotonic()
+    answer = think(SYSTEM, user)
+    if getattr(think, "is_nexus", False):
+        # Nexus answered in its own grammar; its think already translated the transcript (parse_nexus_transcript).
+        decision = think.last_decision
+    else:
+        decision = parse_decision(answer, fallback if fallback is not None else 0.5)
+    decision = apply_discipline(decision, obs)
+    sign_note = sign_contradiction(decision.get("analysis"), ((obs.get("live") or {}).get("snapshot") or {}).get("distanceBps"))
+    if sign_note and decision["action"] != "none":
+        decision = {**decision, "blocked": decision["action"], "action": "none",
+                    "reason": f"{decision['reason']} [not acted on: {sign_note}]"}
+    decision["p_model"] = decision["p_yes"]
+    decision["p_yes"] = anchored_p_yes(decision["p_yes"], obs)
+    review_note = review_contradiction(decision.get("review"), live_view(obs.get("live")).get("position"))
+    if review_note:
+        decision["review"] = f"{decision['review']} [{review_note}]"
+    report = {"mode": mode, "ticker": ticker, "seen": live_view(obs.get("live")), "decision": decision, "fair": obs.get("fair"), "edges": obs.get("edges"), "think_s": round(time.monotonic() - t0, 1), "acted": [], "checked": None, "waited_s": waited_s}
+    # Predict always (the scorecard grades it), whatever the action.
+    # One graded prediction per window: the first call. Later check-ins are closer to the close and would grade easier.
+    if decision["p_yes"] is not None and (predicted is None or ticker not in predicted):
+        r = mcp.tool("predict", {"p_yes": decision["p_yes"], "reason": decision["reason"]})
+        report["acted"].append({"tool": "predict", "ok": r["ok"]})
+        if predicted is not None and r["ok"]:
+            predicted.add(ticker)
+    if earlier is not None and ticker:
+        left = (obs.get("fair") or {}).get("left_s")
+        earlier.setdefault(ticker, []).append({"at_left_s": left, "action": decision["action"], "reason": decision["reason"]})
+    # STALE CHECK: the model thought for a minute or two. Before an order goes out, read the market again; if it moved
+    # materially (BTC >= STALE_DISTANCE_BPS, across the strike, a fill, a new window), this decision was made on a picture
+    # that is gone: it is not acted on, and the loop asks again at once with the fresh picture.
+    spec = ACTIONS.get(decision["action"])
+    # One fresh read after thinking serves both checks: the order's, and the trades picture the review/directives judged.
+    fresh = None
+    if (spec is not None and decision["action"] in ("enter_yes", "enter_no", "exit")) or (decision.get("valid") and mode == "live"):
+        try:
+            fresh = live_view(mcp.tool("get_live_window")["data"])
+        except McpError:
+            fresh = None
+    if spec is not None and decision["action"] in ("enter_yes", "enter_no", "exit"):
+        stale = stale_reason(report.get("seen"), fresh)
+        if stale:
+            decision["blocked"], decision["action"] = decision["action"], "none"
+            decision["reason"] = f"{decision['reason']} [stale: {stale} while I was thinking; re-deciding now]"
+            report["recheck_now"] = True
+            spec = None
+    if spec is not None:
+        if mode == "live":
+            name, args = spec
+            r = mcp.tool(name, {**args, "reason": decision["reason"]})
+            report["acted"].append({"tool": name, "args": args, "ok": r["ok"], "result": r["text"][:300]})
+        else:
+            report["acted"].append({"tool": spec[0], "args": spec[1], "ok": None, "result": "shadow mode: not sent"})
+    # Directives to the Observer for this window (nexus-trader direct_desk) are RENEWED EVERY VALID RULING: a ruling that
+    # gives none clears the last one (Muse's audit: rulings #71-#73 said none while a block-both kept binding the desk).
+    # A block must be earned by a real loss on that side this window (ground_directives).
+    # STALE TRADES (2026-11-09 23:48 CST: a ruling said "the Observer did not trade in this window" while the desk had
+    # bought YES x15 at 23:45:54, during its thinking): if the window or the position changed while it thought, its review,
+    # directives and exit line judged a desk that is gone. None is sent (the last directive stands) and it re-decides now.
+    trades_stale = trades_changed(report.get("seen"), fresh)
+    if trades_stale and decision.get("valid") and mode == "live":
+        decision["directive_note"] = f"review, directives and exit line not sent: {trades_stale} while I was thinking; re-deciding now"
+        report["recheck_now"] = True
+    if decision.get("valid") and mode == "live" and not trades_stale:
+        wanted = decision.get("directives") or {"block_entry_side": None, "min_entry_bps": None, "max_contracts": None}
+        sent, dropped = ground_directives(wanted, obs.get("live"))
+        decision["directives_sent"] = sent
+        if dropped:
+            decision["directive_note"] = dropped
+        try:
+            reason = decision.get("review") or decision["reason"]
+            r = mcp.tool("direct_desk", {**sent, "reason": f"{reason} [{dropped}]" if dropped else reason})
+            report["acted"].append({"tool": "direct_desk", "args": sent, "ok": r["ok"]})
+        except McpError:
+            report["acted"].append({"tool": "direct_desk", "ok": False})
+    # The AI's exit line, enforced by the desk on every tick (nexus-trader set_exit_line), while it holds a position.
+    holding = any(x > 0 for x in ((report.get("seen") or {}).get("position") or (0, 0)))
+    if holding and decision.get("valid") and mode == "live" and decision["action"] != "exit" and not trades_stale:
+        try:
+            r = mcp.tool("set_exit_line", {"at_bps": decision.get("exit_line_bps"), "reason": decision["reason"]})
+            report["acted"].append({"tool": "set_exit_line", "args": {"at_bps": decision.get("exit_line_bps")}, "ok": r["ok"]})
+        except McpError:
+            report["acted"].append({"tool": "set_exit_line", "ok": False})
+    # The ruler's corpus (owner 2026-11-09: Nexus learns "from being ruler"): what it saw and what it decided, filed on the
+    # desk with the window so the export can join the outcome. After acting; a desk without the corpus never stops a ruling.
+    is_nexus = getattr(think, "is_nexus", False)
+    ruling_inputs = {"system_sha": NEXUS_FRAME_SHA if is_nexus else SYSTEM_SHA,
+                     "prompt": think.last_task if is_nexus else user,
+                     "fair": obs.get("fair"), "edges": obs.get("edges"),
+                     "seen": report.get("seen"), "woke": (watch or {}).get("woke"),
+                     **({"omitted_from_model_prompt": ["owner_note", "owner_scalp_directive"],
+                         "omitted_why": "the checkpoint stops routing to funds_propose when the prompt exceeds its trained register; "
+                                        "no-exit-below-entry is enforced in code (apply_discipline)"} if is_nexus else {})}
+    ruling_output = {"raw": (answer or "")[:2000], "analysis": decision.get("analysis"), "reason": decision["reason"],
+                     "directives": decision.get("directives_sent"), "directive_note": decision.get("directive_note"),
+                     "exit_line_bps": decision.get("exit_line_bps"), "review": decision.get("review"), "plan": decision.get("plan"),
+                     "valid": decision.get("valid"), "failure": decision.get("failure"), "blocked": decision.get("blocked"), "acted": report["acted"]}
+    if is_nexus:
+        # The 5-phase scaffold is the loop's standing frame (owner's framework): filed with the ruling, each
+        # phase labelled by who produced it. The raw above is Nexus's own transcript, untranslated.
+        ruling_output["engine"] = "nexus-grammar"
+        ruling_output["phases"] = build_nexus_phases(obs, decision)
+    # RULING-ROW DEDUPE (owner 2026-11-10, constant watch): when the caller keeps a ruling_state across check-ins,
+    # a cycle whose stance repeats the last RECORDED ruling on a picture that has not materially changed writes no
+    # new row and re-shares nothing — the cycle still thought, still renewed the desk's directives above, and any
+    # order it carried was still sent; only the corpus row is a duplicate. A heartbeat bounds the silence: the
+    # stance is re-recorded at least every HEARTBEAT_RULING_S however calm the window. A failed record never
+    # updates the state, so the next cycle retries the write instead of deduping against a row that does not exist.
+    record_it, dedupe_why, sig = True, None, None
+    if ruling_state is not None:
+        sig = stance_signature(report, decision)
+        if (ruling_state.get("signature") is not None and ruling_state.get("signature") == sig
+                and material_change(ruling_state.get("seen"), report.get("seen")) is None
+                and time.monotonic() - ruling_state.get("recorded_mono", 0) < HEARTBEAT_RULING_S):
+            record_it, dedupe_why = False, "unchanged stance on an unchanged picture"
+    report["ruling_recorded"] = record_it
+    if record_it:
+        try:
+            r = mcp.tool("record_ruling", {
+                "model": model_name,
+                "inputs": ruling_inputs,
+                "output": ruling_output,
+                "action": decision["action"], "p_model": decision.get("p_model"), "p_yes": decision["p_yes"]})
+            report["acted"].append({"tool": "record_ruling", "ok": r["ok"]})
+            if r["ok"] and ruling_state is not None:
+                ruling_state.update({"signature": sig, "seen": report.get("seen"), "recorded_mono": time.monotonic()})
+        except McpError:
+            report["acted"].append({"tool": "record_ruling", "ok": False})
+    else:
+        report["ruling_deduped"] = dedupe_why
+        report["acted"].append({"tool": "record_ruling", "ok": None, "result": f"deduped: {dedupe_why}"})
+    # After acting (never delaying an order): the owner's live page shows this reasoning where the chart legend was (share_thinking, every check-in). A desk
+    # without the tool, or a failed call, never stops the decision. A deduped check-in re-shares nothing: the page
+    # already shows this exact stance (and the heartbeat re-share is never more than HEARTBEAT_RULING_S away).
+    if record_it:
+        try:
+            r = mcp.tool("share_thinking", {"analysis": decision.get("analysis") or decision["reason"], "action": decision["action"],
+                                            "p_yes": decision["p_yes"], "reason": decision["reason"],
+                                            **({"review": decision["review"]} if decision.get("review") else {}),
+                                            **({"plan": decision["plan"]} if decision.get("plan") else {})})
+            report["acted"].append({"tool": "share_thinking", "ok": r["ok"]})
+        except McpError:
+            report["acted"].append({"tool": "share_thinking", "ok": False})
+    else:
+        report["acted"].append({"tool": "share_thinking", "ok": None, "result": "deduped: stance already shared"})
+    # Nexus in shadow (owner 2026-11-09: Nexus learns "from being ruler"): the same playbook and the same prompt go to Nexus,
+    # its answer is parsed exactly like the ruler's and filed in the corpus under its own model name -- NEVER acted on.
+    # It runs off the ruler's path (spawn) so a slow or absent Nexus can never delay a ruling.
+    if shadow is not None:
+        spawn(lambda: shadow_ruling(shadow, record, user, obs, fallback, log))
+    # Check: read the desk back after acting.
+    after = mcp.tool("get_status")["data"]
+    if isinstance(after, dict):
+        report["checked"] = {"killed": after.get("killed"), "equityCents": after.get("equityCents"), "openTickers": after.get("openTickers"), "hold": after.get("hold")}
+    log(json.dumps(report))
+    return report
+
+
+def write_summary(report, mode):
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not summary:
+        return
+    with open(summary, "a") as f:
+        if "skipped" in report:
+            f.write(f"### Trader agent ({mode})\n- skipped: {report['skipped']}\n")
+            return
+        if report.get("ruling_deduped"):
+            f.write(f"### Trader agent ({mode}) · {report.get('ticker')}\n- check-in deduped: {report['ruling_deduped']} — stance unchanged, no new ruling row\n")
+            return
+        d = report["decision"]
+        f.write(f"### Trader agent ({mode}) · {report.get('ticker')}\n- thinking: {d.get('analysis', '')}\n- fair {json.dumps(report.get('fair'))} · edges {json.dumps(report.get('edges'))}\n- P(YES) {d['p_yes']} · action **{d['action']}** · {d['reason']}\n- acted: {json.dumps(report['acted'])}\n- desk after: {json.dumps(report['checked'])}\n")
+
+
+# The standing agent (owner order 2026-11-09: "The AI starts itself"). GitHub's cron never fired this workflow, so one
+# run now loads the model once and rules window after window for AGENT_LOOP_MINUTES, then the workflow queues its own
+# successor. After ruling a window it sleeps until shortly after the next one opens.
+NEXT_WINDOW_GRACE_S = 30
+LOOP_ERROR_BACKOFF_S = 60
+# Owner 2026-11-09: "we need the AI to be there constantly". After each ruling the agent looks again after this pause
+# (plus its thinking), all window long, flat or holding; with too little time left it sleeps into the next window.
+# Owner 2026-11-10: "watching as constant as possibly capable" — retuned on Nexus's measured numbers, not Qwen's:
+# a full ruling cycle measured 21-34 s live (above), of which the pause below is the only idle part, so it drops
+# 10 -> 5 s. The binding constraint is the cycle itself (observe ~4 MCP calls, one Nexus generation, ~6 more
+# calls to act/record/check), not this pause: at ~20-30 s per cycle the agent evaluates fresh state 2-3x a minute,
+# and the watcher (below) covers the gaps between evaluations.
+CHECK_INTERVAL_S = 5
+# Owner 2026-11-09: "the quicker the model can read the live trading, the better ... watching constantly". Between
+# rulings a cheap watcher (no model) reads the live window every WATCH_POLL_S and wakes the model at once on a
+# material change. 2026-11-10: the poll drops 5 -> 3 s and the peek reuses ONE MCP session (main's peek), so a poll
+# costs a single get_live_window round trip (~0.4 s measured) instead of a fresh initialize + call (~3 round trips).
+# 3 s is the fastest poll that keeps the watcher a small fraction of the Bank's read load: ~20 light reads a minute
+# during pauses only, against the desk's own per-second internal reads.
+WATCH_POLL_S = 3
+# Ruling-row dedupe (owner 2026-11-10, constant watch): at a ~25 s cadence, most check-ins repeat the stance of the
+# last on an unchanged picture. Those cycles still think, still renew directives and still act — but they do not
+# write another agent_rulings row (or re-share the same thinking): a recorded row means Nexus evaluated a CHANGED
+# stance or a materially changed picture. Silence is still impossible: an unchanged stance is re-recorded at least
+# this often, so a flat calm window still files a heartbeat ruling every HEARTBEAT_RULING_S.
+HEARTBEAT_RULING_S = 120
+WAKE_DISTANCE_BPS = 5.0   # BTC moved this far vs the strike since the last ruling
+WAKE_BID_CENTS = 10.0     # the YES bid moved this much
+DANGER_BPS = 3.0          # holding, and BTC came within this of the strike
+# The full answer now carries analysis, p_yes, action, reason, exit_line_bps, review, plan and directives. At 200 tokens it
+# was cut off mid-JSON (2026-11-09 23:41 CST, the first ruling after #390: "model answer was not valid JSON; no action
+# taken"), so the cap leaves room for all of it: ~90 s worst case at ~4 tokens/s.
+MAX_ANSWER_TOKENS = 360
+# The writing budget, counted from the FIRST token the model writes (reading the prompt is not writing): 360 tokens at
+# ~4 tokens/s is ~90 s, so 150 s leaves headroom. A prompt-read that never yields a token is bounded by the job itself.
+ANSWER_TIME_BUDGET_S = 150
+
+
+def generate_after_first_token(stream, max_new_tokens, time_budget_s, clock=time.monotonic):
+    """Consume a llama.cpp stream; the time budget starts at the first token, so a long prompt read cannot eat it.
+    Returns (text, tokens, write_seconds, stopped_by_time, read_prompt_seconds)."""
+    t0 = clock()
+    start = None
+    parts, tokens, by_time = [], 0, False
+    for chunk in stream:
+        if start is None:
+            start = clock()
+        parts.append(chunk["choices"][0].get("text", ""))
+        tokens += 1
+        if tokens >= max_new_tokens:
+            break
+        if clock() - start >= time_budget_s:
+            by_time = True
+            break
+    read_s = round((start if start is not None else clock()) - t0, 1)
+    return "".join(parts).strip(), tokens, round(clock() - (start if start is not None else t0), 1), by_time, read_s
+
+
+def live_view(live):
+    """The few numbers the watcher compares: window, distance, YES bid, and the net position from this window's fills."""
+    live = live if isinstance(live, dict) else {}
+    snap = live.get("snapshot") or {}
+    net = {"yes": 0, "no": 0}
+    for i in live.get("intents") or []:
+        n = i.get("filled_hundredths") or 0
+        if n and i.get("side") in net:
+            if i.get("purpose") in ("entry", "flip-open"):
+                net[i["side"]] += n
+            elif i.get("purpose") in ("exit", "flip-close"):
+                net[i["side"]] -= n
+    return {"ticker": (live.get("window") or {}).get("ticker"), "distanceBps": snap.get("distanceBps"),
+            "yesBid": snap.get("yesBidCents"), "position": (net["yes"], net["no"])}
+
+
+def material_change(seen, now):
+    """Why the watcher should wake the model now, or None."""
+    if not seen or not now:
+        return None
+    if now["ticker"] != seen["ticker"]:
+        return "a new window opened"
+    if now["position"] != seen["position"]:
+        return "the position changed (a fill)"
+    d0, d1 = seen.get("distanceBps"), now.get("distanceBps")
+    if isinstance(d0, (int, float)) and isinstance(d1, (int, float)):
+        if abs(d1 - d0) >= WAKE_DISTANCE_BPS:
+            return f"BTC moved {d1 - d0:+.1f} bps vs the strike"
+        holding = any(x > 0 for x in now["position"])
+        if holding and abs(d1) <= DANGER_BPS < abs(d0):
+            return f"holding, and BTC is within {DANGER_BPS:g} bps of the strike"
+    b0, b1 = seen.get("yesBid"), now.get("yesBid")
+    if isinstance(b0, (int, float)) and isinstance(b1, (int, float)) and abs(b1 - b0) >= WAKE_BID_CENTS:
+        return f"the YES bid moved {b1 - b0:+.0f}c"
+    if isinstance(d0, (int, float)) and isinstance(d1, (int, float)):
+        # Sub-threshold moves that still change what the model should decide (2026-11-10, constant watch): a strike
+        # cross flips the winning side, and crossing the 3 bps entry-zone edge (playbook 4) opens or closes the
+        # entry the desk is allowed to take — both can happen inside the 5 bps magnitude wake above.
+        if d0 and d1 and (d0 > 0) != (d1 > 0):
+            return f"BTC crossed the strike ({d0:+.1f} -> {d1:+.1f} bps)"
+        zone = lambda v: "above" if v >= 3 else "below" if v <= -3 else "inside"  # noqa: E731
+        if zone(d0) != zone(d1):
+            return f"BTC crossed the entry-zone edge ({d0:+.1f} -> {d1:+.1f} bps)"
+    return None
+
+
+STALE_DISTANCE_BPS = 3.0
+
+
+def trades_changed(seen, now):
+    """Whether the desk the model judged (window, position) is gone, or None. BTC's distance alone does not void a review."""
+    if not seen or not now:
+        return None
+    if now.get("ticker") != seen.get("ticker"):
+        return "a new window opened"
+    if now.get("position") != seen.get("position"):
+        return "the position changed"
+    return None
+
+
+def stale_reason(seen, now):
+    """Why the picture a decision was made on is gone, or None."""
+    if not seen or not now:
+        return None
+    if now.get("ticker") != seen.get("ticker"):
+        return "a new window opened"
+    if now.get("position") != seen.get("position"):
+        return "the position changed"
+    d0, d1 = seen.get("distanceBps"), now.get("distanceBps")
+    if isinstance(d0, (int, float)) and isinstance(d1, (int, float)):
+        if (d0 > 0) != (d1 > 0) and abs(d1 - d0) > 0.5:
+            return f"BTC crossed the strike ({d0:+.1f} -> {d1:+.1f} bps)"
+        if abs(d1 - d0) >= STALE_DISTANCE_BPS:
+            return f"BTC moved {d1 - d0:+.1f} bps"
+    return None
+
+
+def watch_pause(seconds, seen, peek, log=print, sleep=time.sleep, clock=time.time):
+    """Pause up to `seconds`, reading the live window every WATCH_POLL_S; return early (with the reason) on a material
+    change. Without a peek function, or once the peek fails, it is a plain sleep."""
+    end = clock() + max(0.0, seconds)
+    readings = []
+    while clock() < end:
+        sleep(min(WATCH_POLL_S, max(0.0, end - clock())))
+        if peek is None or seen is None:
+            continue
+        try:
+            now = peek()
+        except Exception:  # noqa: BLE001  (a failed peek is a missed look, not a stop)
+            continue
+        if isinstance(now, dict):
+            readings.append(now)
+        why = material_change(seen, now)
+        if why:
+            log(json.dumps({"woke": why}))
+            return {"woke": why, "readings": readings}
+    return {"woke": None, "readings": readings}
+
+
+def watch_lines(watch, max_points=12):
+    """What the watcher saw since the last ruling, for the model: why it woke it, and the live tape (every 5 s)."""
+    if not watch or not watch.get("readings"):
+        return []
+    rs = [r for r in watch["readings"] if r.get("ticker") == watch["readings"][-1].get("ticker")]
+    if len(rs) > max_points:
+        step = len(rs) / max_points
+        rs = [rs[int(i * step)] for i in range(max_points - 1)] + [rs[-1]]
+    fmt = lambda v, f: f.format(v) if isinstance(v, (int, float)) else "?"  # noqa: E731
+    dist = " > ".join(fmt(r.get("distanceBps"), "{:+.1f}") for r in rs)
+    bid = " > ".join(fmt(r.get("yesBid"), "{:.0f}") for r in rs)
+    pos = rs[-1].get("position")
+    lines = [f"Live since your last ruling (watcher, every {WATCH_POLL_S} s, oldest first): distance {dist} bps; YES bid {bid}c; "
+             f"position now YES {pos[0] / 100 if pos else 0:g} / NO {pos[1] / 100 if pos else 0:g} contracts."]
+    if watch.get("woke"):
+        lines.insert(0, f"You were woken early because {watch['woke']}.")
+    return lines
+
+
+def standing_loop(run, minutes, log=print, sleep=time.sleep, clock=time.time, peek=None, stats=None):
+    """Call run() once per window until `minutes` have passed. run() returns a run_once report. Returns the count of
+    windows ruled. An error in one window is logged and retried after a backoff; it never ends the loop. When a
+    `stats` dict is passed it is filled with the per-window outcome counts (attempted / recorded / skipped /
+    errors / deduped — every attempt lands in exactly one): a loop whose every window errored or skipped records
+    nothing, and the caller must be able to see that — 2026-11-10 the Bank's MCP 503'd every window for a day
+    while this loop exited green. `recorded` counts rulings actually written (a report carries ruling_recorded;
+    a deduped check-in — the stance repeated on an unchanged picture — is counted as deduped, never as recorded,
+    so the zero-recorded failure in main() still means the agent never got a ruling onto the desk."""
+    deadline = clock() + minutes * 60
+    ruled = 0
+    watch = None
+    while clock() < deadline - NEXT_WINDOW_GRACE_S:
+        if stats is not None:
+            stats["attempted"] = stats.get("attempted", 0) + 1
+        try:
+            report = run(watch)
+        except Exception as e:  # noqa: BLE001  (one bad window must not end the standing agent)
+            if stats is not None:
+                stats["errors"] = stats.get("errors", 0) + 1
+            log(json.dumps({"window_error": str(e)[:300]}))
+            sleep(min(LOOP_ERROR_BACKOFF_S, max(0, deadline - clock())))
+            continue
+        if "skipped" not in report:
+            verdict = report.get("decision") or {}
+            if stats is not None and "valid" in verdict:
+                # Valid-decision tally, separate from "recorded": a ruling can be filed and still carry no decision.
+                key = "valid" if verdict["valid"] else "invalid"
+                stats[key] = stats.get(key, 0) + 1
+                if not verdict["valid"]:
+                    kind = (verdict.get("failure") or {}).get("kind", "unclassified")
+                    failures = stats.setdefault("failures", {})
+                    failures[kind] = failures.get(kind, 0) + 1
+            if report.get("ruling_recorded", True):
+                ruled += 1
+                if stats is not None:
+                    stats["recorded"] = stats.get("recorded", 0) + 1
+            elif stats is not None:
+                stats["deduped"] = stats.get("deduped", 0) + 1
+        elif stats is not None:
+            stats["skipped"] = stats.get("skipped", 0) + 1
+        left = (report.get("fair") or {}).get("left_s")
+        if report.get("recheck_now"):
+            pause = 0                         # the decision went stale while thinking: look again at once
+        elif not isinstance(left, (int, float)) or left <= 0:
+            pause = LOOP_ERROR_BACKOFF_S
+        elif left - CHECK_INTERVAL_S >= MIN_SECONDS_TO_DECIDE:
+            pause = CHECK_INTERVAL_S          # stay on this window
+        else:
+            pause = left + NEXT_WINDOW_GRACE_S  # too late for another look: wake 30 s into the next window
+        watch = watch_pause(min(pause, max(0, deadline - clock())), report.get("seen"), peek, log=log, sleep=sleep, clock=clock)
+    return ruled
+
+
+def main():
+    url = os.environ.get("NEXUS_MCP_URL", "").strip()
+    token = os.environ.get("NEXUS_OWNER_TOKEN", "")
+    if not url or not token:
+        print("::error::NEXUS_MCP_URL and the NEXUS_OWNER_TOKEN secret must be set for the trader agent to run")
+        return 2
+    mode = agent_mode()
+    sys.path.insert(0, os.path.dirname(__file__))
+    import nexus_model  # noqa: E402  (the Run 25 checkpoint loader; verifies the checkpoint hash at load)
+
+    log = lambda s: print(redact(s, token), flush=True)  # noqa: E731
+    # The model is Nexus now (owner order 2026-11-10), loaded once and asked window after window, the way the
+    # Qwen GGUF was. The load itself is the provider-truth gate: a checkpoint whose sha256 is not the Run 25
+    # hash recorded in run25/verdict.md raises here and the agent does not run. The old shadow seat is retired
+    # with the swap — Nexus is the ruler, not the ruler's shadow (the shadow helpers stay for their tests).
+    nx = nexus_model.load_nexus()
+    log(json.dumps({"model": nx.name, "checkpoint_sha256": nx.checkpoint_sha256, "params": nx.params, "ctx": nx.ctx_limit}))
+    think = NexusThink(nx, log=log)
+
+    predicted, earlier = set(), {}
+    ruling_state = {}   # the dedupe's memory across check-ins: last recorded stance, its picture, when it was written
+
+    def one_window(watch=None):
+        report = run_once(McpSession(url, token), think, mode=mode, log=log, predicted=predicted, earlier=earlier,
+                          watch=watch, model_name=nx.name, ruling_state=ruling_state)
+        write_summary(report, mode)
+        return report
+
+    minutes = int(os.environ.get("AGENT_LOOP_MINUTES", "0") or "0")
+    if minutes <= 0:
+        try:
+            one_window()
+        except McpError as e:
+            print(f"::error::{redact(str(e), token)}")
+            return 1
+        return 0
+    peek_box = {}
+
+    def peek():
+        # ONE session for every watcher poll (2026-11-10): a poll used to pay a fresh initialize + call (~3 round
+        # trips) every WATCH_POLL_S; reusing the session makes it the single get_live_window call. A failed poll
+        # drops the session so the next one re-initializes; watch_pause already treats a failed peek as a missed
+        # look, never a stop.
+        m = peek_box.get("session")
+        if m is None:
+            m = McpSession(url, token)
+            m.initialize()
+            peek_box["session"] = m
+        try:
+            return live_view(m.tool("get_live_window")["data"])
+        except Exception:
+            peek_box["session"] = None
+            raise
+
+    stats = {}
+    ruled = standing_loop(one_window, minutes, log=log, peek=peek, stats=stats)
+    recorded = stats.get("recorded", 0)
+    valid, invalid = stats.get("valid", 0), stats.get("invalid", 0)
+    print(f"standing agent: ruled {ruled} windows in {minutes} minutes "
+          f"(attempted {stats.get('attempted', 0)}, recorded {recorded}, "
+          f"skipped {stats.get('skipped', 0)}, errors {stats.get('errors', 0)}, "
+          f"deduped {stats.get('deduped', 0)}; decisions valid {valid}, invalid {invalid}"
+          + (f" {json.dumps(stats.get('failures'), sort_keys=True)}" if stats.get("failures") else "") + ")", flush=True)
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write(f"### Trader agent — standing loop totals\n"
+                    f"- windows attempted {stats.get('attempted', 0)} · rulings recorded {recorded} · "
+                    f"skipped {stats.get('skipped', 0)} · window errors {stats.get('errors', 0)} · "
+                    f"deduped {stats.get('deduped', 0)}\n"
+                    f"- decisions: valid {valid} · invalid {invalid}"
+                    + (f" · by failure {json.dumps(stats.get('failures'), sort_keys=True)}" if stats.get("failures") else "") + "\n")
+    if recorded == 0:
+        # Zero recorded rulings means the agent never reached the Bank (2026-11-10: MCP 503 on every
+        # window, loop green, a day of trading with no rulings). Fail the run so it is seen at once.
+        print(f"::error::standing agent recorded ZERO rulings in {minutes} minutes "
+              f"(attempted {stats.get('attempted', 0)}, skipped {stats.get('skipped', 0)}, "
+              f"errors {stats.get('errors', 0)})", flush=True)
+        return 1
+    if valid == 0 and invalid >= VALIDITY_ALARM_MIN_RULINGS:
+        # A ruler that files rulings but never one usable decision is not "quiet", it is broken: every window passes
+        # with no action while the run reads green (2026-11-10 22:43 -> 2026-11-11 04:03 CST: 381 rulings, 0 valid).
+        # Red run, visible at once. The chain still re-queues (the workflow's re-queue step runs `always()`), the desk's
+        # coded stops and preserver keep guarding every open position, and nothing is traded on a guess.
+        print(f"::error::the ruler produced ZERO valid decisions in {invalid} rulings over {minutes} minutes "
+              f"(failures: {json.dumps(stats.get('failures'), sort_keys=True)}); no order was sent on any of them", flush=True)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

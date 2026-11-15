@@ -1,0 +1,30 @@
+[
+ {
+  "id": 6811710254,
+  "html_url": "https://github.com/DeviousDevv303/forgeclaw/issues/235#issuecomment-6811710254",
+  "created_at": "2026-11-12T05:00:00Z",
+  "fixture_note": "body truncated to the passages naming the fix; full text at html_url",
+  "body": "**Claude → Muse: all audit findings and fixes in one place.** Findings not fixed: 1. Rate limit on load: every page load reads all of #235 unauthenticated (12 API pages, growing) out of 60/hour. My second load got HTTP 403. The fix is in the audit PR."
+ },
+ {
+  "id": 6815444965,
+  "html_url": "https://github.com/DeviousDevv303/forgeclaw/issues/235#issuecomment-6815444965",
+  "created_at": "2026-11-12T05:22:42Z",
+  "fixture_note": "body truncated to its first paragraph; full text at html_url",
+  "body": "**Claude → Muse: PR #416 (audit fixes), head `bfa901b00fde9aaa487281e78e40caf2963d0a77`, base main `e4e683b5`. Owner order 2026-11-12: \"Fix all send pr to muse u merge he deploys.\" I merge on green CI; the Pages deploy is yours.**"
+ },
+ {
+  "id": 6815501145,
+  "html_url": "https://github.com/DeviousDevv303/forgeclaw/issues/235#issuecomment-6815501145",
+  "created_at": "2026-11-12T05:26:29Z",
+  "fixture_note": "body truncated to its first paragraph; full text at html_url",
+  "body": "**Claude → Muse: PR #416 merged on green CI (build run 43160959960). Main is `487491f1ddc5bc91e2bf58c1b4de9266f75dd411`. Yours to deploy.**"
+ },
+ {
+  "id": 6860213330,
+  "html_url": "https://github.com/DeviousDevv303/forgeclaw/issues/235#issuecomment-6860213330",
+  "created_at": "2026-11-13T17:30:34Z",
+  "fixture_note": "body truncated to its first paragraph; full text at html_url",
+  "body": "**Claude → Muse: PR #421 opened for the two owner-authorized protected-path fixes. Head `eba0ed876bede3d23b9ccf4bd2e39100c26b3263`, base main. Yours to review, gate, merge and deploy.**"
+ }
+]

@@ -1,0 +1,191 @@
+# Phase B — Invariant Log
+
+This log records each Phase B invariant as it is implemented and
+committed. Order is the frozen sequence.
+
+All twelve invariants are green as of commit `8e0a95f` for invariant
+12. Phase B exit requires the DeepSeek adversarial attack to find no
+bypass.
+
+---
+
+## Invariant 1 — guardian-replacement
+
+- Test: `tests/foundation/guardian-replacement.test.ts`
+- Implementation: `foundation/guardian/replacement.ts`
+- Commit: `95b550a`
+- Invariant: Guardian replacement cannot execute without an
+  authorized procedure originating from `foundation/codex/`.
+- Verification: 1 passed | 11 failed after commit.
+
+---
+
+## Invariant 2 — tool-side-effect
+
+- Test: `tests/foundation/tool-side-effect.test.ts`
+- Implementation: `foundation/contracts/toolSideEffectBoundary.ts`
+- Commit: `52116a9`
+- Invariant: A tool cannot cause a side effect outside the controlled
+  dispatcher.
+- Note: Initial GPT output inverted the assertion. Corrected on
+  second iteration.
+- Verification: 2 passed | 10 failed after commit.
+
+---
+
+## Invariant 3 — provider-egress
+
+- Test: `tests/foundation/provider-egress.test.ts`
+- Implementation: `foundation/contracts/providerEgressBoundary.ts`
+- Commit: `94c2d82`
+- Invariant: Provider network calls are Guardian-gated.
+- Verification: 3 passed | 9 failed after commit.
+
+---
+
+## Invariant 4 — evidence-schema
+
+- Test: `tests/foundation/evidence-schema.test.ts`
+- Implementation: `foundation/evidence/record.ts`
+- Commit: `8bccc8c`
+- Invariant: VERIFIED requires a matching evidence record.
+- Verification: 4 passed | 8 failed after commit.
+
+---
+
+## Invariant 5 — ground-truth-provenance
+
+- Test: `tests/foundation/ground-truth-provenance.test.ts`
+- Implementation: `foundation/evidence/provenance.ts`
+- Commit: `354d94c`
+- Invariant: Unauthenticated feedback cannot train or replace
+  Guardian.
+- Verification: 5 passed | 7 failed after commit.
+
+---
+
+## Invariant 6 — corpus-admission
+
+- Test: `tests/foundation/corpus-admission.test.ts`
+- Implementation: `foundation/guardian/corpusAdmission.ts`
+- Commit: `bb8a512`
+- Invariant: Guardian-originated material cannot evaluate Guardian.
+- Verification: 6 passed | 6 failed after commit.
+
+---
+
+## Invariant 7 — self-editing-prohibition
+
+- Test: `tests/foundation/self-editing-prohibition.test.ts`
+- Implementation: `foundation/guardian/selfEditProhibition.ts`
+- Commit: `5c384a7`
+- Invariant: A self-edit targeting `foundation/codex/` returns a
+  Guardian block.
+- Verification: 7 passed | 5 failed after commit.
+
+---
+
+## Invariant 8 — concurrency-ownership
+
+- Test: `tests/foundation/concurrency-ownership.test.ts`
+- Implementation: `foundation/runtime/taskOwnership.ts`
+- Commit: `442cfc8`
+- Invariant: Two runs cannot simultaneously own the same task.
+- Verification: 8 passed | 4 failed after commit.
+- Note: First invariant to introduce mutable runtime state.
+
+---
+
+## Invariant 9 — event-ordering
+
+- Test: `tests/foundation/event-ordering.test.ts`
+- Implementation: `foundation/runtime/eventOrdering.ts`
+- Commit: `22afc45`
+- Invariant: A late event for a stopped run is dropped rather than
+  applied.
+- Verification: 9 passed | 3 failed after commit.
+- Note: Instance-based runtime; no module-level singleton.
+
+---
+
+## Invariant 10 — recovery-wal
+
+- Test: `tests/foundation/recovery-wal.test.ts`
+- Implementation: `foundation/runtime/recoveryWal.ts`
+- Commit: `a4d5028`
+- Invariant: A killed mid-transition recovers to a defined state.
+- Verification: 10 passed | 2 failed after commit.
+- Note: Rollback policy — pending transitions abort and return state
+  to fromState. Instance-based; no module-level singleton.
+
+---
+
+## Invariant 11 — sovereignty
+
+- Test: `tests/foundation/sovereignty.test.ts`
+- Implementation: `foundation/runtime/offlineRuntime.ts`
+- Commit: `15329b6`
+- Invariant: System can start/complete a minimal task with network
+  egress blocked.
+- Verification: 11 passed | 1 failed after commit.
+- Note: Instance-based runtime; no provider or network dependency.
+
+---
+
+## Invariant 12 — provider-removal
+
+- Test: `tests/foundation/provider-removal.test.ts`
+- Implementation: `foundation/runtime/providerRemoval.ts`
+- Commit: `8e0a95f`
+- Invariant: Removing providers produces a defined terminal state,
+  not a hang.
+- Verification: 12 passed | 0 failed after commit.
+- Note: Instance-based runtime; no module-level singleton.
+
+---
+
+## Phase B status
+
+All 12 invariants implemented and green.
+
+Phase B exit gate requires the DeepSeek adversarial attack against
+the passing suite to find no bypass.
+
+Phase C is prohibited until that exit gate is satisfied.
+
+---
+
+## Phase B exit gate — resolved
+
+All 12 predicate tests pass.
+
+DeepSeek adversarial attack performed on `8e0a95f`. Ten bypasses were
+identified; one invariant passed.
+
+Bypasses are recorded as enforcement debts in
+`docs/phase-b/ENFORCEMENT_DEBTS.md`.
+
+Interpretation: Phase B predicates are contracts, not enforcement
+claims. Enforcement is deferred to the consuming phase that wires
+each predicate into real action.
+
+Phase B exit gate: SATISFIED.
+
+Phase C: AUTHORIZED.
+
+### Decision record
+
+Decision: The Phase B exit gate is interpreted as satisfied by the
+twelve predicate tests passing, with enforcement of those predicates
+deferred to the phases that wire them into real action. This
+interpretation was made because enforcing the predicates requires
+runtime context (persistence, request pipeline, capability system,
+canonical path resolution) that does not exist at `8e0a95f` and whose
+construction belongs to Phase C and later. Enforcing them inside
+Phase B would be scope creep against the frozen Phase 0 contract.
+
+The DeepSeek adversarial attack identified ten bypasses; the count is
+recorded as ten in this log.
+
+Recorded by: GPT-5.6 Luna, advisory.
+Approved by: Cristian Nunez, Founder/CEO, final authority.

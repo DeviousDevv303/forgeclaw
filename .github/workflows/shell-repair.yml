@@ -1,0 +1,244 @@
+name: ForgeClaw Shell Repair
+run-name: Shell repair ${{ inputs.invocation_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      repair_branch:
+        description: Repair branch; must match forge/repair/*
+        required: true
+        type: string
+      patch:
+        description: Unified patch to apply from the repository root
+        required: true
+        type: string
+      reason:
+        description: One-line reason for the repair
+        required: true
+        type: string
+      invocation_id:
+        description: Correlation identifier
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: shell-repair-${{ inputs.repair_branch }}
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # Hardening: no write-capable token on disk while patched code is built.
+          persist-credentials: false
+      - name: Load protected-path policy from main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git show origin/main:.github/scripts/check-protected.py > "$RUNNER_TEMP/check-protected.py"
+          git show origin/main:.github/protected-paths.txt > "$RUNNER_TEMP/protected-paths.txt"
+          git show origin/main:.github/scripts/check-symlinks.sh > "$RUNNER_TEMP/check-symlinks.sh"
+
+      # Layer 1: input validation.
+      - name: Validate repair inputs
+        env:
+          REPAIR_BRANCH: ${{ inputs.repair_branch }}
+          REPAIR_PATCH: ${{ inputs.patch }}
+          REPAIR_REASON: ${{ inputs.reason }}
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import re
+          branch = os.environ['REPAIR_BRANCH'].strip()
+          patch = os.environ['REPAIR_PATCH']
+          reason = os.environ['REPAIR_REASON'].strip()
+          invocation = os.environ['INVOCATION_ID'].strip()
+          if not re.fullmatch(r'forge/repair/[A-Za-z0-9][A-Za-z0-9._/-]{0,80}', branch) or '..' in branch or branch.endswith('/'):
+              raise SystemExit('repair_branch must match forge/repair/* without traversal.')
+          if not patch or len(patch) > 100_000:
+              raise SystemExit('patch must contain 1-100000 characters.')
+          if not reason or len(reason) > 240 or any(ord(c) < 32 and c not in '\t' for c in reason):
+              raise SystemExit('reason must be a one-line message of at most 240 characters.')
+          if not re.fullmatch(r'[A-Za-z0-9._:-]{1,120}', invocation):
+              raise SystemExit('invocation_id contains unsupported characters.')
+          PY
+
+      # Layer 2: branch isolation; every invocation starts at origin/main,
+      # while reruns reuse the already-created repair branch.
+      - name: Create isolated repair branch from origin/main
+        env:
+          REPAIR_BRANCH: ${{ inputs.repair_branch }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main "$REPAIR_BRANCH" || git fetch --no-tags origin main
+          git config user.name 'ForgeClaw Shell Repair'
+          git config user.email 'forgeclaw-shell-repair@local'
+          if git show-ref --verify --quiet "refs/remotes/origin/$REPAIR_BRANCH"; then
+            git switch --create "$REPAIR_BRANCH" "origin/$REPAIR_BRANCH" || git switch "$REPAIR_BRANCH"
+          else
+            git switch --create "$REPAIR_BRANCH" origin/main || git switch "$REPAIR_BRANCH"
+          fi
+          test "$(git merge-base HEAD origin/main)" = "$(git rev-parse origin/main)" || {
+            echo 'Repair branch must be based on origin/main.' >&2
+            exit 1
+          }
+      - name: Baseline verify
+        id: baseline
+        run: npm ci --ignore-scripts && npm run build
+
+
+      # Layer 3: workspace confinement. The patch is applied only below the
+      # checked-out root and Git is never allowed to follow external paths.
+      - name: Apply patch inside repository workspace
+        env:
+          REPAIR_PATCH: ${{ inputs.patch }}
+        run: |
+          set -euo pipefail
+          test -n "${GITHUB_WORKSPACE:-}" && test -d "$GITHUB_WORKSPACE"
+          printf '%s\n' "$REPAIR_PATCH" | git apply --whitespace=error
+          git diff --check
+
+      # Layer 4: protected-path check over the complete branch diff and all
+      # untracked files, not only the paths touched by the patch command.
+      - name: Refuse protected paths
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          # Policy: .github/protected-paths.txt as it exists on main (loaded before the patch).
+          # The patch is intentionally uncommitted here, so compare origin/main to the whole working
+          # tree. --no-renames lists BOTH sides of a rename, otherwise moving a protected file would
+          # only show its new name.
+          {
+            git diff --no-renames --name-only -z origin/main
+            git ls-files -z --others --exclude-standard
+          } | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
+          bash "$RUNNER_TEMP/check-symlinks.sh"
+
+      - name: Post-patch verify
+        id: verify
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          npm ci --ignore-scripts && npm run build 2>&1 | tee verify.log
+
+      # Layer 5: no push on verification failure, with a reviewable artifact.
+      - name: Record repair failure
+        if: steps.verify.outcome != 'success'
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          REPAIR_BRANCH: ${{ inputs.repair_branch }}
+        run: |
+          set -euo pipefail
+          {
+            echo "invocation_id=$INVOCATION_ID"
+            echo "branch=$REPAIR_BRANCH"
+            echo 'post_patch_verify=failed'
+            echo
+            cat verify.log 2>/dev/null || true
+          } > repair-failure.txt
+          git reset --hard origin/main
+          git clean -fdx
+
+      - name: Upload repair failure evidence
+        if: steps.verify.outcome != 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: shell-repair-failure-${{ inputs.invocation_id }}
+          path: repair-failure.txt
+          if-no-files-found: error
+
+      - name: Stop after failed verification
+        if: steps.verify.outcome != 'success'
+        run: exit 1
+
+      # The verify step executes patched code, so re-run the checks on the final tree before it is
+      # committed. Policy and scripts come from the copies loaded from main, never from the working tree.
+      - name: Re-check protected paths after verification
+        run: |
+          set -euo pipefail
+          {
+            git diff --no-renames --name-only -z origin/main
+            git ls-files -z --others --exclude-standard
+          } | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"
+          bash "$RUNNER_TEMP/check-symlinks.sh"
+
+      # Optional: act as the ForgeClaw GitHub App (own name and avatar; its pull requests also get the normal
+      # build check, which pull requests opened with the default token do not). Skipped, with the default
+      # token as the fallback, until the repository variable FORGECLAW_APP_ID and the secret
+      # FORGECLAW_APP_PRIVATE_KEY exist.
+      - name: Sign in as the ForgeClaw app
+        id: app
+        if: vars.FORGECLAW_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.FORGECLAW_APP_ID }}
+          private-key: ${{ secrets.FORGECLAW_APP_PRIVATE_KEY }}
+
+      - name: Commit and push repair branch
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          AS_APP: ${{ steps.app.outputs.token != '' && 'true' || '' }}
+          APP_ID: ${{ vars.FORGECLAW_APP_ID }}
+          APP_SLUG: ${{ vars.FORGECLAW_APP_SLUG || 'forgeclaw' }}
+          REPAIR_BRANCH: ${{ inputs.repair_branch }}
+          REPAIR_REASON: ${{ inputs.reason }}
+        run: |
+          set -euo pipefail
+          # The patch is applied to the working tree and not yet committed, so compare the working tree (not only
+          # the committed history, which is empty here) with main. An edit to an existing file was skipped before.
+          if git diff --quiet origin/main && test -z "$(git ls-files --others --exclude-standard)"; then
+            echo 'No repair changes to publish.'
+            exit 0
+          fi
+          if [[ -n "${AS_APP:-}" ]]; then
+            git config user.name "${APP_SLUG}[bot]"
+            git config user.email "${APP_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
+          fi
+          git add --all
+          git commit -m "repair: $(printf '%s' "$REPAIR_REASON" | tr '\n\r' '  ' | cut -c1-200)"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push --set-upstream origin "HEAD:$REPAIR_BRANCH"
+
+      # Layer 6: PR-only landing path. This step never merges the PR.
+      - name: Create labeled pull request
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          REPAIR_BRANCH: ${{ inputs.repair_branch }}
+          REPAIR_REASON: ${{ inputs.reason }}
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+        run: |
+          set -euo pipefail
+          label='autonomous-repair'
+          gh label create "$label" --color 'b60205' --description 'Guarded ForgeClaw repair proposal' 2>/dev/null || true
+          pr_url="$(gh pr list --base main --head "$REPAIR_BRANCH" --state open --json url --jq '.[0].url // empty')"
+          if [[ -z "$pr_url" ]]; then
+            body=$(cat <<EOF
+          <img src="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/raw/main/docs/brand/forgeclaw-avatar.png" width="64" align="right" alt="ForgeClaw">
+
+          **ForgeClaw** · autonomous agent · guarded repair proposal
+
+          - Invocation ID: $INVOCATION_ID
+          - Baseline exit code: ${{ steps.baseline.outcome == 'success' && '0' || '1' }}
+          - Post-patch exit code: ${{ steps.verify.outcome == 'success' && '0' || '1' }}
+          - Run URL: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          - Landing path: pull request to main; this workflow never merges.
+          EOF
+          )
+            pr_url="$(gh pr create --base main --head "$REPAIR_BRANCH" --title "[ForgeClaw] repair: $(printf '%s' "$REPAIR_REASON" | tr '\n\r' '  ' | cut -c1-200)" --body "$body")"
+          fi
+          gh pr edit "$pr_url" --add-label "$label"
+          echo "Pull request: $pr_url"

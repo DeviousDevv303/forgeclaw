@@ -1,0 +1,48 @@
+// ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
+// Proprietary source-available license. Commercial use requires written permission. See LICENSE.
+import { memo } from 'react'
+import type { AgentLane as AgentLaneType } from '../../types/warRoom'
+import { useI18n } from '../../lib/i18n'
+
+interface AgentLaneProps {
+  lane: AgentLaneType
+}
+
+const statusConfig = {
+  idle: { dot: 'bg-slate-500', labelKey: 'lane.idle' },
+  working: { dot: 'bg-orange-500 animate-pulse', labelKey: 'lane.working' },
+  blocked: { dot: 'bg-red-500', labelKey: 'lane.blocked' },
+  reviewing: { dot: 'bg-yellow-500', labelKey: 'lane.reviewing' },
+} as const
+
+export const AgentLane = memo(function AgentLane({ lane }: AgentLaneProps) {
+  const { t } = useI18n()
+  const config = statusConfig[lane.status]
+
+  return (
+    <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
+      <div className="flex items-center gap-2 mb-2">
+        <span className={`w-2 h-2 rounded-full ${config.dot}`} />
+        <span className="text-sm font-medium text-slate-200">{lane.agentId}</span>
+        <span className="text-xs text-slate-500 ml-auto">{t(config.labelKey)}</span>
+      </div>
+      
+      {lane.currentTask && (
+        <div className="text-xs text-slate-400 mb-1 truncate">
+          {lane.currentTask}
+        </div>
+      )}
+      
+      <div className="flex items-center gap-2 text-xs text-slate-600">
+        {lane.sha && <span className="font-mono">{lane.sha.slice(0, 7)}</span>}
+        <span className="ml-auto">
+          {new Date(lane.lastActivity).toLocaleTimeString('en-US', { 
+            hour12: false, 
+            hour: '2-digit', 
+            minute: '2-digit' 
+          })}
+        </span>
+      </div>
+    </div>
+  )
+})

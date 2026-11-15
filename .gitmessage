@@ -1,0 +1,14 @@
+type(scope): short subject
+
+WHY:
+- Explain the reason for the change and the risk it closes.
+
+FILES:
+- path/to/file: exact behavior changed.
+
+VALIDATION:
+- npm run build: not run
+- npm run lint: not run
+
+Contract: v1.1, override by Cristian
+Co-authored-by: Cristian <towerslutz@gmail.com>

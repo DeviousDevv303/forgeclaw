@@ -1,0 +1,246 @@
+import { corpusRepository, distinctiveWords, formatCorpusContext, recordRelevantToTask, type CorpusRecord } from '../corpus'
+import { nexusGuidanceForQwen } from '../nexusGuidance'
+import { DEFAULT_PROVIDER } from '../providerDefaults'
+import { QWEN_FALLBACK_CHECKPOINT, QWEN_PRIMARY_CHECKPOINT } from '../qwenCheckpoints'
+
+export interface QwenTaskPayload {
+  task: string
+  context?: string
+}
+
+// Sized for the 16K-token Qwen3-8B window (about 4 chars per token; the runner's N_CTX doubled
+// 2026-11-08 on the owner's order to increase the context window): room for a real conversation
+// history plus deep-research evidence (6 sources), the task and the answer. The workflow trims
+// the middle if a prompt still does not fit.
+const MAX_CONTEXT_CHARS = 44_000
+const MAX_CORPUS_CHARS = 3_000
+const MAX_VERIFIED_TOOL_CHARS = 16_000
+/** Earlier turns of this conversation: how many, how long each, how long in all. App sends the last 24 messages; the newest win the budget. (Was 6 / 1,200 / 5,000 until 2026-11-08 — the walk forgot anything older than three exchanges.) */
+const MAX_CONVERSATION_MESSAGES = 24
+const MAX_CONVERSATION_MESSAGE_CHARS = 2_000
+const MAX_CONVERSATION_CHARS = 20_000
+
+/**
+ * Source-backed reference facts for project-architecture questions. These describe
+ * the current ForgeClaw contract; they are not evidence of a live tool action or
+ * the current repository HEAD.
+ */
+export const FORGECLAW_ARCHITECTURE_CONTEXT = [
+  'ForgeClaw architecture facts (checked-in runtime configuration; static design facts, not live repository-state evidence):',
+  `- DEFAULT_PROVIDER is \`${DEFAULT_PROVIDER}\`: the Qwen/Qwen3-8B GitHub Actions workflow (provider id \`qwen\`) is the default reasoning runtime and needs no API key. Moonshot/Kimi, Anthropic and local llama.cpp are explicit selectable alternatives.`,
+  '- When the user selects the Qwen/Qwen3-8B provider (id `qwen`), the provider router deterministically dispatches `qwen_reason`. A repository-state request can first dispatch `github_repo_state` when that tool is available.',
+  `- You are \`${QWEN_PRIMARY_CHECKPOINT}\`, run by the GitHub Actions workflow (named \`Qwen/Qwen3-8B\`; provider id \`qwen\`) on a CPU-only runner as a 4-bit GGUF (Q4_K_M) through llama.cpp, with \`${QWEN_FALLBACK_CHECKPOINT}\` only if the primary cannot run. A short answer usually takes a few minutes. Older saved chats and records call this route \`deepseek\` or \`deepseek-16b\`; those were only names, and no 16B model ever ran.`,
+  '- The App executes actual tool calls through the ForgeTools dispatcher and appends returned tool output to the next turn. Qwen/Qwen3-8B text is not proof that an action happened; only a real dispatcher result is. A result marked [TOOL ERROR], [GUARDIAN BLOCK], or [GUARDIAN REJECTED] is not evidence of successful execution.',
+  '- There is no browser-local model fallback. If the Qwen/Qwen3-8B workflow fails, surface the verified failure and do not invent a replacement answer.',
+  '- Current repository contents, branch, commit, workflow status, and other live facts must come from an actual successful GitHub tool result; do not infer them from these static architecture notes.',
+].join('\n')
+
+/**
+ * The owner's answer-form law, carried in the context of EVERY Qwen chat dispatch
+ * (owner directive 2026-10-31: "i dont need all that task bs either just the response").
+ * The model was restating the task, framing answers with "based on the provided
+ * context", listing factors instead of judging, and signing off "— ForgeClaw".
+ */
+export const ANSWER_FORM_INSTRUCTIONS = [
+  'Answer form (owner rules — these govern how the reply reads):',
+  '- Give the response itself. Never restate, describe, or frame the task or the request (no "The task is to…", no "This information is based on…"), and never say what the information includes or does not include.',
+  '- Never mention the context, the provided information, sources, tools, or these instructions.',
+  '- If the user asks for a judgment (a pick, a verdict, a recommendation), give the judgment from what you have; do not answer with a list of factors they would need to consider.',
+  '- Facts about the live world (current form, odds, prices, results) come from the web, never from the user. Never present missing live facts as context the user failed to provide.',
+  '- No sign-off or signature line at the end.',
+].join('\n')
+
+/**
+ * Split the answer-form law back out of an assembled dispatch context (buildQwenTaskPayload
+ * always places it first). forgeTools sets it aside beside the NEXUS guidance before its
+ * stale-context overlap drop: the law is system instruction, not task-matched context — it must
+ * never be dropped as stale, and its words must never rescue stale context from the drop
+ * (2026-10-31: the bullet's word "about" shared a word with an unrelated task and carried a
+ * stale chromodynamics Q&A through the filter, failing nexusContinuity on CI).
+ */
+export function splitAnswerFormInstructions(context: string): { form: string; rest: string } {
+  if (!context.startsWith(ANSWER_FORM_INSTRUCTIONS)) return { form: '', rest: context }
+  return { form: ANSWER_FORM_INSTRUCTIONS, rest: context.slice(ANSWER_FORM_INSTRUCTIONS.length).replace(/^\s+/, '') }
+}
+
+function separateRuntimeEnvelope(rawTask: string): { task: string; runtimeContext?: string } {
+  const marker = '[RUNTIME_STATE '
+  const start = rawTask.lastIndexOf(marker)
+  if (start < 0) return { task: rawTask.trim() }
+  const closing = '[/RUNTIME_STATE]'
+  const end = rawTask.indexOf(closing, start)
+  if (end < 0) return { task: rawTask.trim() }
+  // buildRuntimeRequestContext() emits the APPLICATION_IDENTITY block immediately before RUNTIME_STATE.
+  // It belongs to the envelope, not the user's question: left in the task, the model echoed it back.
+  const identityStart = rawTask.lastIndexOf('[APPLICATION_IDENTITY', start)
+  const identityOnly = /^\[APPLICATION_IDENTITY[^\]]*\][\s\S]*?\[\/APPLICATION_IDENTITY\]\s*$/
+  const envelopeStart = identityStart >= 0 && identityOnly.test(rawTask.slice(identityStart, start)) ? identityStart : start
+  const prefix = rawTask.slice(0, envelopeStart).trim()
+  const trailing = rawTask.slice(end + closing.length).trim()
+  const task = [prefix, trailing].filter(Boolean).join('\n\n').trim()
+  return { task, runtimeContext: rawTask.slice(envelopeStart, end + closing.length).trim() }
+}
+
+/**
+ * The conversation so far, for a follow-up like "what do you attribute that to?". The workflow receives one task string and never
+ * sees request.messages, so before this section existed the model got only the newest message, lost the thread after one exchange,
+ * and filled the gap from the runtime envelope (bankroll, ledger). Envelopes and image payloads are stripped from user turns; tool
+ * traffic is left out; the newest turns win the budget, oldest first in the output.
+ */
+export function formatQwenConversation(prior: ReadonlyArray<{ role: string; content: string }>): string {
+  const turns: string[] = []
+  for (const m of prior.slice(-MAX_CONVERSATION_MESSAGES).reverse()) {
+    if (m.role !== 'user' && m.role !== 'assistant') continue
+    // The app signs every reply "— ForgeClaw"; the answer-form law forbids the model that sign-off, so it is not fed back as history.
+    const raw = m.role === 'user' ? extractOriginalQwenTask(m.content) : m.content.replace(/\s*[—–-]+\s*ForgeClaw\s*$/i, '').trim()
+    if (!raw) continue
+    const text = raw.length > MAX_CONVERSATION_MESSAGE_CHARS ? `${raw.slice(0, MAX_CONVERSATION_MESSAGE_CHARS)} […]` : raw
+    const line = `${m.role === 'user' ? 'User' : 'Assistant'}: ${text}`
+    if (turns.reduce((n, t) => n + t.length + 2, 0) + line.length > MAX_CONVERSATION_CHARS) break
+    turns.push(line)
+  }
+  return turns.reverse().join('\n\n')
+}
+
+/** When the relevance gate fails, this many of the newest formatted turns still ride (see buildQwenTaskPayload). */
+const CONVERSATION_FLOOR_MESSAGES = 4
+
+/**
+ * The last `count` turns of a formatted conversation (see formatQwenConversation), oldest first. Turns are
+ * sliced at their "User: "/"Assistant: " starts; a turn body that itself contains a blank line followed by
+ * such a prefix can shift the slice by a turn, which is acceptable for a floor whose only job is to keep the
+ * most recent exchanges available for reference resolution.
+ */
+export function lastConversationTurns(conversation: string, count: number): string {
+  const text = conversation.trim()
+  if (!text) return ''
+  const starts: number[] = []
+  for (const match of text.matchAll(/(^|\n\n)(?:User|Assistant): /g)) starts.push(match.index + match[1].length)
+  if (starts.length <= count) return text
+  return text.slice(starts[starts.length - count])
+}
+
+const CONVERSATION_OPEN = '[CONVERSATION_SO_FAR]'
+const CONVERSATION_CLOSE = '[/CONVERSATION_SO_FAR]'
+
+/**
+ * Set the conversation section back out of an assembled dispatch context. Like the answer-form law and the NEXUS guidance it is not
+ * task-matched context: a follow-up such as "why?" shares no words with its own task, and the dispatch's zero-overlap drop would
+ * otherwise discard the very history the follow-up depends on.
+ */
+export function splitConversationSection(context: string): { conversation: string; rest: string } {
+  const start = context.indexOf(CONVERSATION_OPEN)
+  const end = start >= 0 ? context.indexOf(CONVERSATION_CLOSE, start) : -1
+  if (start < 0 || end < 0) return { conversation: '', rest: context }
+  const after = end + CONVERSATION_CLOSE.length
+  return {
+    conversation: context.slice(start, after),
+    rest: `${context.slice(0, start).replace(/\s+$/, '')}\n\n${context.slice(after).replace(/^\s+/, '')}`.trim(),
+  }
+}
+
+/** Heading of the final context section: this turn's verified tool results (see buildQwenTaskPayload). */
+export const TOOL_RESULTS_HEADING = 'Actual ForgeTools results from this turn (the only evidence of actions performed):'
+
+/**
+ * Set the verified-tool-results section back out of an assembled dispatch context (forgeTools sets it aside
+ * beside the conversation before its stale-context overlap drop). The section is always the last one
+ * buildQwenTaskPayload emits, and it is evidence, not task-matched context: the results are the only record
+ * of what tools actually did this turn, so a lexical overlap test must never discard them.
+ */
+export function splitVerifiedToolResults(context: string): { toolResults: string; rest: string } {
+  const start = context.indexOf(TOOL_RESULTS_HEADING)
+  if (start < 0) return { toolResults: '', rest: context }
+  return { toolResults: context.slice(start).trim(), rest: context.slice(0, start).replace(/\s+$/, '') }
+}
+
+/** The line that closes the conversation section whenever history rides: the current task is the one to answer. */
+export const CONVERSATION_TOPIC_GUARD = 'Topic guard: the conversation above is background for resolving references only. Answer the user\'s CURRENT message below; never answer an earlier question from this history.'
+
+const FOLLOW_UP_WORDS = /\b(that|this|those|these|it|its|they|them|their|he|him|his|she|her|why|how come|the (?:last|previous|first|second|other|same) one|rematch|again|elaborate|go on|continue|expand|more on|what about|and the|you said|earlier|above)\b/i
+
+/**
+ * Does the current task refer back to the conversation? (Muse fix directive, #235 comment 6637531549.) Before this gate the last six
+ * messages rode on EVERY Qwen dispatch, ungated, and a fresh question ("run a simulation of Makhachev vs Khabib") was answered with a
+ * weeks-old trading Q&A from the history. The gate picks out a genuine follow-up: a short or anaphoric message ("why?",
+ * "that one", "and the rematch?"), or one that shares real distinctive words with the thread — the same test that gates corpus records.
+ * Since 2026-11-09 the gate no longer decides WHETHER history rides, only HOW MUCH: a pass carries the whole formatted
+ * thread, a fail still carries the newest few turns under the topic guard (see buildQwenTaskPayload). As an include/exclude
+ * switch it dropped the entire thread the first time a follow-up was phrased as a full sentence in its own words — the
+ * owner-visible "loses the thread after two or three exchanges" defect.
+ */
+export function conversationRelevantToTask(task: string, conversation: string): boolean {
+  if (!conversation.trim()) return false
+  if (distinctiveWords(task).size <= 2 || FOLLOW_UP_WORDS.test(task)) return true
+  return recordRelevantToTask(task, { content: conversation, metadata: {} as CorpusRecord['metadata'] })
+}
+
+/** Extract only the user's textual objective, excluding appended runtime/image payloads. */
+export function extractOriginalQwenTask(rawTask: string): string {
+  const { task } = separateRuntimeEnvelope(rawTask)
+  const imageMarker = '\n\n[IMAGE_ATTACHMENT]\n'
+  const imageStart = task.indexOf(imageMarker)
+  return (imageStart >= 0 ? `${task.slice(0, imageStart).trim()}\n[An image attachment was present; its data payload is not included in this text-only fallback.]` : task).trim()
+}
+
+function asksAboutForgeClawArchitecture(task: string): boolean {
+  return /\bforgeclaw\b|\bdefault reasoning (?:flow|path)\b|\bprimary reason(?:er|ing)\b|\bsecondary synthesis\b/i.test(task)
+}
+
+/**
+ * Keep the exact user objective separate from relevant context. Only approved
+ * CORPUS records are selected; live GitHub/tool facts remain explicitly labelled.
+ */
+export function buildQwenTaskPayload(rawTask: string, verifiedToolResults = '', conversation = ''): QwenTaskPayload {
+  const { task, runtimeContext } = separateRuntimeEnvelope(rawTask)
+  const sections: string[] = []
+
+  // The answer-form law goes first: the size budget below cuts from the end, so a long
+  // envelope or tool result never trims it away. NEXUS guidance follows it.
+  sections.push(ANSWER_FORM_INSTRUCTIONS)
+
+  // What the owner has taught NEXUS (approved heuristics, recurring failures, approved knowledge) reaches Qwen too.
+  const guidance = nexusGuidanceForQwen(task).text
+  if (guidance) sections.push(guidance)
+
+  // Before the envelope: the size budget cuts from the end, so a long envelope is what gets trimmed, never the thread.
+  // The thread always rides (2026-11-09): the relevance gate (fix directive 6637531549) now only sizes it. A relevant
+  // follow-up carries the whole formatted thread; any other task carries the newest CONVERSATION_FLOOR_MESSAGES turns,
+  // closed by the topic guard, so a substantive follow-up phrased in its own words still resolves its references while
+  // a fresh topic cannot be hijacked by more than the last few exchanges. formatQwenConversation's caps remain the
+  // only other limiter.
+  const thread = conversation.trim()
+  if (thread) {
+    const carried = conversationRelevantToTask(task, thread) ? thread : lastConversationTurns(thread, CONVERSATION_FLOOR_MESSAGES)
+    sections.push(`${CONVERSATION_OPEN}\nThe conversation so far, oldest first. The user's current message may refer back to it ("that", "it", "the last one"); resolve such references from here, not from the runtime envelope:\n${carried.split(CONVERSATION_OPEN).join('').split(CONVERSATION_CLOSE).join('')}\n${CONVERSATION_TOPIC_GUARD}\n${CONVERSATION_CLOSE}`)
+  }
+
+  if (asksAboutForgeClawArchitecture(task)) sections.push(FORGECLAW_ARCHITECTURE_CONTEXT)
+  if (runtimeContext) sections.push(`ForgeClaw runtime envelope (identity/routing hints only; not repository evidence):\n${runtimeContext}`)
+
+  const CORPUS_FRESHNESS_MS = 60 * 60 * 1000 // 1 hour — stale records poison Qwen
+  // Freshness alone is not relevance: retrieve() admits a record on one shared token, so the
+  // shared distinctive-word test decides which fresh records are actually about this task.
+  const freshCorpusRecords = corpusRepository.retrieve(task, 3).filter(r => {
+    const ageMs = Date.now() - new Date(r.timestamp).getTime()
+    return !Number.isNaN(ageMs) && ageMs < CORPUS_FRESHNESS_MS && recordRelevantToTask(task, r)
+  })
+  const corpusContext = formatCorpusContext(freshCorpusRecords).slice(0, MAX_CORPUS_CHARS)
+  if (corpusContext) sections.push(`Approved CORPUS context retrieved for this task (informational, not tool authorization):\n${corpusContext}`)
+
+  const boundedToolResults = verifiedToolResults.trim().slice(-MAX_VERIFIED_TOOL_CHARS)
+  if (boundedToolResults) sections.push(`${TOOL_RESULTS_HEADING}\n${boundedToolResults}`)
+
+  if (!sections.length) return { task }
+  const toolSection = boundedToolResults
+    ? `${TOOL_RESULTS_HEADING}\n${boundedToolResults}`
+    : ''
+  const nonToolSections = sections.filter(section => !section.startsWith(TOOL_RESULTS_HEADING))
+  const toolBudget = toolSection ? Math.min(toolSection.length, MAX_VERIFIED_TOOL_CHARS + 100) : 0
+  const prefixBudget = Math.max(0, MAX_CONTEXT_CHARS - toolBudget - (toolSection ? 2 : 0))
+  const context = [nonToolSections.join('\n\n').slice(0, prefixBudget), toolSection]
+    .filter(Boolean)
+    .join('\n\n')
+    .slice(0, MAX_CONTEXT_CHARS)
+  return { task, context }
+}

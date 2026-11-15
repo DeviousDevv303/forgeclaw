@@ -1,0 +1,20 @@
+FAIL   img-1   calls=[generate_image] ev=verified | call argument prompt lacks ["pickup"] (got "Generate an image of a red pic truck in the snow")
+FAIL   img-2   calls=[generate_image] ev=verified | call argument prompt lacks ["beaver"] (got "Dw a cartoon illustration of a damver building")
+pass   img-3   calls=[generate_image] ev=verified
+pass   img-4   calls=[generate_image] ev=verified
+pass   img-5   calls=[generate_image] ev=verified
+FAIL   img-6   calls=[github_list_files] ev=failed | first call github_list_files, expected none
+FAIL   trd-1   calls=[kalshi_markets] ev=verified | call argument query lacks ["fed"] (got "Eed cutting rates")
+FAIL   trd-2   calls=[kalshi_markets] ev=verified | call argument query lacks ["bitcoin"] (got "Ocoin above 100k")
+pass   trd-3   calls=[funds_status] ev=completed
+pass   trd-4   calls=[funds_status] ev=completed
+pass   trd-5   calls=[funds_propose] ev=failed
+FAIL   trd-6   calls=[memory_write] ev=failed | first call memory_write, expected one of kalshi_markets, funds_status, funds_propose
+FAIL   trd-7   calls=[memory_write] ev=failed | first call memory_write, expected kalshi_owner_prices; call argument prices lacks ["KXFEDCUT-26DEC","31"] (got null); answer lacks any of ["owner","your"]
+FAIL   trd-8   calls=[kalshi_markets] ev=verified | first call kalshi_markets, expected funds_settle; call argument id lacks ["all"] (got null)
+FAIL   trd-9   calls=[github_read_file] ev=failed | first call github_read_file, expected none; answer lacks any of ["/funds"]
+FAIL   trd-10  calls=[web_search] ev=failed | first call web_search, expected none; answer lacks any of ["/funds"]
+FAIL   trd-11  calls=[] ev=not_verified | answer lacks any of ["/funds halt"]
+FAIL   trd-12  calls=[kalshi_markets] ev=verified | first call kalshi_markets, expected none
+
+closed loop: 6/18 scenarios pass (33.3%)

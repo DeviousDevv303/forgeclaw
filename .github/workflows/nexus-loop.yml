@@ -1,0 +1,62 @@
+name: Nexus Loop (solo)
+
+# Owner order 2026-11-08: either lane (Muse or Claude) can continue the Nexus
+# training loop without the other. This workflow is the execution half of that
+# order — it runs the loop's frozen pipeline (nexus-llm/loop-tree) on a GitHub
+# runner, so dispatching it needs nothing but GitHub access. Method, bars, and
+# the grading protocol live in nexus-llm/SOLO-RUNBOOK.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: 'Run directory name under nexus-llm/runs (e.g. run25)'
+        required: true
+        type: string
+      mode:
+        description: 'grade = score the committed checkpoint; train = train from the committed data.jsonl, then grade'
+        required: true
+        type: choice
+        options:
+          - grade
+          - train
+        default: grade
+
+permissions:
+  contents: read
+
+jobs:
+  loop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python deps (CPU torch + sentencepiece)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install sentencepiece
+      - name: Run the loop pipeline
+        env:
+          RUN: ${{ inputs.run }}
+          MODE: ${{ inputs.mode }}
+        run: bash nexus-llm/loop-tree/train/run-loop.sh
+      - name: Upload run outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-${{ inputs.run }}-${{ inputs.mode }}-${{ github.run_id }}
+          path: |
+            nexus-llm/runs/${{ inputs.run }}/gate.txt
+            nexus-llm/runs/${{ inputs.run }}/loop.txt
+            nexus-llm/runs/${{ inputs.run }}/eval/
+            nexus-llm/runs/${{ inputs.run }}/unrestrict-predictions.jsonl
+            nexus-llm/runs/${{ inputs.run }}/train.log
+          if-no-files-found: warn

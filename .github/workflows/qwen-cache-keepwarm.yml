@@ -1,0 +1,71 @@
+# Keeps the Qwen3-8B model cache alive. GitHub deletes a cache that has not been used for 7 days, and the model is about 5 GB: the next
+# question after an idle week would otherwise download it from scratch (several minutes). Restoring the cache on a hit refreshes its
+# last-used time, so a restore every few days is enough. If the cache has already gone, this run downloads the model and saves it, so
+# the next real question is fast again. Cost: about 1 to 2 minutes of free runner time, twice a week.
+name: Qwen model cache keep-warm
+run-name: Qwen model cache keep-warm
+
+on:
+  schedule:
+    - cron: '23 6 * * 1,4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keepwarm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      # Same key and path as qwen3-8b.yml; the key is unchanged from before the rename so the existing cache keeps being used.
+      - name: Restore GGUF model cache
+        id: gguf_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/forgeclaw-gguf
+          key: deepseek-gguf-v2-qwen3-8b-${{ runner.os }}
+
+      - name: Say what happened
+        run: |
+          if [ "${{ steps.gguf_cache.outputs.cache-hit }}" = "true" ]; then
+            echo "Cache hit: the model cache was used just now, so its 7-day clock restarted."
+            ls -la ~/.cache/forgeclaw-gguf | head
+          else
+            echo "::warning::The model cache was gone (evicted). Downloading the model and saving it again."
+          fi
+
+      - name: Set up Python
+        if: ${{ steps.gguf_cache.outputs.cache-hit != 'true' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download the model again
+        if: ${{ steps.gguf_cache.outputs.cache-hit != 'true' }}
+        run: |
+          pip install huggingface_hub
+          python - <<'PY'
+          import os, sys
+          sys.path.insert(0, '.github/scripts')
+          import qwen_gguf as g
+          from huggingface_hub import hf_hub_download, list_repo_files
+          name = g.pick_gguf_file(list_repo_files(g.GGUF_REPO), g.QUANT)
+          if name is None:
+              raise SystemExit(f'no {g.QUANT} .gguf file found in {g.GGUF_REPO}')
+          path = hf_hub_download(repo_id=g.GGUF_REPO, filename=name, local_dir=os.path.expanduser('~/.cache/forgeclaw-gguf'))
+          print('downloaded', path, os.path.getsize(path), 'bytes')
+          PY
+
+      - name: Save GGUF model cache
+        if: ${{ steps.gguf_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/forgeclaw-gguf
+          key: deepseek-gguf-v2-qwen3-8b-${{ runner.os }}

@@ -1,0 +1,305 @@
+name: Claude Code
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+  repository_dispatch:
+    types: [claude-task, claude-fix]
+
+jobs:
+  claude:
+    # Hardening: only the owner/members/collaborators can trigger this job (public repo: anyone can comment).
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read # Required for Claude to read CI results on PRs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Verify Anthropic API credential
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPICAPIKEY }}
+          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPICWORKSPACEID }}
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /tmp/anthropic-models.json --write-out '%{http_code}' \
+            --request GET \
+            --header "x-api-key: ${ANTHROPIC_API_KEY}" \
+            --header 'anthropic-version: 2023-06-01' \
+            --header "anthropic-workspace-id: ${ANTHROPIC_WORKSPACE_ID}" \
+            https://api.anthropic.com/v1/models)"
+          echo "Anthropic API HTTP status: ${status}"
+          if [[ "${status}" != 2* ]]; then
+            python3 - <<'PY'
+          import json
+          from pathlib import Path
+          try:
+              payload = json.loads(Path('/tmp/anthropic-models.json').read_text())
+              error = payload.get('error', {})
+              print(f"Anthropic API error: {error.get('type', 'unknown')}: {error.get('message', 'no message')}")
+          except Exception:
+              print('Anthropic API returned a non-JSON error response.')
+          PY
+            exit 1
+          fi
+
+      - name: Run Claude Code
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        env:
+          # 2026-10-23: every @claude mention failed after 0 s with "API Error: 400 This API key is not scoped to a
+          # workspace" because only the credential check above sent this header; claude-automation and claude-fix
+          # below already set it on their action step. Same header, same secret.
+          ANTHROPIC_CUSTOM_HEADERS: |
+            anthropic-workspace-id: ${{ secrets.ANTHROPICWORKSPACEID }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPICAPIKEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPICWORKSPACEID }}
+          show_full_output: true
+          # Hardening: explicit limits for the comment-triggered job. No shell and no web access, bounded turns.
+          claude_args: |
+            --max-turns 20
+            --disallowedTools "Bash,WebFetch,WebSearch"
+
+          # Optional: Customize the trigger phrase (default: @claude)
+          # trigger_phrase: "/claude"
+
+          # Optional: Trigger when specific user is assigned to an issue
+          # assignee_trigger: "claude-bot"
+
+          # Optional: Configure Claude's behavior with CLI arguments
+          # claude_args: |
+          #   --model claude-opus-4-1-20250805
+          #   --max-turns 10
+          #   --allowedTools "Bash(npm install),Bash(npm run build),Bash(npm run test:*),Bash(npm run lint:*)"
+          #   --system-prompt "Follow our coding standards. Ensure all new code has tests. Use TypeScript for new files."
+
+          # Optional: Advanced settings configuration
+          # settings: |
+          #   {
+          #     "env": {
+          #       "NODE_ENV": "test"
+          #     }
+          #   }
+
+  claude-automation:
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'claude-task'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      actions: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Verify Anthropic API credential
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPICAPIKEY }}
+          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPICWORKSPACEID }}
+        run: |
+          set -euo pipefail
+
+          status="$(curl --silent --show-error \
+            --output /tmp/anthropic-models.json \
+            --write-out '%{http_code}' \
+            --request GET \
+            --header "x-api-key: ${ANTHROPIC_API_KEY}" \
+            --header 'anthropic-version: 2023-06-01' \
+            --header "anthropic-workspace-id: ${ANTHROPIC_WORKSPACE_ID}" \
+            https://api.anthropic.com/v1/models)"
+
+          echo "Anthropic API HTTP status: ${status}"
+
+          if [[ "${status}" != 2* ]]; then
+            cat /tmp/anthropic-models.json
+            exit 1
+          fi
+
+      - name: Run Claude Code automation
+        id: claude-automation
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_CUSTOM_HEADERS: |
+            anthropic-workspace-id: ${{ secrets.ANTHROPICWORKSPACEID }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPICAPIKEY }}
+          anthropic_workspace_id: ${{ secrets.ANTHROPICWORKSPACEID }}
+          show_full_output: true
+          display_report: true
+
+          prompt: |
+            REPOSITORY: ${{ github.repository }}
+            EVENT: repository_dispatch
+            ACTOR: ${{ github.actor }}
+
+            TASK:
+            ${{ github.event.client_payload.prompt }}
+
+            FORGECLAW AUTOMATION BOUNDARY:
+            - This is ForgeClaw.
+            - Follow the repository's existing Guardian and constitutional rules.
+            - Perform only the requested task.
+            - Do not expand scope.
+            - Do not modify Guardian rules unless explicitly requested.
+            - Do not modify Corpus/NEXUS unless explicitly requested.
+            - Do not modify licensing or failure taxonomy unless explicitly requested.
+            - For CLAUDE:INSPECT, do not modify any files.
+            - Do not create branches.
+            - Do not commit.
+            - Do not push.
+            - Do not open a pull request.
+            - Report concrete evidence rather than claiming work was completed without verification.
+            - Stop after the requested inspection.
+
+          claude_args: |
+            --max-turns 15
+            --allowedTools Read,Glob,Grep
+
+  # ── claude-fix: ForgeClaw (or the operator) asks Claude to FIX code ────────────────────────────
+  # Added by Claude Sonnet 5.5 at the operator's request ("forgeclaw trigger it to fix code").
+  # Safety model, enforced by steps rather than by the prompt alone:
+  #   - never pushes to main: work happens on claude-fix/<run id>, and the result is a pull request;
+  #   - a protected-path check deletes the branch and fails the run if it touches workflows,
+  #     Guardian/tool-dispatch code, package-control files, foundation tests or the license;
+  #   - the PR is opened by a fixed step, not by the model, and a human still reviews and merges;
+  #   - the task text is passed only as the action's `prompt` input, never interpolated into a shell.
+  # Dispatch: POST /repos/{owner}/{repo}/dispatches  {"event_type":"claude-fix","client_payload":{"prompt":"..."}}
+  claude-fix:
+    if: github.event_name == 'repository_dispatch' && github.event.action == 'claude-fix'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    concurrency:
+      group: claude-fix
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+      id-token: write
+    env:
+      FIX_BRANCH: claude-fix/${{ github.run_id }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Verify Anthropic API credential
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPICAPIKEY }}
+          ANTHROPIC_WORKSPACE_ID: ${{ secrets.ANTHROPICWORKSPACEID }}
+        run: |
+          set -euo pipefail
+          status="$(curl --silent --show-error --output /tmp/anthropic-models.json --write-out '%{http_code}' \
+            --request GET \
+            --header "x-api-key: ${ANTHROPIC_API_KEY}" \
+            --header 'anthropic-version: 2023-06-01' \
+            --header "anthropic-workspace-id: ${ANTHROPIC_WORKSPACE_ID}" \
+            https://api.anthropic.com/v1/models)"
+          echo "Anthropic API HTTP status: ${status}"
+          if [[ "${status}" != 2* ]]; then
+            cat /tmp/anthropic-models.json
+            exit 1
+          fi
+
+      # Policy is copied out of the checkout BEFORE the model runs, so the model cannot edit the
+      # checker or the list that will judge its branch.
+      - name: Load protected-path policy from main
+        run: |
+          set -euo pipefail
+          git show origin/main:.github/scripts/check-protected.py > "$RUNNER_TEMP/check-protected.py"
+          git show origin/main:.github/protected-paths.txt > "$RUNNER_TEMP/protected-paths.txt"
+
+      - name: Run Claude Code fix
+        id: claude-fix
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_CUSTOM_HEADERS: |
+            anthropic-workspace-id: ${{ secrets.ANTHROPICWORKSPACEID }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPICAPIKEY }}
+          show_full_output: true
+          display_report: true
+          prompt: |
+            REPOSITORY: ${{ github.repository }}
+            EVENT: repository_dispatch (claude-fix)
+            ACTOR: ${{ github.actor }}
+            WORK BRANCH (use exactly this name): ${{ env.FIX_BRANCH }}
+
+            TASK:
+            ${{ github.event.client_payload.prompt }}
+
+            FORGECLAW FIX BOUNDARY:
+            - This is ForgeClaw. Follow the repository's Guardian and constitutional rules.
+            - Do exactly the requested task. No scope expansion, no unrelated refactors, no new dependencies.
+            - Create the branch named above from main, commit there, and push only that branch. Never push to main.
+            - Do NOT modify any path listed in .github/protected-paths.txt (workflows, package manifests and
+              lockfiles, build/lint/test configs such as vite/vitest/eslint/tsconfig, Guardian and tool
+              dispatch code, foundation/engine, tests/foundation, scripts/, LICENSE). Read that file first.
+              A check will delete your branch and fail the run if you do. If the fix needs one of these,
+              stop and report that instead.
+            - Before committing, run: npx tsc -b, npx eslint ., npx vitest run, npm run build.
+            - Commit message must state: who (Claude via claude-fix), what changed, why, what was tested, what is unverified.
+            - Report concrete evidence. Say "not verified" rather than claiming completion you did not check.
+            - Do not open the pull request yourself; the workflow does that after its checks.
+
+          claude_args: |
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(git checkout -b claude-fix/*),Bash(git add:*),Bash(git commit:*),Bash(git push origin claude-fix/*),Bash(git status:*),Bash(git diff:*),Bash(npm ci),Bash(npm ci --ignore-scripts),Bash(npx tsc -b),Bash(npx eslint .),Bash(npx vitest run:*),Bash(npm run build)"
+
+      - name: Enforce protected paths and open the pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASK_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git fetch origin "$FIX_BRANCH" 2>/dev/null; then
+            echo "No $FIX_BRANCH was pushed; nothing to check or open."
+            exit 0
+          fi
+          # --no-renames: with rename detection, moving a protected file shows only its NEW path, which would
+          # slip past the check. Without it, both the old (deleted) and new paths are listed.
+          changed="$(git diff --no-renames --name-only origin/main...FETCH_HEAD)"
+          echo "Files changed on $FIX_BRANCH:"
+          echo "$changed"
+          # Shared policy (.github/protected-paths.txt); NUL-separated so odd file names cannot slip through.
+          if ! git diff --no-renames --name-only -z origin/main...FETCH_HEAD | python3 "$RUNNER_TEMP/check-protected.py" "$RUNNER_TEMP/protected-paths.txt"; then
+            echo "::error::claude-fix touched a protected path. Deleting $FIX_BRANCH and failing."
+            git push origin --delete "$FIX_BRANCH"
+            exit 1
+          fi
+          if [ -z "$changed" ]; then
+            echo "Branch has no changes against main; not opening a pull request."
+            exit 0
+          fi
+          gh pr create --base main --head "$FIX_BRANCH" \
+            --title "claude-fix: ${FIX_BRANCH}" \
+            --body "Opened by the claude-fix workflow after its protected-path check passed (see run: ${TASK_URL}). Review the diff, the commit message (what/why/tested/unverified) and the Build Gate before merging. Nothing was merged automatically. Pull requests opened with the built-in workflow token do not start other workflows: if the Build Gate check does not appear, close and reopen this PR to run it."

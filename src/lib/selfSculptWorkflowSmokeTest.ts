@@ -1,0 +1,1 @@
+// Self-sculpt workflow smoke test. Safe, standalone module created by GitHub Actions.\nexport const SELF_SCULPT_WORKFLOW_SMOKE_TEST = 'passed' as const\n

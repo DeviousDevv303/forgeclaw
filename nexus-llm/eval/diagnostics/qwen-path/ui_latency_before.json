@@ -1,0 +1,29 @@
+{
+  "label": "current-30-45-60",
+  "trials": [
+    {
+      "publish_s": 20,
+      "shown": true,
+      "seconds_after_publish": 10.2,
+      "total_s_from_dispatch": 30.2,
+      "api_polls": 2,
+      "mirror_polls": 4
+    },
+    {
+      "publish_s": 50,
+      "shown": true,
+      "seconds_after_publish": 25.5,
+      "total_s_from_dispatch": 75.5,
+      "api_polls": 3,
+      "mirror_polls": 5
+    },
+    {
+      "publish_s": 100,
+      "shown": true,
+      "seconds_after_publish": 35.3,
+      "total_s_from_dispatch": 135.3,
+      "api_polls": 4,
+      "mirror_polls": 6
+    }
+  ]
+}

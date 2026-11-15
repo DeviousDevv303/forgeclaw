@@ -1,0 +1,67 @@
+{
+  "row_id": "sw-020",
+  "benchmark_hash": "e5ba5013dd99f3a1b39b7d163c19e556405966e69a5dcbd08a2ed1c9b62b4adb",
+  "evidence_type": "Manus-run deployed live UI, Run 25 checkpoint",
+  "expected_spawn_count": {
+    "min": 2,
+    "max": 2
+  },
+  "observed_spawn_count": 0,
+  "decomposition_match": false,
+  "valid_formation": true,
+  "hard_fail_restraint": false,
+  "hard_fail_readonly_write_grant": false,
+  "brief_completeness": false,
+  "missing_required_facts": [
+    {
+      "spawn_index": 0,
+      "facts": [
+        "GitHub Actions billing"
+      ]
+    },
+    {
+      "spawn_index": 1,
+      "facts": [
+        ".github/workflows"
+      ]
+    }
+  ],
+  "assignments": [
+    {
+      "expected_spawn_index": 0,
+      "actual_index": null,
+      "brief_complete": false,
+      "tools_include": [],
+      "tools_include_ok": false,
+      "tools_exclude_present": [],
+      "tools_exclude_ok": false,
+      "toolset_is_explicit": false
+    },
+    {
+      "expected_spawn_index": 1,
+      "actual_index": null,
+      "brief_complete": false,
+      "tools_include": [],
+      "tools_include_ok": false,
+      "tools_exclude_present": [],
+      "tools_exclude_ok": false,
+      "toolset_is_explicit": false
+    }
+  ],
+  "sw016_self_containment": null,
+  "sw017_transport_discipline": null,
+  "returned_child_results_observed": 0,
+  "parent_context_result_spans_observed": 0,
+  "parent_final_answer_observed": true,
+  "parent_synthesis_end_to_end_structurally_observed": false,
+  "sequence_and_timing_grade": "requires_manual_review_of_raw_ordered_trace",
+  "malformed_spawn_calls_verbatim": [],
+  "spawn_calls": [],
+  "child_returns_verbatim": [],
+  "parent_final_answer_verbatim": "Not something I can answer from memory — oriakth on the venue.",
+  "notes": [
+    "The token was injected into a fresh in-memory browser context and is excluded from evidence files.",
+    "Every non-GET/HEAD/OPTIONS request was blocked except dispatches to nexus-intelligence.yml, ddg_search.yml and deep-research.yml.",
+    "No benchmark write/create action is authorized by this harness."
+  ]
+}
