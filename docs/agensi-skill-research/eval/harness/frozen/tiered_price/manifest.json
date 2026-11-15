@@ -1,0 +1,167 @@
+{
+ "task": "tiered_price",
+ "seed": 20261114,
+ "candidates": 20,
+ "mutants": [
+  {
+   "id": "m01",
+   "op": "BOOL",
+   "lines": [
+    2
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m02",
+   "op": "CMP",
+   "lines": [
+    5
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m03",
+   "op": "CMP",
+   "lines": [
+    7
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m04",
+   "op": "ARITH",
+   "lines": [
+    11
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m05",
+   "op": "ARITH",
+   "lines": [
+    12
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m06",
+   "op": "CONST",
+   "lines": [
+    11
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m07",
+   "op": "CONST",
+   "lines": [
+    11
+   ],
+   "class": "MAY"
+  },
+  {
+   "id": "m08",
+   "op": "ARITH",
+   "lines": [
+    11
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m09",
+   "op": "ARITH",
+   "lines": [
+    11
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m10",
+   "op": "CONST",
+   "lines": [
+    10
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m11",
+   "op": "CONST",
+   "lines": [
+    8
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m12",
+   "op": "CONST",
+   "lines": [
+    7
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m13",
+   "op": "CONST",
+   "lines": [
+    6
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m14",
+   "op": "CONST",
+   "lines": [
+    5
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m15",
+   "op": "ARITH",
+   "lines": [
+    4
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m16",
+   "op": "CONST",
+   "lines": [
+    2
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m17",
+   "op": "CMP",
+   "lines": [
+    2
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m18",
+   "op": "CONST",
+   "lines": [
+    2
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m19",
+   "op": "CMP",
+   "lines": [
+    2
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m20",
+   "op": "DROP_IF",
+   "lines": [
+    2
+   ],
+   "class": "MUST"
+  }
+ ]
+}

@@ -1,0 +1,151 @@
+{
+ "task": "parse_duration",
+ "seed": 20261114,
+ "candidates": 18,
+ "mutants": [
+  {
+   "id": "m01",
+   "op": "NOT",
+   "lines": [
+    5
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m02",
+   "op": "BOOL",
+   "lines": [
+    5
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m03",
+   "op": "CMP",
+   "lines": [
+    5
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m04",
+   "op": "CMP",
+   "lines": [
+    11
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m05",
+   "op": "CMP",
+   "lines": [
+    11
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m06",
+   "op": "CMP",
+   "lines": [
+    14
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m07",
+   "op": "CMP",
+   "lines": [
+    17
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m08",
+   "op": "CMP",
+   "lines": [
+    24
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m09",
+   "op": "DROP_IF",
+   "lines": [
+    24
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m10",
+   "op": "ARITH",
+   "lines": [
+    19
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m11",
+   "op": "DROP_IF",
+   "lines": [
+    17
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m12",
+   "op": "DROP_IF",
+   "lines": [
+    14
+   ],
+   "class": "MAY"
+  },
+  {
+   "id": "m13",
+   "op": "CONST",
+   "lines": [
+    9
+   ],
+   "class": "MAY"
+  },
+  {
+   "id": "m14",
+   "op": "CONST",
+   "lines": [
+    7
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m15",
+   "op": "DROP_IF",
+   "lines": [
+    5
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m16",
+   "op": "CONST",
+   "lines": [
+    1
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m17",
+   "op": "CONST",
+   "lines": [
+    1
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m18",
+   "op": "CONST",
+   "lines": [
+    1
+   ],
+   "class": "MUST"
+  }
+ ]
+}
