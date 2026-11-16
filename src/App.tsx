@@ -232,6 +232,10 @@ import { sculptTarget } from './lib/ai/qwenSculpt'
 import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
 import { autoSettleKalshiPositions, kalshiOrderPlacedJournalEntry, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
 import { FundsPanel } from './components/FundsPanel'
+import { IntuitionPanel } from './components/IntuitionPanel'
+import { intuitionSummary, parseIntuitionCommand } from './lib/intuition/command'
+import { loadLedger as loadIntuitionLedger } from './lib/intuition/ledger'
+import { ACTIVE_REGISTRY as INTUITION_REGISTRY } from './lib/intuition/patternClasses'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiCredentialPresence, kalshiKeyUsable, loadKalshiEnv, loadKalshiRelayUrl, saveKalshiCredentials, saveKalshiEnv, saveKalshiRelayUrl, type KalshiEnv } from './lib/kalshiAuth'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/pageVisibility'
@@ -836,6 +840,8 @@ function App() {
   const [settledNotices, setSettledNotices] = useState<SettledNotice[]>([])
   // Bumped after every /funds command so the FundsPanel re-reads the ledger (PR B item 6).
   const [fundsTick, setFundsTick] = useState(0)
+  // /intuition: the read-only Synthetic Intuition panel (owner-typed; shows numbers only).
+  const [intuitionOpen, setIntuitionOpen] = useState(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const moonshotKeyVerified = useMemo(() => isKeyVerified('moonshot', moonshotApiKey), [moonshotApiKey, keyVerifyTick])
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
@@ -1296,7 +1302,8 @@ function App() {
     // to an unverified local fallback.
     const qwenProvider = isQwenProvider(activeProvider)
     // A public visitor (no token, relay configured) reaches the model through the relay instead.
-    if (qwenProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '')) {
+    // /intuition is a local, read-only view: it needs no token because it dispatches nothing.
+    if (qwenProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '') && parseIntuitionCommand(promptText) === null) {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: 'assistant',
@@ -1469,6 +1476,8 @@ function App() {
       parseSculptCommand(promptText) !== null ||
       // /funds is the owner's ledger, handled here with no model.
       parseFundsCommand(promptText) !== null ||
+      // /intuition is a read-only view of the local Synthetic Intuition ledger, also with no model.
+      parseIntuitionCommand(promptText) !== null ||
       isExplicitToolRequest(promptText) ||
       (isExplicitShellRequest(promptText) && extractExplicitShellCommand(promptText) !== null)
     )
@@ -1769,6 +1778,21 @@ function App() {
             guardianPosture,
             requestGuardianApproval,
           }),
+      }
+
+      // /intuition: read-only view of the Synthetic Intuition ledger. Owner-typed only; a public visitor never sees it.
+      const intuitionCmd = isPublicVisitor(ghToken) ? null : parseIntuitionCommand(promptText)
+      if (intuitionCmd) {
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        setIntuitionOpen(intuitionCmd.kind === 'open')
+        const reply = intuitionCmd.kind === 'open' ? intuitionSummary(loadIntuitionLedger(), INTUITION_REGISTRY) : 'Synthetic Intuition ledger closed.'
+        setMessages(prev => prev.map(message => message.id === msgId ? { ...message, content: reply, streaming: false, agentPhase: 'COMPLETE' } : message))
+        emitForge({ type: 'MISSION_COMPLETE' })
+        setRequestStatus('success')
+        setLastRequestError('')
+        setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+        resolveTask(taskId)
+        return
       }
 
       // /funds: the owner's funds ledger (fundsLedger.ts). Owner-typed only: no model can add funds, approve or place.
@@ -2880,9 +2904,16 @@ function App() {
     })
   }
 
-  /** Everything visible on screen as text (not a picture), copied for troubleshooting; shown for manual copy if the browser blocks it. */
+  /** What is visible on screen right now as text (not a picture, and not the scrolled-off history), copied for troubleshooting; shown for manual copy if the browser blocks it. */
   const copyScreenText = async () => {
+    // Only what is on screen right now (owner, 2026-11-14), like a phone screenshot: the visual viewport, so a pinch-zoom or an
+    // open on-screen keyboard narrows it to what the owner actually sees.
+    const visual = window.visualViewport
+    const view = visual
+      ? { top: visual.offsetTop, left: visual.offsetLeft, bottom: visual.offsetTop + visual.height, right: visual.offsetLeft + visual.width }
+      : { top: 0, left: 0, bottom: window.innerHeight, right: window.innerWidth }
     const text = describeScreen(document.getElementById('root') ?? document.body, {
+      view,
       url: window.location.href.split('#')[0],
       viewport: `${window.innerWidth}×${window.innerHeight}`,
       provider: activeProvider,
@@ -3767,6 +3798,10 @@ function App() {
               <div ref={messagesEndRef} />
             </div>
             
+            {/* Synthetic Intuition ledger (/intuition): above the monitor and composer, clear of the fixed spiderling panel. */}
+            {!isPublicVisitor(ghToken) && (
+              <IntuitionPanel open={intuitionOpen} registry={INTUITION_REGISTRY} onClose={() => setIntuitionOpen(false)} />
+            )}
             {/* System Monitor — pinned above input */}
             <SystemMonitor
               events={activityStream.events}
@@ -3854,7 +3889,7 @@ function App() {
                 </div>
               ))}
 
-              <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #202024', padding: '10px 0 12px', zIndex: 20 }}>
+              <div data-composer-bar style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #202024', padding: '10px 0 12px', zIndex: 20 }}>
                 {attachedFile && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: '#f97316', fontSize: '12px' }}>
                     <span>📎 {attachedFile.name}</span>
