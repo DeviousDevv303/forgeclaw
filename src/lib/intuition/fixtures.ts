@@ -13,8 +13,8 @@ export const FROZEN_TEST_REGISTRY: PatternRegistry = {
   version: 'test-1',
   status: 'frozen',
   classes: [
-    { id: 'tape.drift-consistent', parent: null, signature: 'Recognition of drift-consistent tape patterns, graded against settled outcomes.', falsifier: 'A settled outcome on a clean chain that the pattern assigned low probability to.' },
-    { id: 'tape.drift-consistent.thin', parent: 'tape.drift-consistent', signature: 'The drift pattern restricted to thin books with under ten resting orders.', falsifier: 'A thin-book settle that resolves against the drift on a clean chain.' },
+    { id: 'tape.drift-consistent', parent: null, signature: 'Recognition of drift-consistent tape patterns, graded against settled outcomes.', asserts: 'test', falsifier: 'A settled outcome on a clean chain that the pattern assigned low probability to.' },
+    { id: 'tape.drift-consistent.thin', parent: 'tape.drift-consistent', signature: 'The drift pattern restricted to thin books with under ten resting orders.', asserts: 'test', falsifier: 'A thin-book settle that resolves against the drift on a clean chain.' },
   ],
 }
 

@@ -15,7 +15,7 @@ import { INTUITION_CHANGED_EVENT, allStats, loadLedger, type IntuitionLedger } f
 import { resolvePacket } from '../lib/intuition/packet'
 import type { PatternRegistry } from '../lib/intuition/patternClasses'
 
-const box: React.CSSProperties = { margin: '8px 12px 0', background: '#0e1218', border: '1px solid #243044', borderRadius: '8px', padding: '8px 10px', color: '#cbd5e1', fontSize: '12px' }
+const box: React.CSSProperties = { margin: '8px 0', background: '#0e1218', border: '1px solid #243044', borderRadius: '8px', padding: '8px 10px', color: '#cbd5e1', fontSize: '12px' }
 const mono: React.CSSProperties = { fontFamily: 'monospace' }
 
 export function IntuitionPanel({ open, registry, onClose }: { open: boolean; registry: PatternRegistry; onClose: () => void }) {
@@ -31,8 +31,8 @@ export function IntuitionPanel({ open, registry, onClose }: { open: boolean; reg
   const stats = allStats(ledger)
   return (
     <section aria-label="Synthetic Intuition ledger" style={box}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <strong style={{ flex: 1 }}>Synthetic Intuition · read-only</strong>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        <strong style={{ flex: '1 1 auto', whiteSpace: 'nowrap' }}>Synthetic Intuition · read-only</strong>
         <span style={{ ...mono, color: registry.status === 'frozen' ? '#86efac' : '#fbbf24' }}>registry {registry.version} · {registry.status}</span>
         <button onClick={onClose} aria-label="Close Synthetic Intuition ledger" style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #243044', borderRadius: '5px', cursor: 'pointer' }}>close</button>
       </div>

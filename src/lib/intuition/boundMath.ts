@@ -13,8 +13,8 @@
  * live leverage starts at zero and is earned only from real graded records. Exact values stay app-side; the model only ever
  * sees the integer bucket.
  *
- * The bucket edges below are PROPOSED for the freeze (Muse owns the freeze list). They are data, not behavior: changing them
- * changes `BUCKET_EDGES_ID`, which changes every packet hash, so nothing silently re-buckets old evidence.
+ * Estimator and bucket edges are FROZEN (Muse's ruling, forgeclaw #235 comment 6904200501). They are data, not behavior:
+ * changing either means a new id, which changes every packet hash, so nothing silently re-buckets old evidence.
  */
 
 export const ESTIMATOR_ID = 'wilson-lcb-z1.959964-v1'
@@ -33,7 +33,7 @@ export function wilsonLowerBound(hits: number, n: number): number {
   return Math.max(0, (centre - margin) / denom)
 }
 
-export const BUCKET_EDGES_ID = 'bucket-edges-v1-proposed'
+export const BUCKET_EDGES_ID = 'bucket-edges-v1'
 /** Lower edge of buckets 1..7 on the lower bound; bucket 0 is everything below the first edge. */
 export const BUCKET_EDGES: readonly number[] = Object.freeze([0.05, 0.15, 0.25, 0.4, 0.55, 0.7, 0.85])
 

@@ -10,7 +10,8 @@ import { describe, expect, it } from 'vitest'
 import { FROZEN_TEST_REGISTRY, DRAFT_REGISTRY, grade, ledgerWith, pre } from './fixtures'
 import { addGrade, addRecord, allStats, statsFor, type IntuitionLedger } from './ledger'
 import { PACKET_CHAR_BUDGET, buildPacket, journalPacket, renderPacket, resolvePacket } from './packet'
-import { validateRegistry, type PatternRegistry } from './patternClasses'
+import { ACTIVE_REGISTRY, assertFrozen, validateRegistry, type PatternRegistry } from './patternClasses'
+import { BUCKET_EDGES, BUCKET_EDGES_ID } from './boundMath'
 
 const req = { patternClassId: 'tape.drift-consistent', regime: 'weekday-us', hypothesisRank: 1, falsifierRegistered: true, pressureEvents: 2, now: '2026-11-15T12:00:00Z' }
 const build = (l: IntuitionLedger) => buildPacket(l, FROZEN_TEST_REGISTRY, req)
@@ -115,12 +116,22 @@ describe('pattern registry rules', () => {
   it('accepts a well-formed registry', () => expect(validateRegistry(good)).toEqual([]))
   it('rejects a class with no falsifier, duplicate ids, a missing parent and a parent loop', () => {
     const bad: PatternRegistry = { version: 'x', status: 'frozen', classes: [
-      { id: 'a', parent: 'b', signature: 'x'.repeat(30), falsifier: '' },
-      { id: 'b', parent: 'a', signature: 'x'.repeat(30), falsifier: 'y'.repeat(30) },
-      { id: 'b', parent: 'ghost', signature: 'x'.repeat(30), falsifier: 'y'.repeat(30) },
+      { id: 'a', parent: 'b', signature: 'x'.repeat(30), asserts: 'a', falsifier: '' },
+      { id: 'b', parent: 'a', signature: 'x'.repeat(30), asserts: 'a', falsifier: 'y'.repeat(30) },
+      { id: 'b', parent: 'ghost', signature: 'x'.repeat(30), asserts: 'a', falsifier: 'y'.repeat(30) },
     ] }
     const e = validateRegistry(bad).join('\n')
     expect(e).toMatch(/no falsifier/); expect(e).toMatch(/duplicate class id "b"/); expect(e).toMatch(/not in the registry/); expect(e).toMatch(/loops/)
+  })
+})
+
+describe('the frozen registry v1', () => {
+  it('is frozen, valid, and holds Muse\'s twelve classes in order', () => {
+    expect(() => assertFrozen(ACTIVE_REGISTRY)).not.toThrow()
+    expect(ACTIVE_REGISTRY.version).toBe('pattern-classes-v1')
+    expect(ACTIVE_REGISTRY.classes.map(c => c.id)).toEqual(['instrument-signature-mismatch', 'clean-chain-contradiction', 'thin-denominator-streak', 'regime-shift-drift', 'pressure-without-evidence', 'repeat-failure-signature', 'recognition-action-gap', 'near-boundary-adjacent', 'stale-context-answer', 'convergent-independent-signals', 'single-source-confidence', 'settled-pattern-repeat'])
+    expect(BUCKET_EDGES_ID).toBe('bucket-edges-v1')
+    expect(BUCKET_EDGES).toEqual([0.05, 0.15, 0.25, 0.4, 0.55, 0.7, 0.85])
   })
 })
 

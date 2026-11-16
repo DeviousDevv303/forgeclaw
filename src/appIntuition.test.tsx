@@ -36,9 +36,10 @@ async function send(text: string) {
   fireEvent.keyDown(box, { key: 'Enter' })
 }
 
-// The draft registry's version is what records must carry for their evidence to count under it.
+// Records carry the frozen registry's version and one of its classes for their evidence to count under it.
 const V = ACTIVE_REGISTRY.version
-const live = (id: string) => pre(id, { patternClassVersion: V })
+const C = 'settled-pattern-repeat'
+const live = (id: string) => pre(id, { patternClassVersion: V, patternClassId: C })
 
 function seed() {
   let l = ledgerWith(0, 0)
@@ -46,9 +47,9 @@ function seed() {
     const id = `h${i}`; l = addRecord(l, live(id)); l = addGrade(l, grade(id, l.records[id].hash, 'correct'))
   }
   l = addRecord(l, live('miss')); l = addGrade(l, grade('miss', l.records.miss.hash, 'incorrect'))
-  l = addRecord(l, pre('syn', { patternClassVersion: V, source: 'synthetic' }))
+  l = addRecord(l, pre('syn', { patternClassVersion: V, patternClassId: C, source: 'synthetic' }))
   l = addGrade(l, grade('syn', l.records.syn.hash, 'correct'))
-  const built = buildPacket(l, ACTIVE_REGISTRY, { patternClassId: 'tape.drift-consistent', regime: 'weekday-us', hypothesisRank: 1, falsifierRegistered: true, pressureEvents: 0, now: '2026-11-15T12:00:00Z', allowDraft: true })
+  const built = buildPacket(l, ACTIVE_REGISTRY, { patternClassId: C, regime: 'weekday-us', hypothesisRank: 1, falsifierRegistered: true, pressureEvents: 0, now: '2026-11-15T12:00:00Z' })
   l = journalPacket(l, built)
   saveLedger(l)
   return { built, l }
@@ -63,9 +64,10 @@ describe('/intuition in the chat', () => {
     await send('/intuition')
     const panel = await screen.findByLabelText('Synthetic Intuition ledger', {}, { timeout: 8000 })
     expect(within(panel).getByText(/read-only/)).toBeTruthy()
-    expect(within(panel).getByText(/registry draft-0 · draft/)).toBeTruthy()
-    expect(within(panel).getByRole('note').textContent).toMatch(/not issued to a model until the pattern-class list is frozen/)
-    const row = within(panel).getByText('tape.drift-consistent').closest('tr')!
+    expect(within(panel).getByText(/registry pattern-classes-v1 · frozen/)).toBeTruthy()
+    expect(within(panel).queryByRole('note')).toBeNull()
+    expect(built.text).toBe('ix1 c=11 b=5 r=1 f=1 p=0')
+    const row = within(panel).getByText(C).closest('tr')!
     // 10 hits of 11 live graded; the synthetic record is listed as excluded, never counted.
     expect(row.textContent).toContain('10/11')
     expect(row.textContent).toContain('1 synthetic')
@@ -88,7 +90,7 @@ describe('/intuition in the chat', () => {
     const panel = await screen.findByLabelText('Synthetic Intuition ledger', {}, { timeout: 8000 })
     await waitFor(() => expect(within(panel).getByText(/FAILS CLOSED: record h3 no longer resolves/)).toBeTruthy())
     expect(within(panel).queryByText('RESOLVES')).toBeNull()
-    expect(within(panel).getByText('tape.drift-consistent').closest('tr')!.textContent).toContain('1 tampered')
+    expect(within(panel).getByText(C).closest('tr')!.textContent).toContain('1 tampered')
   }, 30_000)
 
   it('cold start shows bucket 0 and no evidence, and /intuition close hides the panel', async () => {

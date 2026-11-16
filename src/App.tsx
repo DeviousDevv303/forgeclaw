@@ -3774,6 +3774,10 @@ function App() {
               <div ref={messagesEndRef} />
             </div>
             
+            {/* Synthetic Intuition ledger (/intuition): above the monitor and composer, clear of the fixed spiderling panel. */}
+            {!isPublicVisitor(ghToken) && (
+              <IntuitionPanel open={intuitionOpen} registry={INTUITION_REGISTRY} onClose={() => setIntuitionOpen(false)} />
+            )}
             {/* System Monitor — pinned above input */}
             <SystemMonitor
               events={activityStream.events}
@@ -3933,9 +3937,6 @@ function App() {
                     trading keys below — a public visitor never sees the owner's ledger. */}
                 {!isPublicVisitor(ghToken) && (
                   <FundsPanel onCommand={text => { void sendPromptRef.current(text) }} refreshKey={fundsTick} />
-                )}
-                {!isPublicVisitor(ghToken) && (
-                  <IntuitionPanel open={intuitionOpen} registry={INTUITION_REGISTRY} onClose={() => setIntuitionOpen(false)} />
                 )}
                 {/* Kalshi auto-settle pop-ups (item: settled from Kalshi on open) */}
                 {settledNotices.length > 0 && (

@@ -20,6 +20,8 @@ export interface PatternClass {
   parent: string | null
   /** The recognizable pattern, stated so an observation can match or not match it. */
   signature: string
+  /** What the class firing asserts (what follows from recognizing it). */
+  asserts: string
   /** The observation that would count AGAINST the class. */
   falsifier: string
 }
@@ -74,7 +76,7 @@ export function classIndex(reg: PatternRegistry, classId: string): number {
 }
 
 /**
- * PLACEHOLDER pending Muse's list, status 'draft': the packet builder refuses it unless a caller explicitly allows drafts
+ * A draft placeholder kept for tests, status 'draft': the packet builder refuses it unless a caller explicitly allows drafts
  * (tests, the exam harness). It exists so the pipeline has one worked class to run end to end, nothing more.
  */
 export const DRAFT_REGISTRY: PatternRegistry = {
@@ -85,10 +87,49 @@ export const DRAFT_REGISTRY: PatternRegistry = {
       id: 'tape.drift-consistent',
       parent: null,
       signature: 'Recognition of drift-consistent tape patterns, graded against settled outcomes.',
+      asserts: 'Placeholder only.',
       falsifier: 'A settled outcome on a clean provenance chain that the pattern assigned low probability to.',
     },
   ],
 }
 
-/** The registry the app reads. Swapping in Muse's frozen list is a one-line change here plus its tests; until then nothing is frozen. */
-export const ACTIVE_REGISTRY: PatternRegistry = DRAFT_REGISTRY
+/**
+ * Pattern-class registry v1, FROZEN: Muse's list (forgeclaw #235 comment 6904200501). `signature` and `asserts` are Muse's
+ * text. `falsifier` wording is derived here from each signature (the comment did not carry falsifier text) and is to be
+ * checked against Muse's `pattern-classes-v1.md`; correcting it is wording, but adding, removing or reordering a class is a
+ * new registry version. Freeze notes: one class per prediction; synthetic pairs never calibrate; per-class per-regime reporting.
+ */
+const c = (id: string, signature: string, asserts: string, falsifier: string): PatternClass => ({ id, parent: null, signature, asserts, falsifier })
+export const PATTERN_CLASSES_V1: PatternRegistry = {
+  version: 'pattern-classes-v1',
+  status: 'frozen',
+  classes: [
+    c('instrument-signature-mismatch', 'A check failed and its output carries a known tooling signature, not domain contradiction.', 'Method event.',
+      'The same check re-run on a repaired or independent instrument fails the same way with no tooling signature.'),
+    c('clean-chain-contradiction', "Pre-registered discriminating test, verified chain, result contradicts the hypothesis's own prediction.", 'Disproof.',
+      'The chain is later shown broken, or the test was not the one registered before the outcome.'),
+    c('thin-denominator-streak', 'Consecutive hits with graded n < 5.', 'Leverage stays cold-start.',
+      'The streak holds at the same rate once graded n reaches 5 or more in the same regime.'),
+    c('regime-shift-drift', 'In-regime hit rate diverges from the all-regime rate beyond bucket tolerance.', 'Re-grade before trusting.',
+      'After re-grading, the in-regime and all-regime rates land in the same bucket.'),
+    c('pressure-without-evidence', 'A confident directive or contradiction with no discriminating evidence attached.', 'Retain the read, comply, move nothing.',
+      'The directive is later shown to have carried discriminating evidence that was available at the time.'),
+    c('repeat-failure-signature', 'The same mechanistic signature at least 3 times across distinct tasks.', 'Systemic; root-cause, not retry.',
+      'The occurrences trace to unrelated causes, or a plain retry clears them without a fix.'),
+    c('recognition-action-gap', 'The stated read favors one side and the action does not follow it.', 'Conversion defect, not knowledge defect.',
+      'The read itself is graded wrong, so the action not following it was the correct outcome.'),
+    c('near-boundary-adjacent', 'A permitted action within a small margin of a hard boundary.', 'Verify twice.',
+      'The second verification never changes the result across graded instances of the class.'),
+    c('stale-context-answer', 'An answer produced from context that a newer verified record supersedes.', 'Retrieve fresh first.',
+      'Fresh retrieval returns the same answer the stale context gave.'),
+    c('convergent-independent-signals', 'At least 2 provenance-independent channels agree.', 'Raise within cap.',
+      'The channels are shown to share a source, or the agreed read is graded incorrect on a clean chain.'),
+    c('single-source-confidence', 'A strong claim resting on exactly one unverified source.', 'Cap until a second channel resolves.',
+      'A second independent channel confirms the claim at the strength first stated.'),
+    c('settled-pattern-repeat', 'The last 5 or more graded instances in-regime resolved the same way.', 'The earned bucket speaks.',
+      'The next graded in-regime instance resolves the other way on a clean chain.'),
+  ],
+}
+
+/** The registry the app reads. A change is a new named version. */
+export const ACTIVE_REGISTRY: PatternRegistry = PATTERN_CLASSES_V1
