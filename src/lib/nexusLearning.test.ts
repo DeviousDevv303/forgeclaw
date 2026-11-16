@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { LearningCandidate } from './corpus'
 import { buildLearningEvent } from './learningEvents'
-import { failurePattern, lessonsForPrompt, llmReadiness, NEXUS_MOTTO, summarizeLearning } from './nexusLearning'
+import { corpusCoverage, failurePattern, lessonsForPrompt, NEXUS_MOTTO, outcomeOfCandidate, summarizeLearning } from './nexusLearning'
 import { visitorCandidate } from './visitorLearning'
 
 let n = 0
@@ -91,13 +91,26 @@ describe('visitor evidence cannot steer NEXUS', () => {
   })
 })
 
-describe('road to the NEXUS LLM', () => {
-  it('counts only approved records toward the milestones, and is honest about the step', () => {
-    const r0 = llmReadiness(0, [candidate('shell_exec', 'completed', 'ok'), candidate('github_read_file', 'completed', 'ok')])
-    expect(r0).toMatchObject({ approved: 0, awaitingReview: 2, step: 0, next: { approved: 100 }, progress: 0, toolCoverage: 2 })
-    expect(llmReadiness(550, [])).toMatchObject({ step: 1, next: { approved: 1_000, label: 'Narrow fine-tune ready' }, progress: 0.5 })
-    expect(llmReadiness(1_000, [])).toMatchObject({ step: 2, next: { approved: 10_000 }, progress: 0 })
-    expect(llmReadiness(12_000, [])).toMatchObject({ next: null, progress: 1 })
+describe('what the stored records cover', () => {
+  it('counts records still waiting for evidence and the distinct tools seen', () => {
+    const c = corpusCoverage([candidate('shell_exec', 'completed', 'ok'), candidate('github_read_file', 'completed', 'ok'), candidate('shell_exec', 'failed', 'x')])
+    expect(c.toolCoverage).toBe(2)
+    expect(c.awaitingEvidence).toBe(3)
+  })
+})
+
+describe('attempted is not completed', () => {
+  it('a dispatch with no confirmed result has its own column and does not raise reliability', () => {
+    const s = summarizeLearning([candidate('browser_run', 'attempted', 'dispatched'), candidate('browser_run', 'attempted', 'dispatched'), candidate('browser_run', 'verified', 'ok'), candidate('browser_run', 'completed', 'ok')])
+    expect(s.tools[0]).toMatchObject({ tool: 'browser_run', total: 4, completed: 2, attempted: 2, failed: 0, blocked: 0 })
+    expect(s.tools[0].reliability).toBe(0.5)
+  })
+  it('the outcome cards and the rows they filter read a record the same way, so the cards sum to the total', () => {
+    const odd = { ...candidate('web_search', 'completed', 'ok'), metadata: { tool: 'web_search', outcome: 'partial' } } as never
+    const s = summarizeLearning([odd, candidate('web_search', 'failed', 'x')])
+    expect(outcomeOfCandidate(odd)).toBe('completed')
+    expect(Object.values(s.byOutcome).reduce((a, b) => a + b, 0)).toBe(s.total)
+    expect(s.byOutcome.completed).toBe(1)
   })
 })
 

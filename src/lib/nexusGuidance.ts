@@ -15,7 +15,7 @@
 
 import { corpusRepository, distinctiveWords, recordRelevantToTask, type CorpusRecord } from './corpus'
 import { heuristicsForPrompt, loadDecisions, type HeuristicDecisions } from './nexusHeuristics'
-import { lessonsForPrompt, summarizeLearning } from './nexusLearning'
+import { lessonsForPrompt, PROMPT_CANDIDATE_WINDOW, summarizeLearning } from './nexusLearning'
 import { CONVERGED_BY, hasQwenLineage } from './nexusConvergence'
 
 const MAX_GUIDANCE_CHARS = 1800
@@ -98,8 +98,8 @@ export interface NexusGuidance {
 export function nexusGuidanceForQwen(task: string, deps: GuidanceDeps = {}): NexusGuidance {
   const empty: NexusGuidance = { text: '', heuristics: 0, lessons: 0, records: 0 }
   if (!task.trim()) return empty
-  const heuristics = heuristicsForPrompt(deps.decisions ?? loadDecisions(), deps.candidates ?? corpusRepository.listCandidates(500))
-  const lessons = lessonsForPrompt(summarizeLearning(deps.candidates ?? corpusRepository.listCandidates(500)), ['qwen_reason', 'github_repo_state', 'github_read_file', 'github_search_code', 'shell_exec', 'web_search', 'browser_run', 'browser_playbook'], 3)
+  const heuristics = heuristicsForPrompt(deps.decisions ?? loadDecisions(), deps.candidates ?? corpusRepository.listCandidates(PROMPT_CANDIDATE_WINDOW))
+  const lessons = lessonsForPrompt(summarizeLearning(deps.candidates ?? corpusRepository.listCandidates(PROMPT_CANDIDATE_WINDOW)), ['qwen_reason', 'github_repo_state', 'github_read_file', 'github_search_code', 'shell_exec', 'web_search', 'browser_run', 'browser_playbook'], 3)
 
   const retrieve = deps.retrieve ?? ((q, n) => corpusRepository.retrieve(q, n))
   const relevant = retrieve(task, 6)

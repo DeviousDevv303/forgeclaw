@@ -36,6 +36,7 @@ const removedKnowledge: string[] = []
 vi.mock('../lib/corpus', () => ({
   corpusRepository: {
     listCandidates: () => seeded,
+    getCandidateCount: () => seeded.length,
     getApprovedCount: () => 0,
     getConvergedCounts: () => ({}),
     listKnowledge: () => knowledgeSeed,
@@ -70,7 +71,7 @@ describe('NexusLearningPanel phone layout', () => {
     // Tool column header is translated from i18n keys, not hardcoded.
     const headers = scroller.querySelectorAll('th')
     expect(headers[0].textContent).toBe('tool')
-    expect(headers.length).toBe(6)
+    expect(headers.length).toBe(7)
   })
 
   it('renders Spanish strings when the language is es (NEXUS_MOTTO stays English)', () => {
@@ -172,7 +173,7 @@ describe('legacy knowledge can be removed in one go, and is not counted as train
     try {
       __setLangForTests('en')
       render(<NexusLearningPanel />)
-      expect(screen.getByTestId('nexus-llm-road').textContent).toContain('1 verified training example')
+      expect(screen.getByTestId('nexus-llm-road').textContent).toContain('1 evidence-backed knowledge record')
       fireEvent.click(screen.getByRole('button', { name: 'REMOVE ALL LEGACY (2)' }))
       expect(screen.getByRole('alertdialog').textContent).toContain('Remove all 2 legacy entries')
       fireEvent.click(screen.getByRole('button', { name: 'CANCEL' }))

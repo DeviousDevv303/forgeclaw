@@ -9,7 +9,7 @@
 // Active heuristics are given to every model as the owner's operating rules (Phase 2 of the owner's scaffolding).
 
 import { corpusRepository, type LearningCandidate } from './corpus'
-import { isVisitorCandidate } from './nexusLearning'
+import { isVisitorCandidate, PROMPT_CANDIDATE_WINDOW } from './nexusLearning'
 
 export interface HeuristicCandidate {
   /** Normalized rule text (the identity of the heuristic). */
@@ -25,7 +25,7 @@ export interface HeuristicCandidate {
 
 export const MIN_RECURRENCE = 2
 const MAX_RULE_CHARS = 160
-const MAX_PROMPT_HEURISTICS = 12
+export const MAX_PROMPT_HEURISTICS = 12
 
 const EXPLICIT_RE = /^\s*(?:rule|heuristic)\s*:\s*(.+)$/i
 // A sentence that states how things should be done, possibly after a softener ("also", "please", "and").
@@ -128,9 +128,14 @@ export function activeHeuristics(mined: HeuristicCandidate[], decisions: Heurist
   return [...new Set([...decisions.approved, ...mined.map(h => h.rule)])].filter(rule => !removed.has(rule))
 }
 
+/** Exactly the rules a prompt carries: active rules mined from the prompt window, capped. The NEXUS page lists these. */
+export function promptHeuristics(decisions: HeuristicDecisions, candidates: LearningCandidate[]): string[] {
+  return activeHeuristics(mineHeuristics(candidates), decisions).slice(0, MAX_PROMPT_HEURISTICS)
+}
+
 /** System-prompt block of the owner's active heuristics; empty when there are none. */
-export function heuristicsForPrompt(decisions: HeuristicDecisions = loadDecisions(), candidates: LearningCandidate[] = corpusRepository.listCandidates(500)): string {
-  const rules = activeHeuristics(mineHeuristics(candidates), decisions).slice(0, MAX_PROMPT_HEURISTICS)
+export function heuristicsForPrompt(decisions: HeuristicDecisions = loadDecisions(), candidates: LearningCandidate[] = corpusRepository.listCandidates(PROMPT_CANDIDATE_WINDOW)): string {
+  const rules = promptHeuristics(decisions, candidates)
   if (!rules.length) return ''
   return "OWNER HEURISTICS (the owner's own rules, learned from what the owner said; follow them unless they conflict with safety rules or the owner's current request):\n" +
     rules.map(r => `- ${r}`).join('\n')

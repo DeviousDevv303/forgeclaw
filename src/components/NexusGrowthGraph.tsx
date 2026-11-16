@@ -10,7 +10,7 @@
 // states announce themselves).
 import { useEffect, useMemo, useRef } from 'react'
 import type { LearningCandidate } from '../lib/corpus'
-import { growthSeries, type GrowthPoint } from '../lib/nexusGrowth'
+import { growthSeries, type AdmittedEntry, type GrowthPoint } from '../lib/nexusGrowth'
 
 // Performance cap for the node field only: past this many admitted entries the field
 // stops gaining visible nodes (the graph line and the counts always show the real
@@ -48,10 +48,11 @@ function dayLabel(t: number): string {
   return new Date(t).toISOString().slice(0, 10)
 }
 
-export function NexusGrowthGraph({ candidates }: { candidates: LearningCandidate[] }) {
-  const points = useMemo(() => growthSeries(candidates), [candidates])
+export function NexusGrowthGraph({ candidates, knowledge }: { candidates: LearningCandidate[]; knowledge: readonly AdmittedEntry[] }) {
+  const points = useMemo(() => growthSeries(candidates, knowledge), [candidates, knowledge])
   const total = candidates.length
-  const admitted = useMemo(() => candidates.filter(c => c.admissionStatus === 'approved').length, [candidates])
+  // The knowledge store is the one source for "admitted", the same number the Admitted card shows.
+  const admitted = knowledge.length
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
   const shownNodes = Math.min(admitted, MAX_FIELD_NODES)
@@ -79,9 +80,9 @@ export function NexusGrowthGraph({ candidates }: { candidates: LearningCandidate
     }
   }, [shownNodes])
 
-  const statusLine = total === 0
+  const statusLine = total === 0 && admitted === 0
     ? 'Nexus has admitted 0 entries — no learning records yet; the graph grows as it learns.'
-    : `Nexus has admitted ${admitted} of ${total} recorded entr${total === 1 ? 'y' : 'ies'} — the graph grows as it learns.`
+    : `Nexus holds ${admitted} admitted knowledge entr${admitted === 1 ? 'y' : 'ies'} and ${total} recorded candidate${total === 1 ? '' : 's'} in this browser — the graph grows as it learns.`
 
   let chart: React.ReactNode = null
   if (points.length > 0) {
@@ -90,7 +91,7 @@ export function NexusGrowthGraph({ candidates }: { candidates: LearningCandidate
     const span = Math.max(last.t - first.t, 1)
     const minT = first.t - span * 0.02
     const maxT = last.t + span * 0.02
-    const maxV = Math.max(last.total, 1)
+    const maxV = Math.max(last.total, last.admitted, 1)
     const x = (t: number) => PAD.left + ((t - minT) / (maxT - minT)) * (CHART_W - PAD.left - PAD.right)
     const y = (v: number) => CHART_H - PAD.bottom - (v / maxV) * (CHART_H - PAD.top - PAD.bottom)
     chart = (
