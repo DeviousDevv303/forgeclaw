@@ -3865,7 +3865,7 @@ function App() {
                 </div>
               ))}
 
-              <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #202024', padding: '10px 0 12px', zIndex: 20 }}>
+              <div data-composer-bar style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #202024', padding: '10px 0 12px', zIndex: 20 }}>
                 {attachedFile && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: '#f97316', fontSize: '12px' }}>
                     <span>📎 {attachedFile.name}</span>
