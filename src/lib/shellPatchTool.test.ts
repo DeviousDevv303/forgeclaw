@@ -29,8 +29,8 @@ class MemoryStorage implements Storage {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 const PATCH = 'diff --git a/src/x.ts b/src/x.ts\n--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1 +1 @@\n-a\n+b\n'
 
-function ctxWith(journal: ReturnType<typeof createRunJournal>): ToolContext {
-  return { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', requestGuardianApproval: async () => true, journal, sculptUnlocked: true }
+function ctxWith(journal: ReturnType<typeof createRunJournal>, extra: Partial<ToolContext> = {}): ToolContext {
+  return { ghToken: 't', ghOwner: 'o', ghRepo: 'r', actor: 'operator', requestGuardianApproval: async () => true, journal, sculptUnlocked: true, ...extra }
 }
 const call = (input: Record<string, unknown>) => ({ id: '1', name: 'shell_patch', input })
 
@@ -143,14 +143,16 @@ describe('shell_patch gating and exposure', () => {
   })
 
   describe('waits for the run and reports what really happened', () => {
-    function github(conclusion: string, prs: unknown[]) {
-      let dispatched: { inputs: { invocation_id: string } } | undefined
+    function github(conclusion: string, prs: unknown[], workflow = 'shell-repair.yml') {
+      let dispatched: { inputs: Record<string, string> } | undefined
       let polls = 0
       return vi.fn(async (url: string, init?: RequestInit) => {
         if (String(url).endsWith('/dispatches')) { dispatched = JSON.parse(String(init!.body)); return new Response(null, { status: 204 }) }
         if (String(url).includes('/git/ref/heads/')) return json({}, 404)
-        const run = (status: string) => ({ id: 5, run_number: 42, name: 'Shell repair', display_title: `Shell repair ${dispatched?.inputs.invocation_id}`, event: 'workflow_dispatch', head_branch: 'main', status, conclusion: status === 'completed' ? conclusion : null, created_at: new Date().toISOString(), html_url: 'https://github.com/o/r/actions/runs/5' })
-        if (String(url).includes('/shell-repair.yml/runs')) return json({ workflow_runs: [run('in_progress')] })
+        const needle = workflow === 'self-sculpt.yml' ? dispatched?.inputs.branch : dispatched?.inputs.invocation_id
+        const runName = workflow === 'self-sculpt.yml' ? 'Self Sculpt' : 'Shell repair'
+        const run = (status: string) => ({ id: 5, run_number: 42, name: runName, display_title: `${runName} ${needle}`, event: 'workflow_dispatch', head_branch: 'main', status, conclusion: status === 'completed' ? conclusion : null, created_at: new Date().toISOString(), html_url: 'https://github.com/o/r/actions/runs/5' })
+        if (String(url).includes(`/actions/workflows/${workflow}/runs`)) return json({ workflow_runs: [run('in_progress')] })
         if (String(url).endsWith('/actions/runs/5')) return json(run(++polls > 1 ? 'completed' : 'in_progress'))
         if (String(url).includes('/pulls?head=')) return json(prs)
         return json({}, 404)
@@ -170,6 +172,90 @@ describe('shell_patch gating and exposure', () => {
       expect(out).toMatch(/^✓ Shell-patch .*: build-validated and proposed as pull request #77/)
       expect(out).toContain('pr: https://github.com/o/r/pull/77')
       expect(out).toContain('(not merged; review it)')
+    })
+
+    it('records a shell-patch proposal only after the correlated successful run has a PR, with source and run provenance', async () => {
+      vi.stubGlobal('fetch', github('success', [{ number: 77, html_url: 'https://github.com/o/r/pull/77' }]))
+      const onVerifiedProposal = vi.fn(async () => ({ stored: true, candidateId: 'proposal-1' }))
+      const out = await settle(executeTool(call({ patch: PATCH, reason: 'fix typo' }), ctxWith(createRunJournal(), {
+        providerId: 'selected-provider', actingProvider: 'acting-provider', onVerifiedProposal,
+      })))
+
+      expect(out).toContain('CORPUS: unapproved verified-proposal candidate recorded (proposal-1)')
+      expect(onVerifiedProposal).toHaveBeenCalledOnce()
+      expect(onVerifiedProposal).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: 'shell_patch', request: 'fix typo', files: ['src/x.ts'], change: PATCH, changeKind: 'unified-diff',
+        selectedProvider: 'selected-provider', actingProvider: 'acting-provider', workflow: 'shell-repair.yml',
+        workflowRunId: 5, workflowRunUrl: 'https://github.com/o/r/actions/runs/5',
+        pullRequestNumber: 77, pullRequestUrl: 'https://github.com/o/r/pull/77',
+      }))
+    })
+
+    it('does not record a shell-patch proposal when the correlated workflow fails', async () => {
+      vi.stubGlobal('fetch', github('failure', []))
+      const onVerifiedProposal = vi.fn(async () => ({ stored: true, candidateId: 'unexpected' }))
+      await settle(executeTool(call({ patch: PATCH, reason: 'fix typo' }), ctxWith(createRunJournal(), { onVerifiedProposal })))
+      expect(onVerifiedProposal).not.toHaveBeenCalled()
+    })
+
+    it('does not record a shell-patch proposal when the successful run has no PR', async () => {
+      vi.stubGlobal('fetch', github('success', []))
+      const onVerifiedProposal = vi.fn(async () => ({ stored: true, candidateId: 'unexpected' }))
+      const out = await settle(executeTool(call({ patch: PATCH, reason: 'fix typo' }), ctxWith(createRunJournal(), { onVerifiedProposal })))
+      expect(out).toContain('succeeded but made no change')
+      expect(onVerifiedProposal).not.toHaveBeenCalled()
+    })
+
+    it('does not record a shell-patch proposal for wait:false dispatch-only', async () => {
+      vi.stubGlobal('fetch', github('success', [{ number: 77, html_url: 'https://github.com/o/r/pull/77' }]))
+      const onVerifiedProposal = vi.fn(async () => ({ stored: true, candidateId: 'unexpected' }))
+      const out = await executeTool(call({ patch: PATCH, reason: 'fix typo', wait: false }), ctxWith(createRunJournal(), { onVerifiedProposal }))
+      expect(out).toContain('DISPATCHED, NOT VERIFIED')
+      expect(onVerifiedProposal).not.toHaveBeenCalled()
+    })
+
+    it('records sculpt_self only after its correlated successful workflow has a PR', async () => {
+      vi.stubGlobal('fetch', github('success', [{ number: 88, html_url: 'https://github.com/o/r/pull/88' }], 'self-sculpt.yml'))
+      const onVerifiedProposal = vi.fn(async () => ({ stored: true, candidateId: 'sculpt-proposal' }))
+      const input = { file_path: 'src/x.ts', content: 'new content', before_content: 'old content', reason: 'improve parser', branch: 'sculpt/test-change' }
+      const out = await settle(executeTool({ id: '1', name: 'sculpt_self', input }, ctxWith(createRunJournal(), {
+        providerId: 'selected-provider', actingProvider: 'acting-provider', onVerifiedProposal,
+      })))
+
+      expect(out).toContain('pull request #88')
+      expect(onVerifiedProposal).toHaveBeenCalledOnce()
+      expect(onVerifiedProposal).toHaveBeenCalledWith(expect.objectContaining({
+        toolName: 'sculpt_self', request: 'improve parser', files: ['src/x.ts'], change: expect.stringContaining('After (11 characters):\nnew content'),
+        changeKind: 'before-after-summary', selectedProvider: 'selected-provider', actingProvider: 'acting-provider',
+        workflow: 'self-sculpt.yml', workflowRunId: 5, workflowRunUrl: 'https://github.com/o/r/actions/runs/5',
+        pullRequestNumber: 88, pullRequestUrl: 'https://github.com/o/r/pull/88',
+      }))
+    })
+
+    it('does not record a sculpt_self proposal when its workflow fails', async () => {
+      vi.stubGlobal('fetch', github('failure', [], 'self-sculpt.yml'))
+      const onVerifiedProposal = vi.fn(async () => ({ stored: true, candidateId: 'unexpected' }))
+      const input = { file_path: 'src/x.ts', content: 'new content', reason: 'improve parser', branch: 'sculpt/test-change' }
+      await settle(executeTool({ id: '1', name: 'sculpt_self', input }, ctxWith(createRunJournal(), { onVerifiedProposal })))
+      expect(onVerifiedProposal).not.toHaveBeenCalled()
+    })
+
+    it('does not record a sculpt_self proposal when the successful run has no PR', async () => {
+      vi.stubGlobal('fetch', github('success', [], 'self-sculpt.yml'))
+      const onVerifiedProposal = vi.fn(async () => ({ stored: true, candidateId: 'unexpected' }))
+      const input = { file_path: 'src/x.ts', content: 'new content', reason: 'improve parser', branch: 'sculpt/test-change' }
+      const out = await settle(executeTool({ id: '1', name: 'sculpt_self', input }, ctxWith(createRunJournal(), { onVerifiedProposal })))
+      expect(out).toContain('succeeded but made no change')
+      expect(onVerifiedProposal).not.toHaveBeenCalled()
+    })
+
+    it('does not record a sculpt_self proposal for wait:false dispatch-only', async () => {
+      vi.stubGlobal('fetch', github('success', [{ number: 88, html_url: 'https://github.com/o/r/pull/88' }], 'self-sculpt.yml'))
+      const onVerifiedProposal = vi.fn(async () => ({ stored: true, candidateId: 'unexpected' }))
+      const input = { file_path: 'src/x.ts', content: 'new content', reason: 'improve parser', branch: 'sculpt/test-change', wait: false }
+      const out = await executeTool({ id: '1', name: 'sculpt_self', input }, ctxWith(createRunJournal(), { onVerifiedProposal }))
+      expect(out).toContain('DISPATCHED, NOT VERIFIED')
+      expect(onVerifiedProposal).not.toHaveBeenCalled()
     })
 
     it('says which step failed and that nothing was pushed, from GitHub, not a guess', async () => {
