@@ -7,9 +7,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { corpusRepository, type LearningCandidate } from '../lib/corpus'
 import { syncNexusIntake } from '../lib/nexusIntake'
-import { LLM_MILESTONES, LLM_ROADMAP, llmReadiness, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, summarizeLearning, type Outcome } from '../lib/nexusLearning'
+import { corpusCoverage, MAX_PROMPT_LESSONS, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, outcomeOfCandidate as outcomeOf, PROMPT_CANDIDATE_WINDOW, promptEligibleLessons, summarizeLearning, type Outcome } from '../lib/nexusLearning'
+import { NEXUS_MODEL_STATE, pct } from '../lib/nexusModelState'
 import { useI18n } from '../lib/i18n'
-import { activeHeuristics, decide, loadDecisions, mineHeuristics } from '../lib/nexusHeuristics'
+import { activeHeuristics, decide, loadDecisions, MAX_PROMPT_HEURISTICS, mineHeuristics, promptHeuristics } from '../lib/nexusHeuristics'
 import { CONVERGED_BY, knowledgeOrigin, NEXUS_PHASES } from '../lib/nexusConvergence'
 import { describeTaste, loadTaste, MIN_TASTE_EVENTS, resetTaste } from '../lib/nexusTaste'
 import { HoldToConfirmButton } from './HoldToConfirmButton'
@@ -21,17 +22,23 @@ const card: React.CSSProperties = { background: '#0d0d0d', border: '1px solid #1
 const purgeButton: React.CSSProperties = { background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', marginBottom: '8px' }
 const heading: React.CSSProperties = { fontSize: '10px', color: '#f97316', letterSpacing: '2px', fontFamily: 'monospace', fontWeight: 'bold', marginBottom: '10px', textTransform: 'uppercase' }
 
-function outcomeOf(c: LearningCandidate): Outcome {
-  const value = (c.metadata?.outcome || 'completed') as Outcome
-  return OUTCOMES.includes(value) ? value : 'completed'
+/**
+ * Every stored candidate, not the newest 1,000. listCandidates() defaults to 1,000, and this page read it with the default,
+ * so past 1,000 stored records every number here (recorded, the outcome cards, failure rate, tools, lessons, the graph) was
+ * silently computed from a slice while labelled as the total. The index itself holds up to 10,000.
+ */
+function readCandidates(): { candidates: LearningCandidate[]; promptWindow: LearningCandidate[]; stored: number } {
+  const stored = corpusRepository.getCandidateCount()
+  // promptWindow is read the way the prompt builders read it, so "given to every model" is computed from the same records.
+  return { candidates: corpusRepository.listCandidates(Math.max(stored, 1)), promptWindow: corpusRepository.listCandidates(PROMPT_CANDIDATE_WINDOW), stored }
 }
 
 export function NexusLearningPanel() {
   const { t } = useI18n()
-  const [candidates, setCandidates] = useState<LearningCandidate[]>(() => corpusRepository.listCandidates())
+  const [{ candidates, promptWindow, stored }, setRead] = useState(readCandidates)
   const [filter, setFilter] = useState<Outcome | 'all'>('all')
   const [notice, setNotice] = useState('')
-  const refresh = useCallback(() => setCandidates(corpusRepository.listCandidates()), [])
+  const refresh = useCallback(() => setRead(readCandidates()), [])
   useEffect(() => {
     // New runs keep adding candidates while the page is open.
     const timer = globalThis.setInterval(refresh, 5_000)
@@ -51,11 +58,18 @@ export function NexusLearningPanel() {
   const approved = corpusRepository.getApprovedCount()
   // The road counts only evidence-backed knowledge; legacy entries admitted without review are not training data.
   const training = corpusRepository.getTrainingCount()
-  const road = useMemo(() => llmReadiness(training, candidates), [training, candidates])
+  const coverage = useMemo(() => corpusCoverage(candidates), [candidates])
   const [decisions, setDecisions] = useState(() => loadDecisions())
-  const mined = useMemo(() => mineHeuristics(candidates), [candidates])
-  const active = useMemo(() => activeHeuristics(mined, decisions), [mined, decisions])
+  // What a prompt carries: mined from the prompt window, capped. `allActive` is every rule the stored records support;
+  // the difference is rules whose mentions are older than the window (or past the cap), shown as a count, not as active.
+  const mined = useMemo(() => mineHeuristics(promptWindow), [promptWindow])
+  const active = useMemo(() => promptHeuristics(decisions, promptWindow), [decisions, promptWindow])
+  const allActive = useMemo(() => activeHeuristics(mineHeuristics(candidates), decisions), [candidates, decisions])
+  const notInPrompt = allActive.filter(rule => !active.includes(rule)).length
   const minedByRule = useMemo(() => new Map(mined.map(h => [h.rule, h])), [mined])
+  const fedBack = useMemo(() => promptEligibleLessons(summarizeLearning(promptWindow)), [promptWindow])
+  const fedBackKeys = new Set(fedBack.map(l => `${l.tool}\u0000${l.pattern}`))
+  const otherRecurring = summary.lessons.filter(l => !fedBackKeys.has(`${l.tool}\u0000${l.pattern}`)).length
   const converged = useMemo(() => corpusRepository.getConvergedCounts(), [candidates]) // eslint-disable-line react-hooks/exhaustive-deps
   const [knowledgeTick, setKnowledgeTick] = useState(0)
   const knowledge = useMemo(() => corpusRepository.listKnowledge(), [candidates, knowledgeTick]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -63,7 +77,7 @@ export function NexusLearningPanel() {
   const [purgeArmed, setPurgeArmed] = useState(false)
   const [knowledgeNotice, setKnowledgeNotice] = useState('')
   const phaseCounts: Record<string, number> = {
-    assumptions: summary.lessons.length,
+    assumptions: fedBack.length,
     heuristics: active.length,
     first_principles: converged.first_principles ?? 0,
     extension: converged.extension ?? 0,
@@ -88,22 +102,26 @@ export function NexusLearningPanel() {
         </ol>
       </header>
 
-      <section style={{ ...card, borderColor: '#2a1a05' }} aria-label="Road to the NEXUS LLM" data-testid="nexus-llm-road">
-        <div style={heading}>ROAD TO THE NEXUS LLM</div>
+      <section style={{ ...card, borderColor: '#2a1a05' }} aria-label="The Nexus model" data-testid="nexus-model">
+        <div style={heading}>THE MODEL · what ForgeClaw runs as Nexus Intelligence</div>
+        <div style={{ color: '#eee', fontFamily: mono, fontSize: '13px', marginBottom: '6px', overflowWrap: 'anywhere' }}>{NEXUS_MODEL_STATE.label}</div>
+        <div style={{ color: '#999', fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.7, overflowWrap: 'anywhere' }}>
+          <div>{NEXUS_MODEL_STATE.parameters} parameters · {NEXUS_MODEL_STATE.contextTokens}-token window · up to {NEXUS_MODEL_STATE.maxCalls} tool calls per answer · trained from scratch</div>
+          <div>checkpoint sha256 {NEXUS_MODEL_STATE.sha256.slice(0, 16)}…</div>
+          <div data-testid="nexus-model-graded">graded {NEXUS_MODEL_STATE.graded.on}: {NEXUS_MODEL_STATE.graded.verdict} · gate {NEXUS_MODEL_STATE.graded.gate}</div>
+          <div>v1 {NEXUS_MODEL_STATE.graded.v1.hits}/{NEXUS_MODEL_STATE.graded.v1.n} ({pct(NEXUS_MODEL_STATE.graded.v1)}) · domains {NEXUS_MODEL_STATE.graded.domains.hits}/{NEXUS_MODEL_STATE.graded.domains.n} ({pct(NEXUS_MODEL_STATE.graded.domains)}) · closed loop {NEXUS_MODEL_STATE.graded.closedLoop.hits}/{NEXUS_MODEL_STATE.graded.closedLoop.n} · fabrication {NEXUS_MODEL_STATE.graded.fabrication}</div>
+        </div>
+        <div style={{ color: '#555', fontSize: '10px', marginTop: '8px', lineHeight: 1.6 }}>From {NEXUS_MODEL_STATE.graded.source}. This is the checkpoint the app serves; later training runs are not shown until one replaces it. The numbers below count the records in this browser. They are not the checkpoint's training set.</div>
+      </section>
+
+      <section style={{ ...card, borderColor: '#2a1a05' }} aria-label="Evidence-backed knowledge" data-testid="nexus-llm-road">
+        <div style={heading}>EVIDENCE-BACKED KNOWLEDGE · in this browser</div>
         <div style={{ color: '#eee', fontFamily: mono, fontSize: '13px', marginBottom: '6px' }}>
-          {road.approved.toLocaleString()} verified training example{road.approved === 1 ? '' : 's'}
-          {road.next ? ` · next: ${road.next.label} at ${road.next.approved.toLocaleString()}` : ' · every data milestone reached'}
+          {training.toLocaleString()} evidence-backed knowledge record{training === 1 ? '' : 's'}
         </div>
-        <div style={{ height: '8px', background: '#1a1a1a', borderRadius: '4px', overflow: 'hidden', marginBottom: '8px' }} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(road.progress * 100)}>
-          <div style={{ width: `${Math.round(road.progress * 100)}%`, height: '100%', background: '#f97316' }} />
+        <div style={{ color: '#888', fontSize: '11px', lineHeight: 1.6 }}>
+          {coverage.awaitingEvidence.toLocaleString()} record(s) with no evidence yet · data covers {coverage.toolCoverage} tool(s) · {approved.toLocaleString()} admitted in all, counting entries admitted other ways
         </div>
-        <div style={{ color: '#888', fontSize: '11px', lineHeight: 1.6, marginBottom: '8px' }}>
-          {road.awaitingReview.toLocaleString()} record(s) with no evidence yet · data covers {road.toolCoverage} tool(s) · milestones {LLM_MILESTONES.map(m => m.approved.toLocaleString()).join(' / ')}
-        </div>
-        <ol style={{ margin: 0, paddingLeft: '18px', fontSize: '12px', lineHeight: 1.7 }}>
-          {LLM_ROADMAP.map((step, i) => <li key={step} style={{ color: i < road.step ? '#22c55e' : i === road.step ? '#f97316' : '#555' }}>{step}{i === road.step ? ' ← now' : ''}</li>)}
-        </ol>
-        <div style={{ color: '#555', fontSize: '10px', marginTop: '8px' }}>NEXUS is training data, not a model yet. Evidence-backed records count by themselves; the milestones are estimates for a LoRA fine-tune of an open base model.</div>
       </section>
 
       <section style={{ ...card, borderColor: '#2a1a05' }} aria-label="Five-phase learning loop" data-testid="nexus-phases">
@@ -120,7 +138,7 @@ export function NexusLearningPanel() {
       </section>
 
       <section aria-label="Evidence totals" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px' }}>
-        <div style={card}><div style={heading}>{t('nexus.recorded')}</div><div style={{ color: '#eee', fontSize: '22px', fontFamily: mono }}>{summary.total}</div></div>
+        <div style={card} data-testid="nexus-recorded"><div style={heading}>{t('nexus.recorded')}</div><div style={{ color: '#eee', fontSize: '22px', fontFamily: mono }}>{summary.total}</div></div>
         {OUTCOMES.map(o => (
           <button key={o} onClick={() => setFilter(filter === o ? 'all' : o)} style={{ ...card, textAlign: 'left', cursor: 'pointer', borderColor: filter === o ? OUTCOME_COLOR[o] : '#1e1e1e' }} aria-pressed={filter === o}>
             <div style={{ ...heading, color: OUTCOME_COLOR[o] }}>{o}</div>
@@ -131,9 +149,13 @@ export function NexusLearningPanel() {
         <div style={card}><div style={heading}>{t('nexus.admitted')}</div><div style={{ color: '#eee', fontSize: '22px', fontFamily: mono }}>{approved}</div></div>
       </section>
 
+      <div data-testid="nexus-stored-note" style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace', lineHeight: 1.6 }}>
+        Counted from the {summary.total.toLocaleString()} record(s) stored in this browser now{stored !== summary.total ? ` (${stored.toLocaleString()} indexed; ${(stored - summary.total).toLocaleString()} could not be read)` : ''}. When storage fills, the oldest records without evidence are removed, so these are not all-time totals.
+      </div>
+
       <section style={card} aria-label="Learning growth" data-testid="nexus-growth">
         <div style={heading}>LEARNING GROWTH · recorded vs admitted, from the stored records</div>
-        <NexusGrowthGraph candidates={candidates} />
+        <NexusGrowthGraph candidates={candidates} knowledge={knowledge} />
       </section>
 
       <section style={card} aria-label="Your taste" data-testid="nexus-taste">
@@ -164,7 +186,7 @@ export function NexusLearningPanel() {
             <div aria-label="Active heuristics">
               <div style={{ color: '#22c55e', fontSize: '10px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>✓ ACTIVE · given to every model ({active.length}) · saved in this browser</div>
               <ul style={{ margin: '4px 0 0', paddingLeft: '18px', color: '#22c55e', fontSize: '12px', lineHeight: 1.7 }}>
-                {active.slice(0, 24).map(rule => {
+                {active.map(rule => {
                   const h = minedByRule.get(rule)
                   return (
                     <li key={rule} style={{ overflowWrap: 'anywhere' }}>
@@ -176,6 +198,7 @@ export function NexusLearningPanel() {
               </ul>
             </div>
           )}
+        {notInPrompt > 0 && <div data-testid="nexus-heuristics-outside" style={{ color: '#888', fontSize: '11px', marginTop: '6px' }}>{notInPrompt} more rule(s) are in older records and are NOT given to the models: a prompt reads the newest {PROMPT_CANDIDATE_WINDOW} records and carries at most {MAX_PROMPT_HEURISTICS} rules. Start a line with "rule:" to state one again.</div>}
       </section>
 
       <section style={card} aria-label="Knowledge" data-testid="nexus-knowledge">
@@ -220,22 +243,23 @@ export function NexusLearningPanel() {
 
       <section style={card} aria-label="Lessons">
         <div style={heading}>{t('nexus.lessonsTitle')}</div>
-        {summary.lessons.length === 0
+        {fedBack.length === 0
           ? <div style={{ color: '#555', fontSize: '12px' }}>{t('nexus.noLessons')}</div>
           : <ul style={{ margin: 0, paddingLeft: '18px', color: '#ccc', fontSize: '12px', lineHeight: 1.7 }}>
-              {summary.lessons.slice(0, 12).map(l => <li key={`${l.tool}${l.pattern}`}><b style={{ color: '#f97316' }}>{l.tool}</b> ×{l.count}: <span style={{ fontFamily: mono }}>{l.pattern}</span> <span style={{ color: '#555' }}>(last {l.lastSeen.slice(0, 10)})</span></li>)}
+              {fedBack.map(l => <li key={`${l.tool}${l.pattern}`}><b style={{ color: '#f97316' }}>{l.tool}</b> ×{l.ownerCount}: <span style={{ fontFamily: mono }}>{l.pattern}</span> <span style={{ color: '#555' }}>(last {l.lastSeen.slice(0, 10)})</span></li>)}
             </ul>}
+        <div data-testid="nexus-lessons-note" style={{ color: '#666', fontSize: '10px', marginTop: '6px', lineHeight: 1.6 }}>Counted from your own runs in the newest {PROMPT_CANDIDATE_WINDOW} records, which is what a prompt reads. A model sees a lesson only when that tool is offered, at most {MAX_PROMPT_LESSONS} per turn.{otherRecurring > 0 ? ` ${otherRecurring} other recurring failure(s) are recorded but not fed back (visitors' runs, or older than that window).` : ''}</div>
       </section>
 
       <section style={card} aria-label="Tool reliability">
         <div style={heading}>{t('nexus.toolsTitle')}</div>
         {summary.tools.length === 0
           ? <div style={{ color: '#555', fontSize: '12px' }}>{t('nexus.noTools')}</div>
-          : <div style={{ overflowX: 'auto' }} data-testid="nexus-tools-scroll"><table style={{ width: '100%', minWidth: '340px', borderCollapse: 'collapse', fontSize: '12px', fontFamily: mono, color: '#bbb' }}>
-              <thead><tr style={{ color: '#666', textAlign: 'left' }}><th>{t('nexus.colTool')}</th><th>{t('nexus.colRuns')}</th><th>{t('nexus.colOk')}</th><th>{t('nexus.colFailed')}</th><th>{t('nexus.colBlocked')}</th><th>{t('nexus.colReliability')}</th></tr></thead>
+          : <div style={{ overflowX: 'auto' }} data-testid="nexus-tools-scroll"><table style={{ width: '100%', minWidth: '400px', borderCollapse: 'collapse', fontSize: '12px', fontFamily: mono, color: '#bbb' }}>
+              <thead><tr style={{ color: '#666', textAlign: 'left' }}><th>{t('nexus.colTool')}</th><th>{t('nexus.colRuns')}</th><th>{t('nexus.colOk')}</th><th>{t('nexus.colAttempted')}</th><th>{t('nexus.colFailed')}</th><th>{t('nexus.colBlocked')}</th><th>{t('nexus.colReliability')}</th></tr></thead>
               <tbody>{summary.tools.slice(0, 20).map(t => (
                 <tr key={t.tool} style={{ borderTop: '1px solid #161616' }}>
-                  <td style={{ padding: '4px 0' }}>{t.tool}</td><td>{t.total}</td><td>{t.completed}</td><td>{t.failed}</td><td>{t.blocked}</td>
+                  <td style={{ padding: '4px 0' }}>{t.tool}</td><td>{t.total}</td><td>{t.completed}</td><td>{t.attempted}</td><td>{t.failed}</td><td>{t.blocked}</td>
                   <td style={{ color: t.reliability >= 0.8 ? '#39ff14' : t.reliability >= 0.5 ? '#eab308' : '#ef4444' }}>{Math.round(t.reliability * 100)}%</td>
                 </tr>))}
               </tbody>

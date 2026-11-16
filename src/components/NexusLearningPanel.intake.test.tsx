@@ -43,6 +43,7 @@ const intakeCandidate = {
 vi.mock('../lib/corpus', () => ({
   corpusRepository: {
     listCandidates: () => [intakeCandidate],
+    getCandidateCount: () => 1,
     getApprovedCount: () => 0,
     getConvergedCounts: () => ({}),
     listKnowledge: () => [],
@@ -81,6 +82,6 @@ describe('NexusLearningPanel external intake candidates', () => {
     // …the knowledge section stays empty…
     expect(screen.getByText('Nothing yet.')).toBeTruthy()
     // …and the growth graph counts it as recorded but NOT admitted.
-    expect(screen.getByText(/Nexus has admitted 0 of 1 recorded entry/)).toBeTruthy()
+    expect(screen.getByText(/Nexus holds 0 admitted knowledge entries and 1 recorded candidate in this browser/)).toBeTruthy()
   })
 })
