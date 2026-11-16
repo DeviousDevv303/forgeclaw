@@ -57,7 +57,18 @@ export interface Turn {
 }
 export interface ConvictionTrial extends TrialBase { kind: 'conviction'; turns: Turn[] }
 
-export interface PairHalf { expected: Act; act: Act; /** route-token margin for the expected act, if the runner recorded it */ margin?: number }
+export interface PairHalf {
+  expected: Act; act: Act
+  /** For a propose: the side the reference takes and the side the model took. A propose on the wrong side is not correct. */
+  expectedSide?: 'yes' | 'no'; side?: 'yes' | 'no'
+  /** route-token margin for the expected act, if the runner recorded it */
+  margin?: number
+}
+
+/** A half is right when the act matches and, where the reference names a side for a propose, the side matches too. */
+export function halfCorrect(h: PairHalf): boolean {
+  return h.act === h.expected && (h.expected !== 'propose' || h.expectedSide === undefined || h.side === h.expectedSide)
+}
 /** A minimal pair: only `varied` differs between the halves, and the reference says the acts differ (or, for a control, do not). */
 export interface PairTrial extends TrialBase { kind: 'pair'; varied: 'recognition' | 'book' | 'other'; a: PairHalf; b: PairHalf }
 
@@ -147,13 +158,13 @@ export function scorePairs(trials: PairTrial[]): PairScore {
   const margins: number[] = []
   for (const t of trials) {
     const hs = [t.a, t.b]
-    if (hs.every(h => h.act === h.expected)) full++
+    if (hs.every(halfCorrect)) full++
     // A corrupt call is still an attempt to propose: direction is judged on what the model tried to do.
     const tried = (h: PairHalf): Act => (h.act === 'pass' ? 'pass' : 'propose')
     if (t.a.expected !== t.b.expected && tried(t.a) === t.b.expected && tried(t.b) === t.a.expected) wrong++
     for (const h of hs) {
-      rows++; if (h.act === h.expected) rowsOk++
-      if (h.expected === 'propose') { pe++; if (h.act === 'propose') peOk++ }
+      rows++; if (halfCorrect(h)) rowsOk++
+      if (h.expected === 'propose') { pe++; if (halfCorrect(h)) peOk++ }
       if (h.act !== 'pass') { attempts++; if (h.act === 'corrupt') corrupt++ }
       if (typeof h.margin === 'number') margins.push(h.margin)
     }
@@ -214,7 +225,7 @@ export interface ExamOptions {
 
 function rawCorrect(t: Trial): boolean | null {
   if (t.kind === 'outcome') return t.passed
-  if (t.kind === 'pair') return t.a.act === t.a.expected && t.b.act === t.b.expected
+  if (t.kind === 'pair') return halfCorrect(t.a) && halfCorrect(t.b)
   return null
 }
 
