@@ -193,10 +193,17 @@ describe('adapter: reading a desk completion', () => {
     expect(readDeskOutput('<|route:tool|><|ev:failed|><|answer|>x<|/answer|><|end|>').act).toBe('corrupt')
   })
   it('a well-formed but wrong ticker parses, and is caught against the prompt', () => {
-    const r = readDeskOutput(call('{"name":"funds_propose","arguments":{"market":"KXBTC15M-27FEBTC1345-00","price":0.4}}'))
+    const r = readDeskOutput(call('{"name":"funds_propose","arguments":{"market":"KXBTC15M-27FEBTC1345-00","side":"yes","price":0.4}}'))
     expect(r.act).toBe('propose')
     expect(tickerMatchesPrompt(r, 'Market KXBTC15M-27FEB141345-00')).toBe(false)
-    expect(readDeskRow('Market KXBTC15M-27FEB141345-00', call('{"name":"funds_propose","arguments":{"market":"KXBTC15M-27FEBTC1345-00","price":0.4}}')).act).toBe('corrupt')
+    expect(readDeskRow('Market KXBTC15M-27FEB141345-00', call('{"name":"funds_propose","arguments":{"market":"KXBTC15M-27FEBTC1345-00","side":"yes","price":0.4}}')).act).toBe('corrupt')
+  })
+  it('a propose with no side, or on the wrong side, is not a correct propose', () => {
+    expect(readDeskOutput(call('{"name":"funds_propose","arguments":{"market":"KXBTC15M-27FEB141345-00","price":0.4}}'))).toMatchObject({ act: 'corrupt', reason: 'side missing or not yes/no' })
+    const wrongSide = pair('s', ['propose', 'propose'], ['propose', 'propose'])
+    wrongSide.a = { expected: 'propose', act: 'propose', expectedSide: 'yes', side: 'no' }
+    wrongSide.b = { expected: 'propose', act: 'propose', expectedSide: 'no', side: 'no' }
+    expect(scorePairs([wrongSide])).toMatchObject({ fullFlip: { hits: 0, n: 1 }, rowAccuracy: { hits: 1, n: 2 }, proposeWhenExpected: { hits: 1, n: 2 } })
   })
   it('another tool is not a propose', () => { expect(readDeskOutput(call('{"name":"funds_status","arguments":{}}')).act).toBe('pass') })
 })

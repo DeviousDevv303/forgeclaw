@@ -233,6 +233,8 @@ import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
 import { autoSettleKalshiPositions, kalshiOrderPlacedJournalEntry, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
 import { FundsPanel } from './components/FundsPanel'
 import { IntuitionPanel } from './components/IntuitionPanel'
+import { parseSwarmCommand, SWARM_VISITOR_NOTICE } from './lib/swarm'
+import { runSwarmRequest } from './lib/swarmRunner'
 import { intuitionSummary, parseIntuitionCommand } from './lib/intuition/command'
 import { loadLedger as loadIntuitionLedger } from './lib/intuition/ledger'
 import { ACTIVE_REGISTRY as INTUITION_REGISTRY } from './lib/intuition/patternClasses'
@@ -512,7 +514,7 @@ const ON_SCREEN_RETRY_DELAYS_MS = [1500, 4000] as const
 
 /** A prompt that runs a fixed command rather than the model: re-running it could repeat a side effect, so it waits for a tap. */
 function isFixedCommandPrompt(prompt: string): boolean {
-  return Boolean(parseDirectQwenCommand(prompt) || parseSculptCommand(prompt) || parseFundsCommand(prompt)) || isExplicitShellRequest(prompt) || isExplicitToolRequest(prompt)
+  return Boolean(parseDirectQwenCommand(prompt) || parseSculptCommand(prompt) || parseFundsCommand(prompt) || parseSwarmCommand(prompt)) || isExplicitShellRequest(prompt) || isExplicitToolRequest(prompt)
 }
 
 function cleanStoredMessage(message: Message): Message {
@@ -1303,7 +1305,7 @@ function App() {
     const qwenProvider = isQwenProvider(activeProvider)
     // A public visitor (no token, relay configured) reaches the model through the relay instead.
     // /intuition is a local, read-only view: it needs no token because it dispatches nothing.
-    if (qwenProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '') && parseIntuitionCommand(promptText) === null) {
+    if (qwenProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '') && parseIntuitionCommand(promptText) === null && parseSwarmCommand(promptText) === null) {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: 'assistant',
@@ -1478,6 +1480,8 @@ function App() {
       parseFundsCommand(promptText) !== null ||
       // /intuition is a read-only view of the local Synthetic Intuition ledger, also with no model.
       parseIntuitionCommand(promptText) !== null ||
+      // /swarm brings its own hosted model by the keys in Settings and says so when none is set.
+      parseSwarmCommand(promptText) !== null ||
       isExplicitToolRequest(promptText) ||
       (isExplicitShellRequest(promptText) && extractExplicitShellCommand(promptText) !== null)
     )
@@ -1822,6 +1826,55 @@ function App() {
         emitForge(fundsOk ? { type: 'MISSION_COMPLETE' } : { type: 'MISSION_BLOCKED', reason: fundsReply.slice(0, 140) })
         setRequestStatus(fundsOk ? 'success' : 'blocked')
         setLastRequestError(fundsOk ? '' : fundsReply)
+        setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+        resolveTask(taskId)
+        return
+      }
+
+      // /swarm <task>: the owner runs a swarm directly (swarm.ts). A hosted model plans it, the agents run on the existing
+      // sub-agent loop with read-only tools (every call still through executeTool and Guardian), and the reply says the Nexus
+      // checkpoint did not form it. Each agent's brief and report is recorded as a learning record, attributed to the
+      // provider that ran it, so real swarm work reaches CORPUS whichever model did it.
+      const swarmCommand = imageUrl ? null : parseSwarmCommand(promptText)
+      if (swarmCommand) {
+        const swarm = isPublicVisitor(ghToken) ? { ok: false, text: SWARM_VISITOR_NOTICE }
+          : swarmCommand.kind === 'usage' ? { ok: false, text: swarmCommand.message }
+          : await runSwarmRequest(swarmCommand.task, {
+              active: activeProvider,
+              keys: { moonshot: moonshotApiKey, openrouter: openrouterApiKey },
+              models: { moonshot: moonshotModel, openrouter: openrouterModel.trim() },
+              allTools: ATTRIBUTED_TOOLS,
+              toolCtx,
+              signal: controller.signal,
+              onAgent: event => {
+                if (event.phase !== 'end' || !event.result) return
+                const r = event.result
+                // Attributed to the hosted model that ran the agent, never to the provider selected for chat.
+                void recordLearningEvent({
+                  channel: 'tool', toolName: 'spawn_agent', actor: 'operator', runId: learningRunRef.current || undefined,
+                  runtime: event.provider, model: event.model || 'default model',
+                  input: `[swarm agent: ${r.agent.role}; tools: ${r.agent.tools.join(', ') || 'none'}] ${r.agent.task}`,
+                  result: r.status === 'returned' ? r.text : `[TOOL ERROR] ${r.text}`,
+                  outcome: r.status === 'returned' ? 'completed' : 'failed',
+                })
+              },
+            }).catch((error: unknown): { ok: boolean; text: string; provider?: string; model?: string } =>
+              ({ ok: false, text: `No swarm was completed: ${error instanceof Error ? error.message : String(error)}` }))
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        const ran = swarm as { ok: boolean; text: string; provider?: string; model?: string }
+        setMessages(prev => prev.map(message => message.id === msgId
+          ? {
+              ...message,
+              content: withForgeClawSignature(ran.text),
+              streaming: false,
+              // Attributed to a model only when a hosted model actually planned or ran it.
+              ...(ran.provider ? { provider: ran.provider, model: ran.model } : {}),
+              agentPhase: ran.ok ? 'COMPLETE' : 'BLOCKED',
+            }
+          : message))
+        emitForge(ran.ok ? { type: 'MISSION_COMPLETE' } : { type: 'MISSION_BLOCKED', reason: ran.text.slice(0, 140) })
+        setRequestStatus(ran.ok ? 'success' : 'blocked')
+        setLastRequestError(ran.ok ? '' : ran.text)
         setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
         resolveTask(taskId)
         return

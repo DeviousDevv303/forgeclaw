@@ -6,7 +6,7 @@ import type { Act } from './harness'
 const CALL = /<\|call\|>([\s\S]*?)<\|\/call\|>/
 export const TICKER_RE = /^[A-Z0-9]+(?:-[A-Z0-9.]+)+$/
 
-export interface DeskRead { act: Act; reason: string; args?: Record<string, unknown> }
+export interface DeskRead { act: Act; reason: string; args?: Record<string, unknown>; /** set on a valid propose */ side?: 'yes' | 'no' }
 
 export function readDeskOutput(output: string, proposeTool = 'funds_propose'): DeskRead {
   const route = /^\s*<\|route:(tool|direct|defer)\|>/.exec(output)?.[1]
@@ -26,7 +26,9 @@ export function readDeskOutput(output: string, proposeTool = 'funds_propose'): D
   for (const k of ['price', 'probability', 'max_stake'] as const) {
     if (k in args && !(typeof args[k] === 'number' && Number.isFinite(args[k] as number) && (args[k] as number) >= 0)) return { act: 'corrupt', reason: `${k} is not a finite non-negative number`, args }
   }
-  return { act: 'propose', reason: 'valid propose call', args }
+  const side = typeof args.side === 'string' ? args.side.toLowerCase() : ''
+  if (side !== 'yes' && side !== 'no') return { act: 'corrupt', reason: 'side missing or not yes/no', args }
+  return { act: 'propose', reason: 'valid propose call', args, side }
 }
 
 /** Corruption a parse cannot see: the proposed ticker is well-formed but is not the ticker the prompt named. */
