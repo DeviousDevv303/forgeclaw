@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { SpiderPanel, SPIDER_PANEL_BOTTOM_PX } from './SpiderPanel'
@@ -93,6 +95,64 @@ describe('panel visibility: shown for a run, gone when idle (owner order 2026-11
     render(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} />)
     expect(SPIDER_PANEL_BOTTOM_PX).toBeGreaterThanOrEqual(84)
     expect(screen.getByTestId('spider-panel').style.bottom).toBe(`${SPIDER_PANEL_BOTTOM_PX}px`)
+  })
+})
+
+describe('the panel is placed from the composer bar it must not cover (owner report 2026-11-13)', () => {
+  const addBar = (top: number) => {
+    const bar = document.createElement('div')
+    bar.setAttribute('data-composer-bar', '')
+    bar.getBoundingClientRect = () => ({ top, bottom: top + 80, left: 0, right: 100, width: 100, height: 80, x: 0, y: top, toJSON: () => ({}) })
+    document.body.appendChild(bar)
+    return bar
+  }
+  const setViewportHeight = (h: number) => Object.defineProperty(window, 'innerHeight', { configurable: true, value: h })
+  afterEach(() => { document.querySelectorAll('[data-composer-bar]').forEach(e => e.remove()); setViewportHeight(768) })
+
+  it('sits its bottom edge 8px above the measured top of the composer bar', () => {
+    setViewportHeight(800)
+    addBar(500)
+    render(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} />)
+    expect(screen.getByTestId('spider-panel').style.bottom).toBe('308px')   // 800 - 500 + 8
+  })
+
+  it('rises with a taller composer (a multi-line draft) instead of staying at a guessed height', async () => {
+    setViewportHeight(800)
+    const bar = addBar(500)
+    const { rerender } = render(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} />)
+    expect(screen.getByTestId('spider-panel').style.bottom).toBe('308px')
+    bar.getBoundingClientRect = () => ({ top: 380, bottom: 460, left: 0, right: 100, width: 100, height: 80, x: 0, y: 380, toJSON: () => ({}) })
+    await act(async () => { window.dispatchEvent(new Event('resize')); await new Promise(resolveFrame => setTimeout(resolveFrame, 60)) })
+    rerender(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} />)
+    expect(screen.getByTestId('spider-panel').style.bottom).toBe('428px')   // 800 - 380 + 8
+  })
+
+  it('follows a composer bar that mounts after the panel (the chat tab opens later than the app)', async () => {
+    setViewportHeight(800)
+    render(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} />)
+    expect(screen.getByTestId('spider-panel').style.bottom).toBe(`${SPIDER_PANEL_BOTTOM_PX}px`)
+    await act(async () => { addBar(500); await new Promise(resolveFrame => setTimeout(resolveFrame, 60)) })
+    expect(screen.getByTestId('spider-panel').style.bottom).toBe('308px')
+  })
+
+  it('keeps the old clearance when there is no composer bar on the page', () => {
+    render(<SpiderPanel ledger={emptyLedger('live', T0)} now={T0} />)
+    expect(screen.getByTestId('spider-panel').style.bottom).toBe(`${SPIDER_PANEL_BOTTOM_PX}px`)
+  })
+
+  it('caps the expanded list so the panel cannot run off the top of a short screen', () => {
+    setViewportHeight(600)
+    addBar(420)
+    const ledger = foldSpiderEvents(emptyLedger('live', T0), [{ type: 'TOOL_START', tool: 'shell_exec', iter: 0, timestamp: T0 }])
+    render(<SpiderPanel ledger={ledger} now={T0} />)
+    fireEvent.click(screen.getByTestId('spider-toggle'))
+    // min(600 * 0.38 = 228, 420 - 8 - 130 = 282) = 228
+    expect(screen.getByTestId('spider-lines').style.maxHeight).toBe('228px')
+  })
+
+  it('the composer bar in App.tsx carries the attribute the panel looks for', () => {
+    const app = readFileSync(resolve(process.cwd(), 'src/App.tsx'), 'utf8')
+    expect(app).toContain("<div data-composer-bar style={{ position: 'sticky', bottom: 0")
   })
 })
 

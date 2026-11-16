@@ -1,0 +1,143 @@
+{
+ "task": "paginate",
+ "seed": 20261114,
+ "candidates": 17,
+ "mutants": [
+  {
+   "id": "m01",
+   "op": "ARITH",
+   "lines": [
+    8
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m02",
+   "op": "CMP",
+   "lines": [
+    12
+   ],
+   "class": "MAY"
+  },
+  {
+   "id": "m03",
+   "op": "DROP_IF",
+   "lines": [
+    12
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m04",
+   "op": "ARITH",
+   "lines": [
+    11
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m05",
+   "op": "CMP",
+   "lines": [
+    9
+   ],
+   "class": "MAY"
+  },
+  {
+   "id": "m06",
+   "op": "DROP_IF",
+   "lines": [
+    9
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m07",
+   "op": "ARITH",
+   "lines": [
+    8
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m08",
+   "op": "CONST",
+   "lines": [
+    8
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m09",
+   "op": "CONST",
+   "lines": [
+    6
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m10",
+   "op": "CMP",
+   "lines": [
+    6
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m11",
+   "op": "DROP_IF",
+   "lines": [
+    6
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m12",
+   "op": "CONST",
+   "lines": [
+    4
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m13",
+   "op": "CMP",
+   "lines": [
+    4
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m14",
+   "op": "DROP_IF",
+   "lines": [
+    4
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m15",
+   "op": "CONST",
+   "lines": [
+    2
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m16",
+   "op": "CMP",
+   "lines": [
+    2
+   ],
+   "class": "MUST"
+  },
+  {
+   "id": "m17",
+   "op": "DROP_IF",
+   "lines": [
+    2
+   ],
+   "class": "MUST"
+  }
+ ]
+}

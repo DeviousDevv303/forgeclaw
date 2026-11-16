@@ -214,6 +214,7 @@ import { HoldToConfirmButton } from './components/HoldToConfirmButton'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
 import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
+import { skillForPrompt } from './lib/skills'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
 import { isPublicVisitor } from './lib/publicRelay'
 import { checkGithubReadArgs } from './lib/githubArgCheck'
@@ -230,6 +231,10 @@ import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
 import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
 import { autoSettleKalshiPositions, kalshiOrderPlacedJournalEntry, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
 import { FundsPanel } from './components/FundsPanel'
+import { IntuitionPanel } from './components/IntuitionPanel'
+import { intuitionSummary, parseIntuitionCommand } from './lib/intuition/command'
+import { loadLedger as loadIntuitionLedger } from './lib/intuition/ledger'
+import { ACTIVE_REGISTRY as INTUITION_REGISTRY } from './lib/intuition/patternClasses'
 import { KALSHI_KEY_ID_STORAGE, KALSHI_PRIVATE_KEY_STORAGE, kalshiCredentialPresence, kalshiKeyUsable, loadKalshiEnv, loadKalshiRelayUrl, saveKalshiCredentials, saveKalshiEnv, saveKalshiRelayUrl, type KalshiEnv } from './lib/kalshiAuth'
 import { findInterruptedTask, RESUME_MODEL_NOTE, type InterruptedTask } from './lib/interruptedTask'
 import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/pageVisibility'
@@ -834,6 +839,8 @@ function App() {
   const [settledNotices, setSettledNotices] = useState<SettledNotice[]>([])
   // Bumped after every /funds command so the FundsPanel re-reads the ledger (PR B item 6).
   const [fundsTick, setFundsTick] = useState(0)
+  // /intuition: the read-only Synthetic Intuition panel (owner-typed; shows numbers only).
+  const [intuitionOpen, setIntuitionOpen] = useState(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const moonshotKeyVerified = useMemo(() => isKeyVerified('moonshot', moonshotApiKey), [moonshotApiKey, keyVerifyTick])
   const [moonshotModel, setMoonshotModel] = useState<string>(() => readMoonshotModel())
@@ -1294,7 +1301,8 @@ function App() {
     // to an unverified local fallback.
     const qwenProvider = isQwenProvider(activeProvider)
     // A public visitor (no token, relay configured) reaches the model through the relay instead.
-    if (qwenProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '')) {
+    // /intuition is a local, read-only view: it needs no token because it dispatches nothing.
+    if (qwenProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '') && parseIntuitionCommand(promptText) === null) {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: 'assistant',
@@ -1467,6 +1475,8 @@ function App() {
       parseSculptCommand(promptText) !== null ||
       // /funds is the owner's ledger, handled here with no model.
       parseFundsCommand(promptText) !== null ||
+      // /intuition is a read-only view of the local Synthetic Intuition ledger, also with no model.
+      parseIntuitionCommand(promptText) !== null ||
       isExplicitToolRequest(promptText) ||
       (isExplicitShellRequest(promptText) && extractExplicitShellCommand(promptText) !== null)
     )
@@ -1666,7 +1676,9 @@ function App() {
     // The owner's approved heuristics (NEXUS page) apply to every model; visitors' browsers have none.
     const ownerHeuristics = isPublicVisitor(ghToken) ? '' : heuristicsForPrompt()
     const browsingPlaybooks = !isPublicVisitor(ghToken) && runtimeTools.some(tool => tool.name === 'browser_run') ? browserPlaybooksForPrompt(promptText) : ''
-    const lessonedSystemPrompt = [baseSystemPrompt, ownerHeuristics, nexusLessons, browsingPlaybooks].filter(Boolean).join('\n\n')
+    // A bundled skill (src/skills) whose triggers match this message: a reviewed procedure, text only (skills.ts).
+    const bundledSkill = skillForPrompt(promptText || '')
+    const lessonedSystemPrompt = [baseSystemPrompt, ownerHeuristics, nexusLessons, browsingPlaybooks, bundledSkill].filter(Boolean).join('\n\n')
     const finalSystemPrompt = relevant.length > 0
       ? lessonedSystemPrompt + '\n\nRelevant past interactions with this user:\n' +
         relevant.map(e => `User: ${e.prompt.slice(0, 200)}\nYou: ${e.response.slice(0, 300)}`).join('\n---\n')
@@ -1676,7 +1688,7 @@ function App() {
     // manual protocol when runtimeTools are present and the App loop parses it.
     const conversationalSystemPrompt = `You are ForgeClaw, a concise and helpful AI assistant. ${languageInstruction}\nAnswer the user's request directly and naturally. Do not emit code fragments, tool syntax, metadata, or hidden reasoning unless the user explicitly asks for them.\n${NO_TOOLS_NOTICE}`
     // A tool-less turn is still a NEXUS turn: the owner's approved heuristics apply to the plain chat answer too.
-    const conversationalPrompt = ownerHeuristics ? `${conversationalSystemPrompt}\n\n${ownerHeuristics}` : conversationalSystemPrompt
+    const conversationalPrompt = [conversationalSystemPrompt, ownerHeuristics, bundledSkill].filter(Boolean).join('\n\n')
     // A numbered request is a ledger: every item it enumerates is owed a section before the run may end (requestLedger.ts).
     const requestLedger = parseRequestLedger(promptText, FORGE_TOOLS.map(tool => tool.name))
     const ledgerInstruction = requestLedger ? `\n\n${reportFormatInstruction(requestLedger)}` : ''
@@ -1753,6 +1765,21 @@ function App() {
             guardianPosture,
             requestGuardianApproval,
           }),
+      }
+
+      // /intuition: read-only view of the Synthetic Intuition ledger. Owner-typed only; a public visitor never sees it.
+      const intuitionCmd = isPublicVisitor(ghToken) ? null : parseIntuitionCommand(promptText)
+      if (intuitionCmd) {
+        if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
+        setIntuitionOpen(intuitionCmd.kind === 'open')
+        const reply = intuitionCmd.kind === 'open' ? intuitionSummary(loadIntuitionLedger(), INTUITION_REGISTRY) : 'Synthetic Intuition ledger closed.'
+        setMessages(prev => prev.map(message => message.id === msgId ? { ...message, content: reply, streaming: false, agentPhase: 'COMPLETE' } : message))
+        emitForge({ type: 'MISSION_COMPLETE' })
+        setRequestStatus('success')
+        setLastRequestError('')
+        setLastRequestLatencyMs(Math.round(performance.now() - requestStartedAt))
+        resolveTask(taskId)
+        return
       }
 
       // /funds: the owner's funds ledger (fundsLedger.ts). Owner-typed only: no model can add funds, approve or place.
@@ -3754,6 +3781,10 @@ function App() {
               <div ref={messagesEndRef} />
             </div>
             
+            {/* Synthetic Intuition ledger (/intuition): above the monitor and composer, clear of the fixed spiderling panel. */}
+            {!isPublicVisitor(ghToken) && (
+              <IntuitionPanel open={intuitionOpen} registry={INTUITION_REGISTRY} onClose={() => setIntuitionOpen(false)} />
+            )}
             {/* System Monitor — pinned above input */}
             <SystemMonitor
               events={activityStream.events}
@@ -3841,7 +3872,7 @@ function App() {
                 </div>
               ))}
 
-              <div style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #202024', padding: '10px 0 12px', zIndex: 20 }}>
+              <div data-composer-bar style={{ position: 'sticky', bottom: 0, background: '#0a0a0a', borderTop: '1px solid #202024', padding: '10px 0 12px', zIndex: 20 }}>
                 {attachedFile && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px 8px', color: '#f97316', fontSize: '12px' }}>
                     <span>📎 {attachedFile.name}</span>

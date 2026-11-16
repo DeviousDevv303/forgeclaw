@@ -9,6 +9,7 @@
  * raises it when a run starts, keeps it while anything is in flight, and hides it shortly after the activity settles.
  */
 import React, { useState } from 'react'
+import { useComposerClearance } from './useComposerClearance'
 import { formatClock, panelLines, spiderCounters, spiderPanelVisible, type SpiderLedger } from '../lib/spiderlings'
 
 /**
@@ -26,6 +27,7 @@ const GLYPH = { out: '↗', ok: '↙', flag: '⚑', unknown: '?' } as const
 
 export const SpiderPanel: React.FC<{ ledger: SpiderLedger; now: number; ambient?: { seed: number; freezeMs?: number } | null }> = ({ ledger, now, ambient = null }) => {
   const [open, setOpen] = useState(false)
+  const { bottom, listMaxPx } = useComposerClearance()
   // Hidden between runs: render nothing, keep the state (an expanded list reopens as it was).
   if (!spiderPanelVisible(ledger, now)) return null
   const c = spiderCounters(ledger, now)
@@ -37,7 +39,7 @@ export const SpiderPanel: React.FC<{ ledger: SpiderLedger; now: number; ambient?
       data-testid="spider-panel"
       data-source={ledger.source}
       style={{
-        position: 'fixed', left: 8, bottom: SPIDER_PANEL_BOTTOM_PX, zIndex: 6, width: 'min(340px, calc(100vw - 16px))', boxSizing: 'border-box', padding: '6px 8px',
+        position: 'fixed', left: 8, bottom, zIndex: 6, width: 'min(340px, calc(100vw - 16px))', boxSizing: 'border-box', padding: '6px 8px',
         background: 'rgba(8,10,18,0.82)', border: `1px solid ${demo ? 'rgba(255,190,70,0.7)' : 'rgba(120,200,255,0.35)'}`, borderRadius: 8,
         font: '11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace', color: '#cfe3f5', backdropFilter: 'blur(4px)',
       }}
@@ -70,7 +72,7 @@ export const SpiderPanel: React.FC<{ ledger: SpiderLedger; now: number; ambient?
         </div>
       )}
       {open && (
-        <ol data-testid="spider-lines" style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, maxHeight: '38vh', overflowY: 'auto' }}>
+        <ol data-testid="spider-lines" style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, maxHeight: listMaxPx > 0 ? `${listMaxPx}px` : '38vh', overflowY: 'auto' }}>
           {lines.length === 0 && <li data-testid="spider-empty" style={{ opacity: 0.7 }}>no tool events yet: nothing is out of the throne</li>}
           {lines.map(l => (
             <li key={l.key} data-tone={l.tone} style={{ color: TONE_COLOR[l.tone], display: 'flex', gap: 6 }}>

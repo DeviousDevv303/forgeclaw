@@ -90,3 +90,27 @@ def _tokens_in(line):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IntuitionPacket(unittest.TestCase):
+    """Synthetic Intuition packet (src/lib/intuition/packet.ts): the bucket digit 0-7 must be exactly one piece, and the whole
+    packet must stay inside its 24-character budget, under the deployed tokenizer. No new special tokens are involved."""
+
+    @staticmethod
+    def packet(code, bucket, flag):
+        return f"ix1 c={code:02d} b={bucket} r=1 f={flag} p=7"
+
+    def test_bucket_digits_are_single_pieces(self):
+        for d in range(8):
+            self.assertEqual(SP.encode(str(d), out_type=str), [str(d)])
+
+    def test_bucket_is_one_token_in_every_packet(self):
+        for code in range(16):
+            for bucket in range(8):
+                for flag in (0, 1):
+                    pkt = self.packet(code, bucket, flag)
+                    self.assertLessEqual(len(pkt), 24)
+                    pieces = SP.encode(pkt, out_type=str)
+                    self.assertLessEqual(len(pieces), len(pkt))
+                    self.assertEqual(pieces[pieces.index("▁b") + 2], str(bucket), pkt)
+                    self.assertNotIn(SP.unk_id(), SP.encode(pkt), pkt)
