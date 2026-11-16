@@ -2887,9 +2887,16 @@ function App() {
     })
   }
 
-  /** Everything visible on screen as text (not a picture), copied for troubleshooting; shown for manual copy if the browser blocks it. */
+  /** What is visible on screen right now as text (not a picture, and not the scrolled-off history), copied for troubleshooting; shown for manual copy if the browser blocks it. */
   const copyScreenText = async () => {
+    // Only what is on screen right now (owner, 2026-11-14), like a phone screenshot: the visual viewport, so a pinch-zoom or an
+    // open on-screen keyboard narrows it to what the owner actually sees.
+    const visual = window.visualViewport
+    const view = visual
+      ? { top: visual.offsetTop, left: visual.offsetLeft, bottom: visual.offsetTop + visual.height, right: visual.offsetLeft + visual.width }
+      : { top: 0, left: 0, bottom: window.innerHeight, right: window.innerWidth }
     const text = describeScreen(document.getElementById('root') ?? document.body, {
+      view,
       url: window.location.href.split('#')[0],
       viewport: `${window.innerWidth}×${window.innerHeight}`,
       provider: activeProvider,
