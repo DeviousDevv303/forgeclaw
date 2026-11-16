@@ -59,6 +59,6 @@ export async function runSculptCommand(command: SculptCommand, run: (call: ToolC
   if (failed(rewrite) || !rewrite.startsWith('✓ Qwen/Qwen3-8B completed as ')) return { ok: false, text: `The workflow model could not rewrite ${command.path}, so nothing was proposed. ${rewrite.slice(0, 300)}`, steps }
   const next = extractRewrittenFile(rewrite.split('\n\n').slice(1).join('\n\n'), file.content)
   if ('error' in next) return { ok: false, text: `${next.error}, so nothing was proposed for ${command.path}.`, steps }
-  const proposed = await step('sculpt_self', { file_path: command.path, content: next.content, reason: `/sculpt ${command.path}: ${command.instruction.replace(/\s+/g, ' ').slice(0, 200)}` })
+  const proposed = await step('sculpt_self', { file_path: command.path, content: next.content, before_content: file.content, reason: `/sculpt ${command.path}: ${command.instruction.replace(/\s+/g, ' ').slice(0, 200)}` })
   return { ok: !failed(proposed), text: proposed, steps }
 }

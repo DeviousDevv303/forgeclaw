@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { buildLearningEvent, MAX_LEARNING_FIELD_CHARS, outcomeFromToolOutput, recordLearningEvent, type LearningRecorder } from './learningEvents'
+import { describe, expect, it, vi } from 'vitest'
+import { buildLearningEvent, MAX_LEARNING_FIELD_CHARS, outcomeFromToolOutput, recordLearningEvent, recordVerifiedProposal, type LearningRecorder, type VerifiedProposalInput, type VerifiedProposalRecorder } from './learningEvents'
 
 const base = { channel: 'tool' as const, input: 'memory_read key="a"', result: 'ok', outcome: 'completed' as const, runtime: 'corpus', model: 'qwen' }
 
@@ -53,5 +53,108 @@ describe('recordLearningEvent', () => {
   it('never throws when storage fails', async () => {
     const recorder: LearningRecorder = { appendInteraction: async () => { throw new Error('quota') } }
     expect(await recordLearningEvent(base, recorder)).toBe(false)
+  })
+})
+
+describe('recordVerifiedProposal', () => {
+  const proposal: VerifiedProposalInput = {
+    toolName: 'shell_patch',
+    request: 'Fix the parser',
+    files: ['src/parser.ts', '', 'src/parser.test.ts'],
+    change: 'diff --git a/src/parser.ts b/src/parser.ts\n+token=sk-live-secret',
+    changeKind: 'unified-diff',
+    selectedProvider: 'selected-model',
+    actingProvider: 'acting-model',
+    workflow: 'shell-repair.yml',
+    workflowRunId: 42,
+    workflowRunUrl: 'https://github.com/acme/forge/actions/runs/42',
+    pullRequestNumber: 77,
+    pullRequestUrl: 'https://github.com/acme/forge/pull/77',
+  }
+
+  function fakeRecorder() {
+    const appendShellExperience = vi.fn<VerifiedProposalRecorder['appendShellExperience']>(async input => {
+      void input
+      return { candidate: { id: 'candidate-1' } }
+    })
+    return { recorder: { appendShellExperience } satisfies VerifiedProposalRecorder, appendShellExperience }
+  }
+
+  it('sanitizes secrets, bounds stored fields, and preserves verified-proposal provenance', async () => {
+    const { recorder, appendShellExperience } = fakeRecorder()
+    const longProposal = {
+      ...proposal,
+      request: 'x'.repeat(5_000),
+      files: ['src/parser.ts', 'f'.repeat(1_200)],
+      change: `token=${'z'.repeat(5_000)}`,
+      selectedProvider: 's'.repeat(300),
+      actingProvider: 'acting-model',
+      workflow: 'w'.repeat(300),
+      workflowRunUrl: `https://example.test/${'u'.repeat(1_200)}`,
+      pullRequestUrl: `https://example.test/${'p'.repeat(1_200)}`,
+    }
+
+    const result = await recordVerifiedProposal(longProposal, recorder)
+    expect(result).toEqual({ stored: true, candidateId: 'candidate-1' })
+    expect(appendShellExperience).toHaveBeenCalledOnce()
+    const stored = appendShellExperience.mock.calls[0][0]
+    expect(stored.input).toHaveLength(MAX_LEARNING_FIELD_CHARS)
+    expect(stored.input).toBe('x'.repeat(MAX_LEARNING_FIELD_CHARS))
+    expect(stored.context).toContain('src/parser.ts')
+    expect(stored.context.split('\n')[0]).toHaveLength(1_007) // "Files: " plus the 1,000-character bound
+    expect(stored.context).not.toContain('z'.repeat(16))
+    expect(stored.context).toContain('[REDACTED secret]')
+    expect(stored.context.length).toBeLessThanOrEqual(MAX_LEARNING_FIELD_CHARS)
+    expect(stored.provenance.selected_provider).toHaveLength(160)
+    expect(stored.provenance.workflow).toHaveLength(200)
+    expect(stored.provenance.workflow_run_url).toHaveLength(1_000)
+    expect(stored.provenance.pull_request_url).toHaveLength(1_000)
+    expect(stored.provenance).toMatchObject({
+      outcome: 'verified',
+      admission: 'unapproved',
+      tool: 'shell_patch',
+      acting_provider: 'acting-model',
+      workflow_run_id: '42',
+      pull_request_number: '77',
+      change_kind: 'unified-diff',
+    })
+    expect(stored.model).toBe('acting-model')
+    expect(stored.source).toBe('forgeclaw:verified-proposal')
+    expect(stored.result).toContain('run #42 succeeded')
+    expect(stored.result).toContain('pull request #77 was opened')
+  })
+
+  it('records only an unapproved shell-experience candidate and returns its id', async () => {
+    const { recorder, appendShellExperience } = fakeRecorder()
+    const result = await recordVerifiedProposal({ ...proposal, toolName: 'sculpt_self' }, recorder)
+
+    expect(result).toEqual({ stored: true, candidateId: 'candidate-1' })
+    expect(appendShellExperience).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'forgeclaw:verified-proposal',
+      provenance: expect.objectContaining({
+        outcome: 'verified', admission: 'unapproved', tool: 'sculpt_self',
+        selected_provider: 'selected-model', acting_provider: 'acting-model',
+      }),
+    }))
+  })
+
+  it.each([
+    ['request', { request: '  ' }],
+    ['workflow run id', { workflowRunId: 0 }],
+    ['workflow run URL', { workflowRunUrl: '' }],
+    ['pull request number', { pullRequestNumber: 0 }],
+    ['pull request URL', { pullRequestUrl: '' }],
+  ])('rejects a proposal missing its required %s reference without recording', async (_reference, override) => {
+    const { recorder, appendShellExperience } = fakeRecorder()
+    const result = await recordVerifiedProposal({ ...proposal, ...override }, recorder)
+
+    expect(result).toEqual({ stored: false })
+    expect(appendShellExperience).not.toHaveBeenCalled()
+  })
+
+  it('returns stored:false without throwing when candidate storage fails', async () => {
+    const recorder: VerifiedProposalRecorder = { appendShellExperience: async () => { throw new Error('quota exceeded') } }
+
+    await expect(recordVerifiedProposal(proposal, recorder)).resolves.toEqual({ stored: false })
   })
 })

@@ -32,7 +32,7 @@ describe('runSculptCommand', () => {
     expect(out).toMatchObject({ ok: true, text: expect.stringContaining('pull request #12') })
     expect(r.calls.map(c => c.name)).toEqual(['github_read_file', 'qwen_reason', 'sculpt_self'])
     expect(r.calls[1].input).toMatchObject({ profile: 'code' })
-    expect(r.calls[2].input).toMatchObject({ file_path: 'src/a.ts', content: UPDATED })
+    expect(r.calls[2].input).toMatchObject({ file_path: 'src/a.ts', content: UPDATED, before_content: ORIGINAL })
   })
 
   it('does nothing at all while locked', async () => {

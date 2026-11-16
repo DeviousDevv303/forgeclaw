@@ -6,7 +6,7 @@
 // The model never sees a partial file: a file github_read_file had to truncate is refused, because a
 // rewrite of a truncated file would delete its tail.
 
-const SCULPT_INTENT_RE = /\b(sculpt|self[- ]?improve|improve yourself|upgrade yourself|modify yourself|self[- ]?modify|evolve yourself|refactor yourself)\b/i
+const SCULPT_INTENT_RE = /\b(sculpt|improve|self[- ]?improve|improve yourself|upgrade yourself|modify yourself|self[- ]?modify|evolve yourself|refactor yourself)\b/i
 const PATH_RE = /(?:^|[\s`'"(])((?:src|docs|public|test|tests|nexus|database)\/[A-Za-z0-9._/-]+\.[A-Za-z0-9]+|README\.md)\b/
 
 /** The repository file a self-sculpt request names, or null when it is not one. */
@@ -16,7 +16,7 @@ export function sculptTarget(text: string): string | null {
 }
 
 const QWEN_SCULPT_MAX_CHARS = 8_000
-const TOO_LARGE = 'the file is larger than 8,000 characters, too large for Qwen to rewrite whole in its 8K context. Use Kimi or Claude, which can propose a shell_patch diff.'
+const TOO_LARGE = 'the file is larger than 8,000 characters, too large for Qwen to rewrite whole in its 8K context. Use `/patch` with Kimi or Claude to propose a shell_patch diff.'
 
 /** File body from a github_read_file result, or an error when it was truncated or unreadable. */
 export function readFileBody(output: string): { content: string } | { error: string } {

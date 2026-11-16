@@ -138,7 +138,7 @@ import { diagKeyFormat } from './lib/diagKeyFormat'
 import { isToolFailureOutput } from './lib/toolOutcome'
 import { cleanForSpeech, createSpeechController, type SpeechSynthLike, type SpeechUtteranceLike } from './lib/speech'
 import { answerLineage, answerOutcome } from './lib/nexusConvergence'
-import { learningRunId, outcomeFromToolOutput, recordLearningEvent, type DistributiveOmit, type LearningEventInput, type LearningLineage } from './lib/learningEvents'
+import { learningRunId, outcomeFromToolOutput, recordLearningEvent, recordVerifiedProposal, type DistributiveOmit, type LearningEventInput, type LearningLineage, type VerifiedProposalInput } from './lib/learningEvents'
 import { routeLiveDataQuestion } from './lib/liveDataRouting'
 import { buildLiveAnswerTask, buildSearchSummaryTask, cleanSearchDisplay, extractQwenAnswer, groundedLiveAnswer, unsupportedNames } from './lib/liveAnswer'
 import { resolveMoonshotModel } from './lib/ai/providers/moonshotProvider'
@@ -228,6 +228,7 @@ import { ReasoningFrameworkPanel } from './components/ReasoningFrameworkPanel'
 import { loadOwnerScaffold, operatingLoopFor, reasoningFormatReminder } from './lib/ownerScaffold'
 import { isSculptUnlocked, SCULPT_TOOLS } from './lib/sculptKey'
 import { parseSculptCommand, runSculptCommand } from './lib/sculptCommand'
+import { sculptTarget } from './lib/ai/qwenSculpt'
 import { ownerRulesPrompt, parseFundsCommand } from './lib/fundsLedger'
 import { autoSettleKalshiPositions, kalshiOrderPlacedJournalEntry, runFundsCommandWithExecution, type SettledNotice } from './lib/kalshiExecution'
 import { FundsPanel } from './components/FundsPanel'
@@ -1601,6 +1602,9 @@ function App() {
     // can emit code-token soup when a large tool protocol is injected for a
     // request that does not need tools.
     const qwenDuoDefault = isQwenProvider(activeProvider)
+    // Nexus cannot rewrite a complete file in its 640-token window. Hand natural-language self-sculpt
+    // requests to the existing Qwen read -> rewrite -> sculpt_self chain and label the result as Qwen.
+    const nexusSculptHandoff = activeProvider === 'nexus-intelligence' && !!sculptTarget(promptText)
     // A hosted tool-calling model (Claude or Kimi) explicitly chosen: it is the reasoning engine, so
     // don't route to Qwen, but still offer general tools. This used to check 'anthropic' only, so
     // Kimi on any "analyze/review/debug" prompt was told to hand the task to the slow Qwen workflow
@@ -1609,13 +1613,14 @@ function App() {
     const complexReasoningTask = !imageUrl && !isHostedReasoner && shouldDispatchComplexTaskToQwen(promptText)
     const coreToolNames = (codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'qwen_reason', 'ask_qwen']
-      : qwenDuoDefault || complexReasoningTask ? ['qwen_reason'] : [])
+      : qwenDuoDefault || complexReasoningTask || nexusSculptHandoff ? ['qwen_reason'] : [])
       // Claude and Kimi never delegate to the slow Qwen workflow, coding task or not.
       .filter(name => !(isHostedReasoner && (name === 'qwen_reason' || name === 'ask_qwen')))
     // Hosted reasoners get general tools (shell, repo state) but never qwen_reason.
     if (isHostedReasoner && !codingTask) {
       coreToolNames.push('github_repo_state', 'shell_exec', 'github_read_file', 'github_search_code')
     }
+    if (nexusSculptHandoff) coreToolNames.push('github_read_file', 'sculpt_self')
     // Claude and Kimi see the picture directly; analyze_image is the URL-based workflow for the others.
     if (imageUrl && !isHostedReasoner) coreToolNames.push('analyze_image')
     // Questions about what is current get gathered sources, whatever the wording (currentInfo.ts).
@@ -1623,7 +1628,7 @@ function App() {
     coreToolNames.push(...baselineToolNames(activeProvider))
     // Nexus Intelligence's dispatch tool rides by provider, with the baselines above (toolExposure.ts):
     // without it the router cannot dispatch the Nexus workflow at all (nexus-not-dispatched).
-    coreToolNames.push(...nexusDispatchToolNames(activeProvider))
+    if (!nexusSculptHandoff) coreToolNames.push(...nexusDispatchToolNames(activeProvider))
     // A pasted address says what to use: this repository's pages need the GitHub tools, any other page the cloud browser.
     coreToolNames.push(...toolsForUrls(promptText || '', ghOwner || CANONICAL_IDENTITY.owner, ghRepo || CANONICAL_IDENTITY.repository))
     // A merge asked for in any wording gets the merge tool and the readers it needs (still offered only while self-sculpt is unlocked).
@@ -1645,11 +1650,13 @@ function App() {
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'This model has no native function calling. ForgeClaw supplies a compact manual protocol and routes every call through its existing dispatcher.'
-    const needsManualTools = codingTask || imageUrl !== undefined || relevantTools.length > 0 || complexReasoningTask || qwenDuoDefault
+    const needsManualTools = codingTask || imageUrl !== undefined || relevantTools.length > 0 || complexReasoningTask || qwenDuoDefault || nexusSculptHandoff
     const primaryInstruction = imageUrl && isHostedReasoner
       ? `\n\nPRIMARY REASONING POLICY\n${VISION_POLICY}`
       : imageUrl
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
+      : nexusSculptHandoff
+        ? '\n\nPRIMARY REASONING POLICY\nThis Nexus self-sculpt request is handed off to the Qwen/Qwen3-8B read → rewrite → sculpt_self chain. Do not dispatch Nexus reasoning for this request. The final result must be attributed to Qwen and must come from actual tool results.'
       : qwenDuoDefault
         ? '\n\nPRIMARY REASONING POLICY\nThe Qwen/Qwen3-8B GitHub Actions workflow (provider id \'qwen\') is the only reasoning engine. Dispatch qwen_reason first and continue only from its verified result. Never claim the workflow ran without its dispatcher result.'
       : isHostedReasoner
@@ -1727,13 +1734,16 @@ function App() {
 
       // Compress coding agent state for context-constrained models
       const compressedState = codingAgentState.task ? compressCodingAgentState(codingAgentState) : ''
-      
+      const onVerifiedProposal = (event: VerifiedProposalInput) => recordVerifiedProposal(event)
+
       const toolCtx = {
         ...loadToolContext(),
         sessionId,
         agentId: FORGECLAW_AGENT_ID,
         runId,
         providerId: activeProvider,
+        actingProvider: activeProvider,
+        onVerifiedProposal,
         signal: controller.signal,
         guardianPosture,
         requestGuardianApproval,
@@ -1752,6 +1762,9 @@ function App() {
             sessionId,
             agentId: FORGECLAW_AGENT_ID,
             runId,
+            providerId: activeProvider,
+            actingProvider: activeProvider,
+            onVerifiedProposal,
             signal: controller.signal,
             guardianPosture,
             requestGuardianApproval,
@@ -1831,7 +1844,11 @@ function App() {
           : await runSculptCommand(sculptCommand, async call => {
               const actId = `act_${call.id}`
               setActivityLog(prev => [...prev.slice(-99), { id: actId, timestamp: Date.now(), tool: call.name, input: call.input, status: 'running' }])
-              const output = await executeTool(call, toolCtx)
+              const output = await executeTool(call, {
+                ...toolCtx,
+                actor: 'operator',
+                actingProvider: call.name === 'shell_patch' ? 'operator' : 'qwen',
+              })
               setActivityLog(prev => prev.map(entry => entry.id === actId ? { ...entry, output: output.slice(0, 300), status: isToolFailureOutput(output) ? 'error' : 'done' } : entry))
               void recordLearning({ channel: 'tool', input: `${call.name} ${JSON.stringify(call.input).slice(0, 500)}`, result: output, outcome: outcomeFromToolOutput(output), toolName: call.name, actor: 'operator', origin: promptOrigin(promptText) })
               return output
@@ -1871,7 +1888,7 @@ function App() {
         emitForge({ type: 'TOOL_START', tool: call.name, iter: 0 })
         // A malformed direct call is reported back with its usage; it is never
         // executed and never handed to the model as a fallback.
-        const rawOutput = explicitTool.error ?? await executeTool(call, { ...toolCtx, actor: 'operator' })
+        const rawOutput = explicitTool.error ?? await executeTool(call, { ...toolCtx, actor: 'operator', actingProvider: 'operator' })
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         // Surface parser adjustments (e.g. an auto-closed quote) so nothing is guessed silently.
         // Web-search replies are the exception (owner, 2026-10-31: "that goes for any web
@@ -1962,7 +1979,7 @@ function App() {
         }])
         emitForge({ type: 'THREAD_SPAWN', threadId: call.id, parentTool: call.name })
         emitForge({ type: 'TOOL_START', tool: call.name, iter: 0 })
-        const output = await executeTool(call, { ...toolCtx, actor: 'operator' })
+        const output = await executeTool(call, { ...toolCtx, actor: 'operator', actingProvider: 'operator' })
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
 
         const isError = isToolFailureOutput(output)
@@ -2257,7 +2274,7 @@ function App() {
           )
           const output = call.name === 'shell_exec' && repositoryHeadVerified
             ? 'Skipped: github_repo_state already provided the authoritative repository HEAD; shell execution was not needed.'
-            : await executeTool(call, toolCtx)
+            : await executeTool(call, { ...toolCtx, actingProvider: resolvedProvider })
           if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
           const isErr = isToolFailureOutput(output)
           void recordLearning({ channel: call.name === 'shell_exec' ? 'shell' : 'tool', input: `${call.name} ${JSON.stringify(call.input)}`, result: output, outcome: output.startsWith('Skipped:') ? 'attempted' : outcomeFromToolOutput(output), toolName: call.name, actor: 'agent', origin: promptOrigin(promptText) })

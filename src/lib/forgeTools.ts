@@ -50,6 +50,7 @@ import { runBrowserRound } from './browserAgent'
 import { recordBrowserLearning } from './browserLearning'
 import { mergePullRequest } from './mergePr'
 import { decodeBase64Utf8, formatFileRead } from './fileRead'
+import type { VerifiedProposalInput, VerifiedProposalRecordResult } from './learningEvents'
 import { listOpenPullRequests, parsePullNumber, readPullRequest } from './prInfo'
 import { formatGrepMatches, gitGrepCommand, parseGrepOutput } from './codeSearch'
 import { isPublicVisitor, PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
@@ -75,7 +76,30 @@ import { isSculptUnlocked, SCULPT_LOCKED_MESSAGE, SCULPT_TOOLS } from './sculptK
  * the pull request it opened, a run that changed nothing, or the failing run. A dispatch alone used to
  * be reported as done, although the build check or the protected-path policy could still reject it.
  */
-async function reportProposalRun(request: GithubRequest, input: { owner: string; repo: string; token: string; workflow: string; needle: string; since: number; branch: string; label: string; signal?: AbortSignal }): Promise<string> {
+type ProposalCaptureSource = Pick<VerifiedProposalInput, 'toolName' | 'request' | 'files' | 'change' | 'changeKind' | 'selectedProvider' | 'actingProvider'>
+
+function replacementSummary(before: string | undefined, after: string): string {
+  const sample = (content: string) => content.length <= 600
+    ? content
+    : `${content.slice(0, 300)}\n… (${content.length - 600} characters omitted) …\n${content.slice(-300)}`
+  const beforeSummary = before === undefined
+    ? 'Before snapshot unavailable.'
+    : `Before (${before.length} characters):\n${sample(before)}`
+  return `${beforeSummary}\nAfter (${after.length} characters):\n${sample(after)}`
+}
+
+function filesFromPatch(patch: string): string[] {
+  const files = [...patch.matchAll(/^diff --git a\/(.+?) b\/(.+)$/gm)].map(match => match[2])
+  if (files.length) return [...new Set(files)]
+  return [...new Set([...patch.matchAll(/^\+\+\+ b\/(.+)$/gm)].map(match => match[1]))]
+}
+
+async function reportProposalRun(
+  request: GithubRequest,
+  input: { owner: string; repo: string; token: string; workflow: string; needle: string; since: number; branch: string; label: string; signal?: AbortSignal },
+  capture?: ProposalCaptureSource,
+  onVerifiedProposal?: (event: VerifiedProposalInput) => Promise<VerifiedProposalRecordResult>,
+): Promise<string> {
   const run = await waitForCorrelatedRun(request, { ...input, maxWaitMs: PROPOSAL_MAX_WAIT_MS })
   if (run.conclusion !== 'success') {
     const facts = await describeFailedRun(request, { ...input, runId: run.id })
@@ -84,7 +108,24 @@ async function reportProposalRun(request: GithubRequest, input: { owner: string;
   }
   const pr = await findPullRequest(request, input.owner, input.repo, input.token, input.branch)
   if (!pr) return `✓ ${input.label} run #${run.run_number} succeeded but made no change (the content was identical), so no pull request was opened. Run: ${run.html_url}`
-  return `✓ ${input.label}: build-validated and proposed as pull request #${pr.number} on ${input.branch} (not merged; review it).\n  pr: ${pr.html_url}\n  run: ${run.html_url}`
+  let corpusNote = ''
+  if (capture && onVerifiedProposal) {
+    let recorded: VerifiedProposalRecordResult = { stored: false }
+    try {
+      recorded = await onVerifiedProposal({
+        ...capture,
+        workflow: input.workflow,
+        workflowRunId: run.id,
+        workflowRunUrl: run.html_url,
+        pullRequestNumber: pr.number,
+        pullRequestUrl: pr.html_url,
+      })
+    } catch { /* The verified proposal remains successful; the warning below makes capture failure visible. */ }
+    corpusNote = recorded.stored
+      ? `\n  CORPUS: unapproved verified-proposal candidate recorded${recorded.candidateId ? ` (${recorded.candidateId})` : ''}.`
+      : '\n  CORPUS WARNING: the verified proposal was not recorded; storage failed or is unavailable.'
+  }
+  return `✓ ${input.label}: build-validated and proposed as pull request #${pr.number} on ${input.branch} (not merged; review it).\n  pr: ${pr.html_url}\n  run: ${run.html_url}${corpusNote}`
 }
 
 /**
@@ -223,6 +264,10 @@ export interface ToolContext {
    * credited to Nexus Intelligence's image generator (the rendering pipeline named too),
    * never to the text checkpoint itself. */
   providerId?: string
+  /** The actual provider responsible for this tool call, which may differ from the selected chat provider. */
+  actingProvider?: string
+  /** Stores a proposal only after reportProposalRun verifies a successful build workflow and finds its PR. */
+  onVerifiedProposal?: (event: VerifiedProposalInput) => Promise<VerifiedProposalRecordResult>
   requestGuardianApproval?: (call: ToolCall) => Promise<boolean>
   spawnAgent?: (systemPrompt: string, task: string, tools?: string[]) => Promise<string>
 }
@@ -1539,6 +1584,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
       case 'sculpt_self': {
         const filePath = typeof input.file_path === 'string' ? input.file_path.trim() : ''
         const content = typeof input.content === 'string' ? input.content : ''
+        const beforeContent = typeof input.before_content === 'string' ? input.before_content : undefined
         const reason = typeof input.reason === 'string' ? input.reason.trim() : ''
         let branch = typeof input.branch === 'string' ? input.branch.trim() : ''
         if (!filePath || !reason) throw new Error('file_path, content and reason are required.')
@@ -1570,7 +1616,18 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'self-sculpt.yml', needle: branch, since: sculptSince, label: `sculpt_self ${branch}` })
         if (!sculptBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch, label: `sculpt_self ${branch}` })
         if (input.wait === false) return `✓ Self-sculpt ${invocationId} DISPATCHED, NOT VERIFIED for ${filePath}; look for the run "Self Sculpt ${branch}".`
-        return await reportProposalRun(githubRequest, { owner, repo, token, workflow: 'self-sculpt.yml', needle: branch, since: sculptSince, branch, label: `Self-sculpt of ${filePath}`, signal: ctx.signal })
+        return await reportProposalRun(
+          githubRequest,
+          { owner, repo, token, workflow: 'self-sculpt.yml', needle: branch, since: sculptSince, branch, label: `Self-sculpt of ${filePath}`, signal: ctx.signal },
+          {
+            toolName: 'sculpt_self', request: reason, files: [filePath],
+            change: replacementSummary(beforeContent, content),
+            changeKind: beforeContent === undefined ? 'replacement-content-summary' : 'before-after-summary',
+            selectedProvider: ctx.providerId || 'unknown',
+            actingProvider: ctx.actingProvider || ctx.providerId || 'unknown',
+          },
+          ctx.onVerifiedProposal,
+        )
       }
 
       // ── Shell patch: guarded shell-repair workflow (branch + pull request proposal) ──
@@ -1648,7 +1705,17 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         journalRecord(ctx.journal, { kind: 'workflow_dispatch', workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, label: `shell_patch ${repairBranch}` })
         if (!repairBranchExisted) journalRecord(ctx.journal, { kind: 'branch_created', branch: repairBranch, label: `shell_patch ${repairBranch}` })
         if (input.wait === false) return `✓ Shell-patch ${invocationId} DISPATCHED, NOT VERIFIED. Look for the run named "Shell repair ${invocationId}". ${preflightNote}`
-        const proposal = await reportProposalRun(githubRequest, { owner, repo, token, workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, branch: repairBranch, label: `Shell-patch ${invocationId}`, signal: ctx.signal })
+        const proposal = await reportProposalRun(
+          githubRequest,
+          { owner, repo, token, workflow: 'shell-repair.yml', needle: invocationId, since: repairSince, branch: repairBranch, label: `Shell-patch ${invocationId}`, signal: ctx.signal },
+          {
+            toolName: 'shell_patch', request: reason, files: filesFromPatch(patch),
+            change: patch, changeKind: 'unified-diff',
+            selectedProvider: ctx.providerId || 'unknown',
+            actingProvider: ctx.actingProvider || ctx.providerId || 'unknown',
+          },
+          ctx.onVerifiedProposal,
+        )
         return preflightNote ? `${proposal}\n${preflightNote}` : proposal
       }
 

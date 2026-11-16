@@ -17,7 +17,7 @@
  * a storage failure is reported to the caller as `false` and never breaks the user's request.
  */
 
-import { corpusRepository, type CorpusInteractionInput } from './corpus'
+import { corpusRepository, type CorpusInteractionInput, type ShellCorpusExperienceInput } from './corpus'
 import { sanitizeShellOutput } from './shellLearning'
 import { isToolFailureOutput } from './toolOutcome'
 
@@ -55,6 +55,27 @@ export type LearningEventInput =
   | (LearningEventBase & { channel: 'chat' | 'voice'; lineage: LearningLineage })
   | (LearningEventBase & { channel: 'tool' | 'shell'; lineage?: LearningLineage })
 
+/** A sculpt/patch proposal after its build workflow succeeded and its PR was found. */
+export interface VerifiedProposalInput {
+  toolName: 'sculpt_self' | 'shell_patch'
+  request: string
+  files: string[]
+  change: string
+  changeKind: string
+  selectedProvider: string
+  actingProvider: string
+  workflow: string
+  workflowRunId: number
+  workflowRunUrl: string
+  pullRequestNumber: number
+  pullRequestUrl: string
+}
+
+export interface VerifiedProposalRecordResult {
+  stored: boolean
+  candidateId?: string
+}
+
 /** Omit that keeps the chat/voice vs tool/shell distinction (the built-in Omit collapses a union). */
 export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
@@ -65,6 +86,10 @@ export function learningRunId(parent?: string): string {
 
 export interface LearningRecorder {
   appendInteraction(input: CorpusInteractionInput): Promise<unknown>
+}
+
+export interface VerifiedProposalRecorder {
+  appendShellExperience(input: ShellCorpusExperienceInput): Promise<{ candidate: { id: string } }>
 }
 
 /** Bound on stored text per field; keeps localStorage use predictable. */
@@ -120,5 +145,50 @@ export async function recordLearningEvent(event: LearningEventInput, recorder: L
     return true
   } catch {
     return false
+  }
+}
+
+/**
+ * Record only an independently verified build + opened-PR result as an unapproved CORPUS candidate.
+ * Callers must gate this on the correlated workflow run and PR; this helper never admits knowledge.
+ */
+export async function recordVerifiedProposal(
+  event: VerifiedProposalInput,
+  recorder: VerifiedProposalRecorder = corpusRepository,
+): Promise<VerifiedProposalRecordResult> {
+  if (!event.request.trim() || !event.workflowRunId || !event.workflowRunUrl || !event.pullRequestUrl || !event.pullRequestNumber) {
+    return { stored: false }
+  }
+  const input = clean(event.request).text
+  const files = clean(event.files.filter(Boolean).join(', ') || 'file path unavailable', 1_000).text
+  const change = clean(event.change || 'Change summary unavailable', MAX_LEARNING_FIELD_CHARS).text
+  const context = clean(`Files: ${files}\nChange kind: ${event.changeKind}\nChange:\n${change}`).text
+  const result = clean(`Verified: ${event.workflow} run #${event.workflowRunId} succeeded and pull request #${event.pullRequestNumber} was opened.`, 1_000).text
+  const provenance = {
+    outcome: 'verified',
+    admission: 'unapproved',
+    tool: event.toolName,
+    selected_provider: clean(event.selectedProvider || 'unknown', 160).text,
+    acting_provider: clean(event.actingProvider || 'unknown', 160).text,
+    workflow: clean(event.workflow, 200).text,
+    workflow_run_id: String(event.workflowRunId),
+    workflow_run_url: clean(event.workflowRunUrl, 1_000).text,
+    pull_request_number: String(event.pullRequestNumber),
+    pull_request_url: clean(event.pullRequestUrl, 1_000).text,
+    change_kind: clean(event.changeKind, 100).text,
+  }
+  try {
+    const { candidate } = await recorder.appendShellExperience({
+      input,
+      context,
+      result,
+      runtime: 'github-actions',
+      model: provenance.acting_provider,
+      source: 'forgeclaw:verified-proposal',
+      provenance,
+    })
+    return { stored: true, candidateId: candidate.id }
+  } catch {
+    return { stored: false }
   }
 }
