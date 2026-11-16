@@ -117,3 +117,25 @@ describe('eventsAfter (the ForgeOps window slides at 60, so it tracks identity, 
     expect(eventsAfter([], b)).toEqual([])
   })
 })
+
+// Owner report 2026-11-15: an image was still generating and its spider read "network · 1 unknown". generate_image waits up
+// to 46 minutes on a workflow; the spider's limit was 3. A run is unknown only once the tool itself would have given up.
+describe('workflow-backed tools are not shown as unknown while they are still inside their own wait', () => {
+  const MIN = 60_000
+  const t0 = 1_800_000_000_000
+  const started = (tool: string) => foldSpiderEvents(emptyLedger('live', t0), [{ type: 'TOOL_START', tool, timestamp: t0, iter: 0 } as AgentEvent])
+  it('an image 17 minutes in is in flight, not unknown; past its own maximum wait it is unknown', async () => {
+    const { IMAGE_MAX_WAIT_MS } = await import('./imageArtifact')
+    const l = started('generate_image')
+    expect(spiderCounters(l, t0 + 17 * MIN)).toMatchObject({ inFlight: 1, unknown: 0 })
+    expect(spiderCounters(l, t0 + IMAGE_MAX_WAIT_MS)).toMatchObject({ inFlight: 1, unknown: 0 })
+    expect(spiderCounters(l, t0 + IMAGE_MAX_WAIT_MS + 2 * MIN)).toMatchObject({ inFlight: 0, unknown: 1 })
+  })
+  it('analyze_image and review_code get their own wait too, and a plain read keeps 3 minutes', async () => {
+    const { VISION_MAX_WAIT_MS } = await import('./visionInput'), { REVIEW_MAX_WAIT_MS } = await import('./codeReview')
+    expect(spiderChannel('analyze_image')?.timeoutMs).toBe(VISION_MAX_WAIT_MS + MIN)
+    expect(spiderChannel('review_code')?.timeoutMs).toBe(REVIEW_MAX_WAIT_MS + MIN)
+    expect(spiderChannel('web_search')?.timeoutMs).toBe(3 * MIN)
+    expect(spiderCounters(started('web_search'), t0 + 4 * MIN)).toMatchObject({ unknown: 1 })
+  })
+})

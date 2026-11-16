@@ -212,7 +212,7 @@ import { ElapsedNote } from './components/ElapsedNote'
 import { NexusLearningPanel } from './components/NexusLearningPanel'
 import { HoldToConfirmButton } from './components/HoldToConfirmButton'
 const SELF_SCULPT_LOCKED_NOTICE = 'Self-sculpt is LOCKED: you have no self-modification tools in this turn. Tell the user plainly to unlock it in SETTINGS → Self-sculpt key, then ask again. Do not claim any change was made.'
-import { lessonsForPrompt, summarizeLearning } from './lib/nexusLearning'
+import { lessonsForPrompt, PROMPT_CANDIDATE_WINDOW, summarizeLearning } from './lib/nexusLearning'
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
 import { skillForPrompt } from './lib/skills'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
@@ -1679,7 +1679,7 @@ function App() {
     const baseSystemPrompt = `${forgemindSystemPrompt(ownerScaffold)}\n\nCURRENT DATE\n${currentDateNote()}${needsCurrentInfo(promptText) && finalTools.some(t => t.name === 'deep_research') ? ' This question is about what is current: call deep_research first and answer from its sources.' : ''}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
     
     // NEXUS recursive learning: recurring failures of the tools offered now, as counted evidence.
-    const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(500)), runtimeTools.map(tool => tool.name))
+    const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(PROMPT_CANDIDATE_WINDOW)), runtimeTools.map(tool => tool.name))
     // The owner's approved heuristics (NEXUS page) apply to every model; visitors' browsers have none.
     const ownerHeuristics = isPublicVisitor(ghToken) ? '' : heuristicsForPrompt()
     const browsingPlaybooks = !isPublicVisitor(ghToken) && runtimeTools.some(tool => tool.name === 'browser_run') ? browserPlaybooksForPrompt(promptText) : ''

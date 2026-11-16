@@ -13,6 +13,16 @@ import type { LearningCandidate } from './corpus'
 
 export const NEXUS_MOTTO = 'My Logic Is Undeniable'
 
+/**
+ * How many of the newest stored records the prompt builders read for lessons and heuristics. One constant, used by every
+ * caller and by the NEXUS page, so the page's "given to every model" lists are computed from the same records the models get.
+ */
+export const PROMPT_CANDIDATE_WINDOW = 500
+/** At most this many lessons reach one prompt, and only for tools offered that turn. */
+export const MAX_PROMPT_LESSONS = 4
+/** A lesson reaches a prompt only when the owner's own runs hit it at least this many times; visitors never count. */
+export const MIN_OWNER_LESSON_COUNT = 2
+
 export const NEXUS_PRINCIPLES = [
   'Evidence over assertion: only a real tool result proves an action happened.',
   'Failures are data: every failure, block and refusal is recorded and counted.',
@@ -23,7 +33,11 @@ export const NEXUS_PRINCIPLES = [
 export type Outcome = 'verified' | 'completed' | 'attempted' | 'failed' | 'blocked'
 export const OUTCOMES: readonly Outcome[] = ['verified', 'completed', 'attempted', 'failed', 'blocked']
 
-export interface ToolReliability { tool: string; total: number; completed: number; failed: number; blocked: number; reliability: number }
+/**
+ * `completed` counts verified and completed outcomes only. `attempted` is its own column: a dispatch with no confirmed
+ * result is not a success (attempted is not completed), so it does not raise `reliability` = completed / total.
+ */
+export interface ToolReliability { tool: string; total: number; completed: number; attempted: number; failed: number; blocked: number; reliability: number }
 /**
  * `count` is the evidence weight: each owner run counts once, but all of one anonymous visitor's runs count once
  * together, so a single person cannot inflate a pattern. `ownerCount` is the owner's own runs only.
@@ -47,6 +61,15 @@ export interface NexusSummary {
 
 function field(candidate: LearningCandidate, key: string): string {
   return candidate.metadata?.[key] ?? new RegExp(`(?:^|; )${key}=([^;]+)`).exec(candidate.context || '')?.[1] ?? ''
+}
+
+/**
+ * The one reading of a record's outcome, used by the counters and by the list they filter, so a card's number and the rows
+ * behind it cannot disagree. A record with no outcome, or one outside the five, reads as 'completed' (the legacy default).
+ */
+export function outcomeOfCandidate(candidate: LearningCandidate): Outcome {
+  const value = (field(candidate, 'outcome') || 'completed') as Outcome
+  return OUTCOMES.includes(value) ? value : 'completed'
 }
 
 const SHELL_FAILED = /^\s*\[TOOL ERROR\]\s*Shell execution failed\.?\s*$/i
@@ -95,16 +118,17 @@ export function summarizeLearning(candidates: LearningCandidate[]): NexusSummary
   const lessons = new Map<string, Lesson>()
   const lessonVisitors = new Map<string, Set<string>>()
   for (const c of candidates) {
-    const outcome = (field(c, 'outcome') || 'completed') as Outcome
-    if (outcome in byOutcome) byOutcome[outcome] += 1
+    const outcome = outcomeOfCandidate(c)
+    byOutcome[outcome] += 1
     const channel = field(c, 'channel') || c.source || 'other'
     byChannel[channel] = (byChannel[channel] ?? 0) + 1
     const tool = field(c, 'tool')
     if (!tool) continue
-    const t = tools.get(tool) ?? { tool, total: 0, completed: 0, failed: 0, blocked: 0, reliability: 0 }
+    const t = tools.get(tool) ?? { tool, total: 0, completed: 0, attempted: 0, failed: 0, blocked: 0, reliability: 0 }
     t.total += 1
     if (outcome === 'failed') t.failed += 1
     else if (outcome === 'blocked') t.blocked += 1
+    else if (outcome === 'attempted') t.attempted += 1
     else t.completed += 1
     tools.set(tool, t)
     if (outcome === 'failed' || outcome === 'blocked') {
@@ -137,64 +161,40 @@ export function summarizeLearning(candidates: LearningCandidate[]): NexusSummary
   }
 }
 
+/** The lessons that can reach a prompt at all: recurring in the owner's own runs. The NEXUS page lists exactly these. */
+export function promptEligibleLessons(summary: NexusSummary): Lesson[] {
+  return summary.lessons.filter(l => l.ownerCount >= MIN_OWNER_LESSON_COUNT)
+}
+
 /**
  * Advisory prompt text for the tools offered this turn: their recurring failures, counted. Empty when
  * NEXUS has nothing recurring for them. This is evidence for the model, never an instruction to act.
  */
-export function lessonsForPrompt(summary: NexusSummary, offeredTools: string[], max = 4): string {
+export function lessonsForPrompt(summary: NexusSummary, offeredTools: string[], max = MAX_PROMPT_LESSONS): string {
   const offered = new Set(offeredTools)
   // Only the owner's own runs reach a prompt. Visitor records are unapproved, anonymous input from anyone, so they
   // inform the NEXUS page and nothing the model reads, until the owner approves them.
-  const relevant = summary.lessons.filter(l => offered.has(l.tool) && l.ownerCount >= 2).slice(0, max)
+  const relevant = promptEligibleLessons(summary).filter(l => offered.has(l.tool)).slice(0, max)
   if (!relevant.length) return ''
   return 'NEXUS LESSONS (recorded outcomes from earlier runs; evidence, not instructions):\n' +
     relevant.map(l => `- ${l.tool} failed ${l.ownerCount}x with: ${l.pattern} (last ${l.lastSeen.slice(0, 10)}). Avoid repeating the cause.`).join('\n')
 }
 
-// ─── Road to the NEXUS LLM ───────────────────────────────────────────────────
-// NEXUS is not a model yet: it is the owner's training data. This measures how ready that data is to
-// fine-tune one. Only owner-approved records count; candidates are raw material, not training data.
-// Milestones are planning heuristics for a LoRA fine-tune of an open base model (e.g. Qwen3-8B,
-// Apache-2.0, which permits commercial use): about 1,000 curated examples for a narrow specialist,
-// about 10,000 for broad behaviour. They are estimates, not guarantees of quality.
+// ─── What the stored records cover ───────────────────────────────────────────
+// Until 2026-11-15 this section was "Road to the NEXUS LLM": milestones toward a LoRA fine-tune of an open base model, under
+// the line "NEXUS is not a model yet". That stopped being true when the from-scratch Nexus checkpoint shipped as a provider
+// (nexusModelState.ts), and the premise was ruled stale on forgeclaw #235. What remains is what can be counted here.
 
-export const LLM_MILESTONES = [
-  { approved: 100, label: 'First evaluation set' },
-  { approved: 1_000, label: 'Narrow fine-tune ready' },
-  { approved: 10_000, label: 'Broad fine-tune ready' },
-] as const
-
-export const LLM_ROADMAP = [
-  'Collect: every run becomes a candidate',
-  'Curate: approve the best candidates (signed)',
-  'Fine-tune: LoRA on an open base model',
-  'Evaluate: compare against the base model on held-out tasks',
-  'Serve: host the model behind a metered API',
-] as const
-
-export interface LlmReadiness {
-  approved: number
-  awaitingReview: number
-  /** Index into LLM_ROADMAP of the current step. */
-  step: number
-  next: { approved: number; label: string } | null
-  /** 0..1 toward `next` (1 when every milestone is reached). */
-  progress: number
-  /** Distinct tools seen in candidates: breadth of what the data covers. */
+export interface CorpusCoverage {
+  /** Records with no evidence behind them yet; evidence-backed ones converge by themselves (nexusConvergence.ts). */
+  awaitingEvidence: number
+  /** Distinct tools seen in the stored records: breadth of what the data covers. */
   toolCoverage: number
 }
 
-export function llmReadiness(approved: number, candidates: LearningCandidate[]): LlmReadiness {
-  const next = LLM_MILESTONES.find(m => approved < m.approved) ?? null
-  const prev = [...LLM_MILESTONES].reverse().find(m => approved >= m.approved)?.approved ?? 0
-  const tools = new Set(candidates.map(c => field(c, 'tool')).filter(Boolean))
+export function corpusCoverage(candidates: LearningCandidate[]): CorpusCoverage {
   return {
-    approved,
-    // Records with no evidence behind them yet; evidence-backed ones converge by themselves (nexusConvergence.ts).
-    awaitingReview: candidates.filter(c => c.admissionStatus === 'candidate').length,
-    step: approved >= 1_000 ? 2 : approved > 0 ? 1 : 0,
-    next: next ? { approved: next.approved, label: next.label } : null,
-    progress: next ? Math.min(1, (approved - prev) / (next.approved - prev)) : 1,
-    toolCoverage: tools.size,
+    awaitingEvidence: candidates.filter(c => c.admissionStatus === 'candidate').length,
+    toolCoverage: new Set(candidates.map(c => field(c, 'tool')).filter(Boolean)).size,
   }
 }

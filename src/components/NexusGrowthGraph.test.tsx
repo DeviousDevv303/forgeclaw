@@ -18,30 +18,33 @@ function candidate(timestamp: string, admissionStatus: string, admittedAt?: stri
   } as unknown as LearningCandidate
 }
 
+const know = (timestamp: string, admittedAt?: string): { timestamp: string; metadata: Record<string, string> } => ({ timestamp, metadata: admittedAt ? { admittedAt } : {} })
+
 describe('growthSeries', () => {
-  it('steps recorded at record timestamps and admitted at admission times', () => {
-    const points = growthSeries([
-      candidate('2026-10-20T10:00:00Z', 'candidate'),
-      candidate('2026-10-21T10:00:00Z', 'approved', '2026-10-22T09:00:00Z'),
-      candidate('2026-10-21T12:00:00Z', 'approved'), // no admittedAt: falls back to its record timestamp
-    ])
-    expect(points.map(p => [p.total, p.admitted])).toEqual([
-      [1, 0], // Oct 20: one recorded
-      [2, 0], // Oct 21 10:00: second recorded
-      [3, 1], // Oct 21 12:00: third recorded and admitted (fallback time)
-      [3, 2], // Oct 22 09:00: the first approval's recorded admission time
-    ])
+  it('steps recorded at candidate timestamps and admitted at knowledge admission times', () => {
+    const points = growthSeries(
+      [candidate('2026-10-20T10:00:00Z', 'candidate'), candidate('2026-10-20T11:00:00Z', 'approved'), candidate('2026-10-21T12:00:00Z', 'approved')],
+      [know('2026-10-20T11:00:00Z', '2026-10-21T09:00:00Z'), know('2026-10-21T12:00:00Z')], // the second has no admittedAt: its own time
+    )
+    expect(points.map(p => [p.total, p.admitted])).toEqual([[1, 0], [2, 0], [2, 1], [3, 2]])
   })
 
-  it('leaves records with unparseable timestamps off the lines', () => {
-    expect(growthSeries([candidate('not-a-date', 'approved')])).toEqual([])
-    expect(growthSeries([])).toEqual([])
+  it('the admitted line follows the knowledge store, not the candidates\' status', () => {
+    // An approved candidate whose knowledge record was removed or evicted is not admitted knowledge any more,
+    // and a legacy knowledge entry with no candidate still is.
+    expect(growthSeries([candidate('2026-10-20T10:00:00Z', 'approved')], []).at(-1)).toMatchObject({ total: 1, admitted: 0 })
+    expect(growthSeries([], [know('2026-10-01T10:00:00Z')]).at(-1)).toMatchObject({ total: 0, admitted: 1 })
+  })
+
+  it('leaves unplaceable timestamps off the lines', () => {
+    expect(growthSeries([candidate('not-a-date', 'approved')], [know('not-a-date')])).toEqual([])
+    expect(growthSeries([], [])).toEqual([])
   })
 })
 
 describe('NexusGrowthGraph', () => {
   it('labels the empty state with the real zero count instead of a blank graph', () => {
-    render(<NexusGrowthGraph candidates={[]} />)
+    render(<NexusGrowthGraph candidates={[]} knowledge={[]} />)
     expect(screen.getByRole('status').textContent).toContain('admitted 0 entries')
     expect(screen.getByRole('status').textContent).toContain('the graph grows as it learns')
     expect(screen.queryByTestId('nexus-growth-chart')).toBeNull()
@@ -53,8 +56,8 @@ describe('NexusGrowthGraph', () => {
       candidate('2026-10-20T10:00:00Z', 'candidate'),
       candidate('2026-10-21T10:00:00Z', 'approved'),
       candidate('2026-10-22T10:00:00Z', 'approved'),
-    ]} />)
-    expect(screen.getByRole('status').textContent).toContain('admitted 2 of 3 recorded entries')
+    ]} knowledge={[know('2026-10-21T10:00:00Z'), know('2026-10-22T10:00:00Z')]} />)
+    expect(screen.getByRole('status').textContent).toContain('holds 2 admitted knowledge entries and 3 recorded candidates')
     expect(screen.getByTestId('nexus-growth-chart')).toBeTruthy()
     const totalLine = screen.getByTestId('nexus-growth-total-line').getAttribute('d') ?? ''
     const admittedLine = screen.getByTestId('nexus-growth-admitted-line').getAttribute('d') ?? ''

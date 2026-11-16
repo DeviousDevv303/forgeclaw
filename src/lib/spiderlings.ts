@@ -17,6 +17,9 @@
  * TOOL_START of the same tool name. Two concurrent runs of one tool can therefore swap outcomes; counts stay right.
  */
 import type { AgentEvent } from '../types/forgeOps'
+import { REVIEW_MAX_WAIT_MS } from './codeReview'
+import { IMAGE_MAX_WAIT_MS } from './imageArtifact'
+import { VISION_MAX_WAIT_MS } from './visionInput'
 
 export type SpiderChannel = 'browser' | 'sandbox' | 'network'
 export type SpiderSource = 'live' | 'demo'
@@ -41,9 +44,14 @@ const TOOLS: Record<string, { channel: SpiderChannel; timeoutMs: number }> = {
   github_run_workflow: { channel: 'network', timeoutMs: 31 * MIN },
   mirofish_sim: { channel: 'network', timeoutMs: 31 * MIN },
   deep_research: { channel: 'network', timeoutMs: 10 * MIN },
+  // These three wait on a GitHub Actions run, not a plain read. Their limit is the tool's own maximum wait plus a minute, read
+  // from the tool so the two cannot drift: at the old 3 minutes a CPU image that was still generating was shown as unknown.
+  generate_image: { channel: 'network', timeoutMs: IMAGE_MAX_WAIT_MS + MIN },
+  analyze_image: { channel: 'network', timeoutMs: VISION_MAX_WAIT_MS + MIN },
+  review_code: { channel: 'network', timeoutMs: REVIEW_MAX_WAIT_MS + MIN },
 }
 const NETWORK_READS = [
-  'web_search', 'http_fetch', 'analyze_image', 'generate_image', 'review_code', 'mirofish_sim_result', 'espn_fight_stats', 'weather_forecast',
+  'web_search', 'http_fetch', 'mirofish_sim_result', 'espn_fight_stats', 'weather_forecast',
   'kalshi_markets', 'kalshi_owner_prices', 'gmail_read', 'gmail_send', 'calendar_read', 'calendar_create', 'send_whatsapp',
 ]
 for (const name of NETWORK_READS) TOOLS[name] = { channel: 'network', timeoutMs: 3 * MIN }
