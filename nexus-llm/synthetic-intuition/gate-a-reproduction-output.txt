@@ -1,0 +1,42 @@
+loaded tranche6=7000 rows, mix=91989 rows
+== tranche 6: desk rows 6200, entry rows 3800
+  route token precedes first recognition element: 5000/5000
+  funds_propose precedes first recognition element: 2347/2347
+  key order "probability" before "side": 2347/2347; "side" first: 0/2347
+  desk_pass P(YES) precedes "No trade": 1453/1453
+  assess_hold action word precedes P(YES): 1200/1200
+  assess_exit rows carrying any probability signal: 0/1200
+  desk rows carrying an explicit recognition signal: 5000/6200
+  entry prompts stating distance+book: 3800/3800
+== full mix: desk rows 34613, entry rows 27413
+  route token precedes first recognition element: 31013/31013
+  funds_propose precedes first recognition element: 18424/18424
+  key order "probability" before "side": 12485/18424; "side" first: 5939/18424
+  desk_pass P(YES) precedes "No trade": 8989/8989
+  assess_hold action word precedes P(YES): 3600/3600
+  assess_exit rows carrying any probability signal: 0/3600
+  desk rows carrying an explicit recognition signal: 31013/34613
+  entry prompts stating distance+book: 26640/27413
+== tranche 6 marginals: desk 6200; entry 3800 = entries 2347 + passes 1453; assess EXIT 1200 / HOLD 1200
+== full mix marginals: desk 34613; entry 27413 = entries 18424 + passes 8989; assess EXIT 3600 / HOLD 3600
+== tranche 6 decisive entry rows (|d|>=3): 3248; with stated edge: 2998
+  edge >=+1.5c: 2054 rows -> propose 2054
+  edge [+0.5,+1.5)c: 116 rows -> desk_pass 6, propose 110
+  edge [0,+0.5)c: 81 rows -> desk_pass 81
+  edge [-3,0)c: 747 rows -> desk_pass 564, propose_fee 183
+  cap band (stated aligned ask >85c): 250 rows -> desk_pass 250, other 0
+== full mix decisive entry rows (|d|>=3): 22958; with stated edge: 22208
+  edge >=+1.5c: 15308 rows -> propose 15308
+  edge [+0.5,+1.5)c: 1022 rows -> desk_pass 62, propose 960
+  edge [0,+0.5)c: 1387 rows -> desk_pass 1387
+  edge [-3,0)c: 4491 rows -> desk_pass 3108, propose_fee 1383
+  cap band (stated aligned ask >85c): 750 rows -> desk_pass 750, other 0
+== tranche 6 ask leak: YES-side stated != printed: 0/1163; NO-side stated != derivable complement: 893/1184 (max diff 2.9c)
+== tranche-6 pairs: 2410 pairs; pair halves 4820
+  family census: a* 1200, c* 400, e* 160, n* 200, s* 450
+  family c*: designed-flip verified 400/400
+  family e*: designed-flip verified 160/160
+  family a*: designed-flip verified 1200/1200
+  family s*: designed-flip verified 450/450
+  family n*: designed-flip verified 200/200
+  pairs varying ONLY the recognition signal (identical prompt, different stated P): 0/2410
