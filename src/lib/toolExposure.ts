@@ -23,6 +23,7 @@ export const READ_ONLY_BASELINE_TOOLS = [
   'github_get_run_logs',
   'github_list_prs',
   'github_pr_info',
+  'github_read_issue',
   'web_search',
   // Read-only market, ledger and forecast reads, so a money question in any wording can be researched; nothing here
   // proposes, approves or places. 2026-10-23: a "best bet on Kalshi" run priced high-temperature markets with no
@@ -329,6 +330,7 @@ export function toolsForUrls(text: string, ownerName: string, repoName: string):
     if (gh && gh[1].toLowerCase() === ownerName.toLowerCase() && gh[2].replace(/\.git$/i, '').toLowerCase() === repoName.toLowerCase()) {
       const kind = (gh[3] ?? '').toLowerCase()
       if (kind === 'pull') out.add('github_pr_info')
+      else if (kind === 'issues') out.add('github_read_issue')
       else if (kind === 'actions') { out.add('github_get_run_status'); out.add('github_get_run_logs') }
       else if (kind === 'blob') out.add('github_read_file')
       else if (kind === 'tree') out.add('github_list_files')
