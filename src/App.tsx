@@ -1575,6 +1575,7 @@ function App() {
       'github_repo_state': ['state', 'status', 'head', 'branch'],
       'github_pr_info': ['pull request', 'pull/', 'pr #', 'merge status', 'is pr'],
       'github_list_prs': ['pull request', 'open pr', 'open prs', 'the prs', 'my prs', 'list pr', 'merge pr', 'merge the pr', 'merge all', 'merge them'],
+      'github_read_issue': ['issue #', 'github issue', 'issues/', 'the issue', 'issue 235', '#235'],
       'generate_image': ['generate', 'image', 'logo', 'illustration', 'picture', 'artwork', 'photo', 'portrait'],
       'analyze_image': ['analyze', 'image', 'photo', 'picture', 'vision'],
       // Not a bare 'review': that would offer it for "review my workflows".

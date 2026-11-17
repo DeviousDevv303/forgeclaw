@@ -29,7 +29,7 @@ const HAS_NAME_CHAR = /[\p{L}\p{N}_]/u
 
 const OWNER_REPO_TOOLS: ReadonlySet<string> = new Set([
   'github_read_file', 'github_list_files', 'github_search_code', 'github_get_run_status',
-  'github_get_run_logs', 'github_list_prs', 'github_pr_info', 'github_repo_state',
+  'github_get_run_logs', 'github_list_prs', 'github_pr_info', 'github_read_issue', 'github_repo_state',
 ])
 
 /** A value shown back to the model: quoted, control characters dropped, cut short (it may be garbage). */

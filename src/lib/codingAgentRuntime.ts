@@ -239,6 +239,7 @@ const DIRECT_TOOLS: Record<string, { required: string[]; usage: string }> = {
   github_get_run_status: { required: ['run_id'], usage: 'github_get_run_status run_id="123"' },
   github_get_run_logs: { required: ['run_id'], usage: 'github_get_run_logs run_id="123"' },
   github_create_issue: { required: ['title', 'body'], usage: 'github_create_issue title="..." body="..."' },
+  github_read_issue: { required: ['issue_number'], usage: 'github_read_issue issue_number="235" [comments="15"]' },
   github_run_workflow: { required: ['workflow'], usage: 'github_run_workflow workflow="file.yml" [ref="main"]' },
   web_search: { required: ['query'], usage: 'web_search query="text" [count="5"]' },
   memory_write: { required: ['key', 'value'], usage: 'memory_write key="name" value="text"' },
@@ -386,6 +387,7 @@ export function hasSuccessfulRepositoryEvidence(
     'github_verify_commit',
     'github_pr_info',
     'github_list_prs',
+    'github_read_issue',
     // A website job may never read a file; its publish commit and Pages build are the evidence.
     'github_publish_site',
     'github_build_site',
