@@ -22,10 +22,10 @@ The `probability`-before-`side` key order (2,347 / 2,347 tranche-6 and 12,485 / 
 
 `audit_gate_b.py` independently validates the committed pair file’s structure against the pack pin and reconciles the published summary with that file:
 
-- 96 rows / 48 pairs, with 16 pairs in each of the positive-magnitude, negative-magnitude and sign families.
+- 96 rows / 48 pairs, with 16 pairs in each of the exact families `magnitude_pos`, `magnitude_neg` and `sign`. `magnitude_pos` and `magnitude_neg` vary strength within one sign; `sign` varies the sign at matched magnitude.
 - Within every pair, the prompt differs only in the numeric distance; shared ticker, YES book, mode and prefix remain fixed. Gold labels total 32 `pass`, 32 `propose_yes` and 32 `propose_no`.
 - There are 24 unique tickers reused across pairs. The raw training mix and tranche-6 are not available here, so their claimed train/eval disjointness cannot be checked independently.
-- The published summary is internally consistent: 24 / 96 rows correct (25%), 0 / 48 full expected flips, and 0 / 16 flips in each family. It reports 88 `pass` and 8 `propose_unknown_side` outputs. All eight listed corrupt row IDs map to expected-`pass` halves in the pair file.
+- The published summary is internally consistent: 24 / 96 rows correct (25%), 0 / 48 full expected flips, and 0 / 16 flips in each exact family. It reports 88 `pass` and 8 `propose_unknown_side` outputs. All eight listed corrupt row IDs map to expected-`pass` halves in the pair file.
 
 **Interpretation:** Under v1.1 §13, a near-zero flip rate on this checkpoint is the diagnostic result that the trait is absent from the current weights and should be built from scratch; it is not evidence that the checkpoint possesses the trait. The report’s 0 / 48 result is a reported probe failure and supports that diagnosis. The raw `gate-b-outputs.jsonl` is not yet present, so the 24/96, 0/48, action-distribution and corruption counts are **summary-consistent, not independently reproduced from model outputs**.
 
