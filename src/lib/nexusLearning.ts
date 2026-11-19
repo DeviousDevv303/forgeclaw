@@ -30,14 +30,14 @@ export const NEXUS_PRINCIPLES = [
   'Convergence closes the loop: evidence-backed results and your own rules become knowledge by themselves; visitors never do, and you can remove any rule.',
 ] as const
 
-export type Outcome = 'verified' | 'completed' | 'attempted' | 'failed' | 'blocked'
-export const OUTCOMES: readonly Outcome[] = ['verified', 'completed', 'attempted', 'failed', 'blocked']
+export type Outcome = 'verified' | 'completed' | 'attempted' | 'failed' | 'blocked' | 'unmeasured'
+export const OUTCOMES: readonly Outcome[] = ['verified', 'completed', 'attempted', 'failed', 'blocked', 'unmeasured']
 
 /**
  * `completed` counts verified and completed outcomes only. `attempted` is its own column: a dispatch with no confirmed
  * result is not a success (attempted is not completed), so it does not raise `reliability` = completed / total.
  */
-export interface ToolReliability { tool: string; total: number; completed: number; attempted: number; failed: number; blocked: number; reliability: number }
+export interface ToolReliability { tool: string; total: number; completed: number; attempted: number; failed: number; blocked: number; unmeasured: number; reliability: number }
 /**
  * `count` is the evidence weight: each owner run counts once, but all of one anonymous visitor's runs count once
  * together, so a single person cannot inflate a pattern. `ownerCount` is the owner's own runs only.
@@ -65,11 +65,11 @@ function field(candidate: LearningCandidate, key: string): string {
 
 /**
  * The one reading of a record's outcome, used by the counters and by the list they filter, so a card's number and the rows
- * behind it cannot disagree. A record with no outcome, or one outside the five, reads as 'completed' (the legacy default).
+ * behind it cannot disagree. A record with no measured outcome, or one outside the known set, is explicitly `unmeasured`.
  */
 export function outcomeOfCandidate(candidate: LearningCandidate): Outcome {
-  const value = (field(candidate, 'outcome') || 'completed') as Outcome
-  return OUTCOMES.includes(value) ? value : 'completed'
+  const value = (field(candidate, 'outcome') || 'unmeasured') as Outcome
+  return OUTCOMES.includes(value) ? value : 'unmeasured'
 }
 
 const SHELL_FAILED = /^\s*\[TOOL ERROR\]\s*Shell execution failed\.?\s*$/i
@@ -124,11 +124,12 @@ export function summarizeLearning(candidates: LearningCandidate[]): NexusSummary
     byChannel[channel] = (byChannel[channel] ?? 0) + 1
     const tool = field(c, 'tool')
     if (!tool) continue
-    const t = tools.get(tool) ?? { tool, total: 0, completed: 0, attempted: 0, failed: 0, blocked: 0, reliability: 0 }
+    const t = tools.get(tool) ?? { tool, total: 0, completed: 0, attempted: 0, failed: 0, blocked: 0, unmeasured: 0, reliability: 0 }
     t.total += 1
     if (outcome === 'failed') t.failed += 1
     else if (outcome === 'blocked') t.blocked += 1
     else if (outcome === 'attempted') t.attempted += 1
+    else if (outcome === 'unmeasured') t.unmeasured += 1
     else t.completed += 1
     tools.set(tool, t)
     if (outcome === 'failed' || outcome === 'blocked') {

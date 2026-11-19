@@ -21,6 +21,14 @@ function candidate(timestamp: string, admissionStatus: string, admittedAt?: stri
 const know = (timestamp: string, admittedAt?: string): { timestamp: string; metadata: Record<string, string> } => ({ timestamp, metadata: admittedAt ? { admittedAt } : {} })
 
 describe('growthSeries', () => {
+  it('plots admitted intake at its original producer timestamp, not sync time', () => {
+    const points = growthSeries(
+      [candidate('2026-10-24T11:00:00.000Z', 'approved')],
+      [know('2026-10-24T11:00:00.000Z', '2026-10-24T11:00:00.000Z')],
+    )
+    expect(points).toEqual([{ t: Date.parse('2026-10-24T11:00:00.000Z'), total: 1, admitted: 1 }])
+  })
+
   it('steps recorded at candidate timestamps and admitted at knowledge admission times', () => {
     const points = growthSeries(
       [candidate('2026-10-20T10:00:00Z', 'candidate'), candidate('2026-10-20T11:00:00Z', 'approved'), candidate('2026-10-21T12:00:00Z', 'approved')],

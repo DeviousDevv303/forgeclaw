@@ -16,7 +16,7 @@ import { describeTaste, loadTaste, MIN_TASTE_EVENTS, resetTaste } from '../lib/n
 import { HoldToConfirmButton } from './HoldToConfirmButton'
 import { NexusGrowthGraph } from './NexusGrowthGraph'
 
-const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316' }
+const OUTCOME_COLOR: Record<Outcome, string> = { verified: '#22c55e', completed: '#39ff14', attempted: '#eab308', failed: '#ef4444', blocked: '#f97316', unmeasured: '#888' }
 const mono = "'Courier New', monospace"
 const card: React.CSSProperties = { background: '#0d0d0d', border: '1px solid #1e1e1e', borderRadius: '8px', padding: '12px 14px' }
 const purgeButton: React.CSSProperties = { background: 'none', border: '1px solid #3a1a1a', color: '#a55', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer', fontSize: '10px', fontFamily: 'monospace', marginBottom: '8px' }
@@ -81,7 +81,7 @@ export function NexusLearningPanel() {
     heuristics: active.length,
     first_principles: converged.first_principles ?? 0,
     extension: converged.extension ?? 0,
-    convergence: Object.values(converged).reduce((a, b) => a + b, 0) + active.length,
+    convergence: Object.values(converged).reduce((a, b) => a + b, 0),
   }
   const [taste, setTaste] = useState(() => loadTaste())
   const tasteWords = useMemo(() => describeTaste(taste), [taste])
@@ -120,7 +120,7 @@ export function NexusLearningPanel() {
           {training.toLocaleString()} evidence-backed knowledge record{training === 1 ? '' : 's'}
         </div>
         <div style={{ color: '#888', fontSize: '11px', lineHeight: 1.6 }}>
-          {coverage.awaitingEvidence.toLocaleString()} record(s) with no evidence yet · data covers {coverage.toolCoverage} tool(s) · {approved.toLocaleString()} admitted in all, counting entries admitted other ways
+          {coverage.awaitingEvidence.toLocaleString()} record(s) with no evidence yet · stored candidate data covers {coverage.toolCoverage} recorded tool(s) · {approved.toLocaleString()} admitted in all, counting entries admitted other ways
         </div>
       </section>
 
@@ -134,7 +134,7 @@ export function NexusLearningPanel() {
             </div>
           ))}
         </div>
-        <div style={{ color: '#666', fontSize: '10px', marginTop: '6px', lineHeight: 1.6 }}>Assumptions: recurring failures to avoid · Heuristics: your own rules · First Principles: your tasks answered with tool evidence · Extension: browsing steps that worked · Convergence: everything that became knowledge by itself. Visitors' input never converges.</div>
+        <div style={{ color: '#666', fontSize: '10px', marginTop: '6px', lineHeight: 1.6 }}>Assumptions counts prompt-eligible recurring failures · Heuristics counts active owner rules · First Principles and Extension count auto-added knowledge by phase · Convergence counts all auto-added knowledge. Visitors&apos; input never converges.</div>
       </section>
 
       <section aria-label="Evidence totals" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px' }}>
@@ -203,7 +203,7 @@ export function NexusLearningPanel() {
 
       <section style={card} aria-label="Knowledge" data-testid="nexus-knowledge">
         <div style={heading}>KNOWLEDGE · what NEXUS treats as known ({knowledge.length})</div>
-        <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>These entries guide the models and count as training data. Check where each came from and remove anything wrong.</div>
+        <div style={{ color: '#666', fontSize: '11px', marginBottom: '8px' }}>These entries guide the models as stored knowledge. Only evidence-backed auto-added entries are counted as training data above; admitted legacy or other entries are not.</div>
         {knowledgeNotice && <div role="status" style={{ color: '#22c55e', fontSize: '11px', marginBottom: '8px' }}>{knowledgeNotice}</div>}
         {/* Confirmed on the page, not with window.confirm: some browsers (in-app ones especially) block that dialog, and then
             confirm returns false and the button would silently do nothing. */}
@@ -256,10 +256,10 @@ export function NexusLearningPanel() {
         {summary.tools.length === 0
           ? <div style={{ color: '#555', fontSize: '12px' }}>{t('nexus.noTools')}</div>
           : <div style={{ overflowX: 'auto' }} data-testid="nexus-tools-scroll"><table style={{ width: '100%', minWidth: '400px', borderCollapse: 'collapse', fontSize: '12px', fontFamily: mono, color: '#bbb' }}>
-              <thead><tr style={{ color: '#666', textAlign: 'left' }}><th>{t('nexus.colTool')}</th><th>{t('nexus.colRuns')}</th><th>{t('nexus.colOk')}</th><th>{t('nexus.colAttempted')}</th><th>{t('nexus.colFailed')}</th><th>{t('nexus.colBlocked')}</th><th>{t('nexus.colReliability')}</th></tr></thead>
+              <thead><tr style={{ color: '#666', textAlign: 'left' }}><th>{t('nexus.colTool')}</th><th>{t('nexus.colRuns')}</th><th>{t('nexus.colOk')}</th><th>{t('nexus.colAttempted')}</th><th>{t('nexus.colFailed')}</th><th>{t('nexus.colBlocked')}</th><th>UNMEASURED</th><th>{t('nexus.colReliability')}</th></tr></thead>
               <tbody>{summary.tools.slice(0, 20).map(t => (
                 <tr key={t.tool} style={{ borderTop: '1px solid #161616' }}>
-                  <td style={{ padding: '4px 0' }}>{t.tool}</td><td>{t.total}</td><td>{t.completed}</td><td>{t.attempted}</td><td>{t.failed}</td><td>{t.blocked}</td>
+                  <td style={{ padding: '4px 0' }}>{t.tool}</td><td>{t.total}</td><td>{t.completed}</td><td>{t.attempted}</td><td>{t.failed}</td><td>{t.blocked}</td><td>{t.unmeasured}</td>
                   <td style={{ color: t.reliability >= 0.8 ? '#39ff14' : t.reliability >= 0.5 ? '#eab308' : '#ef4444' }}>{Math.round(t.reliability * 100)}%</td>
                 </tr>))}
               </tbody>

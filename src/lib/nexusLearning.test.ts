@@ -102,15 +102,15 @@ describe('what the stored records cover', () => {
 describe('attempted is not completed', () => {
   it('a dispatch with no confirmed result has its own column and does not raise reliability', () => {
     const s = summarizeLearning([candidate('browser_run', 'attempted', 'dispatched'), candidate('browser_run', 'attempted', 'dispatched'), candidate('browser_run', 'verified', 'ok'), candidate('browser_run', 'completed', 'ok')])
-    expect(s.tools[0]).toMatchObject({ tool: 'browser_run', total: 4, completed: 2, attempted: 2, failed: 0, blocked: 0 })
+    expect(s.tools[0]).toMatchObject({ tool: 'browser_run', total: 4, completed: 2, attempted: 2, failed: 0, blocked: 0, unmeasured: 0 })
     expect(s.tools[0].reliability).toBe(0.5)
   })
   it('the outcome cards and the rows they filter read a record the same way, so the cards sum to the total', () => {
     const odd = { ...candidate('web_search', 'completed', 'ok'), metadata: { tool: 'web_search', outcome: 'partial' } } as never
     const s = summarizeLearning([odd, candidate('web_search', 'failed', 'x')])
-    expect(outcomeOfCandidate(odd)).toBe('completed')
+    expect(outcomeOfCandidate(odd)).toBe('unmeasured')
     expect(Object.values(s.byOutcome).reduce((a, b) => a + b, 0)).toBe(s.total)
-    expect(s.byOutcome.completed).toBe(1)
+    expect(s.byOutcome.unmeasured).toBe(1)
   })
 })
 
