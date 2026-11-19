@@ -237,6 +237,7 @@ export function intakeCandidateInput(record: NexusIntakeRecord): ShellCorpusExpe
   const link = firstLink(record.provenance)
   return {
     input: `${record.kind}: ${record.subject}`,
+    timestamp: record.ts,
     context: `nexus-intake record: source=${record.source}; run_id=${record.runId}; kind=${record.kind}; ts=${record.ts}`,
     result: record.text,
     runtime: 'nexus-intake',

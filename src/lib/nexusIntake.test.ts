@@ -165,6 +165,14 @@ describe('nexusIntake parsing', () => {
 describe('nexusIntake sync', () => {
   beforeEach(() => storage.clear())
 
+  it('preserves the producer timestamp on admitted intake records', async () => {
+    const repo = new CorpusRepository()
+    const result = await syncNexusIntake(sourceOf(AUDIT_LINE), repo)
+    expect(result.admitted).toBe(1)
+    expect(repo.listCandidates()[0].timestamp).toBe('2026-10-24T11:00:00.000Z')
+    expect(repo.listKnowledge()[0].timestamp).toBe('2026-10-24T11:00:00.000Z')
+  })
+
   it('AUTO-ADMITS a qualifying audit record (finding-confirmed, run_id + ref) with full provenance and the owner-criteria marker', async () => {
     const repo = new CorpusRepository()
     const result = await syncNexusIntake(sourceOf(AUDIT_LINE), repo)

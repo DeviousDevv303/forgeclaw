@@ -38,6 +38,8 @@ export interface LearningCandidate extends CorpusRecord {
 
 export interface ShellCorpusExperienceInput extends CorpusInteractionInput {
   provenance: Record<string, string>
+  /** Original producer timestamp for external intake; local append time is used when absent. */
+  timestamp?: string
 }
 
 export interface CorpusInteractionInput {
@@ -1037,7 +1039,7 @@ export class CorpusRepository {
    * like appendShellExperience: an unapproved candidate, nothing more.
    */
   appendIntakeExperience(input: ShellCorpusExperienceInput, admittedBy?: string): Promise<{ interaction: CorpusRecord; candidate: LearningCandidate }> {
-    const timestamp = new Date().toISOString()
+    const timestamp = input.timestamp && Number.isFinite(Date.parse(input.timestamp)) ? input.timestamp : new Date().toISOString()
     const content = canonicalContent(input)
     return integrityHash(content).then(integrity => {
       const interactionId = `interaction-${integrity}`

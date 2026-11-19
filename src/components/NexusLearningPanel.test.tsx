@@ -71,7 +71,7 @@ describe('NexusLearningPanel phone layout', () => {
     // Tool column header is translated from i18n keys, not hardcoded.
     const headers = scroller.querySelectorAll('th')
     expect(headers[0].textContent).toBe('tool')
-    expect(headers.length).toBe(7)
+    expect(headers.length).toBe(8)
   })
 
   it('renders Spanish strings when the language is es (NEXUS_MOTTO stays English)', () => {

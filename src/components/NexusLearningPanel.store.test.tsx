@@ -50,7 +50,7 @@ describe('NEXUS page against the real store', () => {
     __setLangForTests('en')
     render(<NexusLearningPanel />)
     const row = within(screen.getByTestId('nexus-tools-scroll')).getByText('web_search').closest('tr')!
-    expect([...row.querySelectorAll('td')].map(td => td.textContent)).toEqual(['web_search', '1060', '1000', '20', '40', '0', '94%'])
+    expect([...row.querySelectorAll('td')].map(td => td.textContent)).toEqual(['web_search', '1060', '1000', '20', '40', '0', '0', '94%'])
   })
 
   it('admitted reads one source: the card, the knowledge heading and the graph agree', () => {
@@ -60,6 +60,13 @@ describe('NEXUS page against the real store', () => {
     expect(screen.getByTestId('nexus-knowledge').textContent).toContain(`what NEXUS treats as known (${k})`)
     expect(screen.getByText(new RegExp(`admitted \\(${k}\\)`))).toBeTruthy()
     expect(screen.getByTestId('nexus-llm-road').textContent).toContain(`${k} admitted in all`)
+  })
+
+  it('labels tool coverage as recorded candidate data, not all knowledge or training data', () => {
+    __setLangForTests('en')
+    render(<NexusLearningPanel />)
+    expect(screen.getByTestId('nexus-llm-road').textContent).toContain('stored candidate data covers 1 recorded tool')
+    expect(screen.getByTestId('nexus-knowledge').textContent).toContain('Only evidence-backed auto-added entries are counted as training data above')
   })
 
   it('"fed back" and "given to every model" list exactly what a prompt carries', () => {

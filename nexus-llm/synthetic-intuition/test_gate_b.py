@@ -14,6 +14,12 @@ def load_rows():
 
 
 class GateBArtifactAuditTests(unittest.TestCase):
+    def test_family_contract_uses_only_the_corrected_identifiers(self):
+        self.assertEqual(audit_gate_b.FAMILY_ORDER, ("magnitude_pos", "magnitude_neg", "sign"))
+        self.assertEqual(audit_gate_b.FAMILIES, set(audit_gate_b.FAMILY_ORDER))
+        self.assertNotIn("positive-magnitude", audit_gate_b.FAMILIES)
+        self.assertNotIn("negative-magnitude", audit_gate_b.FAMILIES)
+
     def test_committed_pairs_and_summary_are_consistent_but_not_raw_reproduced(self):
         report = audit_gate_b.audit(
             load_rows(),
