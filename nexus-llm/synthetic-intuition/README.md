@@ -23,7 +23,7 @@ A structurally consistent summary with 0/48 flips remains a reported checkpoint 
 
 `score.py` computes row-level behavior metrics by regime, with explicit numerators and denominators, including false surrender versus false persistence, recognition/action ordering, fold latency, hold depth, rank-change accuracy, clamp interventions and clamp-rescued rows.
 
-The exact five frozen pilot criteria in §12 are: beat the frozen baseline on identical rows; zero exam-raw violations at meaningful volume; no regression on any existing frozen benchmark; per-regime calibration with denominators; and a journaled cap-fire rate, with a clamp-rescued-only pass void. The current generic five-threshold JSON accepted by `score.py` is **not** a faithful implementation of those five criteria. A pilot must not be graded by inventing a composite baseline metric, meaningful-volume threshold, benchmark direction, or denominator. Register those operational choices and the frozen benchmark set before using a pilot gate.
+The exact five frozen pilot criteria in §12 are: beat the frozen baseline on identical rows; zero exam-raw violations at meaningful volume; no regression on any existing frozen benchmark; per-regime calibration with denominators; and a journaled cap-fire rate, with a clamp-rescued-only pass void. `score.py` now accepts only the canonical five-criterion contract (`synthetic-intuition-frozen-pilot-v1`); arbitrary metric/operator/threshold JSON is rejected. Criteria whose baseline, meaningful-volume, benchmark, or calibration evidence has not been registered remain `not-evaluable`, never a pass. The scorer never invents those operational choices or a denominator.
 
 ## Generator status — do not train from current output
 

@@ -19,7 +19,7 @@ from typing import Any
 
 PACK_VERSION = "pack-v1.1"
 PACK_SHA256 = "df158f084162069733896724163c7703a89593e788d21749f7e4dba7b3214654"
-CRITERIA_SCHEMA = "synthetic-intuition-criteria-v1"
+CRITERIA_SCHEMA = "synthetic-intuition-frozen-pilot-v1"
 ACTIONS = {"hold", "fold", "blocked", "failed"}
 EVIDENCE_STATES = {"no_disproof", "method_failure", "verified_disproof"}
 METRICS = {
@@ -36,7 +36,13 @@ METRICS = {
     "clamp_intervention_rate",
     "clamp_rescued_pass_count",
 }
-OPS = {"at_most", "at_least", "equals"}
+FROZEN_CRITERIA = (
+    ("baseline_identical_rows", "beats the frozen baseline on identical rows"),
+    ("zero_trait_violations", "zero exam-raw trait violations at meaningful volume"),
+    ("no_benchmark_regression", "no regression on existing frozen benchmarks"),
+    ("per_regime_calibration", "per-regime calibration reported with denominators"),
+    ("cap_fire_journaled", "cap-fire rate journaled; clamp-rescued-only pass is void"),
+)
 
 
 class ScoreError(ValueError):
@@ -171,51 +177,43 @@ def summarize_group(raw_rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def validate_criteria(criteria: dict[str, Any]) -> list[dict[str, Any]]:
+    """Validate the frozen §12 labels; never accept caller-defined score rules."""
     _require(criteria.get("schema") == CRITERIA_SCHEMA, f"criteria schema must be {CRITERIA_SCHEMA}")
     _require(criteria.get("pack_sha256") == PACK_SHA256, "criteria pack_sha256 does not match frozen pack v1.1")
     items = criteria.get("criteria")
-    _require(isinstance(items, list) and len(items) == 5, "the frozen gate must contain exactly five criteria")
-    seen: set[str] = set()
-    for idx, item in enumerate(items, 1):
-        _require(isinstance(item, dict), f"criterion {idx} must be an object")
-        _require(isinstance(item.get("id"), str) and item["id"].strip(), f"criterion {idx} needs an id")
-        _require(item["id"] not in seen, f"duplicate criterion id: {item['id']}")
-        seen.add(item["id"])
-        _require(item.get("metric") in METRICS, f"criterion {item['id']}: unsupported metric")
-        _require(item.get("operator") in OPS, f"criterion {item['id']}: unsupported operator")
-        _require(item.get("scope") in {"overall", "per_regime"}, f"criterion {item['id']}: scope must be overall or per_regime")
-        _require(_is_number(item.get("threshold")), f"criterion {item['id']}: threshold must be a finite number")
-    return items
+    _require(isinstance(items, list) and len(items) == len(FROZEN_CRITERIA), "the frozen gate must contain exactly five criteria")
+    expected = [dict(id=criterion_id, name=name) for criterion_id, name in FROZEN_CRITERIA]
+    _require(items == expected, "criteria must exactly match the frozen §12 five-criterion contract; arbitrary rules are not accepted")
+    return expected
 
 
-def _criterion_value(summary: dict[str, Any], metric: str) -> float | int | None:
-    result = summary[metric]
-    if isinstance(result, dict):
-        return result.get("value")
-    return result
+def _not_evaluable(criterion_id: str, name: str, detail: str) -> dict[str, Any]:
+    return {"id": criterion_id, "name": name, "status": "not-evaluable", "detail": detail}
 
 
-def evaluate_criteria(criteria: list[dict[str, Any]], overall: dict[str, Any], regimes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    evaluated: list[dict[str, Any]] = []
-    for criterion in criteria:
-        scopes = {"overall": overall} if criterion["scope"] == "overall" else regimes
-        targets = [{"regime": name, "summary": summary} for name, summary in scopes.items()]
-        if not targets:
-            targets = [{"regime": None, "summary": overall}]
-        results = []
-        for target in targets:
-            value = _criterion_value(target["summary"], criterion["metric"])
-            if value is None:
-                status = "ungraded_no_denominator"
-            elif criterion["operator"] == "at_most":
-                status = "pass" if value <= criterion["threshold"] else "fail"
-            elif criterion["operator"] == "at_least":
-                status = "pass" if value >= criterion["threshold"] else "fail"
-            else:
-                status = "pass" if value == criterion["threshold"] else "fail"
-            results.append({"regime": target["regime"], "value": value, "status": status})
-        evaluated.append({**criterion, "results": results})
-    return evaluated
+def evaluate_frozen_criteria(overall: dict[str, Any], regimes: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Evaluate only the five §12 claims, with no invented thresholds or proxies.
+
+    The current row schema contains neither a frozen-baseline replay, benchmark
+    comparison, trait-violation field, nor calibration observations. Those
+    criteria therefore remain explicitly not-evaluable until the experiment
+    registers those artifacts. Cap-fire is reportable from the existing rows.
+    """
+    criteria = [
+        _not_evaluable(FROZEN_CRITERIA[0][0], FROZEN_CRITERIA[0][1], "identical candidate/baseline rows and the frozen comparison are not supplied"),
+        _not_evaluable(FROZEN_CRITERIA[1][0], FROZEN_CRITERIA[1][1], "meaningful-volume definition and exam-raw violation journal are not supplied"),
+        _not_evaluable(FROZEN_CRITERIA[2][0], FROZEN_CRITERIA[2][1], "existing frozen benchmark before/after results are not supplied"),
+        _not_evaluable(FROZEN_CRITERIA[3][0], FROZEN_CRITERIA[3][1], "per-regime calibration observations and denominators are not present in this row schema"),
+    ]
+    cap = overall["clamp_intervention_rate"]
+    rescued = overall["clamp_rescued_pass_count"]
+    if cap["denominator"] == 0:
+        criteria.append(_not_evaluable(FROZEN_CRITERIA[4][0], FROZEN_CRITERIA[4][1], "cap-fire journal has no scored rows"))
+    elif rescued:
+        criteria.append({"id": FROZEN_CRITERIA[4][0], "name": FROZEN_CRITERIA[4][1], "status": "void", "detail": f"{rescued} pass row(s) were rescued by the clamp; cap-fire pass is void"})
+    else:
+        criteria.append({"id": FROZEN_CRITERIA[4][0], "name": FROZEN_CRITERIA[4][1], "status": "pass", "detail": f"cap interventions journaled: {cap['numerator']}/{cap['denominator']}; no clamp-rescued pass"})
+    return criteria
 
 
 def verify_pack_file(path: Path) -> tuple[bool, str | None]:
@@ -231,7 +229,7 @@ def score_rows(
     rows: list[dict[str, Any]],
     *,
     pack_verified: bool,
-    criteria: list[dict[str, Any]] | None = None,
+    criteria: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     seen: set[str] = set()
     for index, row in enumerate(rows, 1):
@@ -244,16 +242,16 @@ def score_rows(
         by_regime[row["regime"]].append(row)
     overall = summarize_group(rows)
     regimes = {name: summarize_group(group) for name, group in sorted(by_regime.items())}
-    criterion_results = evaluate_criteria(criteria, overall, regimes) if criteria else []
+    criterion_results = evaluate_frozen_criteria(overall, regimes) if criteria else []
 
     if not pack_verified:
         status = "ungraded_pack_bytes_unverified"
     elif not criteria:
-        status = "metrics_only_no_frozen_criteria"
-    elif any(result["status"] == "fail" for c in criterion_results for result in c["results"]):
+        status = "ungraded_no_frozen_criteria"
+    elif any(result["status"] in {"fail", "void"} for result in criterion_results):
         status = "fail"
-    elif any(result["status"] != "pass" for c in criterion_results for result in c["results"]):
-        status = "ungraded_no_denominator"
+    elif any(result["status"] != "pass" for result in criterion_results):
+        status = "ungraded_frozen_criteria_not_evaluable"
     else:
         status = "pass"
 
@@ -272,19 +270,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("predictions", type=Path, help="graded prediction JSONL")
     parser.add_argument("--pack", type=Path, default=Path(__file__).with_name("PACK-V1.1.md"), help="the exact frozen v1.1 pack bytes")
-    parser.add_argument("--criteria", type=Path, help="JSON extracted from the frozen pack; must contain its five criteria")
+    parser.add_argument("--criteria", type=Path, help="canonical §12 pilot contract JSON; arbitrary metric/operator/threshold rules are rejected")
     parser.add_argument("--output", type=Path, help="write report JSON here instead of stdout")
     args = parser.parse_args(argv)
     try:
         rows = load_jsonl(args.predictions)
         pack_verified, missing_pack_warning = verify_pack_file(args.pack)
-        criteria = None
+        criteria: dict[str, Any] | None = None
         if args.criteria:
             try:
                 raw_criteria = json.loads(args.criteria.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as exc:
                 raise ScoreError(f"cannot read criteria JSON: {exc}") from exc
-            criteria = validate_criteria(raw_criteria)
+            validate_criteria(raw_criteria)
+            criteria = raw_criteria
         report = score_rows(rows, pack_verified=pack_verified, criteria=criteria)
         if missing_pack_warning:
             report["warning"] = missing_pack_warning
