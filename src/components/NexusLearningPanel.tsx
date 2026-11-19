@@ -6,6 +6,7 @@
 // signed authorization (corpusAdmissionAuth.ts), which this page deliberately does not hold.
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { corpusRepository, type LearningCandidate } from '../lib/corpus'
+import { corpusStorageReady, getCorpusStorageStatus, type CorpusStorageStatus } from '../lib/storage'
 import { syncNexusIntake } from '../lib/nexusIntake'
 import { corpusCoverage, MAX_PROMPT_LESSONS, NEXUS_MOTTO, NEXUS_PRINCIPLES, OUTCOMES, outcomeOfCandidate as outcomeOf, PROMPT_CANDIDATE_WINDOW, promptEligibleLessons, summarizeLearning, type Outcome } from '../lib/nexusLearning'
 import { NEXUS_MODEL_STATE, pct } from '../lib/nexusModelState'
@@ -38,7 +39,17 @@ export function NexusLearningPanel() {
   const [{ candidates, promptWindow, stored }, setRead] = useState(readCandidates)
   const [filter, setFilter] = useState<Outcome | 'all'>('all')
   const [notice, setNotice] = useState('')
+  const [storageStatus, setStorageStatus] = useState<CorpusStorageStatus>(() => getCorpusStorageStatus())
   const refresh = useCallback(() => setRead(readCandidates()), [])
+  useEffect(() => {
+    let live = true
+    void corpusStorageReady.then(() => {
+      if (!live) return
+      setStorageStatus(getCorpusStorageStatus())
+      refresh()
+    })
+    return () => { live = false }
+  }, [refresh])
   useEffect(() => {
     // New runs keep adding candidates while the page is open.
     const timer = globalThis.setInterval(refresh, 5_000)
@@ -150,8 +161,13 @@ export function NexusLearningPanel() {
       </section>
 
       <div data-testid="nexus-stored-note" style={{ color: '#555', fontSize: '10px', fontFamily: 'monospace', lineHeight: 1.6 }}>
-        Counted from the {summary.total.toLocaleString()} record(s) stored in this browser now{stored !== summary.total ? ` (${stored.toLocaleString()} indexed; ${(stored - summary.total).toLocaleString()} could not be read)` : ''}. When storage fills, the oldest records without evidence are removed, so these are not all-time totals.
+        Counted from the {summary.total.toLocaleString()} record(s) stored in this browser now{stored !== summary.total ? ` (${stored.toLocaleString()} indexed; ${(stored - summary.total).toLocaleString()} could not be read)` : ''}. Backend: {storageStatus.backend === 'indexeddb' ? 'IndexedDB' : 'localStorage fallback'} · migration: {storageStatus.migration}. When storage fills, the oldest records without evidence are removed, so these are not all-time totals.
       </div>
+      {storageStatus.migration === 'failed' && (
+        <div role="alert" data-testid="nexus-storage-migration-error" style={{ ...card, borderColor: '#7f1d1d', color: '#fca5a5', fontFamily: mono, fontSize: '11px' }}>
+          Corpus storage migration was not verified; legacy records were kept intact. No partial move is being presented as complete. {storageStatus.error ? `Reason: ${storageStatus.error}` : ''}
+        </div>
+      )}
 
       <section style={card} aria-label="Learning growth" data-testid="nexus-growth">
         <div style={heading}>LEARNING GROWTH · recorded vs admitted, from the stored records</div>

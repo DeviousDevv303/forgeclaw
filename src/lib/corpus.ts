@@ -1,8 +1,8 @@
 // ForgeClaw — Copyright (c) 2026 DeviousDevv303 (Cristian). All Rights Reserved.
 // Proprietary source-available license. Commercial use requires written permission. See LICENSE.
 // ─── NEXUS / Corpus Local Store ──────────────────────────────────────────────
-// Small, deterministic, localStorage-backed corpus ledger. No network is needed
-// to initialize or use this module; synchronization is an explicit optional path.
+// Deterministic corpus ledger. Corpus keys are persisted by the IndexedDB-backed
+// storage adapter; localStorage remains a verified migration source and fallback.
 
 import { safeGetItem, safeRemoveItem, safeSetItem, strictGetItem, strictRemoveItem, strictSetItem, type StorageResult } from './storage'
 import { QWEN_PRIMARY_CHECKPOINT } from './qwenCheckpoints'
@@ -121,14 +121,12 @@ const CANDIDATE_INDEX_KEY = 'forgeclaw_nexus_candidate_index_v1'
 const DECLINED_KEY = 'forgeclaw_nexus_declined_v1'
 const MAX_INDEX_ENTRIES = 10_000
 /**
- * The corpus's byte budget, in stored characters (localStorage quotas count UTF-16 units, i.e. string
- * length). The browser's wall is roughly 5M units for the whole origin — shared with settings, the
- * GitHub token and conversation history — so the corpus keeps its own footprint at or under 4M.
- * Owner's ruling (2026-11-12): once the store is over this budget, the OLDEST knowledge records may
- * be evicted to make room, newest learning first-preserved. Before that ruling, admitted knowledge
- * was never removable (see pruneUnapproved) and a knowledge-full store simply failed every write.
+ * IndexedDB has no portable fixed quota. We use a 100M UTF-16-unit corpus ceiling as a
+ * deterministic last-resort guard: it is large enough to leave the old ~5M origin wall
+ * behind while still preventing an unbounded client-side store. The old ladder remains
+ * intact only when this ceiling (or the browser's own quota) is reached.
  */
-export const MAX_CORPUS_STORAGE_CHARS = 4_000_000
+export const MAX_CORPUS_STORAGE_CHARS = 100_000_000
 
 /**
  * Total characters held by the corpus's indexed footprint — its share of the origin's storage
