@@ -9,6 +9,16 @@ import score
 
 
 class ScoreHarnessTests(unittest.TestCase):
+    def frozen_contract(self):
+        return {
+            "schema": score.CRITERIA_SCHEMA,
+            "pack_sha256": score.PACK_SHA256,
+            "criteria": [
+                {"id": criterion_id, "name": name}
+                for criterion_id, name in score.FROZEN_CRITERIA
+            ],
+        }
+
     def row(self, row_id, regime, evidence, decision, **overrides):
         row = {
             "id": row_id,
@@ -58,25 +68,36 @@ class ScoreHarnessTests(unittest.TestCase):
         result = score.summarize_group([row])
         self.assertEqual(result["false_surrender_rate"]["numerator"], 1)
 
-    def test_frozen_criteria_require_exactly_five_and_matching_pack_pin(self):
-        criterion = {"id": "x", "metric": "action_accuracy_rate", "scope": "overall", "operator": "at_least", "threshold": 0.5}
+    def test_frozen_criteria_reject_arbitrary_rules_and_require_the_exact_five(self):
+        contract = self.frozen_contract()
+        self.assertEqual(score.validate_criteria(contract), contract["criteria"])
+        arbitrary = self.frozen_contract()
+        arbitrary["criteria"] = [
+            {"id": "x", "metric": "action_accuracy_rate", "scope": "overall", "operator": "at_least", "threshold": 0.5}
+        ] * 5
         with self.assertRaises(score.ScoreError):
-            score.validate_criteria({"schema": score.CRITERIA_SCHEMA, "pack_sha256": score.PACK_SHA256, "criteria": [criterion]})
+            score.validate_criteria(arbitrary)
+        wrong_name = self.frozen_contract()
+        wrong_name["criteria"][0]["name"] = "arbitrary proxy"
         with self.assertRaises(score.ScoreError):
-            score.validate_criteria({"schema": score.CRITERIA_SCHEMA, "pack_sha256": "0" * 64, "criteria": [criterion] * 5})
+            score.validate_criteria(wrong_name)
+        bad_pin = self.frozen_contract()
+        bad_pin["pack_sha256"] = "0" * 64
+        with self.assertRaises(score.ScoreError):
+            score.validate_criteria(bad_pin)
 
-    def test_five_passed_criteria_still_need_verified_pack_bytes_for_gate_pass(self):
+    def test_frozen_contract_never_invents_a_pilot_pass_from_row_metrics(self):
         rows = [self.row("h", "desk", "no_disproof", "hold")]
-        items = [
-            {"id": "c1", "metric": "action_accuracy_rate", "scope": "overall", "operator": "at_least", "threshold": 1},
-            {"id": "c2", "metric": "false_surrender_rate", "scope": "overall", "operator": "equals", "threshold": 0},
-            {"id": "c3", "metric": "hold_depth_mean_turns", "scope": "overall", "operator": "at_least", "threshold": 0},
-            {"id": "c4", "metric": "recognition_before_action_rate", "scope": "overall", "operator": "at_least", "threshold": 1},
-            {"id": "c5", "metric": "clamp_rescued_pass_count", "scope": "overall", "operator": "equals", "threshold": 0},
-        ]
-        report = score.score_rows(rows, pack_verified=False, criteria=items)
-        self.assertEqual(report["overall_status"], "ungraded_pack_bytes_unverified")
-        self.assertTrue(all(result["results"][0]["status"] == "pass" for result in report["criteria"]))
+        report = score.score_rows(rows, pack_verified=True, criteria=self.frozen_contract())
+        self.assertEqual(report["overall_status"], "ungraded_frozen_criteria_not_evaluable")
+        self.assertEqual([item["id"] for item in report["criteria"]], [item[0] for item in score.FROZEN_CRITERIA])
+        self.assertTrue(all(item["status"] == "not-evaluable" for item in report["criteria"][:4]))
+
+    def test_frozen_contract_is_not_evaluable_without_registered_contract(self):
+        rows = [self.row("h", "desk", "no_disproof", "hold")]
+        report = score.score_rows(rows, pack_verified=True)
+        self.assertEqual(report["overall_status"], "ungraded_no_frozen_criteria")
+        self.assertEqual(report["criteria"], [])
 
     def test_bad_row_hash_and_duplicate_id_are_rejected(self):
         row = self.row("x", "desk", "no_disproof", "hold", pack_sha256="0" * 64)

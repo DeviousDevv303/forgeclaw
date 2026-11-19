@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Audit the committed Gate B pair geometry and summary without pretending raw outputs are present."""
+"""Audit Gate B geometry using the frozen family identifiers.
+
+The family contract is deliberately exact: ``magnitude_pos`` and
+``magnitude_neg`` vary strength within one sign; ``sign`` varies the sign at
+matched magnitude. The old prose labels positive-magnitude/negative-magnitude
+are not accepted as data identifiers.
+"""
 from __future__ import annotations
 
 import argparse
@@ -17,6 +23,7 @@ DISTANCE_RE = re.compile(r"BTC is ([+-]?[0-9]+(?:\.[0-9]+)?) bps")
 TICKER_RE = re.compile(r"Propose a trade on (KX[A-Z0-9-]+):")
 BOOK_RE = re.compile(r"YES ([0-9]+(?:\.[0-9]+)?)/([0-9]+(?:\.[0-9]+)?)c")
 FAMILIES = {"magnitude_pos", "magnitude_neg", "sign"}
+FAMILY_ORDER = ("magnitude_pos", "magnitude_neg", "sign")
 
 
 class AuditError(ValueError):
@@ -135,7 +142,7 @@ def audit_pairs(rows: list[dict[str, Any]]) -> dict[str, Any]:
             require(11 <= dp <= 19 and -19 <= dn <= -11 and math.isclose(dp, abs(dn), abs_tol=1e-9), f"{pair_id}: sign pair must be matched ±11–19 bps")
             require(pos["expected_action"] == "propose_yes" and neg["expected_action"] == "propose_no", f"{pair_id}: sign gold labels do not invert side")
 
-    require(dict(family_pairs) == {"magnitude_pos": 16, "magnitude_neg": 16, "sign": 16}, f"pair-family counts differ from 16/16/16: {dict(family_pairs)}")
+    require(dict(family_pairs) == {family: 16 for family in FAMILY_ORDER}, f"pair-family counts differ from 16/16/16 for {FAMILY_ORDER}: {dict(family_pairs)}")
     require(dict(expected_actions) == {"propose_no": 32, "propose_yes": 32, "pass": 32}, f"expected action counts differ from 32/32/32: {dict(expected_actions)}")
     return {
         "rows": 96,
