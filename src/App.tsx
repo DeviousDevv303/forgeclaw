@@ -8,7 +8,7 @@ import { ThroneRig } from './components/ThroneRig'
 import { parseAmbientParams } from './components/spiderAmbient'
 // import { SupabaseProvider } from './components/SupabaseProvider'
 import { useErrorBus } from './hooks/useErrorBus'
-import { safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
+import { readCorpusStorageSnapshot, safeGetItem, safeSetItem, safeRemoveItem, safeJsonParse } from './lib/storage'
 import { installErrorHandlers, logError } from './lib/errorLog'
 
 /** Persisted Qwen run for resume after app background/kill. */
@@ -2888,8 +2888,9 @@ function App() {
       : t(Math.max(0, result.attempted - result.admitted) === 1 ? 'corpus.unavailableOne' : 'corpus.unavailableMany', { n: Math.max(0, result.attempted - result.admitted) }))
   }
 
-  const exportNexusStore = () => {
-    const result = buildNexusStoreExport(localStorage, location.origin)
+  const exportNexusStore = async () => {
+    const storage = await readCorpusStorageSnapshot()
+    const result = buildNexusStoreExport(storage, location.origin)
     if (!result.ok) {
       setCorpusExportStatus(result.reason === 'credential' ? t('corpus.exportBlocked', { key: result.keyPrefix }) : t('corpus.exportFailed'))
       return
@@ -2906,7 +2907,8 @@ function App() {
     setSendingNexusStore(true)
     setCorpusSendStatus(t('corpus.sendingNexusStore'))
     try {
-      const result = await sendNexusStoreExport({ storage: localStorage, origin: location.origin, token: ghToken, repoName: nexusSendRepo, deps: { request: fetch } })
+      const storage = await readCorpusStorageSnapshot()
+      const result = await sendNexusStoreExport({ storage, origin: location.origin, token: ghToken, repoName: nexusSendRepo, deps: { request: fetch } })
       if (result.ok) {
         const params = { repo: result.repoFullName, sha: result.commitSha.slice(0, 7), records: result.approvedCount }
         setCorpusSendStatus(result.createdRepo ? t('corpus.sentNexusStoreCreated', params) : t('corpus.sentNexusStore', params))
