@@ -10,7 +10,7 @@ This directory tracks the Phase C work from [ForgeClaw Issue #235](https://githu
 
 ## Gate B artifact audit
 
-The committed `gate-b-pairs.jsonl` is a flat 96-row file (48 pairs), not a 48-row nested-pair file. `audit_gate_b.py` checks the actual schema, pair geometry, distance-only prompt variation, expected-label/family counts, pack hash, and internal consistency of `gate-b-summary.json`. It deliberately reports `raw_output_reproduced: false`: the summary can be reconciled to the pair artifact, but independent output grading requires Muse’s `gate-b-outputs.jsonl`.
+The committed `gate-b-pairs.jsonl` is a flat 96-row file (48 pairs), not a 48-row nested-pair file. `audit_gate_b.py` checks the actual schema, pair geometry, distance-only prompt variation, expected-label/family counts, pack hash, and internal consistency of `gate-b-summary.json`. The family identifiers are exact: `magnitude_pos`, `magnitude_neg`, and `sign`; the retired prose labels positive-magnitude/negative-magnitude are not accepted as data. It deliberately reports `raw_output_reproduced: false`: the summary can be reconciled to the pair artifact, but independent output grading requires Muse’s `gate-b-outputs.jsonl`.
 
 ```bash
 cd nexus-llm/synthetic-intuition
