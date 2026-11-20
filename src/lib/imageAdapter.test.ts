@@ -1,11 +1,12 @@
 // @vitest-environment node
 // The image adapter makes generate-image.yml model-swappable. These tests pin what must not drift:
-// SD1.5 stays the default, the TS allowlist matches the Python one, Turbo models never get a size
+// the size-resolved default (SDXL Turbo up to 512, SD1.5 above) matches between the TS dispatch
+// and the Python spec, the TS allowlist matches the Python one, Turbo models never get a size
 // they were not benchmarked at, the runner is pinned, and the dependencies are exact pins.
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { executeTool, FORGE_TOOLS, IMAGE_MODELS, type ToolContext } from './forgeTools'
+import { defaultImageModel, executeTool, FORGE_TOOLS, IMAGE_MODELS, type ToolContext } from './forgeTools'
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -39,15 +40,23 @@ except g.SpecError as e:
 }
 
 describe('generate_image.py build_spec', () => {
-  it('defaults to Stable Diffusion 1.5 with the previous settings', () => {
+  it('defaults to SDXL Turbo at 512 with its benchmarked settings', () => {
     const { ok } = spec({ PROMPT: 'a fox' })
-    expect(ok).toMatchObject({ model: 'sd15', repo: 'runwayml/stable-diffusion-v1-5', steps: 30, guidance: 7.5, staged: false, width: 512, height: 512 })
-    expect(ok?.negative).toContain('blurry')
+    expect(ok).toMatchObject({ model: 'sdxl-turbo', repo: 'stabilityai/sdxl-turbo', steps: 1, guidance: 0, staged: true, width: 512, height: 512 })
+    expect(ok?.negative).toBeNull()
     expect(ok?.generation_prompt).toBe('a fox, realistic style, high quality, detailed')
   })
 
-  it('treats an empty MODEL (an older dispatch) as the default', () => {
-    expect(spec({ PROMPT: 'a fox', MODEL: '' }).ok?.model).toBe('sd15')
+  it('treats an empty MODEL (an older dispatch) as the default, resolved by size', () => {
+    expect(spec({ PROMPT: 'a fox', MODEL: '' }).ok?.model).toBe('sdxl-turbo')
+    expect(spec({ PROMPT: 'a fox', MODEL: '', WIDTH: '1024', HEIGHT: '1024' }).ok?.model).toBe('sd15')
+  })
+
+  it('keeps the TypeScript and Python default-model resolvers in step', () => {
+    for (const [width, height] of [[256, 256], [512, 512], [512, 768], [1024, 512], [1024, 1024]] as const) {
+      const resolved = spec({ PROMPT: 'p', WIDTH: String(width), HEIGHT: String(height) }).ok?.model
+      expect(resolved, `${width}x${height}`).toBe(defaultImageModel(width, height))
+    }
   })
 
   it('resolves the Turbo models with their benchmarked settings', () => {
@@ -56,7 +65,8 @@ describe('generate_image.py build_spec', () => {
   })
 
   it('records licence terms for every model, flagging the Turbo ones for verification', () => {
-    expect(String(spec({ PROMPT: 'p' }).ok?.license)).toContain('OpenRAIL-M')
+    expect(String(spec({ PROMPT: 'p', MODEL: 'sd15' }).ok?.license)).toContain('OpenRAIL-M')
+    expect(String(spec({ PROMPT: 'p' }).ok?.license)).toContain('Verify before commercial use')
     for (const model of ['sdxl-turbo', 'sd-turbo']) {
       expect(String(spec({ PROMPT: 'p', MODEL: model }).ok?.license)).toContain('Verify before commercial use')
     }
@@ -70,7 +80,7 @@ describe('generate_image.py build_spec', () => {
   it('refuses Turbo sizes above 512 but still allows SD1.5 up to 1024', () => {
     expect(spec({ PROMPT: 'p', MODEL: 'sdxl-turbo', WIDTH: '768', HEIGHT: '512' }).error).toMatch(/only verified up to 512/)
     expect(spec({ PROMPT: 'p', MODEL: 'sd-turbo', WIDTH: '512', HEIGHT: '1024' }).error).toMatch(/only verified up to 512/)
-    expect(spec({ PROMPT: 'p', WIDTH: '1024', HEIGHT: '1024' }).ok).toMatchObject({ width: 1024, height: 1024 })
+    expect(spec({ PROMPT: 'p', WIDTH: '1024', HEIGHT: '1024' }).ok).toMatchObject({ model: 'sd15', width: 1024, height: 1024 })
   })
 
   it('keeps the original prompt and size validation', () => {
@@ -103,8 +113,9 @@ describe('allowlist and workflow wiring', () => {
     expect(workflow).not.toContain('ubuntu-latest')
   })
 
-  it('passes the model through env, defaults it to sd15, and runs the script', () => {
-    expect(workflow).toMatch(/model:\n\s+description:[^\n]+\n\s+required: false\n\s+default: sd15/)
+  it('passes the model through env, leaves its default empty for the script resolver, and runs the script', () => {
+    expect(workflow).toMatch(/model:\n\s+description:[^\n]+\n\s+required: false\n\s+default: ''/)
+    expect(workflow).not.toContain('default: sd15')
     expect(workflow).toContain('MODEL: ${{ inputs.model }}')
     expect(workflow).toContain('run: python .github/scripts/generate_image.py')
     expect(workflow).not.toContain('python - <<')
@@ -120,7 +131,7 @@ describe('allowlist and workflow wiring', () => {
     // (sd-turbo) was cached and the others re-downloaded on every run.
     const key = workflow.split('\n').find(l => l.trim().startsWith('key: image-models-'))
     expect(key).toBeDefined()
-    expect(key).toContain("inputs.model || 'sd15'")
+    expect(key).toContain("inputs.model || 'auto'")
   })
 
   it('ships exact dependency pins, including torch', () => {
@@ -157,9 +168,15 @@ describe('generate_image dispatch', () => {
     return hit ? JSON.parse((hit[1] as RequestInit).body as string) : undefined
   }
 
-  it('sends model sd15 when none is given', async () => {
+  it('sends model sdxl-turbo when none is given at the default 512 size', async () => {
     const m = dispatchMock(); vi.stubGlobal('fetch', m)
     await executeTool(call({ prompt: 'a fox' }), ctx())
+    expect(dispatched(m).inputs.model).toBe('sdxl-turbo')
+  })
+
+  it('sends model sd15 when none is given above 512, the only size it is verified at', async () => {
+    const m = dispatchMock(); vi.stubGlobal('fetch', m)
+    await executeTool(call({ prompt: 'a fox', width: 1024, height: 1024 }), ctx())
     expect(dispatched(m).inputs.model).toBe('sd15')
   })
 
