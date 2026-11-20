@@ -54,7 +54,7 @@ import type { VerifiedProposalInput, VerifiedProposalRecordResult } from './lear
 import { listOpenPullRequests, parsePullNumber, readPullRequest } from './prInfo'
 import { parseIssueNumber, readIssue } from './issueInfo'
 import { formatGrepMatches, gitGrepCommand, parseGrepOutput } from './codeSearch'
-import { isPublicVisitor, PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
+import { getFamilyCode, isPublicVisitor, PUBLIC_RELAY_URL, runPublicReasoning, runPublicResearch } from './publicRelay'
 import { ATTACHED_IMAGE, currentAttachedImage } from './imageInput'
 import { formatImageAnalysis, runImageAnalysis } from './visionInput'
 import { formatCodeReview, runCodeReview } from './codeReview'
@@ -242,6 +242,10 @@ export interface ToolContext {
   ghRepo: string
   /** Public relay for visitors without a GitHub token (src/lib/publicRelay.ts); empty for the owner. */
   publicRelayUrl?: string
+  /** Family mode: the shared family code and relay base URL, when this browser entered one.
+   * Actions API calls are then rerouted through the relay's family tier (githubFetch.ts). */
+  familyCode?: string
+  familyRelayUrl?: string
   /** Whether the self-sculpt key is unlocked; defaults to the live check in sculptKey.ts. */
   sculptUnlocked?: boolean
   sessionId?: string
@@ -982,6 +986,8 @@ export function loadToolContext(): ToolContext {
     ghOwner:         safeGetItem('fc_gh_owner') || CANONICAL_IDENTITY.owner,
     ghRepo:          safeGetItem('fc_gh_repo')  || CANONICAL_IDENTITY.repository,
     publicRelayUrl:  PUBLIC_RELAY_URL || undefined,
+    familyCode:      getFamilyCode() || undefined,
+    familyRelayUrl:  PUBLIC_RELAY_URL || undefined,
     waPhoneNumberId: wa.phoneNumberId,
     waAccessToken:   wa.accessToken,
     waRecipient:     wa.recipientNumber,
@@ -1013,7 +1019,7 @@ function kalshiToolDeps(ctx: ToolContext): KalshiDeps {
   const base = (url: string, init?: RequestInit) => toolFetch(ctx, url, init)
   return {
     fetcher: relayFallbackFetcher(base, relayUrl), signal: ctx.signal, relayUrl,
-    sign: kalshiReadSigner(isPublicVisitor(ctx.ghToken ?? '', ctx.publicRelayUrl)),
+    sign: kalshiReadSigner(isPublicVisitor(ctx.ghToken ?? '', ctx.publicRelayUrl) && !ctx.familyCode),
   }
 }
 
@@ -1029,7 +1035,7 @@ function kalshiToolDeps(ctx: ToolContext): KalshiDeps {
 export function autoApproveExecutionDeps(ctx: ToolContext): KalshiExecutionDeps {
   return {
     runId: ctx.runId,
-    visitor: isPublicVisitor(ctx.ghToken ?? '', ctx.publicRelayUrl),
+    visitor: isPublicVisitor(ctx.ghToken ?? '', ctx.publicRelayUrl) && !ctx.familyCode,
     onFailure: note => logError('kalshi', note.message, `run ${note.runId ?? ctx.runId ?? 'none'} · position ${note.positionId ?? '?'} · stage ${note.stage}${note.ticker ? ` · ${note.ticker}` : ''}${note.clientOrderId ? ` · key ${note.clientOrderId}` : ''}${note.httpStatus ? ` · http ${note.httpStatus}` : ''}`),
     onPlaced: info => journalRecord(ctx.journal, kalshiOrderPlacedJournalEntry(info)),
   }
@@ -1372,7 +1378,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
       case 'github_create_issue': {
         const title = input.title as string
         const body  = input.body  as string
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/issues`, { method: 'POST', headers, body: JSON.stringify({ title, body }) })
         if (!res.ok) throw new Error(`GitHub ${res.status}`)
@@ -1385,7 +1391,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         const workflow = input.workflow as string
         const ref = (input.ref as string) || 'main'
         const inputs = parseWorkflowDispatchInputs(input.inputs)
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
         const runWorkflowSince = Date.now()
         const res = await toolFetch(ctx, `https://api.github.com/repos/${owner}/${repo}/actions/workflows/${workflow}/dispatches`, { method: 'POST', headers, body: JSON.stringify(inputs ? { ref, inputs } : { ref }) })
@@ -1425,12 +1431,12 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         context = stripImages(context)
         // Public visitor (no token in this browser, relay configured for this build): the owner's relay runs
         // the chat model; the owner's token, tools and NEXUS are never involved.
-        if (!token && ctx.publicRelayUrl) {
+        if (!token && !ctx.familyCode && ctx.publicRelayUrl) {
           const answer = await runPublicReasoning(task, { context, relayUrl: ctx.publicRelayUrl, signal: ctx.signal })
           if (isEmptyQwenResponse(answer.result)) return `[TOOL ERROR] The public model run ${answer.invocationId} produced an empty response.`
           return formatQwenResultText(answer.invocationId, owner, repo, 'main', `Stages: dispatch=public-relay; result-retrieval=relay-artifact; checkpoint=${answer.model || 'unknown'}`, '(public relay run)', answer.result)
         }
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         // The NEXUS guidance block is the owner's teaching, not task-matched context: it is set aside here, exempt from
         // the overlap rule below, and put back in front. Before this, "write a poem about cats" reached the 16B with
         // no guidance at all because the whole context string was zeroed.
@@ -1547,7 +1553,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         // workflow_dispatch size limits, and the Nexus workflow is text-only.
         const IMAGE_DATA_PATTERN = /data:image\/[a-zA-Z]+;base64,[A-Za-z0-9+/=]+/g
         task = task.replace(IMAGE_DATA_PATTERN, '[image omitted: not supported via Nexus workflow dispatch]')
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         if (!/^[A-Za-z0-9._/-]+$/.test(ref) || ref.startsWith('/') || ref.includes('..')) {
           throw new Error('Invalid workflow ref.')
         }
@@ -1629,7 +1635,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         if (!/^sculpt\/[a-z0-9][a-z0-9._/-]{0,60}$/.test(branch) || branch.endsWith('/') || branch.includes('..')) {
           throw new Error('Self-sculpt branch is unsafe or protected.')
         }
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         const invocationId = `sculpt-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
         const headers = { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
         // Only a branch that does not exist yet may be deleted by rollback.
@@ -1665,7 +1671,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
       // ── Shell patch: guarded shell-repair workflow (branch + pull request proposal) ──
       // ── Merge a pull request (co-signed, key-locked, checks and protected paths enforced by the tool) ──
       case 'github_merge_pr': {
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         const method = input.method === 'merge' || input.method === 'rebase' ? input.method : 'squash'
         return await mergePullRequest((url, init) => toolFetch(ctx, url, init), {
           owner, repo, token, pullNumber: Number(input.pull_number),
@@ -1675,7 +1681,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
 
       // ── Cloud browser: click and browse on a real Chromium on a runner (interactive actions are co-signed) ──
       case 'browser_run': {
-        if (!token) throw new Error('No GitHub token configured; the browser runs as a GitHub Actions workflow.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured; the browser runs as a GitHub Actions workflow.')
         return await runBrowserRound((url, init) => toolFetch(ctx, url, init), {
           owner, repo, token, actions: input.actions, sessionId: typeof input.session_id === 'string' && input.session_id ? input.session_id : undefined,
           goal: typeof input.goal === 'string' ? input.goal.trim().slice(0, 200) : undefined, signal: ctx.signal,
@@ -1705,7 +1711,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         // with the counts, instead of spending a runner job; git apply in the workflow stays the authority on applying.
         const malformedHunk = checkUnifiedDiff(patch)
         if (malformedHunk) throw new Error(`The patch is malformed: ${malformedHunk} Regenerate the diff so each hunk's line counts match its @@ header (for example from \`git diff\`), then call shell_patch again.`)
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         // Preflight with the real `git apply --check` on a runner (owner authorization, #235, 2026-11-12): a malformed
         // model-written patch fails here, in the app, with git's own message, before any repair run is dispatched.
         // It goes through shell_exec (same Guardian path). wait:false is the explicit dispatch-only mode, so it skips the wait.
@@ -2262,7 +2268,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         const model = input.model === undefined || input.model === '' ? defaultImageModel(width, height) : String(input.model)
         if (!(IMAGE_MODELS as readonly string[]).includes(model)) throw new Error(`Unknown image model '${model}'. Allowed: ${IMAGE_MODELS.join(', ')}.`)
         if (model !== 'sd15' && (width > 512 || height > 512)) throw new Error(`Image model '${model}' is only verified up to 512x512.`)
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
 
         // The owner's own taste (nexusTaste.ts, learned from his reactions) steers the prompt; empty until it has enough to say.
         const tastePrompt = tasteForImagePrompt()
@@ -2315,7 +2321,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
       }
 
       case 'analyze_image': {
-        if (!token) throw new Error('No GitHub token configured. analyze_image runs as a GitHub Actions job and needs gh_token with Contents and Actions: write.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured. analyze_image runs as a GitHub Actions job and needs gh_token with Contents and Actions: write.')
         // Used to return "Dispatched" and never the answer, and could not take an uploaded picture at all.
         const requested = String(input.image_url || '').trim()
         const image = requested && requested !== ATTACHED_IMAGE ? requested : currentAttachedImage()
@@ -2485,7 +2491,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
       }
 
       case 'review_code': {
-        if (!token) throw new Error('No GitHub token configured. review_code runs as a GitHub Actions job and needs gh_token with Actions: write.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured. review_code runs as a GitHub Actions job and needs gh_token with Actions: write.')
         // Used to return "dispatched" and never the review. The workflow lives in ForgeClaw's own repository.
         const result = await runCodeReview(githubRequest, { owner: ctx.ghOwner, repo: ctx.ghRepo, token, code: String(input.code || ''), language: input.language as string | undefined, signal: ctx.signal })
         return formatCodeReview(result)
@@ -2668,11 +2674,11 @@ case 'spawn_agent': {
       // ── Deep research ────────────────────────────────────────────────────────
       case 'deep_research': {
         // Public visitor: the owner's relay runs the same research workflow; no token in this browser.
-        if (!token && ctx.publicRelayUrl) {
+        if (!token && !ctx.familyCode && ctx.publicRelayUrl) {
           const { report, runUrl } = await runPublicResearch(String(input.question || ''), { relayUrl: ctx.publicRelayUrl, signal: ctx.signal })
           return formatResearchResult(report, runUrl)
         }
-        if (!token) throw new Error('No GitHub token configured. deep_research runs as a GitHub Actions job and needs gh_token with Actions: write.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured. deep_research runs as a GitHub Actions job and needs gh_token with Actions: write.')
         // The workflow lives in ForgeClaw's own repository regardless of any owner/repo in the call.
         const { report, runUrl } = await runDeepResearch(githubRequest, {
           owner: ctx.ghOwner, repo: ctx.ghRepo, token,

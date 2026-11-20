@@ -18,11 +18,24 @@
 //   RATE             optional KV namespace binding for the per-IP quota
 //   LEARN            optional KV namespace: visitor conversations (for NEXUS) and error reports
 //   OWNER_KEY        secret; the owner's app sends it to export the stored learning/error reports
+//   FAMILY_CODE      optional secret; a simple shared code that unlocks the family tier below
+//   FAMILY_MAX_PER_HOUR    family dispatches per IP per hour, default 300
+//   FAMILY_MAX_CONCURRENT  family-tier runs in progress per workflow, default 6
 //   RESEND_API_KEY   optional secret; with REPORT_EMAIL, error reports are emailed through Resend
 //   REPORT_EMAIL     the owner's email address for error reports
 
 const WORKFLOW = 'qwen3-8b.yml'
 const RESEARCH_WORKFLOW = 'deep-research.yml'
+// Family tier: the interactive workflows the owner's app dispatches for chat, Nexus, images,
+// research, search, browsing, shell and self-sculpt. Money and trading workflows
+// (trader-agent.yml, kalshi-snapshot.yml, owner-exit.yml) are deliberately absent: a shared
+// family code never gains a route to them, whatever the app asks for.
+const FAMILY_WORKFLOWS = new Set([
+  'qwen3-8b.yml', 'nexus-intelligence.yml', 'generate-image.yml', 'image-analyze.yml',
+  'deep-research.yml', 'ddg_search.yml', 'code-review.yml', 'browser-agent.yml',
+  'browser-automation.yml', 'shell-exec.yml', 'shell-repair.yml', 'self-sculpt.yml',
+  'site-build.yml', 'search-proxy.yml',
+])
 const ID_RE = /^public-[a-z0-9]{6,12}-[a-z0-9]{6,12}$/
 const MAX_TASK_CHARS = 4000
 // Gathered web evidence for the answer; about 4K tokens of the model's 8K context.
@@ -392,6 +405,103 @@ async function forwardKalshi(request, env, cors) {
   return json({ status: res.status, body: await res.text() }, 200, cors)
 }
 
+/**
+ * Family tier (owner-directed 2026-11-19): a browser holding the shared FAMILY_CODE but no
+ * GitHub token gets the owner's interactive surface. The app rewrites its GitHub Actions API
+ * calls to /v1/family/repos/<owner>/<repo>/actions/... and this handler performs them with the
+ * relay's token, returning GitHub's response verbatim. The scope is pinned three ways: the
+ * repository must be this relay's REPO, the workflow must be in FAMILY_WORKFLOWS (checked on
+ * dispatch, and on run/artifact reads via the run's own workflow path), and nothing outside
+ * /actions/ exists here at all — repository contents, issues and every other API stay
+ * unreachable, because the relay token itself holds Actions permission only.
+ */
+function familyAuthorized(request, env) {
+  const auth = request.headers.get('Authorization') || ''
+  return sameSecret(auth, `Bearer ${env.FAMILY_CODE}`)
+}
+
+function passthrough(res, cors) {
+  return new Response(res.body, {
+    status: res.status,
+    headers: { 'Content-Type': res.headers.get('Content-Type') || 'application/json', ...cors },
+  })
+}
+
+async function familyRunsInProgress(env, workflow) {
+  let count = 0
+  for (const status of ['queued', 'in_progress']) {
+    const res = await gh(env, `/actions/workflows/${workflow}/runs?status=${status}&per_page=50`)
+    if (!res.ok) throw new Error(`GitHub ${res.status} listing runs`)
+    count += ((await res.json()).workflow_runs || []).length
+  }
+  return count
+}
+
+/** The workflow file a run belongs to, from the run's own record; null when unreadable. */
+async function runWorkflow(env, runId) {
+  const res = await gh(env, `/actions/runs/${runId}`)
+  if (!res.ok) return { res }
+  const run = await res.json()
+  return { run, status: res.status, workflow: String(run.path || '').split('/').pop() || '' }
+}
+
+async function familyProxy(request, env, cors, url) {
+  const repo = env.REPO || 'DeviousDevv303/forgeclaw'
+  const m = /^\/v1\/family\/repos\/([^/]+)\/([^/]+)\/actions\/(.+)$/.exec(url.pathname)
+  if (!m || `${decodeURIComponent(m[1])}/${decodeURIComponent(m[2])}` !== repo) {
+    return json({ error: 'family routes are scoped to the ForgeClaw repository' }, 403, cors)
+  }
+  const rest = m[3]
+  const denied = workflow => json({ error: `workflow '${workflow}' is not family-unlocked` }, 403, cors)
+
+  const dispatch = /^workflows\/([^/]+)\/dispatches$/.exec(rest)
+  if (request.method === 'POST' && dispatch) {
+    const workflow = decodeURIComponent(dispatch[1])
+    if (!FAMILY_WORKFLOWS.has(workflow)) return denied(workflow)
+    if (await overQuota(request, env, 'family', Number(env.FAMILY_MAX_PER_HOUR || 300))) {
+      return json({ error: 'family hourly limit reached; try again later' }, 429, cors)
+    }
+    if (await familyRunsInProgress(env, workflow) >= Number(env.FAMILY_MAX_CONCURRENT || 6)) {
+      return json({ error: 'family runs are busy; try again in a few minutes' }, 503, cors)
+    }
+    const body = await request.text()
+    const res = await gh(env, `/actions/workflows/${workflow}/dispatches`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+    })
+    return passthrough(res, cors)
+  }
+
+  const runsList = /^workflows\/([^/]+)\/runs$/.exec(rest)
+  if (request.method === 'GET' && runsList) {
+    const workflow = decodeURIComponent(runsList[1])
+    if (!FAMILY_WORKFLOWS.has(workflow)) return denied(workflow)
+    return passthrough(await gh(env, `/actions/workflows/${workflow}/runs${url.search}`), cors)
+  }
+
+  const runRoute = /^runs\/(\d+)(\/artifacts)?$/.exec(rest)
+  if (request.method === 'GET' && runRoute) {
+    const { res, run, status, workflow } = await runWorkflow(env, runRoute[1])
+    if (!run) return passthrough(res, cors)
+    if (!FAMILY_WORKFLOWS.has(workflow)) return denied(workflow)
+    if (!runRoute[2]) return json(run, status, cors)
+    return passthrough(await gh(env, `/actions/runs/${runRoute[1]}/artifacts${url.search}`), cors)
+  }
+
+  const zipRoute = /^artifacts\/(\d+)\/zip$/.exec(rest)
+  if (request.method === 'GET' && zipRoute) {
+    const artRes = await gh(env, `/actions/artifacts/${zipRoute[1]}`)
+    if (!artRes.ok) return passthrough(artRes, cors)
+    const art = await artRes.json()
+    const runId = art?.workflow_run?.id
+    if (!runId) return json({ error: 'artifact has no workflow run' }, 404, cors)
+    const { workflow } = await runWorkflow(env, runId)
+    if (!workflow || !FAMILY_WORKFLOWS.has(workflow)) return denied(workflow || 'unknown')
+    return passthrough(await gh(env, `/actions/artifacts/${zipRoute[1]}/zip`, { redirect: 'follow' }), cors)
+  }
+
+  return json({ error: 'not a family-unlocked route' }, 403, cors)
+}
+
 export default {
   async fetch(request, env) {
     const cors = corsHeaders(request, env)
@@ -399,8 +509,13 @@ export default {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors })
     const url = new URL(request.url)
     // Error reports and the owner exports work even before the model token is configured.
-    if (!env.GITHUB_TOKEN && (url.pathname.startsWith('/v1/reason') || url.pathname.startsWith('/v1/research'))) return json({ error: 'relay is not configured' }, 503, cors)
+    if (!env.GITHUB_TOKEN && (url.pathname.startsWith('/v1/reason') || url.pathname.startsWith('/v1/research') || url.pathname.startsWith('/v1/family'))) return json({ error: 'relay is not configured' }, 503, cors)
     try {
+      if (url.pathname.startsWith('/v1/family/')) {
+        if (!env.FAMILY_CODE) return json({ error: 'family mode is not configured' }, 503, cors)
+        if (!familyAuthorized(request, env)) return json({ error: 'family code required' }, 401, cors)
+        return await familyProxy(request, env, cors, url)
+      }
       if (request.method === 'POST' && url.pathname === '/v1/reason') return await startReasoning(request, env, cors)
       if (request.method === 'POST' && url.pathname === '/v1/errors') return await receiveErrors(request, env, cors)
       if (request.method === 'GET' && url.pathname === '/v1/learning') return await exportRecords(request, env, cors, 'learn:')

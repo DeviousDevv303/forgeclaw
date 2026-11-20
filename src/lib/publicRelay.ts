@@ -17,6 +17,32 @@ export function isPublicVisitor(ghToken: string, relayUrl = PUBLIC_RELAY_URL): b
   return !!relayUrl && !ghToken.trim()
 }
 
+// ─── Family mode ─────────────────────────────────────────────────────────────
+// The owner shares one simple code with family (entered once in Settings → GitHub). A browser
+// holding the code is not a visitor: the relay's family tier performs its GitHub Actions calls
+// with the relay's own token (see relay/worker.js), so chat, Nexus, tools and images work as
+// they do for the owner. The code lives only in this browser's localStorage and is sent only
+// to the relay, as a Bearer header on rewritten Actions calls (see githubFetch.ts).
+
+export const FAMILY_CODE_KEY = 'forgeclaw_family_code'
+
+export function getFamilyCode(): string {
+  try { return (localStorage.getItem(FAMILY_CODE_KEY) || '').trim() } catch { return '' }
+}
+
+export function setFamilyCode(code: string): void {
+  try {
+    const value = code.trim()
+    if (value) localStorage.setItem(FAMILY_CODE_KEY, value)
+    else localStorage.removeItem(FAMILY_CODE_KEY)
+  } catch { /* storage unavailable: family mode simply stays off */ }
+}
+
+/** True when this browser is a plain visitor: public-visitor conditions and no family code. */
+export function isVisitor(ghToken: string, relayUrl = PUBLIC_RELAY_URL): boolean {
+  return isPublicVisitor(ghToken, relayUrl) && !getFamilyCode()
+}
+
 export const PUBLIC_MODE_NOTICE = translate('en', 'public.notice')
 
 export interface PublicReasoningOptions {

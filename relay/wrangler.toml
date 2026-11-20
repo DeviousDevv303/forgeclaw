@@ -23,6 +23,7 @@ MAX_CONCURRENT = "3"
 
 # Secrets (never in this file): npx wrangler secret put <NAME>
 #   GITHUB_TOKEN    fine-grained, forgeclaw only, Actions: Read and write
+#   FAMILY_CODE     optional; a simple shared code unlocking the family tier (see README)
 #   OWNER_KEY       a long random phrase; paste the same into ForgeClaw → NEXUS → relay owner key
 #   RESEND_API_KEY  from resend.com (free); error reports are emailed to REPORT_EMAIL
 #   REPORT_EMAIL    the address you signed up to Resend with

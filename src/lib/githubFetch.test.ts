@@ -66,3 +66,37 @@ describe('shared GitHub fetch boundary', () => {
     expect(fetchMock.mock.calls.every(call => call[1]?.cache === 'no-store')).toBe(true)
   })
 })
+
+describe('family mode transport rewrite', () => {
+  const ctx = { familyCode: 'lighthouse7', familyRelayUrl: 'https://relay.example/' }
+
+  it('reroutes Actions API calls to the relay family tier with the code as Bearer', async () => {
+    const { familyActionsRewrite } = await import('./githubFetch')
+    const out = familyActionsRewrite(
+      'https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/generate-image.yml/runs?event=workflow_dispatch&per_page=50',
+      { headers: { Authorization: 'token ' } }, ctx)
+    expect(out?.input).toBe('https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/actions/workflows/generate-image.yml/runs?event=workflow_dispatch&per_page=50')
+    expect(new Headers(out?.init.headers).get('Authorization')).toBe('Bearer lighthouse7')
+  })
+
+  it('leaves non-Actions GitHub calls and non-GitHub calls untouched', async () => {
+    const { familyActionsRewrite } = await import('./githubFetch')
+    expect(familyActionsRewrite('https://api.github.com/repos/DeviousDevv303/forgeclaw/contents/src/App.tsx', {}, ctx)).toBeNull()
+    expect(familyActionsRewrite('https://example.com/actions/workflows/x.yml/runs', {}, ctx)).toBeNull()
+  })
+
+  it('does nothing without a code or a relay URL', async () => {
+    const { familyActionsRewrite } = await import('./githubFetch')
+    const url = 'https://api.github.com/repos/o/r/actions/runs/1'
+    expect(familyActionsRewrite(url, {}, {})).toBeNull()
+    expect(familyActionsRewrite(url, {}, { familyCode: 'x' })).toBeNull()
+    expect(familyActionsRewrite(url, {}, { familyRelayUrl: 'https://relay.example' })).toBeNull()
+  })
+
+  it('toolFetch sends the rewritten request, not the GitHub one', async () => {
+    const fetchMock = vi.fn(async (url: string) => new Response(JSON.stringify({ url }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await toolFetch(ctx, 'https://api.github.com/repos/DeviousDevv303/forgeclaw/actions/workflows/qwen3-8b.yml/dispatches', { method: 'POST' })
+    expect(String(fetchMock.mock.calls[0][0])).toBe('https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/actions/workflows/qwen3-8b.yml/dispatches')
+  })
+})

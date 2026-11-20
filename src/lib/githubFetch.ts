@@ -17,6 +17,10 @@ export const GITHUB_READ_TIMEOUT_MS = 30_000
 export interface GithubFetchContext {
   signal?: AbortSignal
   timeoutMs?: number
+  /** Family mode (publicRelay.ts): the shared family code and the relay base URL. When both
+   * are set, GitHub Actions API calls are rerouted through the relay's family tier. */
+  familyCode?: string
+  familyRelayUrl?: string
 }
 
 function getRequestUrl(input: RequestInfo | URL): string {
@@ -63,6 +67,30 @@ function waitForGithubRetry(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+const GITHUB_ACTIONS_PATH_RE = /^https:\/\/api\.github\.com(\/repos\/[^/]+\/[^/]+\/actions\/.*)$/
+
+/**
+ * Family mode transport: with a family code set, GitHub Actions API calls are rerouted to the
+ * relay's family tier, which performs them with its own token and returns GitHub's response
+ * verbatim. Only /actions/ paths rewrite — repository-contents and other API calls pass
+ * through untouched (the relay cannot serve them). Returns null when no rewrite applies.
+ */
+export function familyActionsRewrite(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  ctx: GithubFetchContext,
+): { input: string; init: RequestInit } | null {
+  const code = (ctx.familyCode || '').trim()
+  const relay = (ctx.familyRelayUrl || '').trim().replace(/\/+$/, '')
+  if (!code || !relay) return null
+  if (typeof input !== 'string' && !(input instanceof URL)) return null
+  const match = GITHUB_ACTIONS_PATH_RE.exec(getRequestUrl(input))
+  if (!match) return null
+  const headers = new Headers(init.headers)
+  headers.set('Authorization', `Bearer ${code}`)
+  return { input: `${relay}/v1/family${match[1]}`, init: { ...init, headers } }
+}
+
 export async function toolFetch(
   ctx: GithubFetchContext,
   input: RequestInfo | URL,
@@ -79,6 +107,10 @@ export async function toolFetch(
     : `${method} request`
 
   if (parentSignal?.aborted) throw new DOMException('Run aborted', 'AbortError')
+
+  const family = familyActionsRewrite(input, init, ctx)
+  const fetchInput = family?.input ?? input
+  const fetchInit = family?.init ?? init
 
   let timeoutRetryUsed = false
 
@@ -97,8 +129,8 @@ export async function toolFetch(
     let retryDelayMs: number | undefined
 
     try {
-      const response = await fetch(input, {
-        ...init,
+      const response = await fetch(fetchInput, {
+        ...fetchInit,
         ...(isGithubApi(input) && retryableRead ? { cache: 'no-store' as RequestCache } : {}),
         signal: controller.signal,
       })
