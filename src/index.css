@@ -5,6 +5,7 @@
 html, body {
   height: 100%;
   overflow: hidden;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -18,6 +19,20 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-sizing: border-box;
+  /* Notch / home-indicator clearance on phones (pairs with viewport-fit=cover). */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* iOS fit: Safari auto-zooms into any field rendered below 16px on focus and does
+   not zoom back out afterwards — on an iPhone the app looked permanently zoomed in
+   and needed constant pinching. ForgeClaw's fields are 11–13px monospace by design;
+   on iOS only, fields render at 16px so focus never triggers the zoom. Android and
+   desktop are untouched. (-webkit-touch-callout is supported only by iOS Safari.) */
+@supports (-webkit-touch-callout: none) {
+  input, textarea, select {
+    font-size: 16px !important;
+  }
 }
 
 ::-webkit-scrollbar {

@@ -781,6 +781,47 @@ function App() {
   const messagesRef = useRef(messages)
   messagesRef.current = messages
   const [input, setInput] = useState('')
+  // Voice dictation (owner request 2026-11-20, for family who type by talking): the mic
+  // button beside Send runs the browser's speech recognition and types what it hears into
+  // the composer. Web Speech API; iOS Safari supports it as webkitSpeechRecognition.
+  const [dictating, setDictating] = useState(false)
+  const dictationRef = useRef<{ stop: () => void } | null>(null)
+  const dictationBaseRef = useRef('')
+  const speechSupported = typeof window !== 'undefined' && !!((window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition)
+  const toggleDictation = () => {
+    if (dictating) { dictationRef.current?.stop(); return }
+    const w = window as unknown as {
+      SpeechRecognition?: new () => {
+        lang: string; interimResults: boolean; continuous: boolean
+        onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
+        onend: (() => void) | null; onerror: (() => void) | null
+        start: () => void; stop: () => void
+      }
+      webkitSpeechRecognition?: new () => {
+        lang: string; interimResults: boolean; continuous: boolean
+        onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
+        onend: (() => void) | null; onerror: (() => void) | null
+        start: () => void; stop: () => void
+      }
+    }
+    const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition
+    if (!Ctor) return
+    const rec = new Ctor()
+    rec.lang = navigator.language || 'en-US'
+    rec.interimResults = true
+    rec.continuous = true
+    dictationBaseRef.current = input ? (input.endsWith(' ') ? input : `${input} `) : ''
+    rec.onresult = event => {
+      let text = ''
+      for (let i = 0; i < event.results.length; i++) text += event.results[i][0].transcript
+      setInput(dictationBaseRef.current + text)
+    }
+    rec.onend = () => { setDictating(false); dictationRef.current = null }
+    rec.onerror = () => { setDictating(false); dictationRef.current = null }
+    dictationRef.current = rec
+    setDictating(true)
+    try { rec.start() } catch { setDictating(false); dictationRef.current = null }
+  }
   // Shown briefly when Enter is pressed while a request is still running (the send is ignored).
   const [busyNotice, setBusyNotice] = useState(false)
   const busyNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -4018,6 +4059,16 @@ function App() {
                     {screenCopied ? t('chat.screenCopied') : t('chat.screenText')}
                   </button>
                   <textarea ref={promptInputRef} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', minHeight: '36px', maxHeight: '120px', overflowY: 'auto', background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', padding: '8px 6px', WebkitAppearance: 'none' }} rows={1} placeholder={t('chat.placeholder', { provider: PROVIDERS[activeProvider].name })} value={input} onChange={e => { setInput(e.target.value); window.forgeCore?.userTyping() }} onInput={e => { setInput(e.currentTarget.value); autoGrowPromptInput() }} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
+                  {speechSupported && (
+                    <button
+                      onClick={toggleDictation}
+                      title={dictating ? 'Stop dictation' : 'Dictate — tap and talk'}
+                      aria-label={dictating ? 'Stop dictation' : 'Dictate'}
+                      style={{ background: dictating ? '#7f1d1d' : '#0d0d0f', color: dictating ? '#fecaca' : '#888', minWidth: '48px', height: '36px', padding: '0 6px', borderRadius: '10px', border: `1px solid ${dictating ? '#ef4444' : '#2e2e33'}`, cursor: 'pointer', fontSize: '15px', flexShrink: 0 }}
+                    >
+                      🎤
+                    </button>
+                  )}
                   {loading ? (
                     <button style={{ background: '#7f1d1d', color: '#fecaca', padding: '7px 16px', borderRadius: '10px', border: '1px solid #ef4444', fontWeight: 'bold', cursor: 'pointer', fontSize: '11px', textTransform: 'uppercase', flexShrink: 0 }} onClick={stopGeneration} aria-label={t('chat.stopAria')}>{t('chat.stop')}</button>
                   ) : (
