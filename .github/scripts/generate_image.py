@@ -1,7 +1,10 @@
 """Repository-owned CPU image generation, called by .github/workflows/generate-image.yml.
 
-Model-swappable through the MODELS allowlist below. The default stays Stable Diffusion 1.5
-(OpenRAIL-M). The Turbo models are opt-in: see each entry's `license` note before relying on them.
+Model-swappable through the MODELS allowlist below. When MODEL is unset, the default is
+resolved by size (see resolve_default_model): SDXL Turbo — the pipeline that won the ForgeClaw
+image bakeoff and was license-cleared as the default — at its verified 512x512, and Stable
+Diffusion 1.5 (OpenRAIL-M) above that, as the only model verified at larger sizes. An explicit
+MODEL is never overridden. See each entry's `license` note before relying on them.
 
 Everything arrives through environment variables; nothing is interpolated into shell text.
 Importing this module has no side effects, so validation can be tested without torch installed.
@@ -17,7 +20,14 @@ import tempfile
 import time
 from pathlib import Path
 
-DEFAULT_MODEL = "sd15"
+def resolve_default_model(width: int, height: int) -> str:
+    """The model a request with no explicit MODEL renders with, by size.
+
+    Mirrors defaultImageModel in src/lib/forgeTools.ts (a test keeps the two in step):
+    SDXL Turbo at or below its verified 512x512; SD1.5 above, as the only model
+    verified at larger sizes.
+    """
+    return "sdxl-turbo" if width <= 512 and height <= 512 else "sd15"
 
 # Per-model spec. `max_side` is the largest width/height we have evidence for: SD1.5 is unchanged
 # from the previous workflow (up to 1024); the Turbo models were only benchmarked at 512x512, so
@@ -65,12 +75,12 @@ def build_spec(env: dict) -> dict:
     """Validate the request and return the resolved generation spec. Raises SpecError."""
     prompt = (env.get("PROMPT") or "").strip()
     style = (env.get("STYLE") or "realistic").strip() or "realistic"
-    model = (env.get("MODEL") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
     try:
         width = int(env.get("WIDTH") or "512")
         height = int(env.get("HEIGHT") or "512")
     except ValueError as exc:
         raise SpecError("width and height must be integers") from exc
+    model = (env.get("MODEL") or "").strip() or resolve_default_model(width, height)
     if not prompt or len(prompt) > 4000:
         raise SpecError("prompt must contain 1-4000 characters")
     if model not in MODELS:
