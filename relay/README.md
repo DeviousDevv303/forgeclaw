@@ -14,6 +14,17 @@ Cloudflare Worker (`worker.js`, free tier is enough). The model and research rou
   an already-signed Kalshi request verbatim to Kalshi (only the two `external-api` hosts) and
   returns its status and body, for when the browser cannot reach Kalshi directly. Nothing is
   stored or logged; the signing headers pass through untouched.
+- **Family tier** (`/v1/family/repos/<owner>/<repo>/actions/...`, needs the `FAMILY_CODE`
+  secret): the owner's family enters one simple code in ForgeClaw (Settings → GitHub → Family
+  code) and gets the owner's interactive surface without holding any token. The app rewrites
+  its GitHub Actions API calls to these routes; the relay performs them with its own token and
+  returns GitHub's response verbatim. Only the interactive workflows in the worker's
+  `FAMILY_WORKFLOWS` list can be dispatched or read back (chat, Nexus, images, research,
+  search, browsing, shell, self-sculpt); trading workflows are never in the list, and nothing
+  outside the Actions API exists on these routes. Limits: 300 dispatches per IP per hour
+  (`FAMILY_MAX_PER_HOUR`) and 6 runs in progress per workflow (`FAMILY_MAX_CONCURRENT`).
+  Rotate the code with `npx wrangler secret put FAMILY_CODE`; family browsers then need the
+  new code once.
 
 The logging routes:
 

@@ -354,3 +354,95 @@ describe('relay worker — /v1/kalshi forwarding', () => {
     expect(calls).toHaveLength(1)
   })
 })
+
+describe('relay worker family tier', () => {
+  const CODE = 'lighthouse7'
+  const fam = (path: string, init: RequestInit & { origin?: string } = {}) =>
+    req(path, { ...init, headers: { Authorization: `Bearer ${CODE}`, ...(init.headers || {}) } })
+  const famEnv = (extra: Record<string, unknown> = {}) => env({ FAMILY_CODE: CODE, ...extra })
+  const FAM = '/v1/family/repos/DeviousDevv303/forgeclaw/actions'
+
+  function stubGithub(handlers: (url: string, init?: RequestInit) => Response | null) {
+    const calls: Array<{ url: string; method: string }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method || 'GET' })
+      const hit = handlers(url, init)
+      if (hit) return hit
+      if (url.includes('/runs?status=')) return Response.json({ workflow_runs: [] })
+      return new Response(null, { status: 204 })
+    }))
+    return calls
+  }
+
+  it('is off until FAMILY_CODE is set, and refuses a wrong code', async () => {
+    stubGithub(() => null)
+    expect((await worker.fetch(fam(`${FAM}/workflows/generate-image.yml/dispatches`, { method: 'POST', body: '{}' }), env())).status).toBe(503)
+    const wrong = req(`${FAM}/workflows/generate-image.yml/dispatches`, { method: 'POST', body: '{}', headers: { Authorization: 'Bearer wrong-code' } })
+    expect((await worker.fetch(wrong, famEnv())).status).toBe(401)
+    const none = req(`${FAM}/workflows/generate-image.yml/dispatches`, { method: 'POST', body: '{}' })
+    expect((await worker.fetch(none, famEnv())).status).toBe(401)
+  })
+
+  it('dispatches an allowlisted workflow with the relay token and passes the body through', async () => {
+    const calls = stubGithub(() => null)
+    const body = JSON.stringify({ ref: 'main', inputs: { prompt: 'a lighthouse', invocation_id: 'sd-1' } })
+    const res = await worker.fetch(fam(`${FAM}/workflows/generate-image.yml/dispatches`, { method: 'POST', body }), famEnv())
+    expect(res.status).toBe(204)
+    const dispatch = calls.find(c => c.url.endsWith('/dispatches'))!
+    expect(dispatch.url).toBe(`${API}/actions/workflows/generate-image.yml/dispatches`)
+  })
+
+  it('never dispatches a trading workflow, whatever the app asks for', async () => {
+    const calls = stubGithub(() => null)
+    for (const wf of ['trader-agent.yml', 'kalshi-snapshot.yml', 'owner-exit.yml', 'deploy.yml']) {
+      expect((await worker.fetch(fam(`${FAM}/workflows/${wf}/dispatches`, { method: 'POST', body: '{}' }), famEnv())).status).toBe(403)
+    }
+    expect(calls.filter(c => c.url.endsWith('/dispatches'))).toHaveLength(0)
+  })
+
+  it('scopes every route to the relay repository and the Actions API', async () => {
+    stubGithub(() => null)
+    expect((await worker.fetch(fam('/v1/family/repos/SomeoneElse/other/actions/workflows/generate-image.yml/dispatches', { method: 'POST', body: '{}' }), famEnv())).status).toBe(403)
+    expect((await worker.fetch(fam('/v1/family/repos/DeviousDevv303/forgeclaw/contents/src/App.tsx'), famEnv())).status).toBe(403)
+  })
+
+  it('proxies the runs list only for allowlisted workflows', async () => {
+    stubGithub(url => url.includes('/workflows/generate-image.yml/runs') ? Response.json({ workflow_runs: [{ id: 7 }] }) : null)
+    const ok = await worker.fetch(fam(`${FAM}/workflows/generate-image.yml/runs?event=workflow_dispatch&per_page=50`), famEnv())
+    expect(ok.status).toBe(200)
+    expect(((await ok.json()) as { workflow_runs: unknown[] }).workflow_runs).toHaveLength(1)
+    expect((await worker.fetch(fam(`${FAM}/workflows/trader-agent.yml/runs`), famEnv())).status).toBe(403)
+  })
+
+  it('reads a run and its artifacts only when the run belongs to an allowlisted workflow', async () => {
+    stubGithub(url => {
+      if (url.endsWith('/actions/runs/42')) return Response.json({ id: 42, path: '.github/workflows/generate-image.yml', status: 'completed' })
+      if (url.endsWith('/actions/runs/42/artifacts?per_page=20')) return Response.json({ artifacts: [{ id: 9, name: 'generated-image-sd-1' }] })
+      if (url.endsWith('/actions/runs/43')) return Response.json({ id: 43, path: '.github/workflows/trader-agent.yml', status: 'completed' })
+      return null
+    })
+    const run = await worker.fetch(fam(`${FAM}/runs/42`), famEnv())
+    expect(run.status).toBe(200)
+    expect(((await run.json()) as { id: number }).id).toBe(42)
+    const arts = await worker.fetch(fam(`${FAM}/runs/42/artifacts?per_page=20`), famEnv())
+    expect(arts.status).toBe(200)
+    expect((await worker.fetch(fam(`${FAM}/runs/43`), famEnv())).status).toBe(403)
+    expect((await worker.fetch(fam(`${FAM}/runs/43/artifacts`), famEnv())).status).toBe(403)
+  })
+
+  it('downloads an artifact zip only when its run is allowlisted', async () => {
+    const zipBytes = new Uint8Array([80, 75, 3, 4])
+    stubGithub(url => {
+      if (url.endsWith('/actions/artifacts/9')) return Response.json({ id: 9, workflow_run: { id: 42 } })
+      if (url.endsWith('/actions/runs/42')) return Response.json({ id: 42, path: '.github/workflows/generate-image.yml' })
+      if (url.endsWith('/actions/artifacts/9/zip')) return new Response(zipBytes, { headers: { 'Content-Type': 'application/zip' } })
+      if (url.endsWith('/actions/artifacts/10')) return Response.json({ id: 10, workflow_run: { id: 43 } })
+      if (url.endsWith('/actions/runs/43')) return Response.json({ id: 43, path: '.github/workflows/trader-agent.yml' })
+      return null
+    })
+    const zip = await worker.fetch(fam(`${FAM}/artifacts/9/zip`), famEnv())
+    expect(zip.status).toBe(200)
+    expect(new Uint8Array(await zip.arrayBuffer())).toEqual(zipBytes)
+    expect((await worker.fetch(fam(`${FAM}/artifacts/10/zip`), famEnv())).status).toBe(403)
+  })
+})

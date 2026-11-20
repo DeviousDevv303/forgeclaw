@@ -216,7 +216,7 @@ import { lessonsForPrompt, PROMPT_CANDIDATE_WINDOW, summarizeLearning } from './
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
 import { skillForPrompt } from './lib/skills'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
-import { isPublicVisitor } from './lib/publicRelay'
+import { getFamilyCode, isVisitor, setFamilyCode } from './lib/publicRelay'
 import { checkGithubReadArgs } from './lib/githubArgCheck'
 import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, mergeChannelCalls, readPendingChannelCalls, savePendingChannelCalls, type ChannelCall } from './lib/channelCalls'
 
@@ -905,6 +905,7 @@ function App() {
   // panel row both read this one value (see waCredentialsConfigured).
   const waConfigured = waCredentialsConfigured(safeGetItem('wa_credentials'))
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
+  const [familyCode, setFamilyCodeState] = useState(() => getFamilyCode())
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
@@ -1103,7 +1104,7 @@ function App() {
   useEffect(() => {
     let cancelled = false
     autoSettleKalshiPositions({
-      visitor: isPublicVisitor(ghToken),
+      visitor: isVisitor(ghToken),
       onFailure: n => emitFailure({ source: 'kalshi', severity: 'warning', message: n.message, context: { stage: n.stage } }),
     }).then(notices => { if (!cancelled && notices.length) setSettledNotices(notices) }).catch(() => {})
     return () => { cancelled = true }
@@ -1117,7 +1118,7 @@ function App() {
     const poll = async () => {
       if (document.visibilityState !== 'visible') return
       const token = resolveGithubToken()
-      if (isPublicVisitor(token)) return
+      if (isVisitor(token)) return
       try {
         const calls = await fetchNewChannelCalls({ token })
         if (cancelled || !calls.length) return
@@ -1305,7 +1306,7 @@ function App() {
     const qwenProvider = isQwenProvider(activeProvider)
     // A public visitor (no token, relay configured) reaches the model through the relay instead.
     // /intuition is a local, read-only view: it needs no token because it dispatches nothing.
-    if (qwenProvider && !ghToken?.trim() && !isPublicVisitor(ghToken || '') && parseIntuitionCommand(promptText) === null && parseSwarmCommand(promptText) === null) {
+    if (qwenProvider && !ghToken?.trim() && !isVisitor(ghToken || '') && parseIntuitionCommand(promptText) === null && parseSwarmCommand(promptText) === null) {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: 'assistant',
@@ -1433,11 +1434,11 @@ function App() {
     rememberAttachedImage(imageUrl)
     // Claude and Kimi see the picture; Qwen has it analyzed on Actions (owner token). The corpus
     // model and free mode have no way to see it, so they say so instead of answering blind.
-    if (imageUrl && !HOSTED_TOOL_PROVIDERS.has(activeProvider) && (activeProvider === 'corpus' || isPublicVisitor(ghToken || ''))) {
+    if (imageUrl && !HOSTED_TOOL_PROVIDERS.has(activeProvider) && (activeProvider === 'corpus' || isVisitor(ghToken || ''))) {
       setMessages(prev => [...prev, userMsg, {
         id: `${Date.now() + 1}`,
         role: 'assistant',
-        content: visionUnavailableReply(isPublicVisitor(ghToken || ''), selectedLanguage),
+        content: visionUnavailableReply(isVisitor(ghToken || ''), selectedLanguage),
         timestamp: Date.now(),
         source: 'local',
         provider: 'ForgeClaw',
@@ -1656,7 +1657,7 @@ function App() {
     const finalTools = [...new Set([...relevantTools, ...coreToolDefs])]
       .filter(tool => sculptUnlocked || !SCULPT_TOOLS.has(tool.name))
       // The cloud browser runs as the owner's Actions workflow; a free-mode visitor has no token and never gets it.
-      .filter(tool => !(isPublicVisitor(ghToken) && tool.name === 'browser_run'))
+      .filter(tool => !(isVisitor(ghToken) && tool.name === 'browser_run'))
       // Claude and Kimi already see an attached picture; a caption saying "picture" must not hand them the slow Actions vision job.
       .filter(tool => !(imageUrl && isHostedReasoner && tool.name === 'analyze_image'))
 
@@ -1680,14 +1681,14 @@ function App() {
           ? '\n\nPRIMARY REASONING POLICY\nUse qwen_reason for this complex task, then continue reasoning from its actual tool result. Do not claim the tool ran until the dispatcher returns its result.'
           : '\n\nPRIMARY REASONING POLICY\nUse qwen_reason for tasks that require delegated reasoning, then formulate the final response from the tool result.'
         : '\n\nPRIMARY REASONING POLICY\nAnswer the user directly and clearly. Do not emit tool syntax, code, token IDs, or internal runtime instructions.'
-    const ownerScaffold = isPublicVisitor(ghToken) ? '' : loadOwnerScaffold()
+    const ownerScaffold = isVisitor(ghToken) ? '' : loadOwnerScaffold()
     const baseSystemPrompt = `${forgemindSystemPrompt(ownerScaffold)}\n\nCURRENT DATE\n${currentDateNote()}${needsCurrentInfo(promptText) && finalTools.some(t => t.name === 'deep_research') ? ' This question is about what is current: call deep_research first and answer from its sources.' : ''}\n\nRESPONSE LANGUAGE\n${languageInstruction}\n\nRUNTIME TOOL AVAILABILITY\n${runtimeToolInstruction}${primaryInstruction}`
     
     // NEXUS recursive learning: recurring failures of the tools offered now, as counted evidence.
     const nexusLessons = lessonsForPrompt(summarizeLearning(corpusRepository.listCandidates(PROMPT_CANDIDATE_WINDOW)), runtimeTools.map(tool => tool.name))
     // The owner's approved heuristics (NEXUS page) apply to every model; visitors' browsers have none.
-    const ownerHeuristics = isPublicVisitor(ghToken) ? '' : heuristicsForPrompt()
-    const browsingPlaybooks = !isPublicVisitor(ghToken) && runtimeTools.some(tool => tool.name === 'browser_run') ? browserPlaybooksForPrompt(promptText) : ''
+    const ownerHeuristics = isVisitor(ghToken) ? '' : heuristicsForPrompt()
+    const browsingPlaybooks = !isVisitor(ghToken) && runtimeTools.some(tool => tool.name === 'browser_run') ? browserPlaybooksForPrompt(promptText) : ''
     // A bundled skill (src/skills) whose triggers match this message: a reviewed procedure, text only (skills.ts).
     const bundledSkill = skillForPrompt(promptText || '')
     const lessonedSystemPrompt = [baseSystemPrompt, ownerHeuristics, nexusLessons, browsingPlaybooks, bundledSkill].filter(Boolean).join('\n\n')
@@ -1786,7 +1787,7 @@ function App() {
       }
 
       // /intuition: read-only view of the Synthetic Intuition ledger. Owner-typed only; a public visitor never sees it.
-      const intuitionCmd = isPublicVisitor(ghToken) ? null : parseIntuitionCommand(promptText)
+      const intuitionCmd = isVisitor(ghToken) ? null : parseIntuitionCommand(promptText)
       if (intuitionCmd) {
         if (controller.signal.aborted || activeRunRef.current?.id !== runId) return
         setIntuitionOpen(intuitionCmd.kind === 'open')
@@ -1804,7 +1805,7 @@ function App() {
       // Approving a Kalshi proposal executes the order (kalshiExecution.ts): re-quote, balance check, placement.
       const fundsReply = await runFundsCommandWithExecution(promptText, {
         runId: learningRunRef.current || undefined,
-        visitor: isPublicVisitor(ghToken),
+        visitor: isVisitor(ghToken),
         onFailure: n => emitFailure({
           source: 'kalshi', severity: 'warning', message: n.message,
           context: {
@@ -1838,7 +1839,7 @@ function App() {
       // provider that ran it, so real swarm work reaches CORPUS whichever model did it.
       const swarmCommand = imageUrl ? null : parseSwarmCommand(promptText)
       if (swarmCommand) {
-        const swarm = isPublicVisitor(ghToken) ? { ok: false, text: SWARM_VISITOR_NOTICE }
+        const swarm = isVisitor(ghToken) ? { ok: false, text: SWARM_VISITOR_NOTICE }
           : swarmCommand.kind === 'usage' ? { ok: false, text: swarmCommand.message }
           : await runSwarmRequest(swarmCommand.task, {
               active: activeProvider,
@@ -2754,7 +2755,7 @@ function App() {
   }
   /** 🔥 👍 👎 on a picture (the owner's own, or one ForgeClaw generated): NEXUS learns how he likes things to look. */
   const renderTasteButtons = (msg: Message, idleColor: string, border: string): React.ReactNode => {
-    if (!msg.imageUrl || msg.imageKind === 'sim-world' || isPublicVisitor(ghToken)) return null
+    if (!msg.imageUrl || msg.imageKind === 'sim-world' || isVisitor(ghToken)) return null
     return (
       <>
         <span style={{ color: idleColor, fontSize: '10px', fontFamily: 'monospace' }}>{t('chat.taste')}</span>
@@ -3002,7 +3003,7 @@ function App() {
     { id: 'forgemind',   label: t('tab.forge') },
     { id: 'agents',      label: t('tab.agents') },
     // NEXUS is the owner's private training data: never shown to free-mode visitors.
-    ...(isPublicVisitor(ghToken) ? [] : [{ id: 'nexus' as Tab, label: t('tab.nexus') }]),
+    ...(isVisitor(ghToken) ? [] : [{ id: 'nexus' as Tab, label: t('tab.nexus') }]),
     { id: 'activity',    label: t('tab.activity'), badge: unresolvedCount > 0 ? String(unresolvedCount) : activityLog.some(e => e.status === 'running') ? '•' : undefined },
     { id: 'settings',    label: t('tab.settings') },
   ]
@@ -3480,8 +3481,8 @@ function App() {
 
               </SettingsSection>
               <SettingsSection title="Sculpt & Reasoning">
-              {!isPublicVisitor(ghToken) && <SculptKeyPanel />}
-              {!isPublicVisitor(ghToken) && <ReasoningFrameworkPanel />}
+              {!isVisitor(ghToken) && <SculptKeyPanel />}
+              {!isVisitor(ghToken) && <ReasoningFrameworkPanel />}
               </SettingsSection>
               <SettingsSection title="GitHub">
               {/* GitHub Token */}              <div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
@@ -3517,6 +3518,27 @@ function App() {
                   {t('settings.githubTokenHelp')}{' '}
                   <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noreferrer" style={{ color: '#f97316' }}>{t('settings.manageTokens')}</a>.
                 </div>
+                {/* Family code: one simple shared code the owner gives family. Entering it on a
+                    device unlocks the full app there (chat, Nexus, tools, images) through the
+                    relay's family tier — no token needed on that device. */}
+                <div style={{ borderTop: '1px solid #1a1a1a', paddingTop: '10px', marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <label style={{ color: '#f97316', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', fontWeight: 'bold', fontFamily: 'monospace' }}>
+                      Family code
+                    </label>
+                    {familyCode && <span style={{ color: '#22c55e', fontSize: '10px', fontFamily: 'monospace' }}>family mode on</span>}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Enter the family code"
+                    value={familyCode}
+                    onChange={e => { setFamilyCodeState(e.target.value); setFamilyCode(e.target.value) }}
+                    style={{ width: '100%', background: '#0a0a0a', color: '#ccc', border: `1px solid ${familyCode ? '#22c55e44' : '#222'}`, borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                  />
+                  <div style={{ color: '#444', fontSize: '10px', marginTop: '6px' }}>
+                    Family only: the code the owner shares with you. It unlocks everything on this device — chat, Nexus, tools and unlimited images — with no GitHub token.
+                  </div>
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   <div>
                     <label style={{ display: 'block', color: '#666', fontSize: '10px', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{t('settings.defaultOwner')}</label>
@@ -3546,7 +3568,7 @@ function App() {
               {/* Kalshi trading keys — this section replaced the old third-party search
                   key slot (owner removed that key 2026-10-23; web_search uses DuckDuckGo).
                   Hidden in visitor mode: a public visitor never sees the trading keys. */}
-              {!isPublicVisitor(ghToken) && (<div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
+              {!isVisitor(ghToken) && (<div style={{ marginTop: '8px', borderTop: '1px solid #1a1a1a', paddingTop: '14px' }}>
                 <label style={{ display: 'block', color: '#888', fontSize: '10px', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   {t('settings.kalshiTitle')}
                 </label>
@@ -3721,7 +3743,7 @@ function App() {
         {activeTab === 'forgemind' && (
           <>
             <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '20px', minHeight: 0 }}>
-              {isPublicVisitor(ghToken) && (
+              {isVisitor(ghToken) && (
                 <div role="note" style={{ border: '1px solid #3a2a05', background: '#120d02', color: '#eab308', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('public.notice')}</div>
               )}
               {/* Persisted coding task — visible so a reload reads as a resume. */}
@@ -3855,7 +3877,7 @@ function App() {
             </div>
             
             {/* Synthetic Intuition ledger (/intuition): above the monitor and composer, clear of the fixed spiderling panel. */}
-            {!isPublicVisitor(ghToken) && (
+            {!isVisitor(ghToken) && (
               <IntuitionPanel open={intuitionOpen} registry={INTUITION_REGISTRY} onClose={() => setIntuitionOpen(false)} />
             )}
             {/* System Monitor — pinned above input */}
@@ -3866,7 +3888,7 @@ function App() {
               proposals={proposals}
               onAcknowledge={handleAcknowledge}
               onReject={handleReject}
-              ownerView={!isPublicVisitor(ghToken)}
+              ownerView={!isVisitor(ghToken)}
             />
             
               {/* ── Autonomy mode toggle ── */}
@@ -4015,7 +4037,7 @@ function App() {
                 <ConnectionToast notice={connectionNotice} reconnectingText={t('chat.reconnecting')} backText={t('chat.reconnected')} />
                 {/* Funds panel (PR B item 6): hidden in visitor mode, like the Kalshi
                     trading keys below — a public visitor never sees the owner's ledger. */}
-                {!isPublicVisitor(ghToken) && (
+                {!isVisitor(ghToken) && (
                   <FundsPanel onCommand={text => { void sendPromptRef.current(text) }} refreshKey={fundsTick} />
                 )}
                 {/* Kalshi auto-settle pop-ups (item: settled from Kalshi on open) */}
@@ -4267,7 +4289,7 @@ function App() {
         )}
 
         {/* ── NEXUS Recursive Learning (replaced the MIC tab; voice input stays on the chat bar) ── */}
-        {activeTab === 'nexus' && !isPublicVisitor(ghToken) && (
+        {activeTab === 'nexus' && !isVisitor(ghToken) && (
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
             <NexusLearningPanel />
           </div>
