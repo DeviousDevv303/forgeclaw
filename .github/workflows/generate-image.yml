@@ -27,13 +27,33 @@ on:
         default: '512'
         type: string
       model:
-        description: 'Model key: sdxl-turbo, sd15 or sd-turbo; empty = default by size (sdxl-turbo up to 512x512, sd15 above); Turbo models are 512x512 max'
+        description: 'Model key: sdxl-turbo, sd15, sd-turbo or flux2-klein-4b; empty = default by size (sdxl-turbo up to 512x512, sd15 above); Turbo models and flux2-klein-4b are 512x512 max; z-image-turbo is refused by the script (its download exceeds the runner disk)'
         required: false
         default: ''
         type: string
       invocation_id:
         description: Correlation identifier
         required: true
+        type: string
+      steps:
+        description: 'Sampling steps, 1-150; empty = the model default (the distilled Turbo models clamp to their verified 1-4 step regime, noted in the run metadata)'
+        required: false
+        default: ''
+        type: string
+      guidance:
+        description: 'Guidance scale (CFG), 0-30; empty = the model default; ignored-with-note for the distilled Turbo models, which run without CFG'
+        required: false
+        default: ''
+        type: string
+      seed:
+        description: 'Sampling seed, 0-2147483647, for a reproducible render; empty = random'
+        required: false
+        default: ''
+        type: string
+      negative_prompt:
+        description: 'What to keep out of the image, up to 1000 characters; empty = the model default; honored only by models that support negative prompts (sd15), ignored-with-note otherwise'
+        required: false
+        default: ''
         type: string
 permissions:
   contents: write
@@ -66,6 +86,10 @@ jobs:
           HEIGHT: ${{ inputs.height }}
           MODEL: ${{ inputs.model }}
           INVOCATION_ID: ${{ inputs.invocation_id }}
+          STEPS: ${{ inputs.steps }}
+          GUIDANCE: ${{ inputs.guidance }}
+          SEED: ${{ inputs.seed }}
+          NEGATIVE_PROMPT: ${{ inputs.negative_prompt }}
         run: python .github/scripts/generate_image.py
       - name: Publish browser-readable image mirror
         env:

@@ -6,7 +6,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { defaultImageModel, executeTool, FORGE_TOOLS, IMAGE_MODELS, type ToolContext } from './forgeTools'
+import { defaultImageModel, executeTool, FORGE_TOOLS, IMAGE_BAKEOFF_MODELS, IMAGE_MODELS, type ToolContext } from './forgeTools'
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>()
@@ -92,6 +92,77 @@ describe('generate_image.py build_spec', () => {
   })
 })
 
+describe('generate_image.py caller settings', () => {
+  it('carries a neutral seed and no settings notes when nothing was set', () => {
+    const { ok } = spec({ PROMPT: 'a fox', MODEL: 'sd15' })
+    expect(ok?.seed).toBeNull()
+    expect(ok?.settings_notes).toEqual([])
+    expect(ok?.negative).toContain('blurry')
+  })
+
+  it('honors steps, guidance, seed and negative prompt exactly on sd15', () => {
+    const { ok } = spec({ PROMPT: 'p', MODEL: 'sd15', STEPS: '40', GUIDANCE: '9.5', SEED: '42', NEGATIVE_PROMPT: 'no text, no watermark' })
+    expect(ok).toMatchObject({ steps: 40, guidance: 9.5, seed: 42, negative: 'no text, no watermark' })
+    expect(ok?.settings_notes).toEqual([])
+  })
+
+  it('replaces the built-in negative prompt only when the caller sets one', () => {
+    expect(spec({ PROMPT: 'p', MODEL: 'sd15' }).ok?.negative).toContain('watermark, signature')
+    expect(spec({ PROMPT: 'p', MODEL: 'sd15', NEGATIVE_PROMPT: '  ' }).ok?.negative).toContain('watermark, signature')
+    expect(spec({ PROMPT: 'p', MODEL: 'sd15', NEGATIVE_PROMPT: 'extra fingers' }).ok?.negative).toBe('extra fingers')
+  })
+
+  it('clamps distilled steps to the 1-4 regime and notes it, but honors a seed', () => {
+    const { ok } = spec({ PROMPT: 'p', MODEL: 'sdxl-turbo', STEPS: '30', SEED: '7' })
+    expect(ok).toMatchObject({ steps: 4, seed: 7 })
+    expect(ok?.settings_notes as string[]).toHaveLength(1)
+    expect(String((ok?.settings_notes as string[])[0])).toContain('clamped to 4')
+    expect(spec({ PROMPT: 'p', MODEL: 'sd-turbo', STEPS: '3' }).ok).toMatchObject({ steps: 3, settings_notes: [] })
+  })
+
+  it('ignores guidance and negative prompts on distilled models, with notes, never silently', () => {
+    const { ok } = spec({ PROMPT: 'p', GUIDANCE: '7', NEGATIVE_PROMPT: 'blur' })
+    expect(ok).toMatchObject({ model: 'sdxl-turbo', guidance: 0, negative: null })
+    const notes = (ok?.settings_notes as string[]).join('\n')
+    expect(notes).toContain('guidance 7.0 ignored')
+    expect(notes).toContain('negative prompt ignored')
+  })
+
+  it('rejects out-of-range or malformed settings', () => {
+    for (const env of [
+      { STEPS: '0' }, { STEPS: '151' }, { STEPS: 'abc' },
+      { GUIDANCE: '-1' }, { GUIDANCE: '31' }, { GUIDANCE: 'x' },
+      { SEED: '-1' }, { SEED: '2147483648' }, { SEED: '1.5' },
+      { NEGATIVE_PROMPT: 'x'.repeat(1001) },
+    ] as Array<Record<string, string>>) {
+      expect(spec({ PROMPT: 'p', MODEL: 'sd15', ...env }).error, JSON.stringify(env)).toBeTruthy()
+    }
+    expect(spec({ PROMPT: 'p', MODEL: 'sd15', STEPS: '150', GUIDANCE: '30', SEED: '2147483647' }).ok).toMatchObject({ steps: 150, guidance: 30, seed: 2147483647 })
+  })
+
+  it('resolves the wired bakeoff candidate: flux2-klein-4b builds a staged spec', () => {
+    const { ok } = spec({ PROMPT: 'p', MODEL: 'flux2-klein-4b', SEED: '42' })
+    expect(ok).toMatchObject({
+      model: 'flux2-klein-4b', repo: 'black-forest-labs/FLUX.2-klein-4B',
+      steps: 4, guidance: 1.0, seed: 42, staged: true, negative: null,
+    })
+    expect(ok?.settings_notes).toEqual([])
+  })
+
+  it('resolves klein caller settings against its distilled regime, with notes', () => {
+    const { ok } = spec({ PROMPT: 'p', MODEL: 'flux2-klein-4b', STEPS: '30', GUIDANCE: '7', NEGATIVE_PROMPT: 'blur' })
+    expect(ok).toMatchObject({ steps: 4, guidance: 1.0, negative: null })
+    const notes = (ok?.settings_notes as string[]).join('\n')
+    expect(notes).toContain('clamped to 4')
+    expect(notes).toContain('guidance 7.0 ignored')
+    expect(notes).toContain('negative prompt ignored')
+  })
+
+  it('still refuses z-image-turbo: in the table, but no loader can run it on the runner', () => {
+    expect(spec({ PROMPT: 'p', MODEL: 'z-image-turbo' }).error).toMatch(/bakeoff candidate whose loader is not verified/)
+  })
+})
+
 describe('allowlist and workflow wiring', () => {
   it('keeps the TypeScript and Python model allowlists identical', () => {
     const r = spawnSync('python3', ['-B', '-c', `import sys, json; sys.path.insert(0, ${JSON.stringify(SCRIPT_DIR)}); import generate_image as g; print(json.dumps(sorted(g.MODELS)))`],
@@ -119,6 +190,13 @@ describe('allowlist and workflow wiring', () => {
     expect(workflow).toContain('MODEL: ${{ inputs.model }}')
     expect(workflow).toContain('run: python .github/scripts/generate_image.py')
     expect(workflow).not.toContain('python - <<')
+  })
+
+  it('wires the caller settings through workflow inputs into the script env, all optional', () => {
+    for (const [input, env] of [['steps', 'STEPS'], ['guidance', 'GUIDANCE'], ['seed', 'SEED'], ['negative_prompt', 'NEGATIVE_PROMPT']] as const) {
+      expect(workflow, input).toMatch(new RegExp(`${input}:\\n\\s+description:[^\\n]+\\n\\s+required: false\\n\\s+default: ''`))
+      expect(workflow, env).toContain(`${env}: \${{ inputs.${input} }}`)
+    }
   })
 
   it('invalidates the model cache when the script or requirements change', () => {
@@ -200,5 +278,86 @@ describe('generate_image dispatch', () => {
     expect(out).toMatch(/TOOL ERROR/)
     expect(out).toContain('only verified up to 512')
     expect(dispatched(m)).toBeUndefined()
+  })
+
+  it('passes caller settings to the workflow exactly as set', async () => {
+    const m = dispatchMock(); vi.stubGlobal('fetch', m)
+    await executeTool(call({ prompt: 'a fox', model: 'sd15', steps: 40, guidance: 9.5, seed: 42, negative_prompt: 'no text' }), ctx())
+    const inputs = dispatched(m).inputs
+    expect(inputs.steps).toBe('40')
+    expect(inputs.guidance).toBe('9.5')
+    expect(inputs.seed).toBe('42')
+    expect(inputs.negative_prompt).toBe('no text')
+  })
+
+  it('sends no settings keys at all when none were set (the pre-wiring dispatch shape)', async () => {
+    const m = dispatchMock(); vi.stubGlobal('fetch', m)
+    await executeTool(call({ prompt: 'a fox' }), ctx())
+    const inputs = dispatched(m).inputs
+    expect(inputs).not.toHaveProperty('steps')
+    expect(inputs).not.toHaveProperty('guidance')
+    expect(inputs).not.toHaveProperty('seed')
+    expect(inputs).not.toHaveProperty('negative_prompt')
+  })
+
+  it('rejects out-of-range settings before any dispatch', async () => {
+    for (const input of [
+      { steps: 0 }, { steps: 151 }, { steps: 2.5 },
+      { guidance: -1 }, { guidance: 31 },
+      { seed: -1 }, { seed: 2147483648 },
+      { negative_prompt: 'x'.repeat(1001) },
+    ]) {
+      const m = dispatchMock(); vi.stubGlobal('fetch', m)
+      const out = await executeTool(call({ prompt: 'a fox', model: 'sd15', ...input }), ctx())
+      expect(out, JSON.stringify(input)).toMatch(/TOOL ERROR/)
+      expect(dispatched(m), JSON.stringify(input)).toBeUndefined()
+    }
+  })
+
+  it('refuses the bakeoff candidates before any dispatch', async () => {
+    for (const model of IMAGE_BAKEOFF_MODELS) {
+      const m = dispatchMock(); vi.stubGlobal('fetch', m)
+      const out = await executeTool(call({ prompt: 'a fox', model }), ctx())
+      expect(out).toMatch(/TOOL ERROR/)
+      expect(out).toContain('bakeoff candidate')
+      expect(dispatched(m)).toBeUndefined()
+    }
+    // And they are never a size-resolved default, at any size.
+    for (const [w, h] of [[256, 256], [512, 512], [768, 768], [1024, 1024]] as const) {
+      expect(IMAGE_BAKEOFF_MODELS).not.toContain(defaultImageModel(w, h))
+    }
+  })
+
+  it('dispatches the wired bakeoff candidate flux2-klein-4b as an explicit model', async () => {
+    const m = dispatchMock(); vi.stubGlobal('fetch', m)
+    await executeTool(call({ prompt: 'a fox', model: 'flux2-klein-4b' }), ctx())
+    expect(dispatched(m).inputs.model).toBe('flux2-klein-4b')
+  })
+
+  it('keeps the TypeScript validation and the Python spec in step on setting boundaries', async () => {
+    // Accept/reject must agree across the boundary: a call the app validates must not be
+    // refused by the runner, and vice versa. Resolution (e.g. the distilled clamp) is the
+    // runner's alone, so the cases use sd15, where both sides resolve identically.
+    const cases: Array<{ input: Record<string, unknown>; env: Record<string, string>; accepted: boolean }> = [
+      { input: { steps: 1 }, env: { STEPS: '1' }, accepted: true },
+      { input: { steps: 150 }, env: { STEPS: '150' }, accepted: true },
+      { input: { steps: 151 }, env: { STEPS: '151' }, accepted: false },
+      { input: { steps: 0 }, env: { STEPS: '0' }, accepted: false },
+      { input: { guidance: 0 }, env: { GUIDANCE: '0' }, accepted: true },
+      { input: { guidance: 30 }, env: { GUIDANCE: '30' }, accepted: true },
+      { input: { guidance: 31 }, env: { GUIDANCE: '31' }, accepted: false },
+      { input: { seed: 0 }, env: { SEED: '0' }, accepted: true },
+      { input: { seed: 2147483647 }, env: { SEED: '2147483647' }, accepted: true },
+      { input: { seed: 2147483648 }, env: { SEED: '2147483648' }, accepted: false },
+      { input: { negative_prompt: 'x'.repeat(1000) }, env: { NEGATIVE_PROMPT: 'x'.repeat(1000) }, accepted: true },
+      { input: { negative_prompt: 'x'.repeat(1001) }, env: { NEGATIVE_PROMPT: 'x'.repeat(1001) }, accepted: false },
+    ]
+    for (const { input, env, accepted } of cases) {
+      const label = JSON.stringify({ input, env })
+      expect(spec({ PROMPT: 'p', MODEL: 'sd15', ...env }).ok !== undefined, `python ${label}`).toBe(accepted)
+      const m = dispatchMock(); vi.stubGlobal('fetch', m)
+      await executeTool(call({ prompt: 'a fox', model: 'sd15', ...input }), ctx())
+      expect(dispatched(m) !== undefined, `ts ${label}`).toBe(accepted)
+    }
   })
 })

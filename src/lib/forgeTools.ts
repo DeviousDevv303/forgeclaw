@@ -282,7 +282,19 @@ function normalizeRepositoryPath(path: string): string {
 }
 
 // Allowlist mirrored by MODELS in .github/scripts/generate_image.py (a test keeps them in sync).
-export const IMAGE_MODELS = ['sd15', 'sdxl-turbo', 'sd-turbo'] as const
+export const IMAGE_MODELS = ['sd15', 'sdxl-turbo', 'sd-turbo', 'z-image-turbo', 'flux2-klein-4b'] as const
+
+/**
+ * Bakeoff candidates still refused at dispatch (phase 1, 2026-11-20; phase 2 update):
+ * Apache-2.0 weights, in the allowlist so they can be named explicitly. flux2-klein-4b
+ * left this list in phase 2 — its staged runner loader is wired and smoke-verified, so
+ * dispatch accepts it as an explicit model (its first runner render is the bakeoff's
+ * first recorded run). z-image-turbo remains refused here and in build_spec: its
+ * diffusers download (32.9 GB) exceeds the Actions runner's 14 GB SSD, so no loader in
+ * the generator script can run it there (see BAKEOFF.md). A refused candidate is never
+ * a default: defaultImageModel never returns one.
+ */
+export const IMAGE_BAKEOFF_MODELS: readonly string[] = ['z-image-turbo']
 
 /**
  * The generator each image model key actually is, named for the user. Every image result states
@@ -293,6 +305,8 @@ export const IMAGE_MODEL_LABELS: Readonly<Record<(typeof IMAGE_MODELS)[number], 
   'sd15': 'Stable Diffusion v1.5',
   'sdxl-turbo': 'SDXL Turbo (Stable Diffusion)',
   'sd-turbo': 'SD Turbo (Stable Diffusion)',
+  'z-image-turbo': 'Z-Image Turbo',
+  'flux2-klein-4b': 'FLUX.2 klein 4B',
 }
 
 /**
@@ -723,7 +737,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'generate_image',
-    description: 'Generate an image on CPU through the repository-owned GitHub Actions workflow. The default model is SDXL Turbo at up to 512x512 (Stable Diffusion v1.5 above that size); optional model "sd15", "sdxl-turbo" or "sd-turbo" — the Turbo models are limited to 512x512 and carry Stability AI Community License terms. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request may be recorded as an unapproved learning candidate.',
+    description: 'Generate an image on CPU through the repository-owned GitHub Actions workflow. The default model is SDXL Turbo at up to 512x512 (Stable Diffusion v1.5 above that size); optional model "sd15", "sdxl-turbo" or "sd-turbo" — the Turbo models are limited to 512x512 and carry Stability AI Community License terms. Optional steps, guidance, seed and negative_prompt are passed to the runner and resolved against the model\'s regime there (distilled Turbo models clamp steps to 1-4 and ignore guidance/negative prompts, noted in the run metadata). "flux2-klein-4b" is a bakeoff candidate (Apache-2.0) whose staged runner loader is wired; its bakeoff benchmarking is still pending. "z-image-turbo" is refused: its runner download exceeds the Actions runner disk. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request may be recorded as an unapproved learning candidate.',
     parameters: {
       type: 'object',
       properties: {
@@ -731,9 +745,9 @@ export const FORGE_TOOLS: ToolDef[] = [
         style: { type: 'string', description: 'Style such as realistic, artistic, or cartoon' },
         width: { type: 'number', description: 'Width in pixels, 256-1024, divisible by 8; defaults to 512' },
         height: { type: 'number', description: 'Height in pixels, 256-1024, divisible by 8; defaults to 512' },
-        model: { type: 'string', enum: [...IMAGE_MODELS], description: 'Optional model key; omit for the default (sdxl-turbo up to 512x512, sd15 above that size). Turbo models are limited to 512x512.' },
+        model: { type: 'string', enum: [...IMAGE_MODELS], description: 'Optional model key; omit for the default (sdxl-turbo up to 512x512, sd15 above that size). Turbo models and flux2-klein-4b are limited to 512x512. flux2-klein-4b is a wired bakeoff candidate (explicit only). z-image-turbo is refused: its runner download exceeds the Actions runner disk.' },
         negative_prompt: { type: 'string', description: 'What to keep out of the image, up to 1000 characters (optional; honored by backends that support it)' },
-        guidance: { type: 'number', description: 'Guidance scale (CFG), 0-30. Defaults per model: sd15 7, turbo models 0-2 (optional)' },
+        guidance: { type: 'number', description: 'Guidance scale (CFG), 0-30. Default per model: sd15 7.5; the distilled turbo models run without CFG, so a guidance value is ignored for them and the run metadata says so (optional)' },
         steps: { type: 'number', description: 'Sampling steps, 1-150. Defaults per model: sd15 25-30, turbo models 1-4 (optional)' },
         seed: { type: 'number', description: 'Sampling seed for a reproducible render; unset = random (optional)' },
       },
@@ -2267,8 +2281,22 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         }
         const model = input.model === undefined || input.model === '' ? defaultImageModel(width, height) : String(input.model)
         if (!(IMAGE_MODELS as readonly string[]).includes(model)) throw new Error(`Unknown image model '${model}'. Allowed: ${IMAGE_MODELS.join(', ')}.`)
+        if (IMAGE_BAKEOFF_MODELS.includes(model)) throw new Error(`Image model '${model}' is a bakeoff candidate whose runner loader is not verified yet; it cannot be dispatched.`)
         if (model !== 'sd15' && (width > 512 || height > 512)) throw new Error(`Image model '${model}' is only verified up to 512x512.`)
         if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
+
+        // Caller settings, validated here and resolved against the model's regime in the
+        // runner (build_spec in generate_image.py — the ranges must stay in step; a test
+        // checks the two sides agree). Unset settings are not sent at all, so a
+        // settings-less dispatch is byte-identical to the pre-wiring one.
+        const steps = input.steps === undefined ? undefined : Number(input.steps)
+        if (steps !== undefined && (!Number.isInteger(steps) || steps < 1 || steps > 150)) throw new Error('Image steps must be an integer from 1 to 150.')
+        const guidance = input.guidance === undefined ? undefined : Number(input.guidance)
+        if (guidance !== undefined && (!Number.isFinite(guidance) || guidance < 0 || guidance > 30)) throw new Error('Image guidance must be a number from 0 to 30.')
+        const seed = input.seed === undefined ? undefined : Number(input.seed)
+        if (seed !== undefined && (!Number.isInteger(seed) || seed < 0 || seed > 2147483647)) throw new Error('Image seed must be an integer from 0 to 2147483647.')
+        const negativePrompt = input.negative_prompt === undefined ? undefined : String(input.negative_prompt)
+        if (negativePrompt !== undefined && negativePrompt.length > 1000) throw new Error('Image negative prompt must be at most 1000 characters.')
 
         // The owner's own taste (nexusTaste.ts, learned from his reactions) steers the prompt; empty until it has enough to say.
         const tastePrompt = tasteForImagePrompt()
@@ -2281,7 +2309,13 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
           headers: { Authorization: `token ${token}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
           body: JSON.stringify({
             ref: 'main',
-            inputs: { prompt: improved.prompt, style, width: String(width), height: String(height), model, invocation_id: invocationId },
+            inputs: {
+              prompt: improved.prompt, style, width: String(width), height: String(height), model, invocation_id: invocationId,
+              ...(steps !== undefined ? { steps: String(steps) } : {}),
+              ...(guidance !== undefined ? { guidance: String(guidance) } : {}),
+              ...(seed !== undefined ? { seed: String(seed) } : {}),
+              ...(negativePrompt !== undefined ? { negative_prompt: negativePrompt } : {}),
+            },
           }),
         })
 
