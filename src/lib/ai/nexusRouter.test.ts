@@ -47,6 +47,35 @@ describe('Nexus Intelligence router loop', () => {
     }
   })
 
+  it('still dispatches a fourth call in the turn instead of hitting the call cap', async () => {
+    // The frozen swarm benchmark expects up to 6 spawns in a turn (sw-018; sw-006
+    // expects 4). With the old cap of 3, this fourth spawn segment came back as the
+    // nexus-call-cap text and the spawn never ran — those rows were unpassable in
+    // the app even for a perfect model.
+    const spawnSegment = (task: string) => `<|route:tool|><|call|>${JSON.stringify({ name: 'spawn_agent', arguments: { system_prompt: 'You are a research agent.', task, tools: 'web_search' } })}<|/call|>`
+    const messages: AIRequest['messages'] = [{ role: 'user', content: 'check the repo state, the test suite, and the docs, in parallel' }]
+    for (let i = 1; i <= 3; i++) {
+      messages.push(
+        { role: 'assistant', content: '', tool_calls: [{ id: `b${i}`, name: 'nexus_reason', input: { task: 'check things in parallel' } }] },
+        { role: 'tool', tool_call_id: `b${i}`, content: nexusResult(spawnSegment(`subtask ${i}`), `nexus-${i}`) },
+        { role: 'assistant', content: '', tool_calls: [{ id: `s${i}`, name: 'spawn_agent', input: { system_prompt: 'You are a research agent.', task: `subtask ${i}`, tools: 'web_search' } }] },
+        { role: 'tool', tool_call_id: `s${i}`, content: `Sub-agent ${i} completed and returned its findings.` },
+      )
+    }
+    messages.push(
+      { role: 'assistant', content: '', tool_calls: [{ id: 'b4', name: 'nexus_reason', input: { task: 'check things in parallel' } }] },
+      { role: 'tool', tool_call_id: 'b4', content: nexusResult(spawnSegment('subtask 4'), 'nexus-4') },
+    )
+    const request: AIRequest = { model: 'nexus-run25', systemPrompt: '', tools: TOOLS, messages }
+    const result = await sendViaRouter(request, '', 'nexus-intelligence')
+    expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', stopReason: 'nexus-tool-call' } })
+    if (result.success) {
+      expect(result.response.toolCalls?.[0]?.name).toBe('spawn_agent')
+      expect(result.response.toolCalls?.[0]?.input).toEqual({ system_prompt: 'You are a research agent.', task: 'subtask 4', tools: 'web_search' })
+      expect(result.response.text).not.toMatch(/loop limit/)
+    }
+  })
+
   it('re-dispatches with the tool result injected into the transcript after the app runs the call', async () => {
     const request: AIRequest = {
       model: 'nexus-run25', systemPrompt: '', tools: TOOLS,
