@@ -1,8 +1,9 @@
 """Repository-owned CPU image generation, called by .github/workflows/generate-image.yml.
 
 Model-swappable through the MODELS allowlist below. When MODEL is unset, the default is
-resolved by size (see resolve_default_model): SDXL Turbo — the pipeline that won the ForgeClaw
-image bakeoff and was license-cleared as the default — at its verified 512x512, and Stable
+resolved by size (see resolve_default_model): FLUX.2 klein 4B — the pipeline that won the
+2026-11-21 ForgeClaw image bakeoff (5 of 6 prompts against SDXL Turbo, including the
+lighthouse and the cube regression; Apache-2.0) — at its verified 512x512, and Stable
 Diffusion 1.5 (OpenRAIL-M) above that, as the only model verified at larger sizes. An explicit
 MODEL is never overridden. See each entry's `license` note before relying on them.
 
@@ -33,10 +34,10 @@ def resolve_default_model(width: int, height: int) -> str:
     """The model a request with no explicit MODEL renders with, by size.
 
     Mirrors defaultImageModel in src/lib/forgeTools.ts (a test keeps the two in step):
-    SDXL Turbo at or below its verified 512x512; SD1.5 above, as the only model
+    FLUX.2 klein 4B at or below its verified 512x512; SD1.5 above, as the only model
     verified at larger sizes.
     """
-    return "sdxl-turbo" if width <= 512 and height <= 512 else "sd15"
+    return "flux2-klein-4b" if width <= 512 and height <= 512 else "sd15"
 
 # Per-model spec. `max_side` is the largest width/height we have evidence for: SD1.5 is unchanged
 # from the previous workflow (up to 1024); the Turbo models were only benchmarked at 512x512, so
@@ -71,8 +72,10 @@ MODELS = {
         "license": "Stability AI Community License (free below US$1M annual revenue; commercial use "
                    "requires registration). Verify before commercial use.",
     },
-    # Bakeoff candidates (phase 1, 2026-11-20): Apache-2.0 weights, named explicitly only —
-    # resolve_default_model never returns them. The steps/guidance below are the vendors'
+    # Bakeoff candidates (phase 1, 2026-11-20): Apache-2.0 weights. flux2-klein-4b won the
+    # 2026-11-21 bakeoff and is now the size-resolved default at or below 512 (see
+    # resolve_default_model above); z-image-turbo is still never returned by it. The
+    # steps/guidance below are the vendors'
     # published starting points for the bakeoff, NOT verified settings.
     #
     # flux2-klein-4b (phase 2): loader wired — the staged split below (_klein_encode /
