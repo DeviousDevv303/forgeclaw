@@ -1,0 +1,1 @@
+<|route:tool|><|call|>{"name":"weather_forecast","arguments":{"place":":","day":506060.5066767e47671}}<|/call|>
