@@ -95,6 +95,18 @@ describe('parseNexusSegment', () => {
     expect(parseNexusSegment('   ')).toMatchObject({ kind: 'failed' })
   })
 
+  it('fails a segment whose call never closed (the decoder dead-ended mid-call)', () => {
+    // The live gibberish shape: a corrupted number in the arguments and no <|/call|> —
+    // the raw call JSON must fail the segment, never render as the chat answer.
+    const parsed = parseNexusSegment('<|route:tool|><|call|>{"name":"funds_propose","arguments":{"max_stake":0.57306e-306300')
+    expect(parsed).toMatchObject({ kind: 'failed', message: 'Nexus Intelligence produced a tool call that did not finish (its segment ended mid-call), so there is no answer to show.' })
+  })
+
+  it('fails a closed call whose JSON does not parse', () => {
+    const parsed = parseNexusSegment('<|route:tool|><|call|>{"name":"funds_propose","arguments":{"max_stake":}}<|/call|>')
+    expect(parsed).toMatchObject({ kind: 'failed', message: 'Nexus Intelligence produced a tool call that did not finish (its segment ended mid-call), so there is no answer to show.' })
+  })
+
   it('strips grammar from unstructured text instead of dropping it', () => {
     expect(stripNexusGrammar('<|route:direct|>plain words<|end|>')).toBe('plain words')
     expect(parseNexusSegment('<|route:defer|>I need the file path first.')).toMatchObject({ kind: 'answer', text: 'I need the file path first.' })

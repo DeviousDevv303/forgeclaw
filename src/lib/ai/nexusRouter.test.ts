@@ -248,4 +248,48 @@ describe('Nexus Intelligence router loop', () => {
     expect(result.success).toBe(false)
     if (!result.success) expect(result.error.message).toContain('nexus-not-dispatched')
   })
+
+  it('cuts a repetition loop out of a Nexus answer, with the loop-cut marker visible', async () => {
+    // The Nexus answer return gets the same truncateRepetitionLoop protection the Qwen path has:
+    // the answer up to the loop is kept, the loop is cut, and the marker says so.
+    const looped = '<|ev:verified|><|answer|>the market is closed today the market is closed today the market is closed today the market is closed today<|/answer|><|end|>'
+    const request: AIRequest = {
+      model: 'nexus-run25', systemPrompt: '', tools: TOOLS,
+      messages: [
+        { role: 'user', content: 'what is the package name?' },
+        { role: 'assistant', content: '', tool_calls: [{ id: 'b1', name: 'nexus_reason', input: { task: 'what is the package name?' } }] },
+        { role: 'tool', tool_call_id: 'b1', content: nexusResult(looped) },
+      ],
+    }
+    const result = await sendViaRouter(request, '', 'nexus-intelligence')
+    expect(result).toMatchObject({ success: true, response: { stopReason: 'nexus-synthesis-complete' } })
+    if (result.success) {
+      expect(result.response.text).toContain('[ForgeClaw cut the rest of this answer: the model fell into a repetition loop.]')
+      expect(result.response.text?.match(/the market is closed today/g)).toHaveLength(1)
+    }
+  })
+
+  it('names the un-run call at the loop cap instead of showing its JSON', async () => {
+    const capSegment = '<|route:tool|><|call|>{"name":"funds_propose","arguments":{"market":"KXBTC-26JAN01","max_stake":0.57}}<|/call|>'
+    const messages: AIRequest['messages'] = [{ role: 'user', content: 'propose a trade' }]
+    for (const n of [1, 2, 3]) {
+      messages.push(
+        { role: 'assistant', content: '', tool_calls: [{ id: `b${n}`, name: 'nexus_reason', input: { task: 'propose a trade' } }] },
+        { role: 'tool', tool_call_id: `b${n}`, content: nexusResult(CALL_SEGMENT, `nexus-${n}`) },
+        { role: 'assistant', content: '', tool_calls: [{ id: `c${n}`, name: 'github_read_file', input: { path: 'package.json' } }] },
+        { role: 'tool', tool_call_id: `c${n}`, content: '{"name":"forgeclaw"}' },
+      )
+    }
+    messages.push(
+      { role: 'assistant', content: '', tool_calls: [{ id: 'b4', name: 'nexus_reason', input: { task: 'propose a trade' } }] },
+      { role: 'tool', tool_call_id: 'b4', content: nexusResult(capSegment, 'nexus-4') },
+    )
+    const result = await sendViaRouter({ model: 'nexus-run25', systemPrompt: '', tools: TOOLS, messages }, '', 'nexus-intelligence')
+    expect(result).toMatchObject({ success: true, response: { stopReason: 'nexus-call-cap' } })
+    if (result.success) {
+      expect(result.response.text).toContain('a call to `funds_propose` that was not run')
+      expect(result.response.text).not.toContain('arguments')
+      expect(result.response.text).not.toContain('max_stake')
+    }
+  })
 })
