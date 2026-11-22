@@ -301,7 +301,7 @@ describe('Nexus Intelligence router loop', () => {
   it('names the un-run call at the loop cap instead of showing its JSON', async () => {
     const capSegment = '<|route:tool|><|call|>{"name":"funds_propose","arguments":{"market":"KXBTC-26JAN01","max_stake":0.57}}<|/call|>'
     const messages: AIRequest['messages'] = [{ role: 'user', content: 'propose a trade' }]
-    for (const n of [1, 2, 3]) {
+    for (const n of [1, 2, 3, 4, 5, 6]) {
       messages.push(
         { role: 'assistant', content: '', tool_calls: [{ id: `b${n}`, name: 'nexus_reason', input: { task: 'propose a trade' } }] },
         { role: 'tool', tool_call_id: `b${n}`, content: nexusResult(CALL_SEGMENT, `nexus-${n}`) },
@@ -310,8 +310,8 @@ describe('Nexus Intelligence router loop', () => {
       )
     }
     messages.push(
-      { role: 'assistant', content: '', tool_calls: [{ id: 'b4', name: 'nexus_reason', input: { task: 'propose a trade' } }] },
-      { role: 'tool', tool_call_id: 'b4', content: nexusResult(capSegment, 'nexus-4') },
+      { role: 'assistant', content: '', tool_calls: [{ id: 'b7', name: 'nexus_reason', input: { task: 'propose a trade' } }] },
+      { role: 'tool', tool_call_id: 'b7', content: nexusResult(capSegment, 'nexus-7') },
     )
     const result = await sendViaRouter({ model: 'nexus-run25', systemPrompt: '', tools: TOOLS, messages }, '', 'nexus-intelligence')
     expect(result).toMatchObject({ success: true, response: { stopReason: 'nexus-call-cap' } })
