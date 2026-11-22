@@ -136,6 +136,59 @@ describe('Nexus Intelligence router loop', () => {
     if (result.success) expect(result.response.toolCalls?.[0]?.name).toBe('nexus_reason')
   })
 
+  describe('attached photo analysis', () => {
+    const photo = 'data:image/png;base64,aGVsbG8='
+    const imageTools = [
+      ...TOOLS,
+      { name: 'analyze_image', description: 'Analyze attached image', parameters: {} },
+    ]
+
+    it('sends a Nexus photo turn to the vision workflow instead of the text-only checkpoint', async () => {
+      const request: AIRequest = {
+        model: 'nexus-run25', systemPrompt: '', tools: imageTools,
+        messages: [{ role: 'user', content: 'What is in this photo? Please give me feedback.', image_url: photo }],
+      }
+      const result = await sendViaRouter(request, '', 'nexus-intelligence')
+      expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', stopReason: 'deterministic-image-analysis' } })
+      if (result.success) {
+        expect(result.response.toolCalls?.[0]).toMatchObject({ name: 'analyze_image', input: { image_url: 'attached', prompt: 'What is in this photo? Please give me feedback.' } })
+        expect(result.response.toolCalls?.some(call => call.name === 'nexus_reason')).toBe(false)
+      }
+    })
+
+    it('returns the actual vision result directly and never asks Nexus to rewrite it', async () => {
+      const request: AIRequest = {
+        model: 'nexus-run25', systemPrompt: '', tools: imageTools,
+        messages: [
+          { role: 'user', content: 'What is in this photo?', image_url: photo },
+          { role: 'assistant', content: '', tool_calls: [{ id: 'vision-1', name: 'analyze_image', input: { image_url: 'attached' } }] },
+          { role: 'tool', tool_call_id: 'vision-1', content: '✓ Image analysis by Qwen2-VL-2B (GitHub Actions, CPU) · run https://github.com/run/1\nA red bicycle leaning against a brick wall.' },
+        ],
+      }
+      const result = await sendViaRouter(request, '', 'nexus-intelligence')
+      expect(result).toMatchObject({ success: true, response: { provider: 'nexus-intelligence', model: 'Qwen2-VL-2B (GitHub Actions, CPU)', stopReason: 'nexus-image-analysis-complete' } })
+      if (result.success) {
+        expect(result.response.text).toContain('A red bicycle leaning against a brick wall.')
+        expect(result.response.text).toContain('text-only Nexus checkpoint was not asked to interpret the image')
+        expect(result.response.toolCalls ?? []).toHaveLength(0)
+      }
+    })
+
+    it('surfaces vision-workflow failures instead of falling back to a Nexus guess', async () => {
+      const request: AIRequest = {
+        model: 'nexus-run25', systemPrompt: '', tools: imageTools,
+        messages: [
+          { role: 'user', content: 'Describe this picture', image_url: photo },
+          { role: 'assistant', content: '', tool_calls: [{ id: 'vision-1', name: 'analyze_image', input: { image_url: 'attached' } }] },
+          { role: 'tool', tool_call_id: 'vision-1', content: '[TOOL ERROR] image analysis run failed' },
+        ],
+      }
+      const result = await sendViaRouter(request, '', 'nexus-intelligence')
+      expect(result.success).toBe(false)
+      if (!result.success) expect(result.error.message).toContain('picture could not be analyzed')
+    })
+  })
+
   it('routes an image request through the Nexus dispatch — no refusal, no intercept', async () => {
     // Owner's correction (2026-11-11): "Nexus has an image generator." The generate-image
     // workflow is part of Nexus Intelligence (ForgeClaw is its body), so an image request
