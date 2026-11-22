@@ -1,6 +1,6 @@
 // @vitest-environment node
 // The image adapter makes generate-image.yml model-swappable. These tests pin what must not drift:
-// the size-resolved default (SDXL Turbo up to 512, SD1.5 above) matches between the TS dispatch
+// the size-resolved default (FLUX.2 klein 4B up to 512, SD1.5 above) matches between the TS dispatch
 // and the Python spec, the TS allowlist matches the Python one, Turbo models never get a size
 // they were not benchmarked at, the runner is pinned, and the dependencies are exact pins.
 import { spawnSync } from 'node:child_process'
@@ -40,15 +40,15 @@ except g.SpecError as e:
 }
 
 describe('generate_image.py build_spec', () => {
-  it('defaults to SDXL Turbo at 512 with its benchmarked settings', () => {
+  it('defaults to FLUX.2 klein 4B at 512 with its bakeoff settings', () => {
     const { ok } = spec({ PROMPT: 'a fox' })
-    expect(ok).toMatchObject({ model: 'sdxl-turbo', repo: 'stabilityai/sdxl-turbo', steps: 1, guidance: 0, staged: true, width: 512, height: 512 })
+    expect(ok).toMatchObject({ model: 'flux2-klein-4b', repo: 'black-forest-labs/FLUX.2-klein-4B', steps: 4, guidance: 1, staged: true, width: 512, height: 512 })
     expect(ok?.negative).toBeNull()
     expect(ok?.generation_prompt).toBe('a fox, realistic style, high quality, detailed')
   })
 
   it('treats an empty MODEL (an older dispatch) as the default, resolved by size', () => {
-    expect(spec({ PROMPT: 'a fox', MODEL: '' }).ok?.model).toBe('sdxl-turbo')
+    expect(spec({ PROMPT: 'a fox', MODEL: '' }).ok?.model).toBe('flux2-klein-4b')
     expect(spec({ PROMPT: 'a fox', MODEL: '', WIDTH: '1024', HEIGHT: '1024' }).ok?.model).toBe('sd15')
   })
 
@@ -66,7 +66,7 @@ describe('generate_image.py build_spec', () => {
 
   it('records licence terms for every model, flagging the Turbo ones for verification', () => {
     expect(String(spec({ PROMPT: 'p', MODEL: 'sd15' }).ok?.license)).toContain('OpenRAIL-M')
-    expect(String(spec({ PROMPT: 'p' }).ok?.license)).toContain('Verify before commercial use')
+    expect(String(spec({ PROMPT: 'p' }).ok?.license)).toContain('Apache License 2.0')
     for (const model of ['sdxl-turbo', 'sd-turbo']) {
       expect(String(spec({ PROMPT: 'p', MODEL: model }).ok?.license)).toContain('Verify before commercial use')
     }
@@ -121,7 +121,7 @@ describe('generate_image.py caller settings', () => {
   })
 
   it('ignores guidance and negative prompts on distilled models, with notes, never silently', () => {
-    const { ok } = spec({ PROMPT: 'p', GUIDANCE: '7', NEGATIVE_PROMPT: 'blur' })
+    const { ok } = spec({ PROMPT: 'p', MODEL: 'sdxl-turbo', GUIDANCE: '7', NEGATIVE_PROMPT: 'blur' })
     expect(ok).toMatchObject({ model: 'sdxl-turbo', guidance: 0, negative: null })
     const notes = (ok?.settings_notes as string[]).join('\n')
     expect(notes).toContain('guidance 7.0 ignored')
@@ -246,10 +246,10 @@ describe('generate_image dispatch', () => {
     return hit ? JSON.parse((hit[1] as RequestInit).body as string) : undefined
   }
 
-  it('sends model sdxl-turbo when none is given at the default 512 size', async () => {
+  it('sends model flux2-klein-4b when none is given at the default 512 size', async () => {
     const m = dispatchMock(); vi.stubGlobal('fetch', m)
     await executeTool(call({ prompt: 'a fox' }), ctx())
-    expect(dispatched(m).inputs.model).toBe('sdxl-turbo')
+    expect(dispatched(m).inputs.model).toBe('flux2-klein-4b')
   })
 
   it('sends model sd15 when none is given above 512, the only size it is verified at', async () => {
