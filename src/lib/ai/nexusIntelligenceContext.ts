@@ -123,11 +123,20 @@ export function parseNexusSegment(segment: string): NexusSegment {
           : {}
         return { kind: 'call', name: parsed.name, input, raw }
       }
-    } catch { /* fall through to answer rendering */ }
+    } catch { /* handled by the unfinished-call check below */ }
+  }
+  // A <|call|> opener that did not parse into a valid call means the runner's constrained
+  // decoder dead-ended mid-call: when the model corrupts a number it emits no <|/call|> at
+  // all, and a closed call with broken JSON is the same failure one token later. Rendering
+  // that raw call JSON as the chat answer is the owner's "gibberish" — fail the segment
+  // honestly instead of showing call grammar as prose.
+  if (raw.includes('<|call|>')) {
+    return { kind: 'failed', message: 'Nexus Intelligence produced a tool call that did not finish (its segment ended mid-call), so there is no answer to show.', raw }
   }
   const answer = /<\|answer\|>([\s\S]*?)(?:<\|\/answer\|>|$)/.exec(raw)
   if (answer && answer[1].trim()) return { kind: 'answer', text: answer[1].trim(), raw }
-  const text = stripNexusGrammar(raw)
+  // Belt-and-braces: no residual call span may reach the displayed answer text.
+  const text = stripNexusGrammar(raw.replace(/<\|call\|>[\s\S]*?(?:<\|\/call\|>|$)/g, ''))
   if (text) return { kind: 'answer', text, raw }
   return { kind: 'failed', message: 'Nexus Intelligence produced a segment with no readable answer.', raw }
 }
