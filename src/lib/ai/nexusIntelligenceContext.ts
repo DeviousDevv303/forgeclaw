@@ -16,6 +16,14 @@
 import { extractOriginalQwenTask } from './qwenContext'
 import type { AIMessage } from './types'
 
+/**
+ * Appended by the router to every plain-text Nexus answer (providerRouter.ts re-exports this).
+ * Defined here because buildNexusPrompt must strip it back out of stored assistant answers:
+ * the note is display framing, not conversation — left in, each prior answer would carry its
+ * ~175 characters into the next dispatch and eat the 1,200-char follow-up budget.
+ */
+export const NEXUS_TEXT_ANSWER_NOTE = 'Note: this is the Nexus checkpoint answering alone. It is a small tool-call specialist and is not reliable on general questions yet; for those, switch to Qwen or Kimi in Settings.'
+
 export const NEXUS_MODEL_ID = 'nexus-run25'
 export const NEXUS_MODEL_LABEL = 'Nexus Intelligence · Run 25 checkpoint'
 export const NEXUS_CHECKPOINT_SHA256 = 'c41852fb0ac11f47c3ce2fc7715e816e95ec2e844e25881637eabaaac87f69b6'
@@ -47,7 +55,13 @@ export function buildNexusPrompt(prior: ReadonlyArray<{ role: string; content: s
   const lines: string[] = []
   for (const m of prior) {
     if (m.role !== 'user' && m.role !== 'assistant') continue
-    const text = (m.role === 'user' ? extractOriginalQwenTask(m.content) : m.content.replace(/\s*[—–-]+\s*ForgeClaw\s*$/i, '')).trim()
+    let text = (m.role === 'user' ? extractOriginalQwenTask(m.content) : m.content.replace(/\s*[—–-]+\s*ForgeClaw\s*$/i, '')).trim()
+    // Stored assistant answers carry the router's standing note appended. It is display framing,
+    // not conversation: strip it so follow-up turns spend the budget on what was actually said,
+    // not on one repeated disclaimer per prior answer.
+    if (m.role === 'assistant' && text.includes(NEXUS_TEXT_ANSWER_NOTE)) {
+      text = text.split(NEXUS_TEXT_ANSWER_NOTE).join('').trim()
+    }
     if (text) lines.push(text)
   }
   lines.push(task)

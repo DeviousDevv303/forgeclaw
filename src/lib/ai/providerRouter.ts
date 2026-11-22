@@ -10,7 +10,7 @@ import { openrouterProvider } from './providers/openrouterProvider'
 import { localInferenceProvider, DEFAULT_LOCAL_MODEL } from './providers/localInferenceProvider'
 import { corpusProvider } from './providers/corpusProvider'
 import { nexusProvider } from './providers/nexusProvider'
-import { buildNexusPrompt, buildNexusTranscript, parseNexusSegment, stripNexusGrammar, NEXUS_MAX_CALLS, NEXUS_MODEL_ID } from './nexusIntelligenceContext'
+import { buildNexusPrompt, buildNexusTranscript, parseNexusSegment, stripNexusGrammar, NEXUS_MAX_CALLS, NEXUS_MODEL_ID, NEXUS_TEXT_ANSWER_NOTE } from './nexusIntelligenceContext'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { isSimulationRequest, SIMULATION_UNAVAILABLE_NOTICE } from '../simulationRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
@@ -24,8 +24,9 @@ import { qwenRunLabel } from '../qwenCheckpoints'
 import { extractSiteHtml, isSiteDeployRequest, parseCreatedRepo, parsePublishedCommit, siteGenerationTask, siteRepoName } from './qwenSite'
 
 /** True for providers that run Qwen/Qwen3-8B via GitHub Actions (provider ids 'corpus'/'qwen'; legacy 'deepseek'). */
-/** Appended to every plain-text Nexus answer: the checkpoint is a tool-call specialist, not a general chat model. */
-export const NEXUS_TEXT_ANSWER_NOTE = 'Note: this is the Nexus checkpoint answering alone. It is a small tool-call specialist and is not reliable on general questions yet; for those, switch to Qwen or Kimi in Settings.'
+/** Appended to every plain-text Nexus answer: the checkpoint is a tool-call specialist, not a general chat model.
+ * The text lives in nexusIntelligenceContext.ts, which strips it back out of stored answers on follow-up turns. */
+export { NEXUS_TEXT_ANSWER_NOTE }
 
 export function isQwenProvider(providerId: string): boolean {
   return providerId === 'corpus' || providerId === 'qwen' || providerId === 'deepseek';  // 'deepseek' = the legacy id in saved sessions and stored records
