@@ -30,6 +30,19 @@ describe('Nexus Intelligence router loop', () => {
     }
   })
 
+  it('refuses research requests instead of presenting an ungrounded Nexus answer as research', async () => {
+    const request: AIRequest = {
+      model: 'nexus-run25', systemPrompt: '', tools: TOOLS,
+      messages: [{ role: 'user', content: 'Lets do some research into that new human like AI from Nuance Labs' }],
+    }
+    const result = await sendViaRouter(request, '', 'nexus-intelligence')
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.message).toContain('not a reliable research or web-search model')
+      expect(result.error.message).toContain('no findings are verified')
+    }
+  })
+
   it('turns a call segment into a normal app tool call', async () => {
     const request: AIRequest = {
       model: 'nexus-run25', systemPrompt: '', tools: TOOLS,
