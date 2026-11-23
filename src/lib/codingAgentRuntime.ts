@@ -159,12 +159,26 @@ const OPERANDLESS_EXECUTABLES = new Set(['pwd', 'whoami', 'uptime', 'hostname'])
 const AMBIGUOUS_EXECUTABLES = new Set(['git', 'node', 'python', 'python3', 'cd', 'cat', 'head', 'tail', 'find', 'grep', 'sed', 'awk', 'sort', 'uniq', 'mkdir', 'cp', 'mv', 'test'])
 const GIT_SUBCOMMANDS = new Set(['status', 'log', 'diff', 'show', 'branch', 'checkout', 'switch', 'clone', 'fetch', 'pull', 'push', 'add', 'commit', 'merge', 'rebase', 'remote', 'stash', 'tag', 'reset', 'restore', 'rev-parse', 'ls-files', 'ls-remote', 'blame', 'grep', 'config', 'init', 'cherry-pick', 'revert', 'describe', 'worktree', 'submodule', 'apply'])
 
-/** True when text starts with a known CLI executable AND, for ambiguous words, reads like a command. */
-export function looksLikeShellCommand(command: string): boolean {
+/** Common CLIs that take no operand and are never prose when the operator said "run" before them. */
+const RUN_VERB_BARE_CLI = new Set(['whoami', 'uname', 'date', 'df', 'env', 'ps', 'hostname', 'uptime'])
+
+/**
+ * True when text starts with a known CLI executable AND, for ambiguous words, reads like a command.
+ * `afterRunVerb` is set when the operator wrote "run"/"execute" before it: that verb disambiguates, so the
+ * wider COMMON_CLI set (echo, wc, curl, tsc, ...) counts too, with the same shell-looking-argument test the
+ * ambiguous words get. Without the verb those stay prose ("echo hi" alone reaches the model; `$ echo hi` runs).
+ */
+export function looksLikeShellCommand(command: string, afterRunVerb = false): boolean {
   const match = /^([A-Za-z][A-Za-z0-9]*)(?:\s+([\s\S]*))?$/.exec(command.trim())
   if (!match) return false
   const executable = match[1].toLowerCase()
   const rest = (match[2] ?? '').trim()
+  if (afterRunVerb && COMMON_CLI.has(executable) && !UNAMBIGUOUS_EXECUTABLES.has(executable) && !AMBIGUOUS_EXECUTABLES.has(executable)) {
+    if (!rest) return RUN_VERB_BARE_CLI.has(executable)
+    if (OPERANDLESS_EXECUTABLES.has(executable) && !rest.startsWith('-') && !/[|&;<>`]|\$\(/.test(rest)) return false
+    if (rest.startsWith('-') || /[|&;<>`]|\$\(/.test(rest) || /(^|\s)["']/.test(rest)) return true
+    return rest.split(/\s+/).some(token => /^[.~/]/.test(token) || token.includes('/') || /\.[A-Za-z0-9]{1,8}$/.test(token))
+  }
   if (OPERANDLESS_EXECUTABLES.has(executable) && rest && !rest.startsWith('-') && !/[|&;<>`]|\$\(/.test(rest)) return false
   if (UNAMBIGUOUS_EXECUTABLES.has(executable)) return true
   if (!AMBIGUOUS_EXECUTABLES.has(executable) || !rest) return false
@@ -215,10 +229,12 @@ export function extractExplicitShellCommand(prompt: string): string | null {
   let command = inlineCode?.[1]?.trim() ?? text
   command = command.replace(/^```(?:bash|sh)?\s*/i, '').replace(/\s*```$/, '').trim()
   command = command.replace(/^(?:please\s+)?(?:run|execute)\s+(?:the\s+)?(?:shell\s+command|shell|command|bash)\s*[:：]?\s*/i, '')
-  command = command.replace(/^(?:please\s+)?(?:run|execute)\s+(?:the\s+)?/i, '').trim()
-  command = command.replace(/^`+|`+$/g, '').trim()
+  const withoutVerb = command.replace(/^(?:please\s+)?(?:run|execute)\s+(?:the\s+)?/i, '').trim()
+  // `run `curl -I x``: the verb sits outside the backticks, so look at the whole text as well as the extracted command.
+  const afterRunVerb = withoutVerb !== command || /^(?:please\s+)?(?:run|execute)\b/i.test(text)
+  command = withoutVerb.replace(/^`+|`+$/g, '').trim()
 
-  return looksLikeShellCommand(command) ? normalizeKnownShellExecutable(command) : null
+  return looksLikeShellCommand(command, afterRunVerb) ? normalizeKnownShellExecutable(command) : null
 }
 
 /**

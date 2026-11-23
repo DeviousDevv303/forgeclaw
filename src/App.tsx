@@ -244,6 +244,8 @@ import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/p
 import { QWEN_RUN_EXPIRED_NOTE, isQwenRunResumable } from './lib/qwenRunResume'
 import { ConnectionToast, type ConnectionNotice } from './components/ConnectionToast'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
+import { imageResearchQuery } from './lib/imageResearch'
+import { photoFollowUpImage } from './lib/photoFollowUp'
 import { baselineToolNames, BROWSER_GUIDANCE, continuesImageTurn, isFollowUp, mergeRequested, nexusDispatchToolNames, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 import { attestedUrlsForConversation, isAttestedLink } from './lib/linkAttestation'
@@ -1478,7 +1480,14 @@ function App() {
       : null
     // Only Claude and Kimi receive the picture itself; any other provider would answer without seeing it.
     // analyze_image reads the picture from here; it never travels in the prompt text.
-    rememberAttachedImage(imageUrl)
+    // A question about the picture just analyzed arrives with no attachment of its own. For the providers that have it
+    // analyzed on Actions (Qwen, Nexus), the same picture rides this turn so the vision workflow answers the new
+    // question; without it the text-only model answered from the analysis text alone (photoFollowUp.ts).
+    const photoFollowImage = !imageUrl && (activeProvider === 'nexus-intelligence' || (isQwenProvider(activeProvider) && activeProvider !== 'corpus')) && !isVisitor(ghToken || '')
+      ? photoFollowUpImage(messagesRef.current, promptText)
+      : undefined
+    const attachedImage = imageUrl ?? photoFollowImage
+    rememberAttachedImage(attachedImage)
     // Claude and Kimi see the picture; Qwen has it analyzed on Actions (owner token). The corpus
     // model and free mode have no way to see it, so they say so instead of answering blind.
     if (imageUrl && !HOSTED_TOOL_PROVIDERS.has(activeProvider) && (activeProvider === 'corpus' || isVisitor(ghToken || ''))) {
@@ -1672,7 +1681,7 @@ function App() {
     // Kimi on any "analyze/review/debug" prompt was told to hand the task to the slow Qwen workflow
     // and was given qwen_reason on every coding task.
     const isHostedReasoner = HOSTED_TOOL_PROVIDERS.has(activeProvider) && !qwenDuoDefault
-    const complexReasoningTask = !imageUrl && !isHostedReasoner && shouldDispatchComplexTaskToQwen(promptText)
+    const complexReasoningTask = !attachedImage && !isHostedReasoner && shouldDispatchComplexTaskToQwen(promptText)
     const coreToolNames = (codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'qwen_reason', 'ask_qwen']
       : qwenDuoDefault || complexReasoningTask || nexusSculptHandoff ? ['qwen_reason'] : [])
@@ -1684,9 +1693,12 @@ function App() {
     }
     if (nexusSculptHandoff) coreToolNames.push('github_read_file', 'sculpt_self')
     // Claude and Kimi see the picture directly; analyze_image is the URL-based workflow for the others.
-    if (imageUrl && !isHostedReasoner) coreToolNames.push('analyze_image')
+    if (attachedImage && !isHostedReasoner) coreToolNames.push('analyze_image')
     // Questions about what is current get gathered sources, whatever the wording (currentInfo.ts).
     if (needsCurrentInfo(promptText)) coreToolNames.push('deep_research')
+    // "Search the web, then make me an image": the router runs web_search before generate_image (providerRouter.ts), so the
+    // search tool is offered for it under every provider. Hosted models already carry it in their baseline.
+    if (imageResearchQuery(promptText || '')) coreToolNames.push('web_search')
     coreToolNames.push(...baselineToolNames(activeProvider))
     // Nexus Intelligence's dispatch tool rides by provider, with the baselines above (toolExposure.ts):
     // without it the router cannot dispatch the Nexus workflow at all (nexus-not-dispatched).
@@ -1712,10 +1724,10 @@ function App() {
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'This model has no native function calling. ForgeClaw supplies a compact manual protocol and routes every call through its existing dispatcher.'
-    const needsManualTools = codingTask || imageUrl !== undefined || relevantTools.length > 0 || complexReasoningTask || qwenDuoDefault || nexusSculptHandoff
+    const needsManualTools = codingTask || attachedImage !== undefined || relevantTools.length > 0 || complexReasoningTask || qwenDuoDefault || nexusSculptHandoff
     const primaryInstruction = imageUrl && isHostedReasoner
       ? `\n\nPRIMARY REASONING POLICY\n${VISION_POLICY}`
-      : imageUrl
+      : attachedImage
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
       : nexusSculptHandoff
         ? '\n\nPRIMARY REASONING POLICY\nThis Nexus self-sculpt request is handed off to the Qwen/Qwen3-8B read → rewrite → sculpt_self chain. Do not dispatch Nexus reasoning for this request. The final result must be attributed to Qwen and must come from actual tool results.'
@@ -2168,7 +2180,7 @@ function App() {
         taskStatus: codingAgentState.taskStatus,
         requiresRepositoryTool: codingTask,
       })}`
-      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt, ...(imageUrl ? { image_url: imageUrl } : {}) }]
+      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt, ...(attachedImage ? { image_url: attachedImage } : {}) }]
       const allToolResults: ToolResult[] = runToolResults
       const toolAttempts: Array<{ name: string; input: string }> = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
@@ -2451,9 +2463,13 @@ function App() {
             generatedImageUrl = takeGeneratedImage(invocationMatch[1])
           }
           directImageCompleted = Boolean(generatedImageUrl)
+          // A picture made after a web search says so beside it: the search's query and what the tool really returned.
+          const searchedFor = conversationMessages
+            .flatMap(m => m.tool_calls ?? [])
+            .find(tc => tc.name === 'web_search' && tc.id.startsWith('deterministic-image-research-'))
           // Keep run URLs, invocation IDs, and enhanced prompts in the
           // execution trace, not in the visible chat bubble beside the image.
-          finalText = directImageCompleted ? '' : imageToolOutput
+          finalText = directImageCompleted ? (searchedFor ? `Searched the web first ("${String(searchedFor.input.query ?? '').slice(0, 120)}") and used what it found as reference for this picture.` : '') : imageToolOutput
           break
         }
 

@@ -10,8 +10,9 @@ import { openrouterProvider } from './providers/openrouterProvider'
 import { localInferenceProvider, DEFAULT_LOCAL_MODEL } from './providers/localInferenceProvider'
 import { corpusProvider } from './providers/corpusProvider'
 import { nexusProvider } from './providers/nexusProvider'
-import { buildNexusPrompt, buildNexusTranscript, parseNexusSegment, NEXUS_MAX_CALLS, NEXUS_MODEL_ID } from './nexusIntelligenceContext'
+import { buildNexusPrompt, buildNexusTranscript, parseNexusSegment, NEXUS_IMAGE_GENERATOR_NOTE, NEXUS_MAX_CALLS, NEXUS_MODEL_ID, NEXUS_TEXT_ANSWER_NOTE, NEXUS_TRIM_NOTE } from './nexusIntelligenceContext'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
+import { imagePromptFromResearch, imageResearchQuery } from '../imageResearch'
 import { isSimulationRequest, SIMULATION_UNAVAILABLE_NOTICE } from '../simulationRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { buildQwenTaskPayload, extractOriginalQwenTask, formatQwenConversation } from './qwenContext'
@@ -25,7 +26,7 @@ import { extractSiteHtml, isSiteDeployRequest, parseCreatedRepo, parsePublishedC
 
 /** True for providers that run Qwen/Qwen3-8B via GitHub Actions (provider ids 'corpus'/'qwen'; legacy 'deepseek'). */
 /** Appended to every plain-text Nexus answer: the checkpoint is a tool-call specialist, not a general chat model. */
-export const NEXUS_TEXT_ANSWER_NOTE = 'Note: this is the Nexus checkpoint answering alone. It is a small tool-call specialist and is not reliable on general questions yet; for those, switch to Qwen or Kimi in Settings.'
+export { NEXUS_TEXT_ANSWER_NOTE }
 
 export function isQwenProvider(providerId: string): boolean {
   return providerId === 'corpus' || providerId === 'qwen' || providerId === 'deepseek';  // 'deepseek' = the legacy id in saved sessions and stored records
@@ -190,6 +191,33 @@ function nextImageStep(request: AIRequest, model: string, selected: ProviderId):
 }
 
 /**
+ * "Search the web, then make me an image": an image request that also tells ForgeClaw to look something up
+ * first. Without this the creation verb alone fired the image intercept below and the whole sentence, search
+ * instruction included, became the diffusion prompt — the search never ran. Each step is chosen from this
+ * turn's real tool results: web_search first, then generate_image with the findings folded into its prompt.
+ * A failed search ends the turn instead of drawing from memory, because the owner asked for the search and a
+ * picture presented as researched when it was not would misstate what happened. The calls are router-issued
+ * (stopReason 'deterministic-*'), so they run through executeTool and Guardian like any other call; the image
+ * call keeps the 'direct-image-' id prefix the chat keys on to attach the picture and end the turn.
+ */
+function nextImageResearchStep(request: AIRequest, model: string, selected: ProviderId): { success: true; response: AIResponse } | { success: false; error: AIError } | undefined {
+  if (!request.tools?.some(t => t.name === 'web_search')) return undefined
+  const query = imageResearchQuery(latestUserTask(request))
+  if (!query || hasToolResult(request, 'generate_image')) return undefined
+  const found = toolResultFor(request, 'web_search')
+  if (found === undefined) return success({ text: '', provider: selected, model, toolCalls: [{ id: `deterministic-image-research-${Date.now()}`, name: 'web_search', input: { query, count: 5 } }], stopReason: 'deterministic-image-research' })
+  if (isFailure(found)) return { success: false, error: classifyError(new Error(`The web search for this image failed, so no picture was generated from guesses. ${found.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 400)} Retry, or ask for the picture without the search.`), selected) }
+  if (/^\s*No results for\b/i.test(found)) return { success: false, error: classifyError(new Error(`The web search for "${query}" returned no results, so no picture was generated from guesses. Rephrase the search, or ask for the picture without it.`), selected) }
+  const prompt = imagePromptFromResearch(latestUserTask(request), found)
+  const nexus = isNexusIntelligenceProvider(selected)
+  return success({
+    text: '', provider: selected, model: nexus ? NEXUS_MODEL_ID : model,
+    toolCalls: [{ id: `${nexus ? NEXUS_IMAGE_GUARANTEE_ID : 'direct-image-'}${Date.now()}`, name: 'generate_image', input: { prompt, style: inferImageStyle(prompt), width: 512, height: 512 } }],
+    stopReason: nexus ? 'deterministic-nexus-image-generator' : 'direct-image-intent',
+  })
+}
+
+/**
  * Qwen website chain: generate -> create repo -> publish -> wait for Pages -> report. Each step is
  * chosen from this turn's real tool results, so a reload or retry resumes at the first missing step.
  */
@@ -301,6 +329,9 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // in its trading register, 2026-11-11 10:15 CST), the Nexus branch below issues the call
   // itself (stopReason 'deterministic-nexus-image-generator') and the turn then says plainly
   // that the generator was called by ForgeClaw's router, not by the language model.
+  // A search-first image request researches before it draws, under every provider (nextImageResearchStep).
+  const researchStep = lastUser && isImageGenerationRequest(lastUser.content) ? nextImageResearchStep(request, choice.model, selected) : undefined
+  if (researchStep) return researchStep
   if (lastUser && isImageGenerationRequest(lastUser.content) && !isNexusIntelligenceProvider(selected)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `direct-image-${Date.now()}`, name: 'generate_image', input: { prompt: extractImagePrompt(lastUser.content), style: inferImageStyle(extractImagePrompt(lastUser.content)), width: 512, height: 512 } }], stopReason: 'direct-image-intent' })
   const prior = latestCurrentToolResult(request)
   // A picture comes first: greetings, repository evidence and research would all answer without it.
@@ -342,6 +373,9 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // tool result is injected into the next dispatch's transcript -> the segment that answers
   // ends the turn. Nothing here touches the Qwen path (or vice versa).
   if (isNexusIntelligenceProvider(selected)) {
+    if (isResearchRequest(latestUserTask(request))) {
+      return { success: false, error: classifyError(new Error('Nexus Intelligence Run 25 is a small tool-call specialist, not a reliable research or web-search model. It was not asked to answer this research request, so no findings are verified. Switch to Qwen or Kimi in Settings for sourced research.'), selected) }
+    }
     const failed = failedNexusToolResult(request)
     if (failed) return { success: false, error: classifyError(new Error(failed.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
     const latest = latestCurrentToolResult(request)
@@ -365,7 +399,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
         return success({ text: `Nexus Intelligence reached its ${NEXUS_MAX_CALLS}-call loop limit still mid-task. Its last segment was a call to \`${parsed.name}\` that was not run.`, provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-call-cap' })
       }
       const trimNote = /\bprompt-trimmed=true\b/.test(latest.content.split('\n\n')[0] ?? '')
-        ? 'Note: the 640-token window could not hold the whole conversation, so the oldest part was trimmed before this segment ran.'
+        ? NEXUS_TRIM_NOTE
         : ''
       // Shown verbatim (the owner's order: Nexus alone), with a standing note so an incoherent answer to a
       // general question reads as the model's limit, not as a broken app (owner report 2026-11-12).
@@ -378,7 +412,7 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
     const guaranteed = guaranteedImageResult(request)
     if (guaranteed) {
       if (/^\s*\[(?:TOOL ERROR|GUARDIAN (?:BLOCKED?|REJECTED))\]/i.test(guaranteed.content)) return { success: false, error: classifyError(new Error(guaranteed.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
-      return success({ text: "Generated by Nexus Intelligence's image generator (the Stable Diffusion pipeline in the generate-image workflow). The Nexus language model did not issue the call for this request, so ForgeClaw's router called the generator directly.", provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-image-generator-complete' })
+      return success({ text: NEXUS_IMAGE_GENERATOR_NOTE, provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-image-generator-complete' })
     }
     // A request to run a simulation is answered here, at the start of a turn (simulationRequest.ts): no tool can run one since
     // MiroFish was removed, the checkpoint cannot run the in-house swarm yet, and dispatching it would spend a GitHub Actions run
