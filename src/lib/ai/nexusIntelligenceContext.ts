@@ -11,7 +11,7 @@
 // standalone server (nexus-standalone/server.py) uses. Tool flow keeps the model's own
 // grammar: a segment that ends with <|call|>{json}<|/call|> becomes a normal app tool call,
 // its result is injected as a <|result:ok|error|> span in the next dispatch's transcript
-// prefix, exactly as nexus-llm/train/loop.py drives the closed loop (max 3 calls).
+// prefix, exactly as nexus-llm/train/loop.py drives the closed loop (call cap: NEXUS_MAX_CALLS below).
 
 import { extractOriginalQwenTask } from './qwenContext'
 import type { AIMessage } from './types'
@@ -27,8 +27,14 @@ export const NEXUS_TEXT_ANSWER_NOTE = 'Note: this is the Nexus checkpoint answer
 export const NEXUS_MODEL_ID = 'nexus-run25'
 export const NEXUS_MODEL_LABEL = 'Nexus Intelligence · Run 25 checkpoint'
 export const NEXUS_CHECKPOINT_SHA256 = 'c41852fb0ac11f47c3ce2fc7715e816e95ec2e844e25881637eabaaac87f69b6'
-/** loop.py's --max-calls default: the closed loop the checkpoint was graded in. */
-export const NEXUS_MAX_CALLS = 3
+/**
+ * Per-turn call cap. The frozen swarm benchmark (nexus-llm/benchmarks/eval-swarm.jsonl)
+ * expects up to 6 spawns in a turn (sw-018; sw-006 expects 4, sw-022 up to 4), so the cap
+ * is the benchmark's maximum: at loop.py's --max-calls default of 3 those rows are
+ * unpassable in the app even for a perfect model. The graded local loop takes --max-calls
+ * as a flag and is not bound by this number; only the app is.
+ */
+export const NEXUS_MAX_CALLS = 6
 /**
  * App-side prompt budget in characters (~4 chars/token against the 640-token window,
  * leaving room for the transcript prefix and the 160-token generation reserve). The
@@ -137,11 +143,20 @@ export function parseNexusSegment(segment: string): NexusSegment {
           : {}
         return { kind: 'call', name: parsed.name, input, raw }
       }
-    } catch { /* fall through to answer rendering */ }
+    } catch { /* handled by the unfinished-call check below */ }
+  }
+  // A <|call|> opener that did not parse into a valid call means the runner's constrained
+  // decoder dead-ended mid-call: when the model corrupts a number it emits no <|/call|> at
+  // all, and a closed call with broken JSON is the same failure one token later. Rendering
+  // that raw call JSON as the chat answer is the owner's "gibberish" — fail the segment
+  // honestly instead of showing call grammar as prose.
+  if (raw.includes('<|call|>')) {
+    return { kind: 'failed', message: 'Nexus Intelligence produced a tool call that did not finish (its segment ended mid-call), so there is no answer to show.', raw }
   }
   const answer = /<\|answer\|>([\s\S]*?)(?:<\|\/answer\|>|$)/.exec(raw)
   if (answer && answer[1].trim()) return { kind: 'answer', text: answer[1].trim(), raw }
-  const text = stripNexusGrammar(raw)
+  // Belt-and-braces: no residual call span may reach the displayed answer text.
+  const text = stripNexusGrammar(raw.replace(/<\|call\|>[\s\S]*?(?:<\|\/call\|>|$)/g, ''))
   if (text) return { kind: 'answer', text, raw }
   return { kind: 'failed', message: 'Nexus Intelligence produced a segment with no readable answer.', raw }
 }

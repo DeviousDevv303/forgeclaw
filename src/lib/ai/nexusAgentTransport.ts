@@ -24,9 +24,22 @@ export async function callNexusViaRouter(
   options: { signal?: AbortSignal; maxTokens?: number },
   dispatchTools: ToolDef[],
 ): Promise<CallResult> {
+  // The router's Nexus branch builds its dispatch from request.messages alone —
+  // request.systemPrompt never reaches the workflow on this path, so a spawned
+  // child's role line was silently dropped and the child ran on the bare task
+  // (a hosted child gets its role line; a Nexus child did not). Fold the role
+  // line into the child's first user message — role line + task is exactly what
+  // the Nexus prompt flattening carries into the dispatch. A new array is built
+  // per call, so the caller's history is never mutated and the fold never
+  // stacks across the sub-agent loop's iterations.
+  const roleLine = systemPrompt.trim()
+  const firstUser = messages.findIndex(m => m.role === 'user')
+  const foldedMessages = roleLine && firstUser >= 0
+    ? messages.map((m, i) => (i === firstUser ? { ...m, content: `${roleLine}\n${m.content}` } : m))
+    : messages
   const request: AIRequest = {
     systemPrompt,
-    messages,
+    messages: foldedMessages,
     model: model || 'nexus-run25',
     tools: dispatchTools,
     signal: options.signal,

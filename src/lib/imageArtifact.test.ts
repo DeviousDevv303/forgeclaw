@@ -247,6 +247,7 @@ describe('image result download', () => {
     vi.useFakeTimers()
     const pngBytes = new Uint8Array([137,80,78,71,13,10,26,10, 0,0,0,13,73,72,68,82, 0,0,0,1,0,0,0,1,8,2,0,0,0, 144,119,83,222])
     const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      void _init
       if (isMirror(input)) return Promise.resolve(new Response(pngBytes, { headers: { 'Content-Type': 'image/png' } }))
       return Promise.reject(new Error('Unexpected fetch: ' + String(input)))
     })

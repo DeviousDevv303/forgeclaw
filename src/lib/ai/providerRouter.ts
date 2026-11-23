@@ -10,12 +10,12 @@ import { openrouterProvider } from './providers/openrouterProvider'
 import { localInferenceProvider, DEFAULT_LOCAL_MODEL } from './providers/localInferenceProvider'
 import { corpusProvider } from './providers/corpusProvider'
 import { nexusProvider } from './providers/nexusProvider'
-import { buildNexusPrompt, buildNexusTranscript, parseNexusSegment, stripNexusGrammar, NEXUS_MAX_CALLS, NEXUS_MODEL_ID, NEXUS_TEXT_ANSWER_NOTE } from './nexusIntelligenceContext'
+import { buildNexusPrompt, buildNexusTranscript, parseNexusSegment, NEXUS_MAX_CALLS, NEXUS_MODEL_ID, NEXUS_TEXT_ANSWER_NOTE } from './nexusIntelligenceContext'
 import { extractImagePrompt, inferImageStyle, isImageGenerationRequest } from '../imageRequest'
 import { isSimulationRequest, SIMULATION_UNAVAILABLE_NOTICE } from '../simulationRequest'
 import { DEFAULT_PROVIDER } from '../providerDefaults'
 import { buildQwenTaskPayload, extractOriginalQwenTask, formatQwenConversation } from './qwenContext'
-import { stripReasoningArtifacts } from './responseFilter'
+import { stripReasoningArtifacts, truncateRepetitionLoop } from './responseFilter'
 import { withResponseLanguage } from '../responseLanguage'
 import { currentDateNote, needsCurrentInfo } from '../currentInfo'
 import { nexusGuidanceForQwen } from '../nexusGuidance'
@@ -172,8 +172,9 @@ function toolResultFor(request: AIRequest, toolName: string): string | undefined
 const isFailure = (content: string) => /^\s*\[(?:TOOL ERROR|GUARDIAN)/i.test(content)
 
 /**
- * Qwen picture chain: analyze_image (Qwen2-VL on Actions) -> its answer. The text model never sees
- * the picture, so it is not asked to answer about one; before this, it summarized the repository instead.
+ * Picture chain: analyze_image (Qwen2-VL on Actions) -> its answer. The text model never sees
+ * the picture. In particular, Nexus is a text-only tool-call checkpoint: asking it to interpret
+ * an attachment produces unrelated token-like prose, so photo turns bypass its reasoning loop.
  */
 function nextImageStep(request: AIRequest, model: string, selected: ProviderId): { success: true; response: AIResponse } | { success: false; error: AIError } | undefined {
   if (!request.tools?.some(t => t.name === 'analyze_image')) return undefined
@@ -183,7 +184,10 @@ function nextImageStep(request: AIRequest, model: string, selected: ProviderId):
   if (isFailure(analysis)) return { success: false, error: classifyError(new Error(`The picture could not be analyzed. ${analysis.replace(/^\s*\[TOOL ERROR\]\s*/i, '').slice(0, 400)}`), selected) }
   const [header, ...body] = analysis.split('\n')
   const source = header.replace(/^✓ Image analysis by /, '')
-  return success({ text: `${body.join('\n').trim()}\n\n(Looked at by ${source})`, provider: selected, model: VISION_MODEL_LABEL, stopReason: 'qwen-image-complete' })
+  const providerNote = isNexusIntelligenceProvider(selected)
+    ? `Photo analyzed by ForgeClaw's vision workflow (${source}); the text-only Nexus checkpoint was not asked to interpret the image.`
+    : `(Looked at by ${source})`
+  return success({ text: `${body.join('\n').trim()}\n\n${providerNote}`, provider: selected, model: VISION_MODEL_LABEL, stopReason: isNexusIntelligenceProvider(selected) ? 'nexus-image-analysis-complete' : 'qwen-image-complete' })
 }
 
 /**
@@ -301,7 +305,9 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   if (lastUser && isImageGenerationRequest(lastUser.content) && !isNexusIntelligenceProvider(selected)) return success({ text: '', provider: selected, model: choice.model, toolCalls: [{ id: `direct-image-${Date.now()}`, name: 'generate_image', input: { prompt: extractImagePrompt(lastUser.content), style: inferImageStyle(extractImagePrompt(lastUser.content)), width: 512, height: 512 } }], stopReason: 'direct-image-intent' })
   const prior = latestCurrentToolResult(request)
   // A picture comes first: greetings, repository evidence and research would all answer without it.
-  const imageStep = isQwenProvider(selected) ? nextImageStep(request, choice.model, selected) : undefined
+  const imageStep = isQwenProvider(selected) || isNexusIntelligenceProvider(selected)
+    ? nextImageStep(request, choice.model, selected)
+    : undefined
   if (imageStep) return imageStep
   // Every message reaches the model: there is no canned reply for greetings, thanks or one-word answers (owner's rule, 2026-11-04).
   if (isQwenProvider(selected) && prior?.name === 'qwen_reason' && isGuardianBlockedResult(prior.content)) return { success: false, error: classifyError(new Error(`Guardian blocked the Qwen/Qwen3-8B reasoning step. ${prior.content.slice(0, 300)}`), selected) }
@@ -356,15 +362,17 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
           return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: parsed.name === 'generate_image' ? `${NEXUS_IMAGE_CALL_ID}${Date.now()}` : `nexus-call-${Date.now()}`, name: parsed.name, input: parsed.input }], stopReason: 'nexus-tool-call' })
         }
         // The graded loop's call cap: the model still wants a tool, but the loop is over.
-        // Show its last segment grammar-stripped instead of dispatching a fourth call.
-        return success({ text: `Nexus Intelligence reached its ${NEXUS_MAX_CALLS}-call loop limit still mid-task. Its last segment:\n\n${stripNexusGrammar(parsed.raw)}`, provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-call-cap' })
+        // Name the un-run call instead of showing its raw segment — call JSON is not prose.
+        return success({ text: `Nexus Intelligence reached its ${NEXUS_MAX_CALLS}-call loop limit still mid-task. Its last segment was a call to \`${parsed.name}\` that was not run.`, provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-call-cap' })
       }
       const trimNote = /\bprompt-trimmed=true\b/.test(latest.content.split('\n\n')[0] ?? '')
         ? 'Note: the 640-token window could not hold the whole conversation, so the oldest part was trimmed before this segment ran.'
         : ''
       // Shown verbatim (the owner's order: Nexus alone), with a standing note so an incoherent answer to a
       // general question reads as the model's limit, not as a broken app (owner report 2026-11-12).
-      return success({ text: [parsed.text, trimNote, NEXUS_TEXT_ANSWER_NOTE].filter(Boolean).join('\n\n'), provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-synthesis-complete' })
+      // The one filter applied is the repetition-loop cut the Qwen path already gets: a verbatim
+      // loop is a decoder failure, not the model's answer.
+      return success({ text: [truncateRepetitionLoop(parsed.text), trimNote, NEXUS_TEXT_ANSWER_NOTE].filter(Boolean).join('\n\n'), provider: selected, model: NEXUS_MODEL_ID, stopReason: 'nexus-synthesis-complete' })
     }
     // A guaranteed image ends the turn here, truthfully attributed: re-dispatching the checkpoint
     // that just declined the call would only append its off-task text under the picture.

@@ -311,12 +311,14 @@ export const IMAGE_MODEL_LABELS: Readonly<Record<(typeof IMAGE_MODELS)[number], 
 
 /**
  * The model a generate_image call renders with when the caller names none, by size:
- * SDXL Turbo — the pipeline that won the ForgeClaw image bakeoff — at or below its
- * verified 512x512; SD1.5 above that, as the only model verified at larger sizes.
+ * FLUX.2 klein 4B — the pipeline that won the 2026-11-21 ForgeClaw image bakeoff
+ * (5 of 6 prompts against SDXL Turbo, including the lighthouse and the cube
+ * regression; Apache-2.0) — at or below its verified 512x512; SD1.5 above that,
+ * as the only model verified at larger sizes.
  * Mirrors resolve_default_model in .github/scripts/generate_image.py.
  */
 export function defaultImageModel(width: number, height: number): (typeof IMAGE_MODELS)[number] {
-  return width <= 512 && height <= 512 ? 'sdxl-turbo' : 'sd15'
+  return width <= 512 && height <= 512 ? 'flux2-klein-4b' : 'sd15'
 }
 
 // ─── Tool Definitions ─────────────────────────────────────────────────────────
@@ -737,7 +739,7 @@ export const FORGE_TOOLS: ToolDef[] = [
   },
   {
     name: 'generate_image',
-    description: 'Generate an image on CPU through the repository-owned GitHub Actions workflow. The default model is SDXL Turbo at up to 512x512 (Stable Diffusion v1.5 above that size); optional model "sd15", "sdxl-turbo" or "sd-turbo" — the Turbo models are limited to 512x512 and carry Stability AI Community License terms. Optional steps, guidance, seed and negative_prompt are passed to the runner and resolved against the model\'s regime there (distilled Turbo models clamp steps to 1-4 and ignore guidance/negative prompts, noted in the run metadata). "flux2-klein-4b" is a bakeoff candidate (Apache-2.0) whose staged runner loader is wired; its bakeoff benchmarking is still pending. "z-image-turbo" is refused: its runner download exceeds the Actions runner disk. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request may be recorded as an unapproved learning candidate.',
+    description: 'Generate an image on CPU through the repository-owned GitHub Actions workflow. The default model is FLUX.2 klein 4B at up to 512x512 (Stable Diffusion v1.5 above that size); optional model "sd15", "sdxl-turbo" or "sd-turbo" — the Turbo models are limited to 512x512 and carry Stability AI Community License terms. Optional steps, guidance, seed and negative_prompt are passed to the runner and resolved against the model\'s regime there (distilled Turbo models clamp steps to 1-4 and ignore guidance/negative prompts, noted in the run metadata). "flux2-klein-4b" (Apache-2.0) won the 2026-11-21 image bakeoff and is the default at up to 512x512. "z-image-turbo" is refused: its runner download exceeds the Actions runner disk. IMPORTANT: use the exact tool name generate_image with an underscore. The result is returned as a short-lived workflow artifact and the request may be recorded as an unapproved learning candidate.',
     parameters: {
       type: 'object',
       properties: {
@@ -745,7 +747,7 @@ export const FORGE_TOOLS: ToolDef[] = [
         style: { type: 'string', description: 'Style such as realistic, artistic, or cartoon' },
         width: { type: 'number', description: 'Width in pixels, 256-1024, divisible by 8; defaults to 512' },
         height: { type: 'number', description: 'Height in pixels, 256-1024, divisible by 8; defaults to 512' },
-        model: { type: 'string', enum: [...IMAGE_MODELS], description: 'Optional model key; omit for the default (sdxl-turbo up to 512x512, sd15 above that size). Turbo models and flux2-klein-4b are limited to 512x512. flux2-klein-4b is a wired bakeoff candidate (explicit only). z-image-turbo is refused: its runner download exceeds the Actions runner disk.' },
+        model: { type: 'string', enum: [...IMAGE_MODELS], description: 'Optional model key; omit for the default (flux2-klein-4b up to 512x512, sd15 above that size). Turbo models and flux2-klein-4b are limited to 512x512. z-image-turbo is refused: its runner download exceeds the Actions runner disk.' },
         negative_prompt: { type: 'string', description: 'What to keep out of the image, up to 1000 characters (optional; honored by backends that support it)' },
         guidance: { type: 'number', description: 'Guidance scale (CFG), 0-30. Default per model: sd15 7.5; the distilled turbo models run without CFG, so a guidance value is ignored for them and the run metadata says so (optional)' },
         steps: { type: 'number', description: 'Sampling steps, 1-150. Defaults per model: sd15 25-30, turbo models 1-4 (optional)' },
