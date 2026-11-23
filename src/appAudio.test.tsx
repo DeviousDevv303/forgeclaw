@@ -147,3 +147,32 @@ describe('attached voice message (Path B)', () => {
     expect(screen.queryByText(/\[Voice message:/)).toBeNull()
   }, 30000)
 })
+
+describe('family mode (relay tier)', () => {
+  it('attempts transcription through the relay family tier with a family code and no token', async () => {
+    vi.stubEnv('VITE_PUBLIC_RELAY_URL', 'https://relay.example')
+    try {
+      localStorage.setItem('forgeclaw_family_code', 'test-family-code')
+      const calls: Array<{ url: string; authorization: string | null }> = []
+      vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url: String(url), authorization: new Headers(init?.headers).get('Authorization') })
+        return githubFetch(String(url), init)
+      }))
+      const { default: App } = await import('./App')
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+      // The guard passes on the family code alone: recording starts, no needs-a-token alert.
+      expect(await screen.findByText(/Recording… speak now/)).toBeTruthy()
+      expect(screen.queryByRole('alert')).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }))
+      const composer = screen.getByPlaceholderText(/Ask anything/) as HTMLTextAreaElement
+      await waitFor(() => expect(composer.value).toBe(TRANSCRIPT), { timeout: 15000 })
+      // The dispatch went to the relay's family tier, carrying the family code as its Bearer.
+      const dispatch = calls.find(c => c.url.endsWith('/actions/workflows/audio-transcribe.yml/dispatches'))!
+      expect(dispatch.url).toBe('https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/actions/workflows/audio-transcribe.yml/dispatches')
+      expect(dispatch.authorization).toBe('Bearer test-family-code')
+    } finally {
+      vi.unstubAllEnvs()
+    }
+  }, 30000)
+})
