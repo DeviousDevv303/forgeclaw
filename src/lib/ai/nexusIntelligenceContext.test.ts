@@ -112,3 +112,40 @@ describe('parseNexusSegment', () => {
     expect(parseNexusSegment('<|route:defer|>I need the file path first.')).toMatchObject({ kind: 'answer', text: 'I need the file path first.' })
   })
 })
+
+describe('Nexus follow-up context: ForgeClaw-authored text is not conversation', () => {
+  it('feeds the model only its own words from earlier replies, not the notes the app appended', async () => {
+    const { NEXUS_TEXT_ANSWER_NOTE, NEXUS_TRIM_NOTE } = await import('./nexusIntelligenceContext')
+    const prompt = buildNexusPrompt(
+      [
+        { role: 'user', content: 'what is the package name?' },
+        { role: 'assistant', content: `The package is named forgeclaw.\n\n${NEXUS_TRIM_NOTE}\n\n${NEXUS_TEXT_ANSWER_NOTE}` },
+      ],
+      'and the version?',
+    )
+    expect(prompt).toBe('what is the package name?\nThe package is named forgeclaw.\nand the version?')
+  })
+
+  it('drops replies that were entirely the app speaking (generator line, call cap, simulation notice, search provenance)', async () => {
+    const { NEXUS_IMAGE_GENERATOR_NOTE } = await import('./nexusIntelligenceContext')
+    const { SIMULATION_UNAVAILABLE_NOTICE } = await import('../simulationRequest')
+    const prompt = buildNexusPrompt(
+      [
+        { role: 'user', content: 'draw a fox' }, { role: 'assistant', content: NEXUS_IMAGE_GENERATOR_NOTE },
+        { role: 'user', content: 'run a simulation' }, { role: 'assistant', content: SIMULATION_UNAVAILABLE_NOTICE },
+        { role: 'user', content: 'fix everything' }, { role: 'assistant', content: 'Nexus Intelligence reached its 6-call loop limit still mid-task. Its last segment was a call to `shell_exec` that was not run.' },
+        { role: 'user', content: 'search the web for a quokka then draw one' }, { role: 'assistant', content: 'Searched the web first ("a quokka") and used what it found as reference for this picture.' },
+      ],
+      'thanks',
+    )
+    expect(prompt).toBe('draw a fox\nrun a simulation\nfix everything\nsearch the web for a quokka then draw one\nthanks')
+  })
+
+  it('keeps the photo analysis itself and removes only the attribution line after it', () => {
+    const analysis = 'A red car parked beside a brick wall.'
+    const viaNexus = `${analysis}\n\nPhoto analyzed by ForgeClaw's vision workflow (Qwen2-VL-2B via GitHub Actions); the text-only Nexus checkpoint was not asked to interpret the image.`
+    const viaQwen = `${analysis}\n\n(Looked at by Qwen2-VL-2B via GitHub Actions)`
+    expect(buildNexusPrompt([{ role: 'assistant', content: viaNexus }], 'what color is the car?')).toBe(`${analysis}\nwhat color is the car?`)
+    expect(buildNexusPrompt([{ role: 'assistant', content: viaQwen }], 'what color is the car?')).toBe(`${analysis}\nwhat color is the car?`)
+  })
+})

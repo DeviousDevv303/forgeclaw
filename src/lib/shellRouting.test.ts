@@ -104,3 +104,33 @@ describe('plain-English requests are not mistaken for a command (audit 2026-11-1
     expect(extractExplicitShellCommand('grep -rn shell_patch src/lib/forgeTools.ts')).toBe('grep -rn shell_patch src/lib/forgeTools.ts')
   })
 })
+
+describe('an explicit "run" makes the common CLIs commands too', () => {
+  it.each([
+    ['run wc -l package.json', 'wc -l package.json'],
+    ['please run echo "hello world"', 'echo "hello world"'],
+    ['execute df -h', 'df -h'],
+    ['run date', 'date'],
+    ['run whoami', 'whoami'],
+    ['run tsc --noEmit', 'tsc --noEmit'],
+    ['run rg -n shell_exec src', 'rg -n shell_exec src'],
+    ['run `curl -sI https://example.com`', 'curl -sI https://example.com'],
+    ['run diff a.txt b.txt', 'diff a.txt b.txt'],
+  ])('%s', (text, expected) => {
+    expect(extractExplicitShellCommand(text)).toBe(expected)
+    expect(isExplicitShellRequest(text)).toBe(true)
+  })
+
+  it.each([
+    'run which one is better for me',
+    'run the file through a spell checker',
+    'run date night ideas by me',
+    'run whoami in this sandbox please',
+    'run echo then tell me what it printed',
+    'run touch screen tests',
+    'echo hi',
+    'wc -l package.json',
+  ])('still leaves prose, and un-prefixed commands outside the allow-list, to the model: %s', text => {
+    expect(extractExplicitShellCommand(text), text).toBeNull()
+  })
+})
