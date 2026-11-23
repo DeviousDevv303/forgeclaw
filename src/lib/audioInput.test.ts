@@ -4,8 +4,10 @@ import {
   audioExtensionForMediaType,
   audioExtensionForName,
   isAudioAttachment,
+  micErrorKind,
   parseAudioDataUrl,
   pickRecorderMimeType,
+  recognitionServiceDeadEnd,
   recorderSupported,
 } from './audioInput'
 
@@ -80,5 +82,34 @@ describe('recorder support and format choice', () => {
     expect(audioExtensionForName('clip.WAV')).toBe('wav')
     expect(audioExtensionForName('archive.tar.gz')).toBeNull()
     expect(audioExtensionForName('noextension')).toBeNull()
+  })
+})
+
+describe('voice failure classification', () => {
+  it('treats only service-side recognition codes as dead ends worth falling back from', () => {
+    expect(recognitionServiceDeadEnd('service-not-allowed')).toBe(true)
+    expect(recognitionServiceDeadEnd('language-not-supported')).toBe(true)
+    // Mic and speech problems stay on the recognition path's own messages.
+    expect(recognitionServiceDeadEnd('not-allowed')).toBe(false)
+    expect(recognitionServiceDeadEnd('audio-capture')).toBe(false)
+    expect(recognitionServiceDeadEnd('network')).toBe(false)
+    expect(recognitionServiceDeadEnd('no-speech')).toBe(false)
+    expect(recognitionServiceDeadEnd('aborted')).toBe(false)
+    expect(recognitionServiceDeadEnd('')).toBe(false)
+  })
+
+  it('maps getUserMedia rejections by name — a missing mic is not a blocked mic', () => {
+    const named = (name: string) => { const e = new Error(name); e.name = name; return e }
+    expect(micErrorKind(named('NotAllowedError'))).toBe('blocked')
+    expect(micErrorKind(named('SecurityError'))).toBe('blocked')
+    expect(micErrorKind(named('NotFoundError'))).toBe('noMic')
+    expect(micErrorKind(named('OverconstrainedError'))).toBe('noMic')
+    expect(micErrorKind(named('NotReadableError'))).toBe('busy')
+    expect(micErrorKind(named('AbortError'))).toBe('busy')
+    expect(micErrorKind(named('TypeError'))).toBe('failed')
+    expect(micErrorKind(new Error('plain'))).toBe('failed')
+    expect(micErrorKind(null)).toBe('failed')
+    expect(micErrorKind(undefined)).toBe('failed')
+    expect(micErrorKind('a string')).toBe('failed')
   })
 })

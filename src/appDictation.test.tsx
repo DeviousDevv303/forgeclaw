@@ -15,7 +15,7 @@ type ErrorEvent = { error?: string }
 
 class FakeRecognition {
   static instances: FakeRecognition[] = []
-  static behavior: 'ok' | 'error-not-allowed' | 'error-audio-capture' | 'throw' = 'ok'
+  static behavior: 'ok' | 'error-not-allowed' | 'error-audio-capture' | 'error-service-not-allowed' | 'throw' = 'ok'
   lang = ''
   interimResults = false
   continuous = false
@@ -30,9 +30,35 @@ class FakeRecognition {
     this.started = true
     if (FakeRecognition.behavior === 'error-not-allowed') this.onerror?.({ error: 'not-allowed' })
     if (FakeRecognition.behavior === 'error-audio-capture') this.onerror?.({ error: 'audio-capture' })
+    if (FakeRecognition.behavior === 'error-service-not-allowed') this.onerror?.({ error: 'service-not-allowed' })
   }
   stop() { this.stopped = true; this.onend?.() }
   emitResult(transcript: string) { this.onresult?.({ results: [[{ transcript }]] }) }
+}
+
+class ThrowingRecognition {
+  constructor() { throw new Error('construction is not supported in this WebView') }
+}
+
+/** The iOS-shaped recorder (MP4 only) + a working mic, for the fallback tests. */
+class FakeMediaRecorder {
+  static instances: FakeMediaRecorder[] = []
+  mimeType: string
+  ondataavailable: ((event: { data: Blob }) => void) | null = null
+  onstop: (() => void) | null = null
+  constructor(_stream: unknown, opts?: { mimeType?: string }) {
+    this.mimeType = opts?.mimeType ?? ''
+    FakeMediaRecorder.instances.push(this)
+  }
+  static isTypeSupported(type: string) { return type === 'audio/mp4' }
+  start() {}
+  stop() { this.ondataavailable?.({ data: new Blob(['fake-audio'], { type: 'audio/mp4' }) }); this.onstop?.() }
+}
+
+function stubRecorder() {
+  FakeMediaRecorder.instances = []
+  Object.defineProperty(window, 'MediaRecorder', { configurable: true, writable: true, value: FakeMediaRecorder })
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, writable: true, value: { getUserMedia: async () => ({ getTracks: () => [{ stop: () => {} }] }) } })
 }
 
 beforeEach(() => {
@@ -51,6 +77,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup(); vi.unstubAllGlobals(); vi.resetModules()
   delete (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition
+  delete (window as unknown as { MediaRecorder?: unknown }).MediaRecorder
 })
 
 describe('dictation button', () => {
@@ -130,4 +157,56 @@ describe('dictation button', () => {
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/Dictation couldn't start/)
   })
+
+  it('falls back to RECORDING when the speech service is a dead end (Android WebView shape)', async () => {
+    // webkitSpeechRecognition exists but every session dies with service-not-allowed:
+    // retrying dictation can never work, so the button must take the working route.
+    FakeRecognition.behavior = 'error-service-not-allowed'
+    localStorage.setItem('gh_token', 'test-token')
+    stubRecorder()
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+    expect(await screen.findByText(/Recording… speak now/)).toBeTruthy()
+    expect(FakeMediaRecorder.instances).toHaveLength(1)
+    expect(screen.queryByRole('alert')).toBeNull()
+  }, 20000)
+
+  it('falls back to RECORDING when the recognition constructor itself throws (embedded WebView shape)', async () => {
+    localStorage.setItem('gh_token', 'test-token')
+    stubRecorder()
+    Object.defineProperty(window, 'webkitSpeechRecognition', { configurable: true, writable: true, value: ThrowingRecognition })
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+    expect(await screen.findByText(/Recording… speak now/)).toBeTruthy()
+    expect(FakeMediaRecorder.instances).toHaveLength(1)
+  }, 20000)
+
+  it('still explains plainly when the constructor throws and NO fallback can run', async () => {
+    Object.defineProperty(window, 'webkitSpeechRecognition', { configurable: true, writable: true, value: ThrowingRecognition })
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/Dictation couldn't start/)
+  }, 20000)
+
+  it('a stale session\'s late error/end cannot kill the live session', async () => {
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+    const first = FakeRecognition.instances[0]
+    fireEvent.click(screen.getByRole('button', { name: 'Stop dictation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Dictate' }))
+    const second = FakeRecognition.instances[1]
+    expect(await screen.findByText(/Listening… speak now/)).toBeTruthy()
+    // The dead session reports in late — neither event may touch the live session.
+    act(() => { first.onerror?.({ error: 'audio-capture' }); first.onend?.() })
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText(/Listening… speak now/)).toBeTruthy()
+    act(() => second.emitResult('second session words'))
+    const composer = screen.getByPlaceholderText(/Ask anything/) as HTMLTextAreaElement
+    expect(composer.value).toBe('second session words')
+  }, 20000)
 })

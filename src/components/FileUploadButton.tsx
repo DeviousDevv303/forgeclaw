@@ -22,6 +22,11 @@ const ACCEPTED_TYPES = [
 // Voice memos (.m4a especially) can arrive with an empty or generic type; the name still counts.
 const AUDIO_NAME = /\.(webm|mp4|m4a|mp3|wav|ogg|flac|aac)$/i
 
+// Extensions ride along in `accept` as well as MIME types: some mobile pickers (iOS
+// Files / Voice Memos shares) match by extension or UTI and grey out anything the
+// MIME list alone does not claim.
+const ACCEPTED_EXTENSIONS = ['.webm', '.mp4', '.m4a', '.mp3', '.wav', '.ogg', '.flac', '.aac', '.pdf', '.txt', '.md', '.csv', '.json']
+
 export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [reading, setReading] = useState(false)
@@ -106,7 +111,7 @@ export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonPro
       <input
         ref={inputRef}
         type="file"
-        accept={ACCEPTED_TYPES.join(',')}
+        accept={[...ACCEPTED_TYPES, ...ACCEPTED_EXTENSIONS].join(',')}
         style={{ display: 'none' }}
         onChange={e => {
           const f = e.target.files?.[0]

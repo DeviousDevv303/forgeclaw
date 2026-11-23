@@ -111,6 +111,60 @@ describe('record-and-transcribe fallback (no Web Speech API)', () => {
     expect(alert.textContent).toMatch(/needs a GitHub token/)
     expect(FakeMediaRecorder.instances).toHaveLength(0) // it never even started recording
   }, 30000)
+
+  it('sending while recording does NOT brick the mic button — the next tap records again', async () => {
+    localStorage.setItem('gh_token', 'test-token')
+    const { default: App } = await import('./App')
+    render(<App />)
+    const composer = screen.getByPlaceholderText(/Ask anything/) as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'typed note' } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+    expect(await screen.findByText(/Recording… speak now/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /^SEND$/i }))
+    // The recording state cleared with the send…
+    await waitFor(() => expect(screen.queryByText(/Recording… speak now/)).toBeNull())
+    // …and the button is alive: a fresh tap starts a NEW recording instead of being
+    // swallowed by the stuck "recording" branch (the field failure this pins).
+    fireEvent.click(screen.getByRole('button', { name: 'Dictate' }))
+    expect(await screen.findByText(/Recording… speak now/)).toBeTruthy()
+    expect(FakeMediaRecorder.instances).toHaveLength(2)
+  }, 30000)
+
+  it('a missing microphone says so — it does not cry "blocked"', async () => {
+    localStorage.setItem('gh_token', 'test-token')
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, writable: true, value: { getUserMedia: async () => { const e = new Error('no device'); e.name = 'NotFoundError'; throw e } } })
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/No microphone found/)
+    expect(FakeMediaRecorder.instances).toHaveLength(0)
+  }, 30000)
+
+  it('a busy microphone says that instead of "blocked"', async () => {
+    localStorage.setItem('gh_token', 'test-token')
+    Object.defineProperty(navigator, 'mediaDevices', { configurable: true, writable: true, value: { getUserMedia: async () => { const e = new Error('busy'); e.name = 'NotReadableError'; throw e } } })
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toMatch(/microphone is busy/)
+    expect(FakeMediaRecorder.instances).toHaveLength(0)
+  }, 30000)
+
+  it('the transcript APPENDS to what the user typed while it transcribed — never wipes it', async () => {
+    localStorage.setItem('gh_token', 'test-token')
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+    expect(await screen.findByText(/Recording… speak now/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Stop recording' }))
+    const composer = screen.getByPlaceholderText(/Ask anything/) as HTMLTextAreaElement
+    // Typed while the clip is on its way to the transcription workflow.
+    fireEvent.change(composer, { target: { value: 'typed meanwhile' } })
+    await waitFor(() => expect(composer.value).toContain(TRANSCRIPT), { timeout: 15000 })
+    expect(composer.value).toContain('typed meanwhile')
+  }, 30000)
 })
 
 describe('attached voice message (Path B)', () => {
