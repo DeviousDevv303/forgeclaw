@@ -223,6 +223,9 @@ import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, me
 /** Shown when the free model, /sculpt or /patch is used with no GitHub token: all three run on GitHub Actions. */
 const GITHUB_TOKEN_REQUIRED_MESSAGE = '⚠️ GitHub token required: the free Qwen model, /sculpt and /patch all run on GitHub Actions and need a GitHub token to dispatch. Add your token in Settings → GitHub, then try again.'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
+import { blobToDataUrl, isAudioAttachment, MAX_AUDIO_BYTES, pickRecorderMimeType, recorderSupported } from './lib/audioInput'
+import { formatVoiceMessageTranscript, runAudioTranscription } from './lib/audioTranscribe'
+import type { GithubRequest } from './lib/githubPublish'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
 import { ReasoningFrameworkPanel } from './components/ReasoningFrameworkPanel'
 import { loadOwnerScaffold, operatingLoopFor, reasoningFormatReminder } from './lib/ownerScaffold'
@@ -810,6 +813,7 @@ function App() {
   const speechSupported = typeof window !== 'undefined' && !!((window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition)
   const toggleDictation = () => {
     if (dictating) { dictationRef.current?.stop(); return }
+    if (recording) { recorderRef.current?.stop(); return }
     const w = window as unknown as {
       SpeechRecognition?: new () => {
         lang: string; interimResults: boolean; continuous: boolean
@@ -825,7 +829,8 @@ function App() {
       }
     }
     const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition
-    if (!Ctor) { showDictationError(t('chat.dictateUnsupported')); return }
+    // No Web Speech API in this browser: record and transcribe on Actions instead of failing.
+    if (!Ctor) { void startRecording(); return }
     if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
     setDictationError('')
     const rec = new Ctor()
@@ -856,6 +861,70 @@ function App() {
     setDictating(true)
     try { rec.start() } catch { setDictating(false); dictationRef.current = null; showDictationError(t('chat.dictateStartFailed')) }
   }
+  // Record-and-transcribe fallback (owner request 2026-11-22: "able to understand audio…
+  // voice to text… whichever or both"): where the Web Speech API does not exist (Firefox,
+  // some embedded browsers) the same mic button records with MediaRecorder instead, and the
+  // clip is transcribed on GitHub Actions (faster-whisper) into the composer. Transcription
+  // needs the owner's GitHub token — it dispatches a workflow — so a family-code session
+  // gets a plain explanation, never a silent dead button.
+  const [recording, setRecording] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
+  const recorderRef = useRef<{ stop: () => void } | null>(null)
+  const recorderBaseRef = useRef('')
+  const recorderSupportedHere = typeof window !== 'undefined' && recorderSupported(window, navigator)
+  const githubApiRequest: GithubRequest = (url, init) => fetch(url, init ?? {})
+  const transcribeClip = async (audio: string): Promise<string> => {
+    const result = await runAudioTranscription(githubApiRequest, {
+      owner: ghOwner || CANONICAL_IDENTITY.owner,
+      repo: ghRepo || CANONICAL_IDENTITY.repository,
+      token: resolveGithubToken(),
+      audio,
+    })
+    return result.transcript
+  }
+  const startRecording = async () => {
+    if (!recorderSupportedHere) { showDictationError(t('chat.dictateUnsupported')); return }
+    if (!resolveGithubToken()) { showDictationError(t('chat.audioNeedsToken')); return }
+    if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
+    setDictationError('')
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch { showDictationError(t('chat.dictateBlocked')); return }
+    const mimeType = pickRecorderMimeType(type => window.MediaRecorder.isTypeSupported(type))
+    let rec: MediaRecorder
+    try {
+      rec = mimeType ? new window.MediaRecorder(stream, { mimeType }) : new window.MediaRecorder(stream)
+    } catch { stream.getTracks().forEach(track => track.stop()); showDictationError(t('chat.audioRecordFailed')); return }
+    const chunks: Blob[] = []
+    rec.ondataavailable = event => { if (event.data.size) chunks.push(event.data) }
+    recorderBaseRef.current = input ? (input.endsWith(' ') ? input : `${input} `) : ''
+    const handle = { stop: () => { try { rec.stop() } catch { /* already stopped */ } } }
+    rec.onstop = () => {
+      stream.getTracks().forEach(track => track.stop())
+      // A session invalidated by a send or an unmount transcribes nothing.
+      if (recorderRef.current !== handle) return
+      recorderRef.current = null
+      setRecording(false)
+      const blob = new Blob(chunks, { type: rec.mimeType || mimeType || 'audio/webm' })
+      if (blob.size > MAX_AUDIO_BYTES) { showDictationError(t('chat.audioTooBig')); return }
+      setTranscribing(true)
+      void blobToDataUrl(blob)
+        .then(dataUrl => transcribeClip(dataUrl))
+        .then(transcript => setInput(recorderBaseRef.current + transcript))
+        .catch((err: unknown) => showDictationError(t('chat.audioTranscribeFailed', { error: err instanceof Error ? err.message : String(err) })))
+        .finally(() => setTranscribing(false))
+    }
+    recorderRef.current = handle
+    setRecording(true)
+    try { rec.start() } catch { recorderRef.current = null; setRecording(false); stream.getTracks().forEach(track => track.stop()); showDictationError(t('chat.audioRecordFailed')) }
+  }
+  useEffect(() => () => {
+    // Never leave the mic hot after the composer is gone; invalidate first so onstop drops the clip.
+    const handle = recorderRef.current
+    recorderRef.current = null
+    handle?.stop()
+  }, [])
   // Shown briefly when Enter is pressed while a request is still running (the send is ignored).
   const [busyNotice, setBusyNotice] = useState(false)
   const busyNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -2758,6 +2827,7 @@ function App() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
+    if (transcribing) return // a voice clip is mid-transcription; the send that started it owns the composer
     if (!input.trim() && !attachedFile) return
     // Keep the typed text while a request is still running; sendPrompt would ignore it anyway.
     // Say so, otherwise an ignored Enter looks like the app froze.
@@ -2775,6 +2845,20 @@ function App() {
         imageUrl = attachedFile.content
         // The picture travels as image_url, never as base64 text in the prompt.
         promptText = input.trim() || t('chat.describeImage')
+      } else if (isAudioAttachment(attachedFile, attachedFile.content)) {
+        // Voice message: every provider is a text model, so the clip is transcribed on
+        // GitHub Actions first and the transcript — labeled as a voice-message transcript —
+        // is what the model receives. A failure keeps the text and the attachment in place
+        // and says why, visibly; nothing is sent half-heard.
+        if (!resolveGithubToken()) { showDictationError(t('chat.audioNeedsToken')); return }
+        setTranscribing(true)
+        try {
+          const transcript = await transcribeClip(attachedFile.content)
+          promptText = formatVoiceMessageTranscript(attachedFile.name, transcript) + (input.trim() ? `\n\n${input}` : '')
+        } catch (err) {
+          showDictationError(t('chat.audioTranscribeFailed', { error: err instanceof Error ? err.message : String(err) }))
+          return
+        } finally { setTranscribing(false) }
       } else {
         const maxFileSize = 50000 // ~50KB of text
         const fileContent = attachedFile.content.length > maxFileSize
@@ -2789,6 +2873,8 @@ function App() {
     // Nulling the ref first makes the session's result handler ignore the final result a
     // stopping recognizer may still deliver.
     if (dictationRef.current) { const rec = dictationRef.current; dictationRef.current = null; rec.stop() }
+    // Same for a live recording: sending invalidates the session so its clip is never transcribed.
+    if (recorderRef.current) { const handle = recorderRef.current; recorderRef.current = null; handle.stop() }
     setInput('')
     setAttachedFile(null)
     await sendPrompt(promptText, imageUrl, { attachmentName: attachedFile?.name })
@@ -4204,12 +4290,12 @@ function App() {
                     {screenCopied ? t('chat.screenCopied') : t('chat.screenText')}
                   </button>
                   <textarea ref={promptInputRef} style={{ flex: 1, minWidth: 0, boxSizing: 'border-box', minHeight: '36px', maxHeight: '120px', overflowY: 'auto', background: 'transparent', color: '#e5e5e5', border: 'none', outline: 'none', resize: 'none', fontSize: '13px', fontFamily: 'monospace', lineHeight: '1.5', padding: '8px 6px', WebkitAppearance: 'none' }} rows={1} placeholder={t('chat.placeholder', { provider: PROVIDERS[activeProvider].name })} value={input} onChange={e => { setInput(e.target.value); window.forgeCore?.userTyping() }} onInput={e => { setInput(e.currentTarget.value); autoGrowPromptInput() }} onPaste={handlePromptPaste} onKeyDown={handleKeyPress} />
-                  {speechSupported && (
+                  {(speechSupported || recorderSupportedHere) && (
                     <button
                       onClick={toggleDictation}
-                      title={dictating ? 'Stop dictation' : 'Dictate — tap and talk'}
-                      aria-label={dictating ? 'Stop dictation' : 'Dictate'}
-                      style={{ background: dictating ? '#7f1d1d' : '#0d0d0f', color: dictating ? '#fecaca' : '#888', minWidth: '48px', height: '36px', padding: '0 6px', borderRadius: '10px', border: `1px solid ${dictating ? '#ef4444' : '#2e2e33'}`, cursor: 'pointer', fontSize: '15px', flexShrink: 0, animation: dictating ? 'micPulse 1.2s ease-in-out infinite' : undefined }}
+                      title={dictating ? 'Stop dictation' : recording ? 'Stop recording' : 'Dictate — tap and talk'}
+                      aria-label={dictating ? 'Stop dictation' : recording ? 'Stop recording' : 'Dictate'}
+                      style={{ background: dictating || recording ? '#7f1d1d' : '#0d0d0f', color: dictating || recording ? '#fecaca' : '#888', minWidth: '48px', height: '36px', padding: '0 6px', borderRadius: '10px', border: `1px solid ${dictating || recording ? '#ef4444' : '#2e2e33'}`, cursor: 'pointer', fontSize: '15px', flexShrink: 0, animation: dictating || recording ? 'micPulse 1.2s ease-in-out infinite' : undefined }}
                     >
                       🎤
                     </button>
@@ -4232,6 +4318,12 @@ function App() {
                 )}
                 {dictating && (
                   <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.dictateListening')}</div>
+                )}
+                {recording && (
+                  <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.audioRecording')}</div>
+                )}
+                {transcribing && (
+                  <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.audioTranscribing')}</div>
                 )}
                 {dictationError && (
                   <div role="alert" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{dictationError}</div>

@@ -1,0 +1,14 @@
+# Exact pins for .github/workflows/audio-transcribe.yml (faster-whisper "small" on CPU, Python 3.11).
+# Verified by actually transcribing with this set locally on 2026-11-22 (FLAC and MP4/AAC clips).
+# av is pinned at 16.1.0 on purpose: a fresh resolve installed av 19.0.2, whose av.open() dropped the
+# metadata_errors keyword that faster-whisper 1.2.1 passes — every transcription died on decode.
+# 16.1.0 is the newest av release verified to decode with faster-whisper 1.2.1.
+av==16.1.0
+ctranslate2==4.9.1
+faster-whisper==1.2.1
+huggingface_hub==2.4.0
+numpy==2.5.5
+onnxruntime==1.32.0
+PyYAML==6.0.4
+tokenizers==0.23.3
+tqdm==4.70.1
