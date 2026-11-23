@@ -14,15 +14,22 @@ Cloudflare Worker (`worker.js`, free tier is enough). The model and research rou
   an already-signed Kalshi request verbatim to Kalshi (only the two `external-api` hosts) and
   returns its status and body, for when the browser cannot reach Kalshi directly. Nothing is
   stored or logged; the signing headers pass through untouched.
-- **Family tier** (`/v1/family/repos/<owner>/<repo>/actions/...`, needs the `FAMILY_CODE`
+- **Family tier** (`/v1/family/repos/<owner>/<repo>/...`, needs the `FAMILY_CODE`
   secret): the owner's family enters one simple code in ForgeClaw (Settings → GitHub → Family
-  code) and gets the owner's interactive surface without holding any token. The app rewrites
-  its GitHub Actions API calls to these routes; the relay performs them with its own token and
-  returns GitHub's response verbatim. Only the interactive workflows in the worker's
-  `FAMILY_WORKFLOWS` list can be dispatched or read back (chat, Nexus, images, research,
-  search, browsing, shell, self-sculpt, voice transcription); trading workflows are never in the list, and nothing
-  outside the Actions API exists on these routes. Limits: 300 dispatches per IP per hour
-  (`FAMILY_MAX_PER_HOUR`) and 6 runs in progress per workflow (`FAMILY_MAX_CONCURRENT`).
+  code) and gets the owner's whole surface without holding any token — full parity (owner
+  decision 2026-11-22: "let her be able to do everything I can do", superseding the 2026-11-19
+  tier that withheld trading workflows). The app rewrites its GitHub API calls to these routes;
+  the relay performs them with its own token and returns GitHub's response verbatim. Every
+  workflow file in the repository can be dispatched or read back (the worker's
+  `FAMILY_WORKFLOWS` list), and the tier also serves the repo-scoped shapes the owner's tools
+  use: git data for the audio/vision upload branches, contents reads and writes, pulls
+  (including merge), issues, commits, branches, run jobs/logs/cancels for STOP rollback, and
+  code search pinned to this repository. Ref creation is limited to the two upload branches
+  (`audio-inputs`, `vision-inputs`), and ref moves/deletes never touch the default, deploy or
+  shared feature branches. Limits: 300 mutating calls per IP per hour (`FAMILY_MAX_PER_HOUR`)
+  and 6 runs in progress per workflow (`FAMILY_MAX_CONCURRENT`). The family routes need the
+  relay token to hold **Contents: Read and write** in addition to Actions (see Deploy step 1);
+  without it the git/contents routes return GitHub's 403 while dispatches keep working.
   Rotate the code with `npx wrangler secret put FAMILY_CODE`; family browsers then need the
   new code once.
 
@@ -32,8 +39,9 @@ The logging routes:
 - `GET /v1/learning` and `GET /v1/errors` (owner only, needs `OWNER_KEY`): export the stored visitor
   conversations (import them into NEXUS from the NEXUS tab) and error reports.
 
-It cannot write to the repository or run any other workflow or tool. Visitors never see your session:
-your keys, tools, NEXUS and chats live only in your browser.
+For visitors it cannot write to the repository or run any other workflow or tool. (The family
+tier above is the deliberate exception: the shared family code unlocks the owner's surface.)
+Visitors never see your session: your keys, tools, NEXUS and chats live only in your browser.
 
 **Limits** (all set in `wrangler.toml`):
 - **Allowed origins:** only the sites listed in `ALLOWED_ORIGINS` can call it.
@@ -89,7 +97,10 @@ Two honest limits of the minimal deploy:
 
 1. **Create the token.** GitHub → Settings → Developer settings → Fine-grained tokens → Generate:
    - Repository access: **Only select repositories → forgeclaw**
-   - Permissions: **Actions: Read and write**. Nothing else (Metadata: read is automatic).
+   - Permissions: **Actions: Read and write** and **Contents: Read and write** (Contents serves
+     the family tier's git-data, contents and rollback routes; a token minted with Actions
+     only — the pre-2026-11-22 setup — needs Contents added before family uploads, file
+     writes and rollback work). Nothing else (Metadata: read is automatic).
    - Expiration: your choice; put a reminder to rotate it.
 2. **Deploy the worker** (needs a free Cloudflare account):
    ```bash

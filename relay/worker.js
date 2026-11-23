@@ -10,7 +10,9 @@
 // cap on concurrently running public jobs so visitors cannot starve the owner's own runs.
 //
 // Secrets / vars (see relay/README.md):
-//   GITHUB_TOKEN     fine-grained token: repository forgeclaw only; Actions: Read and write. Nothing else.
+//   GITHUB_TOKEN     fine-grained token: repository forgeclaw only; Actions: Read and write, and
+//                    Contents: Read and write (the family tier's git-data and contents routes —
+//                    uploads, file writes and rollback — fail with GitHub 403 until Contents is added).
 //   REPO             owner/name, default DeviousDevv303/forgeclaw
 //   ALLOWED_ORIGINS  comma-separated, e.g. https://deviousdevv303.github.io
 //   MAX_PER_HOUR     per-IP dispatches per hour, default 10
@@ -26,16 +28,42 @@
 
 const WORKFLOW = 'qwen3-8b.yml'
 const RESEARCH_WORKFLOW = 'deep-research.yml'
-// Family tier: the interactive workflows the owner's app dispatches for chat, Nexus, images,
-// research, search, browsing, shell and self-sculpt. Money and trading workflows
-// (trader-agent.yml, kalshi-snapshot.yml, owner-exit.yml) are deliberately absent: a shared
-// family code never gains a route to them, whatever the app asks for.
+// Family tier (owner decision 2026-11-22, superseding the 2026-11-19 exclusion): FULL PARITY —
+// "let her be able to do everything I can do." Every workflow file in the repository is listed,
+// including the money and trading workflows the 2026-11-19 tier deliberately withheld
+// (trader-agent.yml, kalshi-snapshot.yml, owner-exit.yml, deploy.yml). Three listed files have
+// no workflow_dispatch trigger (build-gate.yml, channel-watch.yml, claude.yml): GitHub itself
+// refuses their dispatch for anyone, owner included; listing them authorizes family run and
+// artifact reads for them, nothing more.
 const FAMILY_WORKFLOWS = new Set([
-  'qwen3-8b.yml', 'nexus-intelligence.yml', 'generate-image.yml', 'image-analyze.yml',
-  'deep-research.yml', 'ddg_search.yml', 'code-review.yml', 'browser-agent.yml',
-  'browser-automation.yml', 'shell-exec.yml', 'shell-repair.yml', 'self-sculpt.yml',
-  'site-build.yml', 'search-proxy.yml', 'audio-transcribe.yml',
+  'audio-transcribe.yml', 'browser-agent.yml', 'browser-automation.yml', 'build-gate.yml',
+  'channel-watch.yml', 'claude.yml', 'code-review.yml', 'cpu-image-benchmark.yml',
+  'ddg_search.yml', 'deep-research.yml', 'deploy.yml', 'forgeclaw-loop.yml',
+  'generate-image.yml', 'image-analyze.yml', 'kalshi-snapshot.yml', 'nexus-intelligence.yml',
+  'nexus-loop.yml', 'owner-exit.yml', 'qwen-bench.yml', 'qwen-cache-keepwarm.yml',
+  'qwen3-8b.yml', 'search-proxy.yml', 'self-sculpt.yml', 'shell-exec.yml', 'shell-repair.yml',
+  'site-build.yml', 'trader-agent.yml',
 ])
+// The branches the audio and vision features upload to and read results from. Family git-data
+// writes may create and advance ONLY the two input branches; the result/mirror branches are
+// written by the workflows themselves and read through the contents route.
+const FAMILY_UPLOAD_BRANCHES = new Set(['audio-inputs', 'vision-inputs'])
+const FAMILY_DATA_BRANCHES = new Set([
+  'audio-inputs', 'audio-results', 'vision-inputs', 'vision-results', 'generated-images',
+  'qwen-results', 'nexus-results', 'research-results', 'review-results', 'browser-results',
+  'site-builds', 'kalshi-snapshot-data',
+])
+// Ref moves a family rollback may never perform, whoever asks: the default/deploy branches and
+// the shared feature branches above. Rollback resets and deletes only run-created branches.
+function familyRefPatchAllowed(branch) {
+  if (FAMILY_UPLOAD_BRANCHES.has(branch)) return true  // the upload flows advance their input branch
+  if (branch === 'main' || branch === 'master' || branch === 'gh-pages') return false
+  return !FAMILY_DATA_BRANCHES.has(branch)
+}
+function familyRefDeleteAllowed(branch) {
+  if (branch === 'main' || branch === 'master' || branch === 'gh-pages') return false
+  return !FAMILY_DATA_BRANCHES.has(branch)
+}
 const ID_RE = /^public-[a-z0-9]{6,12}-[a-z0-9]{6,12}$/
 const MAX_TASK_CHARS = 4000
 // Gathered web evidence for the answer; about 4K tokens of the model's 8K context.
@@ -64,12 +92,16 @@ function corsHeaders(request, env) {
   return { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', 'Access-Control-Max-Age': '86400', Vary: 'Origin' }
 }
 
-function gh(env, path, init = {}) {
-  const repo = env.REPO || 'DeviousDevv303/forgeclaw'
-  return fetch(`https://api.github.com/repos/${repo}${path}`, {
+function ghApi(env, path, init = {}) {
+  return fetch(`https://api.github.com${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${env.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'User-Agent': 'forgeclaw-relay', 'X-GitHub-Api-Version': '2022-11-28', ...(init.headers || {}) },
   })
+}
+
+function gh(env, path, init = {}) {
+  const repo = env.REPO || 'DeviousDevv303/forgeclaw'
+  return ghApi(env, `/repos/${repo}${path}`, init)
 }
 
 async function publicRunsInProgress(env, workflow = WORKFLOW) {
@@ -406,14 +438,26 @@ async function forwardKalshi(request, env, cors) {
 }
 
 /**
- * Family tier (owner-directed 2026-11-19): a browser holding the shared FAMILY_CODE but no
- * GitHub token gets the owner's interactive surface. The app rewrites its GitHub Actions API
- * calls to /v1/family/repos/<owner>/<repo>/actions/... and this handler performs them with the
- * relay's token, returning GitHub's response verbatim. The scope is pinned three ways: the
- * repository must be this relay's REPO, the workflow must be in FAMILY_WORKFLOWS (checked on
- * dispatch, and on run/artifact reads via the run's own workflow path), and nothing outside
- * /actions/ exists here at all — repository contents, issues and every other API stay
- * unreachable, because the relay token itself holds Actions permission only.
+ * Family tier (owner-directed 2026-11-19; FULL PARITY by owner decision 2026-11-22): a browser
+ * holding the shared FAMILY_CODE but no GitHub token gets the owner's whole surface — "let her
+ * be able to do everything I can do." The app rewrites its GitHub API calls to
+ * /v1/family/repos/<owner>/<repo>/... and this handler performs them with the relay's token,
+ * returning GitHub's response verbatim. The scope is still pinned, now by route shape:
+ *  - the repository must be this relay's REPO (any other owner/repo is refused);
+ *  - Actions: every workflow in FAMILY_WORKFLOWS (all of the repo's workflow files) may be
+ *    dispatched, and run/artifact/job/log reads and run cancels are checked against the run's
+ *    own workflow path;
+ *  - git data: blobs/trees/commits are content-addressed plumbing that lands nothing by
+ *    itself; the landing points are the refs — creation is scoped to the two feature upload
+ *    branches (audio-inputs, vision-inputs), and ref moves/deletes follow
+ *    familyRefPatchAllowed/familyRefDeleteAllowed, which never touch the default, deploy or
+ *    shared feature branches;
+ *  - contents, pulls, issues, commits and branches: this repository only, the same shapes the
+ *    owner's own tools call;
+ *  - code search: only with the relay repository pinned in the query.
+ * Every mutating call counts against the family hourly quota. Serving the git/contents routes
+ * needs the relay token to hold Contents permission as well as Actions (see the header note);
+ * without it those routes return GitHub's 403, visibly, and dispatches keep working.
  */
 function familyAuthorized(request, env) {
   const auth = request.headers.get('Authorization') || ''
@@ -447,59 +491,193 @@ async function runWorkflow(env, runId) {
 
 async function familyProxy(request, env, cors, url) {
   const repo = env.REPO || 'DeviousDevv303/forgeclaw'
-  const m = /^\/v1\/family\/repos\/([^/]+)\/([^/]+)\/actions\/(.+)$/.exec(url.pathname)
+
+  // Code search lives outside /repos/...: the query itself must pin this relay's repository.
+  if (url.pathname === '/v1/family/search/code') {
+    if (request.method !== 'GET') return json({ error: 'not a family-unlocked route' }, 403, cors)
+    const q = url.searchParams.get('q') || ''
+    if (!q.toLowerCase().includes(`repo:${repo}`.toLowerCase())) {
+      return json({ error: 'family code search is scoped to the ForgeClaw repository' }, 403, cors)
+    }
+    return passthrough(await ghApi(env, `/search/code${url.search}`), cors)
+  }
+
+  const m = /^\/v1\/family\/repos\/([^/]+)\/([^/]+)(?:\/(.+))?$/.exec(url.pathname)
   if (!m || `${decodeURIComponent(m[1])}/${decodeURIComponent(m[2])}` !== repo) {
     return json({ error: 'family routes are scoped to the ForgeClaw repository' }, 403, cors)
   }
-  const rest = m[3]
+  const rest = m[3] || ''
   const denied = workflow => json({ error: `workflow '${workflow}' is not family-unlocked` }, 403, cors)
-
-  const dispatch = /^workflows\/([^/]+)\/dispatches$/.exec(rest)
-  if (request.method === 'POST' && dispatch) {
-    const workflow = decodeURIComponent(dispatch[1])
-    if (!FAMILY_WORKFLOWS.has(workflow)) return denied(workflow)
-    if (await overQuota(request, env, 'family', Number(env.FAMILY_MAX_PER_HOUR || 300))) {
-      return json({ error: 'family hourly limit reached; try again later' }, 429, cors)
-    }
-    if (await familyRunsInProgress(env, workflow) >= Number(env.FAMILY_MAX_CONCURRENT || 6)) {
-      return json({ error: 'family runs are busy; try again in a few minutes' }, 503, cors)
-    }
+  const notRoute = () => json({ error: 'not a family-unlocked route' }, 403, cors)
+  // Every mutating family call spends from the same hourly bucket as dispatches.
+  const writeBlocked = async () => (await overQuota(request, env, 'family', Number(env.FAMILY_MAX_PER_HOUR || 300)))
+    ? json({ error: 'family hourly limit reached; try again later' }, 429, cors) : null
+  const forward = async (path, init) => passthrough(await gh(env, path, init), cors)
+  const forwardBody = async (path, method) => {
+    const blocked = await writeBlocked()
+    if (blocked) return blocked
     const body = await request.text()
-    const res = await gh(env, `/actions/workflows/${workflow}/dispatches`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
-    })
-    return passthrough(res, cors)
+    return forward(path, { method, headers: { 'Content-Type': 'application/json' }, body })
+  }
+  /** Gate a run-scoped route on the run's own workflow, exactly like the run reads. */
+  const runGate = async runId => {
+    const { res, run, status, workflow } = await runWorkflow(env, runId)
+    if (!run) return { blocked: passthrough(res, cors) }
+    if (!FAMILY_WORKFLOWS.has(workflow)) return { blocked: denied(workflow) }
+    return { run, status }
   }
 
-  const runsList = /^workflows\/([^/]+)\/runs$/.exec(rest)
-  if (request.method === 'GET' && runsList) {
-    const workflow = decodeURIComponent(runsList[1])
-    if (!FAMILY_WORKFLOWS.has(workflow)) return denied(workflow)
-    return passthrough(await gh(env, `/actions/workflows/${workflow}/runs${url.search}`), cors)
+  // Repository metadata (repo state reads; the rollback default-branch lookup).
+  if (rest === '' && request.method === 'GET') return forward('')
+
+  if (rest.startsWith('actions/')) {
+    const a = rest.slice('actions/'.length)
+
+    const dispatch = /^workflows\/([^/]+)\/dispatches$/.exec(a)
+    if (request.method === 'POST' && dispatch) {
+      const workflow = decodeURIComponent(dispatch[1])
+      if (!FAMILY_WORKFLOWS.has(workflow)) return denied(workflow)
+      const blocked = await writeBlocked()
+      if (blocked) return blocked
+      if (await familyRunsInProgress(env, workflow) >= Number(env.FAMILY_MAX_CONCURRENT || 6)) {
+        return json({ error: 'family runs are busy; try again in a few minutes' }, 503, cors)
+      }
+      const body = await request.text()
+      const res = await gh(env, `/actions/workflows/${workflow}/dispatches`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body,
+      })
+      return passthrough(res, cors)
+    }
+
+    const runsList = /^workflows\/([^/]+)\/runs$/.exec(a)
+    if (request.method === 'GET' && runsList) {
+      const workflow = decodeURIComponent(runsList[1])
+      if (!FAMILY_WORKFLOWS.has(workflow)) return denied(workflow)
+      return forward(`/actions/workflows/${workflow}/runs${url.search}`)
+    }
+
+    // Bare run list (the error report's failed-run scan).
+    if (a === 'runs' && request.method === 'GET') return forward(`/actions/runs${url.search}`)
+
+    const runRoute = /^runs\/(\d+)(\/artifacts)?$/.exec(a)
+    if (request.method === 'GET' && runRoute) {
+      const { blocked, run, status } = await runGate(runRoute[1])
+      if (blocked) return blocked
+      if (!runRoute[2]) return json(run, status, cors)
+      return forward(`/actions/runs/${runRoute[1]}/artifacts${url.search}`)
+    }
+
+    const jobsRoute = /^runs\/(\d+)\/jobs$/.exec(a)
+    if (request.method === 'GET' && jobsRoute) {
+      const { blocked } = await runGate(jobsRoute[1])
+      if (blocked) return blocked
+      return forward(`/actions/runs/${jobsRoute[1]}/jobs${url.search}`)
+    }
+
+    const logsRoute = /^jobs\/(\d+)\/logs$/.exec(a)
+    if (request.method === 'GET' && logsRoute) {
+      const jobRes = await gh(env, `/actions/jobs/${logsRoute[1]}`)
+      if (!jobRes.ok) return passthrough(jobRes, cors)
+      const job = await jobRes.json()
+      if (!job?.run_id) return json({ error: 'job has no workflow run' }, 404, cors)
+      const { blocked } = await runGate(job.run_id)
+      if (blocked) return blocked
+      return forward(`/actions/jobs/${logsRoute[1]}/logs`, { redirect: 'follow' })
+    }
+
+    const cancelRoute = /^runs\/(\d+)\/(cancel|force-cancel)$/.exec(a)
+    if (request.method === 'POST' && cancelRoute) {
+      const { blocked } = await runGate(cancelRoute[1])
+      if (blocked) return blocked
+      const quota = await writeBlocked()
+      if (quota) return quota
+      return forward(`/actions/runs/${cancelRoute[1]}/${cancelRoute[2]}`, { method: 'POST' })
+    }
+
+    const zipRoute = /^artifacts\/(\d+)\/zip$/.exec(a)
+    if (request.method === 'GET' && zipRoute) {
+      const artRes = await gh(env, `/actions/artifacts/${zipRoute[1]}`)
+      if (!artRes.ok) return passthrough(artRes, cors)
+      const art = await artRes.json()
+      const runId = art?.workflow_run?.id
+      if (!runId) return json({ error: 'artifact has no workflow run' }, 404, cors)
+      const { workflow } = await runWorkflow(env, runId)
+      if (!workflow || !FAMILY_WORKFLOWS.has(workflow)) return denied(workflow || 'unknown')
+      return forward(`/actions/artifacts/${zipRoute[1]}/zip`, { redirect: 'follow' })
+    }
+
+    return notRoute()
   }
 
-  const runRoute = /^runs\/(\d+)(\/artifacts)?$/.exec(rest)
-  if (request.method === 'GET' && runRoute) {
-    const { res, run, status, workflow } = await runWorkflow(env, runRoute[1])
-    if (!run) return passthrough(res, cors)
-    if (!FAMILY_WORKFLOWS.has(workflow)) return denied(workflow)
-    if (!runRoute[2]) return json(run, status, cors)
-    return passthrough(await gh(env, `/actions/runs/${runRoute[1]}/artifacts${url.search}`), cors)
+  if (rest.startsWith('git/')) {
+    const g = rest.slice('git/'.length)
+    if (g === 'blobs' && request.method === 'POST') return forwardBody('/git/blobs', 'POST')
+    if (g === 'trees' && request.method === 'POST') return forwardBody('/git/trees', 'POST')
+    if (g === 'commits' && request.method === 'POST') return forwardBody('/git/commits', 'POST')
+    const commitRead = /^commits\/([0-9a-f]{7,40})$/i.exec(g)
+    if (commitRead && request.method === 'GET') return forward(`/git/commits/${commitRead[1]}`)
+    const treeRead = /^trees\/(.+)$/.exec(g)
+    if (treeRead && request.method === 'GET') return forward(`/git/trees/${treeRead[1]}${url.search}`)
+    const refRead = /^ref\/(.+)$/.exec(g)
+    if (refRead && request.method === 'GET') return forward(`/git/ref/${refRead[1]}`)
+    if (g === 'refs' && request.method === 'POST') {
+      // Branch creation lands a ref: only the two feature upload branches may be created.
+      const body = await request.text()
+      let branch = ''
+      try { branch = String(JSON.parse(body || '{}').ref || '').replace(/^refs\/heads\//, '') } catch { /* refused below */ }
+      if (!FAMILY_UPLOAD_BRANCHES.has(branch)) {
+        return json({ error: `family git routes may create only the upload branches (${[...FAMILY_UPLOAD_BRANCHES].join(', ')})` }, 403, cors)
+      }
+      const blocked = await writeBlocked()
+      if (blocked) return blocked
+      return forward('/git/refs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+    }
+    const refMove = /^refs\/heads\/(.+)$/.exec(g)
+    if (refMove && (request.method === 'PATCH' || request.method === 'DELETE')) {
+      const branch = decodeURIComponent(refMove[1])
+      const allowed = request.method === 'PATCH' ? familyRefPatchAllowed(branch) : familyRefDeleteAllowed(branch)
+      if (!allowed) return json({ error: `branch '${branch}' is protected on the family tier` }, 403, cors)
+      if (request.method === 'DELETE') {
+        const blocked = await writeBlocked()
+        if (blocked) return blocked
+        return forward(`/git/refs/heads/${refMove[1]}`, { method: 'DELETE' })
+      }
+      return forwardBody(`/git/refs/heads/${refMove[1]}`, 'PATCH')
+    }
+    return notRoute()
   }
 
-  const zipRoute = /^artifacts\/(\d+)\/zip$/.exec(rest)
-  if (request.method === 'GET' && zipRoute) {
-    const artRes = await gh(env, `/actions/artifacts/${zipRoute[1]}`)
-    if (!artRes.ok) return passthrough(artRes, cors)
-    const art = await artRes.json()
-    const runId = art?.workflow_run?.id
-    if (!runId) return json({ error: 'artifact has no workflow run' }, 404, cors)
-    const { workflow } = await runWorkflow(env, runId)
-    if (!workflow || !FAMILY_WORKFLOWS.has(workflow)) return denied(workflow || 'unknown')
-    return passthrough(await gh(env, `/actions/artifacts/${zipRoute[1]}/zip`, { redirect: 'follow' }), cors)
+  const contents = /^contents\/(.+)$/.exec(rest)
+  if (contents) {
+    if (request.method === 'GET') return forward(`/contents/${contents[1]}${url.search}`)
+    if (request.method === 'PUT') return forwardBody(`/contents/${contents[1]}`, 'PUT')
+    return notRoute()
   }
 
-  return json({ error: 'not a family-unlocked route' }, 403, cors)
+  const commitRoute = /^commits\/([^/]+)(\/check-runs)?$/.exec(rest)
+  if (commitRoute && request.method === 'GET') {
+    return forward(`/commits/${commitRoute[1]}${commitRoute[2] || ''}${url.search}`)
+  }
+
+  const branchRoute = /^branches\/(.+)$/.exec(rest)
+  if (branchRoute && request.method === 'GET') return forward(`/branches/${branchRoute[1]}`)
+
+  if (rest === 'pulls' && request.method === 'GET') return forward(`/pulls${url.search}`)
+  const pullRoute = /^pulls\/(\d+)(\/files|\/merge|\/update-branch)?$/.exec(rest)
+  if (pullRoute) {
+    const [, n, sub] = pullRoute
+    if (request.method === 'GET' && (!sub || sub === '/files')) return forward(`/pulls/${n}${sub || ''}${url.search}`)
+    if (request.method === 'PUT' && sub === '/merge') return forwardBody(`/pulls/${n}/merge`, 'PUT')
+    if (request.method === 'POST' && sub === '/update-branch') return forwardBody(`/pulls/${n}/update-branch`, 'POST')
+    if (request.method === 'PATCH' && !sub) return forwardBody(`/pulls/${n}`, 'PATCH')
+    return notRoute()
+  }
+
+  if (rest === 'issues' && request.method === 'POST') return forwardBody('/issues', 'POST')
+  const issueRoute = /^issues\/(\d+)(\/comments)?$/.exec(rest)
+  if (issueRoute && request.method === 'GET') return forward(`/issues/${issueRoute[1]}${issueRoute[2] || ''}${url.search}`)
+
+  return notRoute()
 }
 
 export default {

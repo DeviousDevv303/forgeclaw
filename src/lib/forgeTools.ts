@@ -1170,7 +1170,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         const content = input.content as string
         const requestedMessage = input.message as string
         const branch  = input.branch  as string | undefined
-        if (!token) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
 
         // Agent attribution contract: every repository write states the acting agent,
         // what changed, and why. The dispatcher owns this so no caller can produce a
@@ -1253,13 +1253,13 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
       // ── GitHub: get run logs (job + step details) ────────────────────────────
       // ── ForgeClaw's own errors, as evidence (read-only) ──
       case 'error_report': {
-        if (!token) throw new Error('No GitHub token configured; the failed-run part of the report needs one.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured; the failed-run part of the report needs one.')
         return await buildErrorReport((url, init) => toolFetch(ctx, url, init), { owner, repo, token, candidates: corpusRepository.listCandidates(500), appLog: getErrorLog() })
       }
 
       // ── Read a pull request (read-only) ──
       case 'github_pr_info': {
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         const pullNumber = parsePullNumber(input.pull_number)
         if (!pullNumber) throw new Error('pull_number must be a pull request number, "#202" or a github.com/.../pull/N URL.')
         return await readPullRequest((url, init) => toolFetch(ctx, url, init), { owner, repo, token, pullNumber })
@@ -1267,7 +1267,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
 
       // ── Read an issue (read-only) ──
       case 'github_read_issue': {
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         const issueNumber = parseIssueNumber(input.issue_number)
         if (!issueNumber) throw new Error('issue_number must be an issue number, "#235" or a github.com/.../issues/N URL.')
         const requestedComments = Number(input.comments)
@@ -1276,7 +1276,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
 
       // ── List open pull requests (read-only) ──
       case 'github_list_prs': {
-        if (!token) throw new Error('No GitHub token configured.')
+        if (!token && !ctx.familyCode) throw new Error('No GitHub token configured.')
         return await listOpenPullRequests((url, init) => toolFetch(ctx, url, init), { owner, repo, token })
       }
 
@@ -1322,7 +1322,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
       // ── GitHub: search code ──────────────────────────────────────────────────
       case 'github_search_code': {
         const query = input.query as string
-        if (!token.trim()) throw new Error('GitHub code search requires authentication. Add a GitHub token in Settings; public file reads may still work without one.')
+        if (!token.trim() && !ctx.familyCode) throw new Error('GitHub code search requires authentication. Add a GitHub token in Settings; public file reads may still work without one.')
         const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
         headers.Authorization = `token ${token}`
         const q = encodeURIComponent(`${query} repo:${owner}/${repo}`)
@@ -2003,7 +2003,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
           throw new Error('shell_exec working_directory must resolve inside the checked-out repository. Use "." for root or a repository-relative path; /workspace paths are normalized automatically.')
         }
 
-        if (!sToken) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
+        if (!sToken && !ctx.familyCode) throw new Error('No GitHub token configured. Add gh_token in memory or settings.')
         if (!command) throw new Error('shell_exec requires a command.')
 
         const sHeaders = {

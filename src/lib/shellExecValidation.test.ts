@@ -28,7 +28,7 @@ describe('shell_exec argument validation (no dispatch happens)', () => {
     expect(out).toContain('must resolve inside the checked-out repository')
   })
 
-  it('refuses a valid command when no GitHub token is configured (shell stays owner-token-only)', async () => {
+  it('refuses a valid command with neither a GitHub token nor a family code', async () => {
     const out = await executeTool({ id: '4', name: 'shell_exec', input: { command: 'git status --short', working_directory: '.' } }, noToken)
     expect(out).toBe('[TOOL ERROR] No GitHub token configured. Add gh_token in memory or settings.')
   })

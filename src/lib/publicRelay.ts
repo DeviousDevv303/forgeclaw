@@ -19,10 +19,11 @@ export function isPublicVisitor(ghToken: string, relayUrl = PUBLIC_RELAY_URL): b
 
 // ─── Family mode ─────────────────────────────────────────────────────────────
 // The owner shares one simple code with family (entered once in Settings → GitHub). A browser
-// holding the code is not a visitor: the relay's family tier performs its GitHub Actions calls
-// with the relay's own token (see relay/worker.js), so chat, Nexus, tools and images work as
-// they do for the owner. The code lives only in this browser's localStorage and is sent only
-// to the relay, as a Bearer header on rewritten Actions calls (see githubFetch.ts).
+// holding the code is not a visitor: the relay's family tier performs its GitHub calls with
+// the relay's own token (see relay/worker.js), so chat, Nexus, tools, images, shell, repo
+// writes, voice and rollback work as they do for the owner (full parity, owner decision
+// 2026-11-22). The code lives only in this browser's localStorage and is sent only to the
+// relay, as a Bearer header on rewritten calls (see githubFetch.ts).
 
 export const FAMILY_CODE_KEY = 'forgeclaw_family_code'
 

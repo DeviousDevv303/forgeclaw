@@ -875,11 +875,14 @@ function App() {
   const recorderBaseRef = useRef('')
   const recorderSupportedHere = typeof window !== 'undefined' && recorderSupported(window, navigator)
   // The same family-aware transport every other workflow feature uses (forgeTools): with a
-  // family code set, toolFetch reroutes Actions API calls through the relay's family tier.
-  // A plain fetch could never take that path.
+  // family code set, toolFetch reroutes the GitHub calls the family tier serves (Actions
+  // dispatch plus the git-data upload and result reads) through the relay. A plain fetch
+  // could never take that path.
   const githubApiRequest: GithubRequest = (url, init) => toolFetch({
     familyCode: getFamilyCode() || undefined,
     familyRelayUrl: PUBLIC_RELAY_URL || undefined,
+    ghOwner: ghOwner || CANONICAL_IDENTITY.owner,
+    ghRepo: ghRepo || CANONICAL_IDENTITY.repository,
   }, url, init ?? {})
   const transcribeClip = async (audio: string): Promise<string> => {
     const result = await runAudioTranscription(githubApiRequest, {
@@ -1479,7 +1482,7 @@ function App() {
     const qwenProvider = isQwenProvider(activeProvider)
     // A public visitor (no token, relay configured) reaches the model through the relay instead.
     // /intuition is a local, read-only view: it needs no token because it dispatches nothing.
-    if (qwenProvider && !ghToken?.trim() && !isVisitor(ghToken || '') && parseIntuitionCommand(promptText) === null && parseSwarmCommand(promptText) === null) {
+    if (qwenProvider && !ghToken?.trim() && !isVisitor(ghToken || '') && !getFamilyCode() && parseIntuitionCommand(promptText) === null && parseSwarmCommand(promptText) === null) {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: 'assistant',
@@ -2900,7 +2903,12 @@ function App() {
     const journal = run.journal
     const rollbackOwner = ghOwner || CANONICAL_IDENTITY.owner
     const rollbackRepo = ghRepo || CANONICAL_IDENTITY.repository
-    if (journal && ghToken) {
+    // Family mode rolls back through the relay's family tier, like every other GitHub call:
+    // toolFetch reroutes the rollback's Actions/git/pulls calls and replaces the (absent)
+    // token header with the family code. With neither credential there is nothing to roll
+    // back with, exactly as before.
+    const rollbackFamilyCode = getFamilyCode()
+    if (journal && (ghToken || rollbackFamilyCode)) {
       void (async () => {
         await new Promise<void>(resolve => setTimeout(resolve, 1500))
         const entries = journal.entries()
@@ -2911,7 +2919,17 @@ function App() {
         }])
         note('⏹ STOP: cancelling remote runs and reverting this run\'s changes…')
         try {
-          const report = await rollbackRun(entries, { owner: rollbackOwner, repo: rollbackRepo, token: ghToken })
+          const report = await rollbackRun(entries, {
+            owner: rollbackOwner, repo: rollbackRepo, token: ghToken,
+            ...(rollbackFamilyCode
+              ? { fetchImpl: ((url: string, init?: RequestInit) => toolFetch({
+                  familyCode: rollbackFamilyCode,
+                  familyRelayUrl: PUBLIC_RELAY_URL || undefined,
+                  ghOwner: rollbackOwner,
+                  ghRepo: rollbackRepo,
+                }, url, init ?? {})) as typeof fetch }
+              : {}),
+          })
           note(`⏹ STOP: rollback finished.\n\n${formatRollbackReport(report)}`)
         } catch (error) {
           note(`⏹ STOP: rollback itself failed (${error instanceof Error ? error.message : String(error)}). Check GitHub Actions and branches manually.`)

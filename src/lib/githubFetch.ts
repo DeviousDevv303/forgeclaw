@@ -18,9 +18,16 @@ export interface GithubFetchContext {
   signal?: AbortSignal
   timeoutMs?: number
   /** Family mode (publicRelay.ts): the shared family code and the relay base URL. When both
-   * are set, GitHub Actions API calls are rerouted through the relay's family tier. */
+   * are set, GitHub API calls the relay's family tier serves are rerouted through it. */
   familyCode?: string
   familyRelayUrl?: string
+  /** The app's own repository ("owner/name"), when known: the family tier is pinned to it, so
+   * the repo-scoped routes (git data, contents, pulls, issues, commits, branches, code search)
+   * rewrite only for this repository; other repositories' calls pass through untouched. Callers
+   * that carry the repository on the context (ghOwner/ghRepo) get it derived automatically. */
+  familyRepo?: string
+  ghOwner?: string
+  ghRepo?: string
 }
 
 function getRequestUrl(input: RequestInfo | URL): string {
@@ -67,13 +74,18 @@ function waitForGithubRetry(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-const GITHUB_ACTIONS_PATH_RE = /^https:\/\/api\.github\.com(\/repos\/[^/]+\/[^/]+\/actions\/.*)$/
+const GITHUB_REPO_PATH_RE = /^\/repos\/([^/]+)\/([^/]+)(\/.*)?$/
+const FAMILY_REPO_SCOPED_RE = /^\/(?:git|contents|pulls|issues|commits|branches)(?:\/|$)/
 
 /**
- * Family mode transport: with a family code set, GitHub Actions API calls are rerouted to the
- * relay's family tier, which performs them with its own token and returns GitHub's response
- * verbatim. Only /actions/ paths rewrite — repository-contents and other API calls pass
- * through untouched (the relay cannot serve them). Returns null when no rewrite applies.
+ * Family mode transport: with a family code set, GitHub API calls are rerouted to the relay's
+ * family tier, which performs them with its own token and returns GitHub's response verbatim.
+ * Actions paths rewrite for any repository (the relay itself pins the repository and refuses
+ * the rest). The repo-scoped shapes the family tier also serves (git data, contents, pulls,
+ * issues, commits, branches, repo metadata) rewrite only when the call targets the app's own
+ * repository — the relay is pinned to it, and other repositories' calls (public reads that
+ * work unauthenticated today) pass through untouched. Code search rewrites only when its
+ * query pins the same repository. Returns null when no rewrite applies.
  */
 export function familyActionsRewrite(
   input: RequestInfo | URL,
@@ -84,11 +96,28 @@ export function familyActionsRewrite(
   const relay = (ctx.familyRelayUrl || '').trim().replace(/\/+$/, '')
   if (!code || !relay) return null
   if (typeof input !== 'string' && !(input instanceof URL)) return null
-  const match = GITHUB_ACTIONS_PATH_RE.exec(getRequestUrl(input))
-  if (!match) return null
-  const headers = new Headers(init.headers)
-  headers.set('Authorization', `Bearer ${code}`)
-  return { input: `${relay}/v1/family${match[1]}`, init: { ...init, headers } }
+  let url: URL
+  try { url = new URL(getRequestUrl(input)) } catch { return null }
+  if (url.hostname !== 'api.github.com') return null
+  const familyRepo = (ctx.familyRepo || (ctx.ghOwner && ctx.ghRepo ? `${ctx.ghOwner}/${ctx.ghRepo}` : '')).trim()
+  const rewrite = (path: string) => {
+    const headers = new Headers(init.headers)
+    headers.set('Authorization', `Bearer ${code}`)
+    return { input: `${relay}/v1/family${path}`, init: { ...init, headers } }
+  }
+  const repoPath = GITHUB_REPO_PATH_RE.exec(url.pathname)
+  if (repoPath) {
+    const rest = repoPath[3] || ''
+    if (rest.startsWith('/actions/')) return rewrite(`${url.pathname}${url.search}`)
+    const sameRepo = !!familyRepo && `${repoPath[1]}/${repoPath[2]}`.toLowerCase() === familyRepo.toLowerCase()
+    if (sameRepo && (rest === '' || FAMILY_REPO_SCOPED_RE.test(rest))) return rewrite(`${url.pathname}${url.search}`)
+    return null
+  }
+  if (url.pathname === '/search/code' && familyRepo) {
+    const q = url.searchParams.get('q') || ''
+    if (q.toLowerCase().includes(`repo:${familyRepo}`.toLowerCase())) return rewrite(`/search/code${url.search}`)
+  }
+  return null
 }
 
 export async function toolFetch(

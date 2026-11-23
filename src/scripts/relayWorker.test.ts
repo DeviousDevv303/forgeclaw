@@ -404,33 +404,38 @@ describe('relay worker family tier', () => {
     expect(((await runs.json()) as { workflow_runs: unknown[] }).workflow_runs).toHaveLength(1)
   })
 
-  it('never dispatches a trading workflow, whatever the app asks for', async () => {
+  it('dispatches trading and deploy workflows too: full parity (owner decision 2026-11-22)', async () => {
     const calls = stubGithub(() => null)
     for (const wf of ['trader-agent.yml', 'kalshi-snapshot.yml', 'owner-exit.yml', 'deploy.yml']) {
-      expect((await worker.fetch(fam(`${FAM}/workflows/${wf}/dispatches`, { method: 'POST', body: '{}' }), famEnv())).status).toBe(403)
+      expect((await worker.fetch(fam(`${FAM}/workflows/${wf}/dispatches`, { method: 'POST', body: '{}' }), famEnv())).status).toBe(204)
     }
-    expect(calls.filter(c => c.url.endsWith('/dispatches'))).toHaveLength(0)
+    expect(calls.filter(c => c.url.endsWith('/dispatches'))).toHaveLength(4)
+    // A name that is not one of the repository's workflow files is still refused.
+    expect((await worker.fetch(fam(`${FAM}/workflows/not-a-workflow.yml/dispatches`, { method: 'POST', body: '{}' }), famEnv())).status).toBe(403)
   })
 
-  it('scopes every route to the relay repository and the Actions API', async () => {
+  it('scopes every route to the relay repository', async () => {
     stubGithub(() => null)
     expect((await worker.fetch(fam('/v1/family/repos/SomeoneElse/other/actions/workflows/generate-image.yml/dispatches', { method: 'POST', body: '{}' }), famEnv())).status).toBe(403)
-    expect((await worker.fetch(fam('/v1/family/repos/DeviousDevv303/forgeclaw/contents/src/App.tsx'), famEnv())).status).toBe(403)
+    expect((await worker.fetch(fam('/v1/family/repos/SomeoneElse/other/contents/src/App.tsx'), famEnv())).status).toBe(403)
+    expect((await worker.fetch(fam('/v1/family/repos/SomeoneElse/other/git/blobs', { method: 'POST', body: '{}' }), famEnv())).status).toBe(403)
   })
 
-  it('proxies the runs list only for allowlisted workflows', async () => {
-    stubGithub(url => url.includes('/workflows/generate-image.yml/runs') ? Response.json({ workflow_runs: [{ id: 7 }] }) : null)
+  it('proxies the runs list for the repository workflows, and refuses unknown ones', async () => {
+    stubGithub(url => url.includes('/workflows/generate-image.yml/runs') || url.includes('/workflows/trader-agent.yml/runs') ? Response.json({ workflow_runs: [{ id: 7 }] }) : null)
     const ok = await worker.fetch(fam(`${FAM}/workflows/generate-image.yml/runs?event=workflow_dispatch&per_page=50`), famEnv())
     expect(ok.status).toBe(200)
     expect(((await ok.json()) as { workflow_runs: unknown[] }).workflow_runs).toHaveLength(1)
-    expect((await worker.fetch(fam(`${FAM}/workflows/trader-agent.yml/runs`), famEnv())).status).toBe(403)
+    expect((await worker.fetch(fam(`${FAM}/workflows/trader-agent.yml/runs`), famEnv())).status).toBe(200)
+    expect((await worker.fetch(fam(`${FAM}/workflows/not-a-workflow.yml/runs`), famEnv())).status).toBe(403)
   })
 
-  it('reads a run and its artifacts only when the run belongs to an allowlisted workflow', async () => {
+  it('reads a run and its artifacts when the run belongs to a repository workflow', async () => {
     stubGithub(url => {
       if (url.endsWith('/actions/runs/42')) return Response.json({ id: 42, path: '.github/workflows/generate-image.yml', status: 'completed' })
       if (url.endsWith('/actions/runs/42/artifacts?per_page=20')) return Response.json({ artifacts: [{ id: 9, name: 'generated-image-sd-1' }] })
       if (url.endsWith('/actions/runs/43')) return Response.json({ id: 43, path: '.github/workflows/trader-agent.yml', status: 'completed' })
+      if (url.endsWith('/actions/runs/44')) return Response.json({ id: 44, path: '.github/workflows/not-a-workflow.yml', status: 'completed' })
       return null
     })
     const run = await worker.fetch(fam(`${FAM}/runs/42`), famEnv())
@@ -438,23 +443,146 @@ describe('relay worker family tier', () => {
     expect(((await run.json()) as { id: number }).id).toBe(42)
     const arts = await worker.fetch(fam(`${FAM}/runs/42/artifacts?per_page=20`), famEnv())
     expect(arts.status).toBe(200)
-    expect((await worker.fetch(fam(`${FAM}/runs/43`), famEnv())).status).toBe(403)
-    expect((await worker.fetch(fam(`${FAM}/runs/43/artifacts`), famEnv())).status).toBe(403)
+    expect((await worker.fetch(fam(`${FAM}/runs/43`), famEnv())).status).toBe(200)
+    expect((await worker.fetch(fam(`${FAM}/runs/44`), famEnv())).status).toBe(403)
+    expect((await worker.fetch(fam(`${FAM}/runs/44/artifacts`), famEnv())).status).toBe(403)
   })
 
-  it('downloads an artifact zip only when its run is allowlisted', async () => {
+  it('downloads an artifact zip when its run belongs to a repository workflow', async () => {
     const zipBytes = new Uint8Array([80, 75, 3, 4])
     stubGithub(url => {
       if (url.endsWith('/actions/artifacts/9')) return Response.json({ id: 9, workflow_run: { id: 42 } })
       if (url.endsWith('/actions/runs/42')) return Response.json({ id: 42, path: '.github/workflows/generate-image.yml' })
       if (url.endsWith('/actions/artifacts/9/zip')) return new Response(zipBytes, { headers: { 'Content-Type': 'application/zip' } })
-      if (url.endsWith('/actions/artifacts/10')) return Response.json({ id: 10, workflow_run: { id: 43 } })
-      if (url.endsWith('/actions/runs/43')) return Response.json({ id: 43, path: '.github/workflows/trader-agent.yml' })
+      if (url.endsWith('/actions/artifacts/10')) return Response.json({ id: 10, workflow_run: { id: 44 } })
+      if (url.endsWith('/actions/runs/44')) return Response.json({ id: 44, path: '.github/workflows/not-a-workflow.yml' })
       return null
     })
     const zip = await worker.fetch(fam(`${FAM}/artifacts/9/zip`), famEnv())
     expect(zip.status).toBe(200)
     expect(new Uint8Array(await zip.arrayBuffer())).toEqual(zipBytes)
     expect((await worker.fetch(fam(`${FAM}/artifacts/10/zip`), famEnv())).status).toBe(403)
+  })
+
+  // ── Full-parity routes (owner decision 2026-11-22) ──────────────────────────
+  const REPO = '/v1/family/repos/DeviousDevv303/forgeclaw'
+
+  it('serves run jobs and job logs, gated on the run workflow (shell_exec result path)', async () => {
+    const calls = stubGithub(url => {
+      if (url.endsWith('/actions/runs/42')) return Response.json({ id: 42, path: '.github/workflows/shell-exec.yml', status: 'completed' })
+      if (url.endsWith('/actions/runs/42/jobs?per_page=20')) return Response.json({ jobs: [{ id: 7, name: 'execute' }] })
+      if (url.endsWith('/actions/jobs/7')) return Response.json({ id: 7, run_id: 42 })
+      if (url.endsWith('/actions/jobs/7/logs')) return new Response('shell output', { status: 200 })
+      if (url.endsWith('/actions/runs/44')) return Response.json({ id: 44, path: '.github/workflows/not-a-workflow.yml', status: 'completed' })
+      if (url.endsWith('/actions/jobs/8')) return Response.json({ id: 8, run_id: 44 })
+      return null
+    })
+    const jobs = await worker.fetch(fam(`${FAM}/runs/42/jobs?per_page=20`), famEnv())
+    expect(jobs.status).toBe(200)
+    expect(((await jobs.json()) as { jobs: unknown[] }).jobs).toHaveLength(1)
+    const logs = await worker.fetch(fam(`${FAM}/jobs/7/logs`), famEnv())
+    expect(logs.status).toBe(200)
+    expect(await logs.text()).toBe('shell output')
+    expect((await worker.fetch(fam(`${FAM}/runs/44/jobs`), famEnv())).status).toBe(403)
+    expect((await worker.fetch(fam(`${FAM}/jobs/8/logs`), famEnv())).status).toBe(403)
+    expect(calls.filter(c => c.url.endsWith('/jobs/8/logs'))).toHaveLength(0)
+  })
+
+  it('cancels and force-cancels runs for STOP rollback, gated on the run workflow', async () => {
+    const calls = stubGithub(url => {
+      if (url.endsWith('/actions/runs/42')) return Response.json({ id: 42, path: '.github/workflows/qwen3-8b.yml', status: 'in_progress' })
+      if (url.endsWith('/actions/runs/44')) return Response.json({ id: 44, path: '.github/workflows/not-a-workflow.yml', status: 'in_progress' })
+      return null
+    })
+    expect((await worker.fetch(fam(`${FAM}/runs/42/cancel`, { method: 'POST' }), famEnv())).status).toBe(204)
+    expect((await worker.fetch(fam(`${FAM}/runs/42/force-cancel`, { method: 'POST' }), famEnv())).status).toBe(204)
+    expect((await worker.fetch(fam(`${FAM}/runs/44/cancel`, { method: 'POST' }), famEnv())).status).toBe(403)
+    expect(calls.filter(c => c.url.includes('/runs/44/cancel'))).toHaveLength(0)
+  })
+
+  it('proxies the bare runs list, repo metadata, pulls, issues, commits and branches', async () => {
+    stubGithub(url => {
+      if (url.endsWith('/actions/runs?status=failure&per_page=15')) return Response.json({ workflow_runs: [{ id: 1 }] })
+      if (url.endsWith('/repos/DeviousDevv303/forgeclaw')) return Response.json({ default_branch: 'main' })
+      if (url.includes('/pulls/12/files')) return Response.json([{ filename: 'src/App.tsx' }])
+      if (url.endsWith('/pulls/12')) return Response.json({ number: 12, state: 'open' })
+      if (url.endsWith('/issues/235')) return Response.json({ number: 235, title: 'channel' })
+      if (url.includes('/commits/abc1234/check-runs')) return Response.json({ check_runs: [] })
+      if (url.endsWith('/branches/main')) return Response.json({ name: 'main' })
+      return null
+    })
+    expect((await worker.fetch(fam(`${FAM}/runs?status=failure&per_page=15`), famEnv())).status).toBe(200)
+    expect((await worker.fetch(fam(REPO), famEnv())).status).toBe(200)
+    expect((await worker.fetch(fam(`${REPO}/pulls/12`), famEnv())).status).toBe(200)
+    expect((await worker.fetch(fam(`${REPO}/pulls/12/files?per_page=100`), famEnv())).status).toBe(200)
+    expect((await worker.fetch(fam(`${REPO}/issues/235`), famEnv())).status).toBe(200)
+    expect((await worker.fetch(fam(`${REPO}/commits/abc1234/check-runs?per_page=100`), famEnv())).status).toBe(200)
+    expect((await worker.fetch(fam(`${REPO}/branches/main`), famEnv())).status).toBe(200)
+  })
+
+  it('proxies the owner write shapes: contents PUT, PR merge, issue create, PR close', async () => {
+    const calls = stubGithub(() => null)
+    expect((await worker.fetch(fam(`${REPO}/contents/src/lib/x.ts`, { method: 'PUT', body: '{"message":"m","content":"YQ=="}' }), famEnv())).status).toBe(204)
+    expect((await worker.fetch(fam(`${REPO}/pulls/12/merge`, { method: 'PUT', body: '{"merge_method":"squash"}' }), famEnv())).status).toBe(204)
+    expect((await worker.fetch(fam(`${REPO}/pulls/12/update-branch`, { method: 'POST', body: '{}' }), famEnv())).status).toBe(204)
+    expect((await worker.fetch(fam(`${REPO}/pulls/12`, { method: 'PATCH', body: '{"state":"closed"}' }), famEnv())).status).toBe(204)
+    expect((await worker.fetch(fam(`${REPO}/issues`, { method: 'POST', body: '{"title":"hi"}' }), famEnv())).status).toBe(204)
+    const put = calls.find(c => c.url.endsWith('/contents/src/lib/x.ts'))!
+    expect(put.method).toBe('PUT')
+    expect(calls.some(c => c.url.endsWith('/pulls/12/merge') && c.method === 'PUT')).toBe(true)
+  })
+
+  it('serves the audio/vision git-data upload chain, scoped to the upload branches', async () => {
+    const calls = stubGithub(url => {
+      if (url.endsWith('/git/ref/heads/audio-inputs')) return Response.json({ object: { sha: 'a'.repeat(40) } })
+      if (url.includes('/git/commits/')) return Response.json({ tree: { sha: 'b'.repeat(40) } })
+      return null
+    })
+    const post = (path: string, body: string) => worker.fetch(fam(`${REPO}/git/${path}`, { method: 'POST', body }), famEnv())
+    expect((await post('blobs', '{"content":"AA==","encoding":"base64"}')).status).toBe(204)
+    expect((await worker.fetch(fam(`${REPO}/git/ref/heads/audio-inputs`), famEnv())).status).toBe(200)
+    expect((await worker.fetch(fam(`${REPO}/git/commits/${'a'.repeat(40)}`), famEnv())).status).toBe(200)
+    expect((await post('trees', '{"tree":[]}')).status).toBe(204)
+    expect((await post('commits', '{"message":"audio: clip"}')).status).toBe(204)
+    // The input branch advances by PATCH; a brand-new input branch may be created by POST /git/refs.
+    expect((await worker.fetch(fam(`${REPO}/git/refs/heads/audio-inputs`, { method: 'PATCH', body: '{"sha":"c"}' }), famEnv())).status).toBe(204)
+    expect((await post('refs', JSON.stringify({ ref: 'refs/heads/vision-inputs', sha: 'c'.repeat(40) }))).status).toBe(204)
+    // Creating any other branch through this route is refused before GitHub is called.
+    const before = calls.length
+    expect((await post('refs', JSON.stringify({ ref: 'refs/heads/main', sha: 'c'.repeat(40) }))).status).toBe(403)
+    expect((await post('refs', JSON.stringify({ ref: 'refs/heads/sculpt/x', sha: 'c'.repeat(40) }))).status).toBe(403)
+    expect(calls.length).toBe(before)
+    // Result branches read back through the contents route.
+    expect((await worker.fetch(fam(`${REPO}/contents/audio-results/audio-x.txt?ref=audio-results`), famEnv())).status).toBe(204)
+    expect((await worker.fetch(fam(`${REPO}/contents/vision-results/vision-x.txt?ref=vision-results`), famEnv())).status).toBe(204)
+  })
+
+  it('never moves or deletes protected refs, but rolls back run-created branches', async () => {
+    const calls = stubGithub(() => null)
+    for (const branch of ['main', 'gh-pages', 'audio-results', 'vision-results', 'generated-images']) {
+      expect((await worker.fetch(fam(`${REPO}/git/refs/heads/${branch}`, { method: 'PATCH', body: '{"sha":"c","force":true}' }), famEnv())).status).toBe(403)
+      expect((await worker.fetch(fam(`${REPO}/git/refs/heads/${branch}`, { method: 'DELETE' }), famEnv())).status).toBe(403)
+    }
+    expect((await worker.fetch(fam(`${REPO}/git/refs/heads/audio-inputs`, { method: 'DELETE' }), famEnv())).status).toBe(403)
+    expect(calls.filter(c => c.method === 'PATCH' || c.method === 'DELETE')).toHaveLength(0)
+    expect((await worker.fetch(fam(`${REPO}/git/refs/heads/sculpt/change-x`, { method: 'PATCH', body: '{"sha":"c","force":true}' }), famEnv())).status).toBe(204)
+    expect((await worker.fetch(fam(`${REPO}/git/refs/heads/sculpt/change-x`, { method: 'DELETE' }), famEnv())).status).toBe(204)
+  })
+
+  it('serves code search only with the relay repository pinned in the query', async () => {
+    const calls = stubGithub(url => url.includes('/search/code') ? Response.json({ total_count: 1, items: [] }) : null)
+    const ok = await worker.fetch(fam(`/v1/family/search/code?q=${encodeURIComponent('shell repo:DeviousDevv303/forgeclaw')}&per_page=10`), famEnv())
+    expect(ok.status).toBe(200)
+    expect((await worker.fetch(fam(`/v1/family/search/code?q=${encodeURIComponent('shell repo:SomeoneElse/other')}`), famEnv())).status).toBe(403)
+    expect(calls.filter(c => c.url.includes('/search/code'))).toHaveLength(1)
+  })
+
+  it('counts mutating family calls against the family hourly quota', async () => {
+    stubGithub(() => null)
+    const e = famEnv({ FAMILY_MAX_PER_HOUR: '2' })
+    const put = () => worker.fetch(fam(`${REPO}/contents/src/lib/x.ts`, { method: 'PUT', body: '{}' }), e)
+    expect((await put()).status).toBe(204)
+    expect((await put()).status).toBe(204)
+    expect((await put()).status).toBe(429)
   })
 })

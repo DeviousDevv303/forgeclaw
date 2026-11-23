@@ -85,6 +85,40 @@ describe('family mode transport rewrite', () => {
     expect(familyActionsRewrite('https://example.com/actions/workflows/x.yml/runs', {}, ctx)).toBeNull()
   })
 
+  it('rewrites the repo-scoped shapes for the app repository once the repo is known (full parity)', async () => {
+    const { familyActionsRewrite } = await import('./githubFetch')
+    const repoCtx = { ...ctx, ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' }
+    const cases: Array<[string, string]> = [
+      ['https://api.github.com/repos/DeviousDevv303/forgeclaw/contents/src/App.tsx', 'https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/contents/src/App.tsx'],
+      ['https://api.github.com/repos/DeviousDevv303/forgeclaw/git/blobs', 'https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/git/blobs'],
+      ['https://api.github.com/repos/DeviousDevv303/forgeclaw/git/refs/heads/audio-inputs', 'https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/git/refs/heads/audio-inputs'],
+      ['https://api.github.com/repos/DeviousDevv303/forgeclaw/contents/audio-results/audio-x.txt?ref=audio-results', 'https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/contents/audio-results/audio-x.txt?ref=audio-results'],
+      ['https://api.github.com/repos/DeviousDevv303/forgeclaw/pulls/12/merge', 'https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/pulls/12/merge'],
+      ['https://api.github.com/repos/DeviousDevv303/forgeclaw/issues/235/comments?per_page=100&page=1', 'https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/issues/235/comments?per_page=100&page=1'],
+      ['https://api.github.com/repos/DeviousDevv303/forgeclaw', 'https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw'],
+    ]
+    for (const [input, expected] of cases) {
+      const out = familyActionsRewrite(input, { headers: { Authorization: 'token ' } }, repoCtx)
+      expect(out?.input).toBe(expected)
+      expect(new Headers(out?.init.headers).get('Authorization')).toBe('Bearer lighthouse7')
+    }
+    // The same shapes for a DIFFERENT repository pass through untouched: the relay is pinned
+    // to the app repo, and public reads of other repos keep working unauthenticated.
+    expect(familyActionsRewrite('https://api.github.com/repos/SomeoneElse/other/contents/src/App.tsx', {}, repoCtx)).toBeNull()
+    expect(familyActionsRewrite('https://api.github.com/repos/SomeoneElse/other/git/blobs', { method: 'POST' }, repoCtx)).toBeNull()
+  })
+
+  it('rewrites code search only when the query pins the app repository', async () => {
+    const { familyActionsRewrite } = await import('./githubFetch')
+    const repoCtx = { ...ctx, familyRepo: 'DeviousDevv303/forgeclaw' }
+    const pinned = `https://api.github.com/search/code?q=${encodeURIComponent('shell repo:DeviousDevv303/forgeclaw')}&per_page=10`
+    expect(familyActionsRewrite(pinned, {}, repoCtx)?.input).toBe(`https://relay.example/v1/family/search/code?q=${encodeURIComponent('shell repo:DeviousDevv303/forgeclaw')}&per_page=10`)
+    const other = `https://api.github.com/search/code?q=${encodeURIComponent('shell repo:SomeoneElse/other')}&per_page=10`
+    expect(familyActionsRewrite(other, {}, repoCtx)).toBeNull()
+    // Without a known app repository the search call is left alone.
+    expect(familyActionsRewrite(pinned, {}, ctx)).toBeNull()
+  })
+
   it('does nothing without a code or a relay URL', async () => {
     const { familyActionsRewrite } = await import('./githubFetch')
     const url = 'https://api.github.com/repos/o/r/actions/runs/1'

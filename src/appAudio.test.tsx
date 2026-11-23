@@ -11,11 +11,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 const API = 'https://api.github.com/repos/DeviousDevv303/forgeclaw'
+const RELAY_API = 'https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw'
 const TRANSCRIPT = 'hola, esto es una nota de voz'
 const flow = { fail: false }
 let invocationId = ''
 
-function githubFetch(url: string, init: RequestInit = {}) {
+function githubFetch(rawUrl: string, init: RequestInit = {}) {
+  // The relay family tier is a path-preserving proxy: a family-mode call to
+  // <relay>/v1/family/repos/<o>/<r>/<path> performs the same GitHub API call as
+  // <api.github.com>/repos/<o>/<r>/<path> with the relay's token. Normalize the
+  // relay form onto the API form so one fixture serves both transports.
+  const url = rawUrl.startsWith(RELAY_API) ? API + rawUrl.slice(RELAY_API.length) : rawUrl
   if (url === `${API}/git/ref/heads/audio-inputs`) return new Response('{}', { status: 404 })
   if (url === `${API}/git/blobs`) return Response.json({ sha: 'blob1' })
   if (url === `${API}/git/trees`) return Response.json({ sha: 'tree1' })
@@ -171,6 +177,22 @@ describe('family mode (relay tier)', () => {
       const dispatch = calls.find(c => c.url.endsWith('/actions/workflows/audio-transcribe.yml/dispatches'))!
       expect(dispatch.url).toBe('https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/actions/workflows/audio-transcribe.yml/dispatches')
       expect(dispatch.authorization).toBe('Bearer test-family-code')
+      // Full parity: the clip upload (git-data) and the result read (contents) also ride
+      // the relay family tier — no family-mode call escapes to api.github.com, where it
+      // would 401 without a token.
+      const blobUpload = calls.find(c => c.url.endsWith('/git/blobs'))!
+      expect(blobUpload.url).toBe('https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/git/blobs')
+      expect(blobUpload.authorization).toBe('Bearer test-family-code')
+      const resultRead = calls.find(c => c.url.includes('/contents/audio-results/'))!
+      expect(resultRead.url.startsWith('https://relay.example/v1/family/repos/DeviousDevv303/forgeclaw/contents/audio-results/')).toBe(true)
+      expect(resultRead.authorization).toBe('Bearer test-family-code')
+      // Every audio-flow call (git-data upload, dispatch, run polling, result reads)
+      // rides the relay — none escapes to api.github.com, where it would 401 tokenless.
+      // (Unrelated surfaces are out of scope here: the War Room hook polls GitHub
+      // directly by design — it records the owner's own decisions on his token.)
+      const audioFlowCalls = calls.filter(c => c.url.includes('/git/') || c.url.includes('/contents/audio-') || c.url.includes('audio-transcribe'))
+      expect(audioFlowCalls.length).toBeGreaterThan(0)
+      expect(audioFlowCalls.every(c => c.url.startsWith('https://relay.example/v1/family/'))).toBe(true)
     } finally {
       vi.unstubAllEnvs()
     }
