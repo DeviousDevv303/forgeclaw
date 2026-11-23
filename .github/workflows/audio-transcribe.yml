@@ -1,0 +1,120 @@
+name: Transcribe Audio
+
+# Speech-to-text with faster-whisper "small" on the CPU runner. The logic lives in
+# .github/scripts/transcribe_audio.py (validated and unit-tested); failures are printed as ::error::
+# annotations. The result is uploaded as the artifact audio-transcription-<invocation_id> (1 day).
+#
+# The clip always comes from the app: it commits the recording or attached audio file to the
+# audio-inputs branch and passes its path as audio_ref. Decoding (WebM/Opus, MP4/AAC from iOS
+# Safari, MP3, WAV, OGG, FLAC) is done by faster-whisper through PyAV, which bundles FFmpeg.
+# The transcribe job is read-only; the separate mirror job (no model code) publishes the
+# transcript to the audio-results branch, where the browser reads it, and removes the clip
+# from audio-inputs.
+on:
+  workflow_dispatch:
+    inputs:
+      audio_ref:
+        description: 'Path of an attached audio clip on the audio-inputs branch, e.g. audio-inputs/<id>.mp4'
+        required: false
+        default: ''
+      language:
+        description: 'Language code (en, es, …); empty auto-detects'
+        required: false
+        default: ''
+      invocation_id:
+        description: 'Unique ID for this request'
+        required: true
+      mirror:
+        description: "Publish the transcript to the browsable audio-results branch ('false' to skip)"
+        required: false
+        default: 'true'
+
+run-name: Transcribe Audio ${{ inputs.invocation_id }}
+
+permissions:
+  contents: read
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Validate inputs
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          AUDIO_REF: ${{ inputs.audio_ref }}
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          printf '%s' "$INVOCATION_ID" | grep -Eqx '[A-Za-z0-9._-]{1,120}' || { echo "::error title=transcribe_audio::invalid invocation_id"; exit 1; }
+          if [ -n "$AUDIO_REF" ] && ! printf '%s' "$AUDIO_REF" | grep -Eqx 'audio-inputs/[A-Za-z0-9._-]{1,120}\.(webm|mp4|m4a|mp3|wav|ogg|flac|aac)'; then
+            echo "::error title=transcribe_audio::audio_ref must be audio-inputs/<name>.(webm|mp4|m4a|mp3|wav|ogg|flac|aac)"; exit 1
+          fi
+          if [ -n "$LANGUAGE" ] && ! printf '%s' "$LANGUAGE" | grep -Eqx '[a-z]{2,3}'; then
+            echo "::error title=transcribe_audio::language must be empty or a 2-3 letter code"; exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch the attached clip
+        if: ${{ inputs.audio_ref != '' }}
+        env:
+          AUDIO_REF: ${{ inputs.audio_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          AUTH="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git -c "http.https://github.com/.extraheader=$AUTH" fetch --depth 1 origin audio-inputs
+          git show "FETCH_HEAD:$AUDIO_REF" > "$RUNNER_TEMP/attached-audio"
+          echo "AUDIO_FILE=$RUNNER_TEMP/attached-audio" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: faster-whisper-small-${{ runner.os }}-v1
+      - name: Install deps (exact pins)
+        run: pip install -r .github/requirements-audio.txt
+      - name: Transcribe
+        env:
+          LANGUAGE: ${{ inputs.language }}
+        run: python .github/scripts/transcribe_audio.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: audio-transcription-${{ inputs.invocation_id }}
+          path: |
+            result.txt
+            result_meta.txt
+          if-no-files-found: ignore
+          retention-days: 1
+
+  mirror:
+    needs: transcribe
+    # Failures are published too, so the app stops waiting with the reason.
+    if: ${{ always() && inputs.mirror != 'false' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      # Checkout first: it cleans the workspace, which would delete a result downloaded before it.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: audio-transcription-${{ inputs.invocation_id }}
+          path: result
+      - name: Publish the transcript and remove the attached clip
+        env:
+          INVOCATION_ID: ${{ inputs.invocation_id }}
+          AUDIO_REF: ${{ inputs.audio_ref }}
+          TRANSCRIBE_RESULT: ${{ needs.transcribe.result }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export GIT_AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          bash .github/scripts/audio_mirror.sh "https://github.com/$REPO.git" "$INVOCATION_ID" "$AUDIO_REF" result "$TRANSCRIBE_RESULT"

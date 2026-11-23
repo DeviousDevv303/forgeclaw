@@ -11,11 +11,16 @@ interface FileUploadButtonProps {
 
 const ACCEPTED_TYPES = [
   'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/x-wav',
+  'audio/ogg', 'audio/flac', 'audio/aac', 'audio/x-m4a',
   'application/pdf',
   'text/plain', 'text/markdown', 'text/csv',
   'application/json', 'application/typescript',
   'text/javascript', 'text/typescript', 'text/x-python',
 ]
+
+// Voice memos (.m4a especially) can arrive with an empty or generic type; the name still counts.
+const AUDIO_NAME = /\.(webm|mp4|m4a|mp3|wav|ogg|flac|aac)$/i
 
 export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -41,6 +46,14 @@ export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonPro
         })
         // Phone photos are scaled to the size the vision models actually use.
         content = await downscaleImageDataUrl(content)
+      } else if (file.type.startsWith('audio/') || AUDIO_NAME.test(file.name)) {
+        // Audio travels as a data URL; on send it is transcribed on GitHub Actions and the
+        // transcript is what the (text-only) providers receive.
+        content = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onloadend = () => resolve(reader.result as string)
+          reader.readAsDataURL(file)
+        })
       } else if (file.type === 'application/pdf') {
         // For PDFs, note that we can't easily extract text client-side
         content = `[PDF: ${file.name} — ${(file.size / 1024).toFixed(1)}KB]`
