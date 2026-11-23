@@ -485,8 +485,11 @@ describe('relay worker — /seat-orders (Nexus Isles owner orders)', () => {
     ],
   }, null, 2)}\n`
 
-  /** A virtual live-world orders file behind a mocked GitHub Contents API. */
-  function stubNexus(initial: string | null) {
+  /** A virtual live-world orders file behind a mocked GitHub Contents API.
+   *  With `raceEntry`, the first PUT loses a write race: another writer's entry
+   *  lands in the file (new sha) and the PUT answers 409, as GitHub does when
+   *  the sha moved between the relay's read and its write. */
+  function stubNexus(initial: string | null, opts: { raceEntry?: unknown } = {}) {
     let text = initial
     let sha = 'sha-0'
     let puts = 0
@@ -503,6 +506,13 @@ describe('relay worker — /seat-orders (Nexus Isles owner orders)', () => {
         puts++
         const body = JSON.parse(String(init.body)) as { content: string; branch: string; sha: string }
         putBodies.push(body)
+        if (opts.raceEntry !== undefined && puts === 1) {
+          const current = JSON.parse(text!) as { seat: string; entries: unknown[] }
+          current.entries.push(opts.raceEntry)
+          text = `${JSON.stringify(current, null, 2)}\n`
+          sha = 'sha-raced'
+          return new Response('{}', { status: 409 })
+        }
         text = Buffer.from(body.content, 'base64').toString('utf8')
         sha = `sha-${puts}`
         return Response.json({ content: { sha } })
@@ -641,6 +651,35 @@ describe('relay worker — /seat-orders (Nexus Isles owner orders)', () => {
       const absent = parseSeatOrderEntry({ tick: 36, operator: 'owner', orders: [] })
       expect(withFalse).toEqual(absent)
       expect(canonicalSeatOrderJson(withFalse)).toBe(canonicalSeatOrderJson(absent))
+    })
+  })
+
+  describe('concurrent-write retry (mocked persistence boundary)', () => {
+    it('a 409 race is retried against a fresh read, and the intervening writer entry is preserved', async () => {
+      const intervening = { tick: 36, operator: 'muse', orders: [{ verb: 'wait', args: {} }] }
+      const gh = stubNexus(SEED, { raceEntry: intervening })
+      const res = await post({ seat: 'cristian', entry: { tick: 36, operator: 'owner', orders: [{ verb: 'gather' }] } })
+      expect(res.status).toBe(200)
+      expect(((await res.json()) as { status: string }).status).toBe('recorded')
+      expect(gh.puts()).toBe(2) // the raced attempt plus the retry
+      const file = parseSeatOrdersFile(JSON.parse(gh.text()!))
+      // Seed (2) + the other writer's intervening entry + ours, appended last —
+      // the retry re-read and appended onto the moved file instead of
+      // overwriting it with the stale read.
+      expect(file.entries).toHaveLength(4)
+      expect(file.entries[2]).toEqual(intervening)
+      expect(file.entries[3]).toEqual({ tick: 36, operator: 'owner', orders: [{ verb: 'gather', args: {} }] })
+    })
+
+    it('when the intervening writer recorded the identical entry, the retry dedupes instead of appending a second copy', async () => {
+      const same = { tick: 36, operator: 'owner', orders: [{ verb: 'gather', args: {} }] }
+      const gh = stubNexus(SEED, { raceEntry: same })
+      const res = await post({ seat: 'cristian', entry: { tick: 36, operator: 'owner', orders: [{ verb: 'gather' }] } })
+      expect(res.status).toBe(200)
+      expect(((await res.json()) as { status: string }).status).toBe('duplicate')
+      expect(gh.puts()).toBe(1) // the retry's duplicate check fires before any second write
+      const file = parseSeatOrdersFile(JSON.parse(gh.text()!))
+      expect(file.entries.filter((e) => e.operator === 'owner' && e.tick === 36)).toHaveLength(1)
     })
   })
 

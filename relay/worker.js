@@ -711,8 +711,10 @@ async function recordSeatOrder(request, env, cors) {
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : String(error) }, 400, cors)
   }
-  // This route is the owner's own: the family code already authenticated the caller
-  // as the owner, so an entry claiming another author is refused, never recorded.
+  // This route is the owner's own: the router's gate already authenticated the
+  // caller with the OWNER_CODE — the owner's distinct credential; the shared
+  // family code does not authorize this route — so an entry claiming another
+  // author is refused, never recorded.
   if (entry.operator !== 'owner') {
     return json({ error: 'this route records owner orders only: entry.operator must be "owner"' }, 400, cors)
   }
