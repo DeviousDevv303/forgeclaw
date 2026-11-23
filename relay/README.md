@@ -20,7 +20,7 @@ Cloudflare Worker (`worker.js`, free tier is enough). The model and research rou
   its GitHub Actions API calls to these routes; the relay performs them with its own token and
   returns GitHub's response verbatim. Only the interactive workflows in the worker's
   `FAMILY_WORKFLOWS` list can be dispatched or read back (chat, Nexus, images, research,
-  search, browsing, shell, self-sculpt); trading workflows are never in the list, and nothing
+  search, browsing, shell, self-sculpt, voice transcription); trading workflows are never in the list, and nothing
   outside the Actions API exists on these routes. Limits: 300 dispatches per IP per hour
   (`FAMILY_MAX_PER_HOUR`) and 6 runs in progress per workflow (`FAMILY_MAX_CONCURRENT`).
   Rotate the code with `npx wrangler secret put FAMILY_CODE`; family browsers then need the
