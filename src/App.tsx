@@ -787,8 +787,26 @@ function App() {
   // button beside Send runs the browser's speech recognition and types what it hears into
   // the composer. Web Speech API; iOS Safari supports it as webkitSpeechRecognition.
   const [dictating, setDictating] = useState(false)
+  // Why dictation last failed, in plain words under the composer. Dictation failures used to
+  // be swallowed whole (onerror only reset state), so a blocked or missing mic made the
+  // button look completely dead — legible failure is the rule: every failure path lands here.
+  const [dictationError, setDictationError] = useState('')
   const dictationRef = useRef<{ stop: () => void } | null>(null)
   const dictationBaseRef = useRef('')
+  const dictationErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showDictationError = (message: string) => {
+    if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
+    setDictationError(message)
+    dictationErrorTimerRef.current = setTimeout(() => setDictationError(''), 9000)
+  }
+  useEffect(() => () => {
+    if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
+    // Never leave the mic hot after the composer is gone; invalidate the session first so a
+    // final in-flight result writes nothing.
+    const rec = dictationRef.current
+    dictationRef.current = null
+    rec?.stop()
+  }, [])
   const speechSupported = typeof window !== 'undefined' && !!((window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition)
   const toggleDictation = () => {
     if (dictating) { dictationRef.current?.stop(); return }
@@ -796,33 +814,47 @@ function App() {
       SpeechRecognition?: new () => {
         lang: string; interimResults: boolean; continuous: boolean
         onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-        onend: (() => void) | null; onerror: (() => void) | null
+        onend: (() => void) | null; onerror: ((event: { error?: string }) => void) | null
         start: () => void; stop: () => void
       }
       webkitSpeechRecognition?: new () => {
         lang: string; interimResults: boolean; continuous: boolean
         onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-        onend: (() => void) | null; onerror: (() => void) | null
+        onend: (() => void) | null; onerror: ((event: { error?: string }) => void) | null
         start: () => void; stop: () => void
       }
     }
     const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition
-    if (!Ctor) return
+    if (!Ctor) { showDictationError(t('chat.dictateUnsupported')); return }
+    if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
+    setDictationError('')
     const rec = new Ctor()
     rec.lang = navigator.language || 'en-US'
     rec.interimResults = true
     rec.continuous = true
     dictationBaseRef.current = input ? (input.endsWith(' ') ? input : `${input} `) : ''
     rec.onresult = event => {
+      // A session invalidated by a send or an unmount ignores results entirely — a stopping
+      // recognizer may still deliver one final result, and it must not write text back.
+      if (dictationRef.current !== rec) return
       let text = ''
       for (let i = 0; i < event.results.length; i++) text += event.results[i][0].transcript
       setInput(dictationBaseRef.current + text)
     }
     rec.onend = () => { setDictating(false); dictationRef.current = null }
-    rec.onerror = () => { setDictating(false); dictationRef.current = null }
+    rec.onerror = event => {
+      setDictating(false); dictationRef.current = null
+      const code = event?.error || ''
+      if (code === 'aborted') return // the user stopped it themselves — not a failure
+      if (code === 'not-allowed' || code === 'service-not-allowed') showDictationError(t('chat.dictateBlocked'))
+      else if (code === 'audio-capture') showDictationError(t('chat.dictateNoMic'))
+      else if (code === 'network') showDictationError(t('chat.dictateNetwork'))
+      else if (code === 'no-speech') showDictationError(t('chat.dictateNoSpeech'))
+      else showDictationError(t('chat.dictateFailed', { error: code || 'unknown' }))
+    }
     dictationRef.current = rec
     setDictating(true)
-    try { rec.start() } catch { setDictating(false); dictationRef.current = null }
+    try { rec.start() } catch { setDictating(false); dictationRef.current = null; showDictationError(t('chat.dictateStartFailed')) }
   }
   // Shown briefly when Enter is pressed while a request is still running (the send is ignored).
   const [busyNotice, setBusyNotice] = useState(false)
@@ -2752,6 +2784,11 @@ function App() {
       }
     }
 
+    // Sending ends dictation: a live session would otherwise write its captured base text
+    // back into the cleared composer on the next result, resurrecting the message just sent.
+    // Nulling the ref first makes the session's result handler ignore the final result a
+    // stopping recognizer may still deliver.
+    if (dictationRef.current) { const rec = dictationRef.current; dictationRef.current = null; rec.stop() }
     setInput('')
     setAttachedFile(null)
     await sendPrompt(promptText, imageUrl, { attachmentName: attachedFile?.name })
@@ -4172,7 +4209,7 @@ function App() {
                       onClick={toggleDictation}
                       title={dictating ? 'Stop dictation' : 'Dictate — tap and talk'}
                       aria-label={dictating ? 'Stop dictation' : 'Dictate'}
-                      style={{ background: dictating ? '#7f1d1d' : '#0d0d0f', color: dictating ? '#fecaca' : '#888', minWidth: '48px', height: '36px', padding: '0 6px', borderRadius: '10px', border: `1px solid ${dictating ? '#ef4444' : '#2e2e33'}`, cursor: 'pointer', fontSize: '15px', flexShrink: 0 }}
+                      style={{ background: dictating ? '#7f1d1d' : '#0d0d0f', color: dictating ? '#fecaca' : '#888', minWidth: '48px', height: '36px', padding: '0 6px', borderRadius: '10px', border: `1px solid ${dictating ? '#ef4444' : '#2e2e33'}`, cursor: 'pointer', fontSize: '15px', flexShrink: 0, animation: dictating ? 'micPulse 1.2s ease-in-out infinite' : undefined }}
                     >
                       🎤
                     </button>
@@ -4192,6 +4229,12 @@ function App() {
                 )}
                 {busyNotice && (
                   <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.busyNotice')}</div>
+                )}
+                {dictating && (
+                  <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.dictateListening')}</div>
+                )}
+                {dictationError && (
+                  <div role="alert" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{dictationError}</div>
                 )}
                 <ConnectionToast notice={connectionNotice} reconnectingText={t('chat.reconnecting')} backText={t('chat.reconnected')} />
                 {/* Funds panel (PR B item 6): hidden in visitor mode, like the Kalshi
