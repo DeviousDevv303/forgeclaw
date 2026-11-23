@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { IMAGE_DISCOVERY_PAGE_SIZE, registerGeneratedImage, takeGeneratedImage, waitForImageRun } from './imageArtifact'
+import { IMAGE_DISCOVERY_PAGE_SIZE, registerGeneratedImage, takeGeneratedImage, waitForImageRun, waitForMirroredImagePng } from './imageArtifact'
 import type { ToolContext } from './forgeTools'
 
 describe('generated image registry side-channel', () => {
@@ -277,5 +277,23 @@ describe('image result download', () => {
     expect(out.value?.dataUrl.startsWith('data:image/png;base64,')).toBe(true)
     const apiCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('api.github.com'))
     expect(apiCalls.length).toBe(0)
+  })
+
+  it('(e) no mirror before its deadline produces a clear timeout, not an image result', async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(waitForMirroredImagePng(ctx, 'DeviousDevv303', 'forgeclaw', invocationId, 0))
+      .rejects.toThrow('Image was dispatched but its output mirror did not appear within 0m.')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('(f) aborting mirror recovery propagates AbortError without another read', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(waitForMirroredImagePng({ ...ctx, signal: controller.signal }, 'DeviousDevv303', 'forgeclaw', invocationId, 10_000))
+      .rejects.toMatchObject({ name: 'AbortError' })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
