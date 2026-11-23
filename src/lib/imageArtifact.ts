@@ -62,6 +62,13 @@ const IMAGE_GITHUB_READ_TIMEOUT_MS = 30_000
 const DISCOVERY_STAGE = 'image-run-discovery GET /actions/workflows/generate-image.yml/runs'
 const STATUS_STAGE = 'image-run-poll GET /actions/runs/{run_id}'
 
+export interface GeneratedImagePng {
+  dataUrl: string
+  width: number
+  height: number
+  bytes: number
+}
+
 function ghHeaders(ctx: ToolContext): Record<string, string> {
   return {
     Authorization: `token ${ctx.ghToken}`,
@@ -200,6 +207,74 @@ function imageMirrorUrl(owner: string, repo: string, invocationId: string): stri
   return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${IMAGE_MIRROR_BRANCH}/generated-images/${encodeURIComponent(invocationId)}.png`
 }
 
+/**
+ * Read the deterministic raw-GitHub mirror without needing Actions run metadata.
+ * The runner publishes the PNG under its invocation ID before artifact upload,
+ * and raw.githubusercontent.com is readable from the Pages app when api.github.com
+ * run discovery is temporarily blocked by browser CORS/network conditions.
+ */
+export async function downloadMirroredImagePng(
+  ctx: ToolContext,
+  owner: string,
+  repo: string,
+  invocationId: string,
+): Promise<GeneratedImagePng | undefined> {
+  const mirrorRes = await toolFetch({ ...ctx, timeoutMs: IMAGE_MIRROR_TIMEOUT_MS }, imageMirrorUrl(owner, repo, invocationId), {
+    cache: 'no-store',
+  })
+  if (mirrorRes.status === 404) return undefined
+  if (!mirrorRes.ok) throw new Error(`Image mirror fetch failed: HTTP ${mirrorRes.status} ${mirrorRes.statusText}`.trim())
+  const pngBlob = await imageStage('image-mirror-bytes', () => mirrorRes.blob())
+  const dimensions = await pngDimensions(pngBlob)
+  return {
+    dataUrl: await blobToDataUrl(pngBlob),
+    width: dimensions.width,
+    height: dimensions.height,
+    bytes: pngBlob.size,
+  }
+}
+
+/**
+ * When Actions run discovery is unreadable after a successful dispatch, recover
+ * via the invocation-specific mirror instead of turning a completed image into
+ * a user-visible failure. The caller bounds this by the workflow's remaining
+ * runtime and only uses it for network/CORS discovery errors, never auth errors.
+ */
+export async function waitForMirroredImagePng(
+  ctx: ToolContext,
+  owner: string,
+  repo: string,
+  invocationId: string,
+  timeoutMs = IMAGE_MAX_WAIT_MS,
+): Promise<GeneratedImagePng> {
+  const deadline = Date.now() + timeoutMs
+  let attempt = 0
+  let lastReadError: string | undefined
+  while (true) {
+    if (ctx.signal?.aborted) throw new DOMException('Run aborted', 'AbortError')
+    try {
+      const image = await downloadMirroredImagePng(ctx, owner, repo, invocationId)
+      if (image) return image
+      lastReadError = undefined
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      lastReadError = error instanceof Error ? error.message : String(error)
+      console.warn(`[image-mirror] read failed for ${invocationId}, retrying: ${lastReadError}`)
+    }
+
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+    const delay = Math.min(statusDelays[Math.min(attempt, statusDelays.length - 1)], remaining)
+    attempt += 1
+    await new Promise<void>(resolve => setTimeout(resolve, delay))
+  }
+
+  if (lastReadError) {
+    throw new Error(`Image output mirror could not be read within ${Math.ceil(timeoutMs / 60000)}m after Actions run discovery failed: ${lastReadError}`)
+  }
+  throw new Error(`Image was dispatched but its output mirror did not appear within ${Math.ceil(timeoutMs / 60000)}m.`)
+}
+
 async function blobToDataUrl(pngBlob: Blob): Promise<string> {
   const pngBuffer = await imageStage('image-bytes', () => pngBlob.arrayBuffer())
   const bytes = new Uint8Array(pngBuffer)
@@ -224,24 +299,13 @@ export async function downloadImagePng(
   repo: string,
   runId: number,
   invocationId: string,
-): Promise<{ dataUrl: string; width: number; height: number; bytes: number }> {
+): Promise<GeneratedImagePng> {
   // GitHub's artifact endpoint returns a 303 redirect to Azure Blob Storage.
   // The redirected response is not CORS-readable from GitHub Pages. New runs
   // publish the same PNG to raw.githubusercontent.com, which is browser-safe.
   try {
-    const mirrorRes = await toolFetch({ ...ctx, timeoutMs: IMAGE_MIRROR_TIMEOUT_MS }, imageMirrorUrl(owner, repo, invocationId), {
-      cache: 'no-store',
-    })
-    if (mirrorRes.ok) {
-      const pngBlob = await imageStage('image-mirror-bytes', () => mirrorRes.blob())
-      const dimensions = await pngDimensions(pngBlob)
-      return {
-        dataUrl: await blobToDataUrl(pngBlob),
-        width: dimensions.width,
-        height: dimensions.height,
-        bytes: pngBlob.size,
-      }
-    }
+    const mirrored = await downloadMirroredImagePng(ctx, owner, repo, invocationId)
+    if (mirrored) return mirrored
   } catch {
     // Older runs do not have a mirror; use the artifact bridge below.
   }
