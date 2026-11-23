@@ -25,7 +25,8 @@ import { qwenRunLabel } from '../qwenCheckpoints'
 import { extractSiteHtml, isSiteDeployRequest, parseCreatedRepo, parsePublishedCommit, siteGenerationTask, siteRepoName } from './qwenSite'
 
 /** True for providers that run Qwen/Qwen3-8B via GitHub Actions (provider ids 'corpus'/'qwen'; legacy 'deepseek'). */
-/** Appended to every plain-text Nexus answer: the checkpoint is a tool-call specialist, not a general chat model. */
+/** Appended to every plain-text Nexus answer: the checkpoint is a tool-call specialist, not a general chat model.
+ * The text lives in nexusIntelligenceContext.ts, which strips it back out of stored answers on follow-up turns. */
 export { NEXUS_TEXT_ANSWER_NOTE }
 
 export function isQwenProvider(providerId: string): boolean {
