@@ -244,6 +244,8 @@ import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/p
 import { QWEN_RUN_EXPIRED_NOTE, isQwenRunResumable } from './lib/qwenRunResume'
 import { ConnectionToast, type ConnectionNotice } from './components/ConnectionToast'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
+import { imageResearchQuery } from './lib/imageResearch'
+import { photoFollowUpImage } from './lib/photoFollowUp'
 import { baselineToolNames, BROWSER_GUIDANCE, continuesImageTurn, isFollowUp, mergeRequested, nexusDispatchToolNames, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 import { attestedUrlsForConversation, isAttestedLink } from './lib/linkAttestation'
@@ -947,6 +949,12 @@ function App() {
   const waConfigured = waCredentialsConfigured(safeGetItem('wa_credentials'))
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
   const [familyCode, setFamilyCodeState] = useState(() => getFamilyCode())
+  // Draft for the locked-screen family-code entry (the chat surface a family member
+  // actually lands on); applied only on Unlock, never per keystroke. The entry starts
+  // as a labelled button and expands into the field on tap, so the locked chat keeps
+  // exactly one text box (the composer) until the family member asks for the field.
+  const [familyCodeDraft, setFamilyCodeDraft] = useState('')
+  const [familyEntryOpen, setFamilyEntryOpen] = useState(false)
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
@@ -1472,7 +1480,14 @@ function App() {
       : null
     // Only Claude and Kimi receive the picture itself; any other provider would answer without seeing it.
     // analyze_image reads the picture from here; it never travels in the prompt text.
-    rememberAttachedImage(imageUrl)
+    // A question about the picture just analyzed arrives with no attachment of its own. For the providers that have it
+    // analyzed on Actions (Qwen, Nexus), the same picture rides this turn so the vision workflow answers the new
+    // question; without it the text-only model answered from the analysis text alone (photoFollowUp.ts).
+    const photoFollowImage = !imageUrl && (activeProvider === 'nexus-intelligence' || (isQwenProvider(activeProvider) && activeProvider !== 'corpus')) && !isVisitor(ghToken || '')
+      ? photoFollowUpImage(messagesRef.current, promptText)
+      : undefined
+    const attachedImage = imageUrl ?? photoFollowImage
+    rememberAttachedImage(attachedImage)
     // Claude and Kimi see the picture; Qwen has it analyzed on Actions (owner token). The corpus
     // model and free mode have no way to see it, so they say so instead of answering blind.
     if (imageUrl && !HOSTED_TOOL_PROVIDERS.has(activeProvider) && (activeProvider === 'corpus' || isVisitor(ghToken || ''))) {
@@ -1666,7 +1681,7 @@ function App() {
     // Kimi on any "analyze/review/debug" prompt was told to hand the task to the slow Qwen workflow
     // and was given qwen_reason on every coding task.
     const isHostedReasoner = HOSTED_TOOL_PROVIDERS.has(activeProvider) && !qwenDuoDefault
-    const complexReasoningTask = !imageUrl && !isHostedReasoner && shouldDispatchComplexTaskToQwen(promptText)
+    const complexReasoningTask = !attachedImage && !isHostedReasoner && shouldDispatchComplexTaskToQwen(promptText)
     const coreToolNames = (codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'qwen_reason', 'ask_qwen']
       : qwenDuoDefault || complexReasoningTask || nexusSculptHandoff ? ['qwen_reason'] : [])
@@ -1678,9 +1693,12 @@ function App() {
     }
     if (nexusSculptHandoff) coreToolNames.push('github_read_file', 'sculpt_self')
     // Claude and Kimi see the picture directly; analyze_image is the URL-based workflow for the others.
-    if (imageUrl && !isHostedReasoner) coreToolNames.push('analyze_image')
+    if (attachedImage && !isHostedReasoner) coreToolNames.push('analyze_image')
     // Questions about what is current get gathered sources, whatever the wording (currentInfo.ts).
     if (needsCurrentInfo(promptText)) coreToolNames.push('deep_research')
+    // "Search the web, then make me an image": the router runs web_search before generate_image (providerRouter.ts), so the
+    // search tool is offered for it under every provider. Hosted models already carry it in their baseline.
+    if (imageResearchQuery(promptText || '')) coreToolNames.push('web_search')
     coreToolNames.push(...baselineToolNames(activeProvider))
     // Nexus Intelligence's dispatch tool rides by provider, with the baselines above (toolExposure.ts):
     // without it the router cannot dispatch the Nexus workflow at all (nexus-not-dispatched).
@@ -1706,10 +1724,10 @@ function App() {
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'This model has no native function calling. ForgeClaw supplies a compact manual protocol and routes every call through its existing dispatcher.'
-    const needsManualTools = codingTask || imageUrl !== undefined || relevantTools.length > 0 || complexReasoningTask || qwenDuoDefault || nexusSculptHandoff
+    const needsManualTools = codingTask || attachedImage !== undefined || relevantTools.length > 0 || complexReasoningTask || qwenDuoDefault || nexusSculptHandoff
     const primaryInstruction = imageUrl && isHostedReasoner
       ? `\n\nPRIMARY REASONING POLICY\n${VISION_POLICY}`
-      : imageUrl
+      : attachedImage
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
       : nexusSculptHandoff
         ? '\n\nPRIMARY REASONING POLICY\nThis Nexus self-sculpt request is handed off to the Qwen/Qwen3-8B read → rewrite → sculpt_self chain. Do not dispatch Nexus reasoning for this request. The final result must be attributed to Qwen and must come from actual tool results.'
@@ -2162,7 +2180,7 @@ function App() {
         taskStatus: codingAgentState.taskStatus,
         requiresRepositoryTool: codingTask,
       })}`
-      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt, ...(imageUrl ? { image_url: imageUrl } : {}) }]
+      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt, ...(attachedImage ? { image_url: attachedImage } : {}) }]
       const allToolResults: ToolResult[] = runToolResults
       const toolAttempts: Array<{ name: string; input: string }> = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
@@ -2445,9 +2463,13 @@ function App() {
             generatedImageUrl = takeGeneratedImage(invocationMatch[1])
           }
           directImageCompleted = Boolean(generatedImageUrl)
+          // A picture made after a web search says so beside it: the search's query and what the tool really returned.
+          const searchedFor = conversationMessages
+            .flatMap(m => m.tool_calls ?? [])
+            .find(tc => tc.name === 'web_search' && tc.id.startsWith('deterministic-image-research-'))
           // Keep run URLs, invocation IDs, and enhanced prompts in the
           // execution trace, not in the visible chat bubble beside the image.
-          finalText = directImageCompleted ? '' : imageToolOutput
+          finalText = directImageCompleted ? (searchedFor ? `Searched the web first ("${String(searchedFor.input.query ?? '').slice(0, 120)}") and used what it found as reference for this picture.` : '') : imageToolOutput
           break
         }
 
@@ -3050,7 +3072,7 @@ function App() {
   ]
 
   return (
-    <div style={{ position: 'relative', zIndex: 10, height: '100dvh', display: 'flex', flexDirection: 'column', color: '#e5e5e5', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', zIndex: 10, height: '100%', display: 'flex', flexDirection: 'column', color: '#e5e5e5', overflow: 'hidden' }}>
 
       {newerBuild && (
         <button
@@ -3063,7 +3085,7 @@ function App() {
       {/* Header */}
       <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px clamp(10px, 3vw, 20px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px 12px', background: '#0a0a0a' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button onClick={() => setActiveTab('settings')} style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: 0 }}>⚙</button>
+          <button onClick={() => setActiveTab('settings')} aria-label="Open settings" style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: '6px', minWidth: '36px', minHeight: '36px' }}>⚙</button>
           <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>FORGECLAW</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px 12px', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0, flex: '1 1 auto' }}>
@@ -3078,7 +3100,7 @@ function App() {
                 title={t('header.ghTitle', { state: t(safeGetItem('gh_token') ? 'state.set' : 'state.notSet') })}
                 onClick={() => setActiveTab('settings')}
                 style={{
-                  width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
+                  width: '22px', height: '22px', borderRadius: '3px', cursor: 'pointer',
                   background: safeGetItem('gh_token') ? '#22c55e22' : '#1a1a1a',
                   border: `1px solid ${safeGetItem('gh_token') ? '#22c55e' : '#333'}`,
                   color: safeGetItem('gh_token') ? '#22c55e' : '#444',
@@ -3091,7 +3113,7 @@ function App() {
                 title={t('header.waTitle', { state: t(waConfigured ? 'state.configured' : 'state.notSet') })}
                 onClick={() => setActiveTab('settings')}
                 style={{
-                  width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
+                  width: '22px', height: '22px', borderRadius: '3px', cursor: 'pointer',
                   background: waConfigured ? '#22c55e22' : '#1a1a1a',
                   border: `1px solid ${waConfigured ? '#22c55e' : '#333'}`,
                   color: waConfigured ? '#22c55e' : '#444',
@@ -3108,7 +3130,7 @@ function App() {
       </header>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0', overflowX: 'auto', scrollbarWidth: 'none' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0', overflowX: 'auto', scrollbarWidth: 'none' }}>
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id
           const isAlert = tab.id === 'activity' && unresolvedCount > 0
@@ -3123,10 +3145,15 @@ function App() {
                 borderBottom: isActive ? '2px solid #f97316' : '2px solid transparent',
                 color: isActive ? '#f97316' : (isAlert ? '#eab308' : '#555'),
                 padding: '10px clamp(9px, 2.6vw, 16px)',
-                flexShrink: 0,
+                flex: '0 1 auto',
+                minHeight: '40px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                touchAction: 'manipulation',
                 whiteSpace: 'nowrap',
                 cursor: 'pointer',
-                fontSize: '9px',
+                fontSize: 'clamp(9px, 2.6vw, 11px)',
                 fontWeight: 'bold',
                 letterSpacing: '2px',
                 textTransform: 'uppercase',
@@ -3178,7 +3205,7 @@ function App() {
 
         {/* ── Settings Tab ── */}
         {activeTab === 'settings' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+          <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
 
               {/* ── Foundational governance: read-only canonical projection ── */}
@@ -3787,6 +3814,72 @@ function App() {
               {isVisitor(ghToken) && (
                 <div role="note" style={{ border: '1px solid #3a2a05', background: '#120d02', color: '#eab308', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('public.notice')}</div>
               )}
+              {/* Family-code entry on the locked surface itself: the only other place to enter
+                  the code is Settings → GitHub, which a family member who cannot reach or
+                  find Settings never sees (owner's report from Layla's iPhone, 2026-11-22:
+                  no visible sign-in anywhere). Shown only while locked — no token and no
+                  code yet — and gone the moment a code is entered. The relay still checks
+                  the code on every call; this entry changes no enforcement. */}
+              {isVisitor(ghToken) && (
+                <div
+                  data-testid="family-code-entry"
+                  style={{ border: '1px solid #14532d', background: '#07130b', borderRadius: '6px', padding: '10px 12px', fontFamily: 'monospace' }}
+                >
+                  <div style={{ color: '#22c55e', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                    Family code
+                  </div>
+                  {!familyEntryOpen ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setFamilyEntryOpen(true)}
+                        style={{ width: '100%', background: '#14532d', border: '1px solid #22c55e', color: '#bbf7d0', borderRadius: '4px', padding: '8px 14px', minHeight: '40px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', fontWeight: 'bold', touchAction: 'manipulation' }}
+                      >
+                        Enter the family code
+                      </button>
+                      <div style={{ color: '#5b7a63', fontSize: '10px', marginTop: '6px', lineHeight: 1.5 }}>
+                        Family only: the code the owner shares with you. It unlocks everything on this device — chat, Nexus, tools and images — with no GitHub token.
+                      </div>
+                    </>
+                  ) : (
+                    <form
+                      onSubmit={e => {
+                        e.preventDefault()
+                        const code = familyCodeDraft.trim()
+                        if (!code) return
+                        setFamilyCode(code)
+                        setFamilyCodeState(code)
+                        setFamilyCodeDraft('')
+                        setFamilyEntryOpen(false)
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <input
+                          aria-label="Family code"
+                          type="text"
+                          autoFocus
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          autoComplete="off"
+                          placeholder="Enter the family code"
+                          value={familyCodeDraft}
+                          onChange={e => setFamilyCodeDraft(e.target.value)}
+                          style={{ flex: 1, minWidth: 0, background: '#0a0a0a', color: '#ccc', border: '1px solid #22c55e44', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                        />
+                        <button
+                          type="submit"
+                          style={{ background: '#14532d', border: '1px solid #22c55e', color: '#bbf7d0', borderRadius: '4px', padding: '8px 14px', minHeight: '40px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', fontWeight: 'bold', whiteSpace: 'nowrap', touchAction: 'manipulation' }}
+                        >
+                          Unlock
+                        </button>
+                      </div>
+                      <div style={{ color: '#5b7a63', fontSize: '10px', marginTop: '6px', lineHeight: 1.5 }}>
+                        Family only: the code the owner shares with you. It unlocks everything on this device — chat, Nexus, tools and images — with no GitHub token.
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
               {/* Persisted coding task — visible so a reload reads as a resume. */}
               <CodingAgentStatePanel state={codingAgentState} resumed={Boolean(agentResumedState)} onChange={setCodingAgentState} />
               <LiveExecution
@@ -4175,15 +4268,15 @@ function App() {
         )}
 
         {activeTab === 'activity' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
               <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>{activityView === 'failures' ? t('activity.failures') : t('activity.executionLog')}</span>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <button onClick={() => setActivityView('log')} style={{ background: activityView === 'log' ? '#1a1a1a' : 'none', border: '1px solid #222', color: activityView === 'log' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>{t('activity.log')}</button>
-                <button onClick={() => setActivityView('failures')} style={{ background: activityView === 'failures' ? '#1a1a1a' : 'none', border: unresolvedCount > 0 ? '1px solid #7f1d1d' : '1px solid #222', color: unresolvedCount > 0 ? '#ef4444' : activityView === 'failures' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>{t('activity.failures')}{unresolvedCount > 0 ? ` ${unresolvedCount}` : ''}</button>
+                <button onClick={() => setActivityView('log')} style={{ background: activityView === 'log' ? '#1a1a1a' : 'none', border: '1px solid #222', color: activityView === 'log' ? '#f97316' : '#555', fontSize: '9px', padding: '6px 10px', minHeight: '32px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px', touchAction: 'manipulation' }}>{t('activity.log')}</button>
+                <button onClick={() => setActivityView('failures')} style={{ background: activityView === 'failures' ? '#1a1a1a' : 'none', border: unresolvedCount > 0 ? '1px solid #7f1d1d' : '1px solid #222', color: unresolvedCount > 0 ? '#ef4444' : activityView === 'failures' ? '#f97316' : '#555', fontSize: '9px', padding: '6px 10px', minHeight: '32px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px', touchAction: 'manipulation' }}>{t('activity.failures')}{unresolvedCount > 0 ? ` ${unresolvedCount}` : ''}</button>
                 {activityView === 'log' && activityLog.length > 0 && (
-                  <button onClick={() => setActivityLog([])} style={{ background: 'none', border: '1px solid #222', color: '#444', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>{t('activity.clear')}</button>
+                  <button onClick={() => setActivityLog([])} style={{ background: 'none', border: '1px solid #222', color: '#444', fontSize: '9px', padding: '6px 10px', minHeight: '32px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px', touchAction: 'manipulation' }}>{t('activity.clear')}</button>
                 )}
                 <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{t('activity.summary', { responses: messages.filter(m => m.role === 'assistant').length, tools: messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0) })}</span>
               </div>

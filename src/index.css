@@ -14,6 +14,15 @@ body {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
+/* App-shell touch behaviour: `manipulation` removes the double-tap-zoom gesture
+   delay on controls, so a tap on a tab or button registers as a tap — on iOS a
+   double-tap-zoomable control can swallow the first tap into the gesture,
+   which read as "the tabs do not respond" on the family iPhone. */
+button, a, input, select, textarea, [role="button"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 #root {
   height: 100dvh;
   display: flex;

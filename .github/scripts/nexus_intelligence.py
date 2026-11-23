@@ -7,7 +7,8 @@ Invoked by .github/workflows/nexus-intelligence.yml. Inputs arrive as environmen
 
 Generation is the graded path, unchanged from nexus-llm/train/predict.py --constrained and the
 standalone server: frame = "User: {prompt}\n<|mode:X|>", ConstrainedDecoder over the checkpoint's
-own code, stop after <|/call|> or at <|end|>, max_new 160.
+own code, stop after <|/call|> or at <|end|>, with a 256-token generation ceiling. The effective
+budget is reduced to the room remaining after preserving input that fits the 640-token window.
 
 Provider truth: the checkpoint is reassembled from the base64 parts committed under
 .github/nexus-runtime/ and its sha256 is verified against the Run 25 checkpoint hash recorded
@@ -17,8 +18,8 @@ copy head has no llama.cpp equivalent, and the packaged predict.py reproduces Ru
 predictions byte-for-byte.
 
 Window honesty: the checkpoint window is 640 tokens total (cfg.ctx in the checkpoint). If the
-framed input plus the 160-token generation reserve does not fit, the oldest prompt lines are
-trimmed (the transcript prefix is trimmed last, at token level) and result_meta.txt reports
+framed input itself does not fit, the oldest prompt lines are trimmed first, then task text, then
+the transcript prefix at token level; result_meta.txt reports
 prompt_trimmed=true. Nothing is silently pretended to be in context.
 """
 import base64
@@ -32,7 +33,40 @@ import time
 EXPECTED_SHA256 = "c41852fb0ac11f47c3ce2fc7715e816e95ec2e844e25881637eabaaac87f69b6"
 GITHUB_DIR = pathlib.Path(__file__).resolve().parents[1]
 RUNTIME_SRC = GITHUB_DIR / "nexus-runtime"
-MAX_NEW = 160
+MAX_NEW = 256
+
+
+def generation_budget(ctx_limit: int, prompt_tokens: int) -> int:
+    """Reserve up to MAX_NEW tokens without ever exceeding the model context window."""
+    return max(0, min(MAX_NEW, ctx_limit - prompt_tokens))
+
+
+def prepare_generation_context(task: str, prefix: str, mode: str, ctx_limit: int, encode, decode, bos: int = 2):
+    """Trim only when the input itself exceeds ctx_limit; output uses whatever room remains."""
+    def build(task_text: str, prefix_text: str):
+        return [bos] + encode(f"User: {task_text}\n<|mode:{mode}|>") + encode(prefix_text)
+
+    trimmed = False
+    lines = task.split("\n")
+    text = task
+    ids = build(text, prefix)
+    while len(ids) > ctx_limit and len(lines) > 1:
+        lines = lines[1:]
+        text = "\n".join(lines)
+        trimmed = True
+        ids = build(text, prefix)
+    while len(ids) > ctx_limit and len(text) > 32:
+        text = text[256:]
+        trimmed = True
+        ids = build(text, prefix)
+    if len(ids) > ctx_limit:
+        base_ids = build(text, "")
+        available = max(0, ctx_limit - len(base_ids))
+        prefix_ids = encode(prefix)
+        prefix = decode(prefix_ids[-available:]) if available else ""
+        ids = build(text, prefix)
+        trimmed = True
+    return text, prefix, ids, trimmed
 
 
 def fail(message: str) -> "SystemExit":
@@ -86,7 +120,7 @@ def main() -> int:
 
     sys.path.insert(0, str(work / "train"))
     import torch
-    from common import BOS, SP, frame
+    from common import BOS, SP
     from constrain import ConstrainedDecoder
     from model import Config, NexusLM
 
@@ -103,33 +137,12 @@ def main() -> int:
     def step_logits(ids):
         return model.next_logprobs(ids)
 
-    # ── Frame, with the token-exact window as a hard bound ──────────────────
-    def build_ctx(task_text: str, prefix_text: str):
-        return [BOS] + SP.encode(frame(task_text, mode)) + SP.encode(prefix_text)
-
-    ids = build_ctx(task, prefix)
-    trimmed = False
-    lines = task.split("\n")
-    while len(ids) + MAX_NEW > ctx_limit and len(lines) > 1:
-        lines = lines[1:]
-        trimmed = True
-        ids = build_ctx("\n".join(lines), prefix)
-    text = "\n".join(lines)
-    while len(ids) + MAX_NEW > ctx_limit and len(text) > 32:
-        text = text[256:]
-        trimmed = True
-        ids = build_ctx(text, prefix)
-    max_new = MAX_NEW
-    if len(ids) + max_new > ctx_limit:
-        # The transcript prefix alone crowds the window: keep its newest tokens
-        # (whole result spans live at the end) and shrink the generation reserve.
-        budget = max(0, ctx_limit - MAX_NEW - (len(ids) - len(SP.encode(prefix))))
-        keep = SP.encode(prefix)[-budget:] if budget > 0 else []
-        prefix = SP.decode(keep)
-        ids = build_ctx(text, prefix)
-        trimmed = True
-        if len(ids) + max_new > ctx_limit:
-            max_new = max(16, ctx_limit - len(ids))
+    # The 256-token value is a ceiling, not a prompt-trimming target. Preserve a fitting
+    # 417-token prompt and give the decoder its actual remaining 223-token context budget.
+    text, prefix, ids, trimmed = prepare_generation_context(
+        task, prefix, mode, ctx_limit, SP.encode, SP.decode, BOS
+    )
+    max_new = generation_budget(ctx_limit, len(ids))
 
     gen = dec.generate(step_logits, ids, prefix, max_new=max_new)
     out = SP.decode(gen)
