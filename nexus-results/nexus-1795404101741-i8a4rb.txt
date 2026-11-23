@@ -1,0 +1,1 @@
+<|route:tool|><|call|>{"name":"http_fetch","arguments":{"url":"github_read_file","method":"PATCH","headers":":"}}<|/call|>
