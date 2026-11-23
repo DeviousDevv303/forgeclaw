@@ -216,7 +216,8 @@ import { lessonsForPrompt, PROMPT_CANDIDATE_WINDOW, summarizeLearning } from './
 import { heuristicsForPrompt } from './lib/nexusHeuristics'
 import { skillForPrompt } from './lib/skills'
 import { browserPlaybooksForPrompt } from './lib/browserLearning'
-import { getFamilyCode, isVisitor, setFamilyCode } from './lib/publicRelay'
+import { getFamilyCode, isVisitor, PUBLIC_RELAY_URL, setFamilyCode } from './lib/publicRelay'
+import { toolFetch } from './lib/githubFetch'
 import { checkGithubReadArgs } from './lib/githubArgCheck'
 import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, mergeChannelCalls, readPendingChannelCalls, savePendingChannelCalls, type ChannelCall } from './lib/channelCalls'
 
@@ -896,14 +897,21 @@ function App() {
   // voice to text… whichever or both"): where the Web Speech API does not exist (Firefox,
   // some embedded browsers) the same mic button records with MediaRecorder instead, and the
   // clip is transcribed on GitHub Actions (faster-whisper) into the composer. Transcription
-  // needs the owner's GitHub token — it dispatches a workflow — so a family-code session
-  // gets a plain explanation, never a silent dead button.
+  // dispatches a workflow, so it needs the owner's GitHub token OR a family code (the relay's
+  // family tier, where audio-transcribe.yml is allowlisted — owner decision 2026-11-22);
+  // with neither, a plain explanation, never a silent dead button.
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const recorderRef = useRef<{ stop: () => void } | null>(null)
   const recorderBaseRef = useRef('')
   const recorderSupportedHere = typeof window !== 'undefined' && recorderSupported(window, navigator)
-  const githubApiRequest: GithubRequest = (url, init) => fetch(url, init ?? {})
+  // The same family-aware transport every other workflow feature uses (forgeTools): with a
+  // family code set, toolFetch reroutes Actions API calls through the relay's family tier.
+  // A plain fetch could never take that path.
+  const githubApiRequest: GithubRequest = (url, init) => toolFetch({
+    familyCode: getFamilyCode() || undefined,
+    familyRelayUrl: PUBLIC_RELAY_URL || undefined,
+  }, url, init ?? {})
   const transcribeClip = async (audio: string): Promise<string> => {
     const result = await runAudioTranscription(githubApiRequest, {
       owner: ghOwner || CANONICAL_IDENTITY.owner,
@@ -915,7 +923,7 @@ function App() {
   }
   const startRecording = async () => {
     if (!recorderSupportedHere) { showDictationError(t('chat.dictateUnsupported')); return }
-    if (!resolveGithubToken()) { showDictationError(t('chat.audioNeedsToken')); return }
+    if (!resolveGithubToken() && !getFamilyCode()) { showDictationError(t('chat.audioNeedsToken')); return }
     if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
     setDictationError('')
     let stream: MediaStream
@@ -2905,7 +2913,7 @@ function App() {
         // GitHub Actions first and the transcript — labeled as a voice-message transcript —
         // is what the model receives. A failure keeps the text and the attachment in place
         // and says why, visibly; nothing is sent half-heard.
-        if (!resolveGithubToken()) { showDictationError(t('chat.audioNeedsToken')); return }
+        if (!resolveGithubToken() && !getFamilyCode()) { showDictationError(t('chat.audioNeedsToken')); return }
         setTranscribing(true)
         try {
           const transcript = await transcribeClip(attachedFile.content)

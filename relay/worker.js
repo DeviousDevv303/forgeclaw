@@ -19,6 +19,14 @@
 //   LEARN            optional KV namespace: visitor conversations (for NEXUS) and error reports
 //   OWNER_KEY        secret; the owner's app sends it to export the stored learning/error reports
 //   FAMILY_CODE      optional secret; a simple shared code that unlocks the family tier below
+//   OWNER_CODE       optional secret; the owner's OWN code, held by the owner alone and
+//                    never shared with family. Powers ONLY the /seat-orders routes: the
+//                    family code is family-tier access, not owner authority, and does
+//                    not authorize them (GPT evidence audit, 2026-11-23).
+//   GITHUB_TOKEN_NEXUS  optional secret; fine-grained token: repository nexus-isles only,
+//                     Contents: Read and write. Powers ONLY the /seat-orders routes (Nexus
+//                     Isles owner orders); separate from GITHUB_TOKEN on purpose, so the
+//                     Actions-scoped token above can never write repository contents.
 //   FAMILY_MAX_PER_HOUR    family dispatches per IP per hour, default 300
 //   FAMILY_MAX_CONCURRENT  family-tier runs in progress per workflow, default 6
 //   RESEND_API_KEY   optional secret; with REPORT_EMAIL, error reports are emailed through Resend
@@ -34,7 +42,7 @@ const FAMILY_WORKFLOWS = new Set([
   'qwen3-8b.yml', 'nexus-intelligence.yml', 'generate-image.yml', 'image-analyze.yml',
   'deep-research.yml', 'ddg_search.yml', 'code-review.yml', 'browser-agent.yml',
   'browser-automation.yml', 'shell-exec.yml', 'shell-repair.yml', 'self-sculpt.yml',
-  'site-build.yml', 'search-proxy.yml',
+  'site-build.yml', 'search-proxy.yml', 'audio-transcribe.yml',
 ])
 const ID_RE = /^public-[a-z0-9]{6,12}-[a-z0-9]{6,12}$/
 const MAX_TASK_CHARS = 4000
@@ -420,6 +428,19 @@ function familyAuthorized(request, env) {
   return sameSecret(auth, `Bearer ${env.FAMILY_CODE}`)
 }
 
+/**
+ * Owner authorization for the /seat-orders routes only. The family code is a
+ * SHARED family-tier credential — by design it sits on family devices — so it
+ * proves family access, never owner authority (GPT evidence audit, 2026-11-23:
+ * anyone holding it could otherwise submit entries claiming operator "owner").
+ * These routes require the separate OWNER_CODE, which the owner alone holds.
+ * The family tier's own routes are untouched and keep using familyAuthorized.
+ */
+function ownerAuthorized(request, env) {
+  const auth = request.headers.get('Authorization') || ''
+  return sameSecret(auth, `Bearer ${env.OWNER_CODE}`)
+}
+
 function passthrough(res, cors) {
   return new Response(res.body, {
     status: res.status,
@@ -502,6 +523,267 @@ async function familyProxy(request, env, cors, url) {
   return json({ error: 'not a family-unlocked route' }, 403, cors)
 }
 
+/**
+ * Nexus Isles seat orders (owner directive 2026-11-22, "complete the playable game").
+ *
+ * The resident view's orders chat box composes owner order entries and POSTs them to
+ * /seat-orders here; this route appends them — authenticated with the owner's OWN
+ * code (the OWNER_CODE secret), never the shared family code — to the world's orders
+ * file (DeviousDevv303/nexus-isles, branch live-world, world-data/seat-orders.json),
+ * which the Nexus Isles runner reads fresh on every proposal. Three layers,
+ * separately guaranteed:
+ *
+ *   1. HTTP authorization: only a request carrying the owner code reaches the write
+ *      path at all; unauthorized requests write nothing. The family code does NOT
+ *      authorize these routes: it is a shared family-tier credential, and owner
+ *      authority is a different thing (GPT evidence audit, 2026-11-23).
+ *   2. Deduplication: an entry whose complete canonical identity (seat, tick, the
+ *      exact operator identity, standing, directive, orders) already exists anywhere
+ *      in the seat's file appends nothing — so a stale retry of an order that a
+ *      correction superseded can never resurrect it. Identity is the exact operator
+ *      string, deliberately: deduplication detects a retry of the SAME submission
+ *      by the SAME author; precedence classes are the runner's separate concern
+ *      (layer 3), and two different authors' identical orders are two records, not
+ *      a retry.
+ *   3. Engine precedence: what governs a tick is decided by the Nexus Isles runner
+ *      from the file (owner class beats operator class, last-in-class wins). This
+ *      relay only records; it never decides an outcome, and no response from these
+ *      routes claims the engine accepted anything — "recorded" means recorded.
+ *
+ * The GitHub credential is the GITHUB_TOKEN_NEXUS secret (nexus-isles only, Contents:
+ * Read and write), held server-side only; the browser authenticates with the owner
+ * code alone and never sees any token.
+ */
+const NEXUS_REPO = 'DeviousDevv303/nexus-isles'
+const SEAT_ORDERS_BRANCH = 'live-world'
+const SEAT_ORDERS_FILE = 'world-data/seat-orders.json'
+
+function ghNexus(env, path, init = {}) {
+  return fetch(`https://api.github.com/repos/${NEXUS_REPO}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${env.GITHUB_TOKEN_NEXUS}`, Accept: 'application/vnd.github+json', 'User-Agent': 'forgeclaw-relay', 'X-GitHub-Api-Version': '2022-11-28', ...(init.headers || {}) },
+  })
+}
+
+function b64EncodeUtf8(text) {
+  const bytes = new TextEncoder().encode(text)
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
+
+function b64DecodeUtf8(b64) {
+  const bin = atob(String(b64).replace(/\s/g, ''))
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return new TextDecoder().decode(bytes)
+}
+
+function isRecordValue(v) { return typeof v === 'object' && v !== null && !Array.isArray(v) }
+
+/**
+ * One seat-orders entry, validated and normalized exactly as the Nexus Isles runner's
+ * parser validates it (runner/ownerOrders.ts, parseEntry) — the relay mirrors the
+ * consumer, so anything recorded here parses there, and anything the parser would
+ * refuse is refused here with the parser's own reason. Normalization matches too:
+ * every order gains its args object ({} when absent), so two spellings of the same
+ * order normalize identically. The engine's lawfulness verdict on an order (verb,
+ * amounts, position) is NOT pre-judged here: the validator decides at resolution and
+ * journals ACTION_REJECTED in the open, exactly as for any resident action.
+ */
+export function parseSeatOrderEntry(raw, index = 0) {
+  const where = `seat orders entry ${index}`
+  if (!isRecordValue(raw)) throw new Error(`${where}: must be an object`)
+  const { tick, operator, orders, directive, standing } = raw
+  if (tick !== null && !(typeof tick === 'number' && Number.isSafeInteger(tick) && tick >= 1)) {
+    throw new Error(`${where}: tick must be null (standing) or an integer >= 1`)
+  }
+  if (standing !== undefined && typeof standing !== 'boolean') {
+    throw new Error(`${where}: standing must be a boolean when present`)
+  }
+  if (standing === true && tick !== null) {
+    throw new Error(`${where}: a standing entry carries tick: null`)
+  }
+  if (standing !== true && tick === null) {
+    throw new Error(`${where}: a non-standing entry must name its tick`)
+  }
+  if (typeof operator !== 'string' || operator.length === 0) {
+    throw new Error(`${where}: operator must be a non-empty string naming the author`)
+  }
+  if (!Array.isArray(orders)) throw new Error(`${where}: orders must be an array`)
+  const parsedOrders = orders.map((o, i) => {
+    if (!isRecordValue(o) || typeof o.verb !== 'string' || o.verb.length === 0) {
+      throw new Error(`${where}: orders[${i}] must carry a non-empty verb`)
+    }
+    if (o.args !== undefined && !isRecordValue(o.args)) {
+      throw new Error(`${where}: orders[${i}].args must be an object`)
+    }
+    return { verb: o.verb, args: o.args ?? {} }
+  })
+  if (directive !== undefined && typeof directive !== 'string') {
+    throw new Error(`${where}: directive must be a string when present`)
+  }
+  return {
+    tick,
+    operator,
+    orders: parsedOrders,
+    ...(directive !== undefined ? { directive } : {}),
+    // standing:false and an absent standing are the same logical entry — the
+    // runner distinguishes only standing === true — so normalization drops the
+    // false spelling. Without this, two spellings of one entry would carry two
+    // canonical identities and a retry spelled the other way would append a
+    // second copy of an order already recorded.
+    ...(standing === true ? { standing: true } : {}),
+  }
+}
+
+/** The whole orders file, validated as the runner's parseSeatOrdersFile validates it. */
+export function parseSeatOrdersFile(raw) {
+  if (!isRecordValue(raw)) throw new Error('seat orders file must be a JSON object')
+  if (typeof raw.seat !== 'string' || raw.seat.length === 0) {
+    throw new Error('seat orders file: seat must be a non-empty string')
+  }
+  if (!Array.isArray(raw.entries)) throw new Error('seat orders file: entries must be an array')
+  return { seat: raw.seat, entries: raw.entries.map((e, i) => parseSeatOrderEntry(e, i)) }
+}
+
+/**
+ * Deterministic canonical JSON: object keys sorted at every depth, arrays kept in
+ * order. The same logical value always canonicalizes to the same string, regardless
+ * of the key order it arrived with — duplicate matching compares these strings,
+ * never raw serializations or insertion-ordered stringifies.
+ */
+export function canonicalSeatOrderJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalSeatOrderJson).join(',')}]`
+  if (isRecordValue(value)) {
+    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${canonicalSeatOrderJson(value[k])}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+/**
+ * The index of the file entry that IS the submitted entry, or -1. Identity is the
+ * complete canonical entry — tick, operator (authorization class), standing,
+ * directive and orders, within the one seat's file the route read (seat scoping is
+ * the route's: it reads only the named seat's file and refuses a seat mismatch) —
+ * matched against EVERY entry in the file, not just the latest: a retry of an order
+ * that a later correction superseded is still a duplicate and appends nothing, so
+ * the stale order stays superseded (owner-adopted rule from the GPT audit edge
+ * case, 2026-11-22; the earlier latest-entry-only definition was withdrawn for
+ * exactly this failure). An entry differing in any field — including a different
+ * operator class carrying the same orders — is not a duplicate and appends
+ * normally; precedence between classes is the runner's guarantee, not this check's.
+ */
+export function findSeatOrderDuplicate(file, entry) {
+  const identity = canonicalSeatOrderJson(entry)
+  return file.entries.findIndex(e => canonicalSeatOrderJson(e) === identity)
+}
+
+/**
+ * The live orders file, parsed and normalized: { file, sha } (sha = the blob sha the
+ * next write must name), or null when no orders file exists on live-world. Throws
+ * with a plain reason when GitHub or the file itself cannot be read — callers turn
+ * that into a 502 and write nothing.
+ */
+async function readLiveSeatOrders(env) {
+  const res = await ghNexus(env, `/contents/${SEAT_ORDERS_FILE}?ref=${SEAT_ORDERS_BRANCH}`)
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error(`GitHub ${res.status} reading the orders file`)
+  const data = await res.json()
+  let raw
+  try { raw = JSON.parse(b64DecodeUtf8(data.content || '')) } catch { throw new Error('the existing seat-orders file is not valid JSON; nothing was written') }
+  try {
+    return { file: parseSeatOrdersFile(raw), sha: data.sha }
+  } catch (error) {
+    throw new Error(`the existing seat-orders file could not be parsed (${error instanceof Error ? error.message : String(error)}); nothing was written`)
+  }
+}
+
+async function recordSeatOrder(request, env, cors) {
+  if (!env.GITHUB_TOKEN_NEXUS) return json({ error: 'relay not configured for seat orders' }, 503, cors)
+  let body
+  try { body = await request.json() } catch { return json({ error: 'body must be JSON {"seat": "...", "entry": {...}}' }, 400, cors) }
+  const seat = isRecordValue(body) ? body.seat : undefined
+  if (typeof seat !== 'string' || seat.length === 0) return json({ error: 'seat must be a non-empty string' }, 400, cors)
+  let entry
+  try {
+    entry = parseSeatOrderEntry(isRecordValue(body) ? body.entry : undefined)
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : String(error) }, 400, cors)
+  }
+  // This route is the owner's own: the router's gate already authenticated the
+  // caller with the OWNER_CODE — the owner's distinct credential; the shared
+  // family code does not authorize this route — so an entry claiming another
+  // author is refused, never recorded.
+  if (entry.operator !== 'owner') {
+    return json({ error: 'this route records owner orders only: entry.operator must be "owner"' }, 400, cors)
+  }
+  // Read–check–append–write, with one retry when a concurrent append moves the file
+  // between our read and our write (the duplicate check runs again on the retry, so
+  // a raced identical submission still appends at most once).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let live
+    try {
+      live = await readLiveSeatOrders(env)
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : String(error) }, 502, cors)
+    }
+    if (!live) {
+      return json({ error: `no seat-orders file exists on ${SEAT_ORDERS_BRANCH} for seat '${seat}'; the relay records orders only into an existing orders file and never creates world state` }, 409, cors)
+    }
+    if (live.file.seat !== seat) {
+      return json({ error: `seat mismatch: the live orders file is for seat '${live.file.seat}', not '${seat}'` }, 400, cors)
+    }
+    if (findSeatOrderDuplicate(live.file, entry) >= 0) {
+      return json({ status: 'duplicate', seat, tick: entry.tick, sha: live.sha }, 200, cors)
+    }
+    const text = `${JSON.stringify({ seat: live.file.seat, entries: [...live.file.entries, entry] }, null, 2)}\n`
+    const res = await ghNexus(env, `/contents/${SEAT_ORDERS_FILE}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: `seat-orders: owner entry for seat ${seat}, tick ${entry.tick === null ? 'standing' : entry.tick}`,
+        content: b64EncodeUtf8(text),
+        branch: SEAT_ORDERS_BRANCH,
+        sha: live.sha,
+      }),
+    })
+    if (res.ok) {
+      const written = await res.json().catch(() => null)
+      return json({ status: 'recorded', seat, tick: entry.tick, sha: written?.content?.sha || null }, 200, cors)
+    }
+    if ((res.status === 409 || res.status === 422) && attempt === 0) continue
+    return json({ error: `GitHub ${res.status} writing the orders file` }, 502, cors)
+  }
+  return json({ error: 'the orders file kept changing under the write; try again' }, 502, cors)
+}
+
+/**
+ * Status read: the entries currently recorded for the seat, the orders file's blob
+ * sha, and the sha of the latest commit that touched it. This reports what the
+ * relay has recorded — never what the engine has accepted or resolved; resolution
+ * is visible in the world journal, which the viewer already renders.
+ */
+async function readSeatOrders(request, env, cors, url) {
+  if (!env.GITHUB_TOKEN_NEXUS) return json({ error: 'relay not configured for seat orders' }, 503, cors)
+  const seat = url.searchParams.get('seat') || ''
+  if (!seat) return json({ error: 'seat query parameter is required' }, 400, cors)
+  let live
+  try {
+    live = await readLiveSeatOrders(env)
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : String(error) }, 502, cors)
+  }
+  if (!live || live.file.seat !== seat) {
+    return json({ error: `no seat-orders file exists on ${SEAT_ORDERS_BRANCH} for seat '${seat}'` }, 404, cors)
+  }
+  let commit = null
+  try {
+    const res = await ghNexus(env, `/commits?path=${encodeURIComponent(SEAT_ORDERS_FILE)}&sha=${SEAT_ORDERS_BRANCH}&per_page=1`)
+    if (res.ok) commit = (await res.json())?.[0]?.sha || null
+  } catch { /* the recorded entries are the substance; a failed commit lookup reports null, never a guess */ }
+  return json({ seat, entries: live.file.entries, sha: live.sha, commit }, 200, cors)
+}
+
 export default {
   async fetch(request, env) {
     const cors = corsHeaders(request, env)
@@ -515,6 +797,13 @@ export default {
         if (!env.FAMILY_CODE) return json({ error: 'family mode is not configured' }, 503, cors)
         if (!familyAuthorized(request, env)) return json({ error: 'family code required' }, 401, cors)
         return await familyProxy(request, env, cors, url)
+      }
+      if (url.pathname === '/seat-orders') {
+        if (!env.OWNER_CODE) return json({ error: 'seat orders are not configured' }, 503, cors)
+        if (!ownerAuthorized(request, env)) return json({ error: 'owner code required' }, 401, cors)
+        if (request.method === 'POST') return await recordSeatOrder(request, env, cors)
+        if (request.method === 'GET') return await readSeatOrders(request, env, cors, url)
+        return json({ error: 'method not allowed' }, 405, cors)
       }
       if (request.method === 'POST' && url.pathname === '/v1/reason') return await startReasoning(request, env, cors)
       if (request.method === 'POST' && url.pathname === '/v1/errors') return await receiveErrors(request, env, cors)
