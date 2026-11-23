@@ -70,6 +70,9 @@ jobs:
           cache: pip
           cache-dependency-path: .github/workflows/nexus-intelligence.yml
 
+      - name: Test Nexus generation budget
+        run: python .github/scripts/test_nexus_intelligence.py
+
       - name: Install inference dependencies
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu torch
