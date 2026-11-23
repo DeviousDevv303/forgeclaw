@@ -4,7 +4,7 @@
 // input, per-IP and concurrency limits, and results read from the run's own artifact.
 import JSZip from 'jszip'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import worker, { manipulationFlags, readZipEntries, sanitizeErrorEntries } from '../../relay/worker.js'
+import worker, { canonicalSeatOrderJson, findSeatOrderDuplicate, manipulationFlags, parseSeatOrderEntry, parseSeatOrdersFile, readZipEntries, sanitizeErrorEntries } from '../../relay/worker.js'
 import { verifyVisitorRecords } from '../lib/visitorLearning'
 
 const ORIGIN = 'https://deviousdevv303.github.io'
@@ -456,5 +456,184 @@ describe('relay worker family tier', () => {
     expect(zip.status).toBe(200)
     expect(new Uint8Array(await zip.arrayBuffer())).toEqual(zipBytes)
     expect((await worker.fetch(fam(`${FAM}/artifacts/10/zip`), famEnv())).status).toBe(403)
+  })
+})
+
+describe('relay worker — /seat-orders (Nexus Isles owner orders)', () => {
+  // Evidence for the owner's pre-merge checklist (2026-11-22). Three layers, tested
+  // separately: HTTP authorization, deduplication, engine precedence. The HTTP and
+  // dedupe tests run against a MOCKED persistence boundary: they prove the bytes the
+  // relay hands to the GitHub Contents API, not a live write to GitHub. Engine
+  // precedence is proven against the real Nexus Isles runner in that repo's suite
+  // (runner/ownerOrders.ts resolveOrdersForTick), on files serialized by this relay.
+  const CODE = 'lighthouse7'
+  const NEXUS = 'https://api.github.com/repos/DeviousDevv303/nexus-isles'
+  const FILE_URL = `${NEXUS}/contents/world-data/seat-orders.json`
+  const seatEnv = (extra: Record<string, unknown> = {}) => env({ FAMILY_CODE: CODE, GITHUB_TOKEN_NEXUS: 'nexus-test-token', ...extra })
+  const auth = { Authorization: `Bearer ${CODE}` }
+  const post = (body: unknown, e = seatEnv(), headers: Record<string, string> = auth) =>
+    worker.fetch(req('/seat-orders', { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body), headers }), e)
+  const get = (query: string, e = seatEnv(), headers: Record<string, string> = auth) =>
+    worker.fetch(req(`/seat-orders${query}`, { headers }), e)
+
+  const SEED = `${JSON.stringify({
+    seat: 'cristian',
+    entries: [
+      { tick: 34, operator: 'muse', orders: [{ verb: 'gather', args: {} }, { verb: 'eat', args: {} }] },
+      { tick: null, standing: true, operator: 'muse', orders: [{ verb: 'gather', args: {} }] },
+    ],
+  }, null, 2)}\n`
+
+  /** A virtual live-world orders file behind a mocked GitHub Contents API. */
+  function stubNexus(initial: string | null) {
+    let text = initial
+    let sha = 'sha-0'
+    let puts = 0
+    const putBodies: Array<Record<string, unknown>> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      const u = String(url)
+      if (u === `${FILE_URL}?ref=live-world`) {
+        if (text === null) return new Response('{}', { status: 404 })
+        return Response.json({ content: Buffer.from(text, 'utf8').toString('base64'), sha })
+      }
+      if (u === FILE_URL && init?.method === 'PUT') {
+        puts++
+        const body = JSON.parse(String(init.body)) as { content: string; branch: string; sha: string }
+        putBodies.push(body)
+        text = Buffer.from(body.content, 'base64').toString('utf8')
+        sha = `sha-${puts}`
+        return Response.json({ content: { sha } })
+      }
+      if (u.startsWith(`${NEXUS}/commits?`)) return Response.json([{ sha: 'commit-1' }])
+      return new Response('{}', { status: 404 })
+    }))
+    return { puts: () => puts, putBodies, text: () => text }
+  }
+
+  describe('HTTP authorization layer', () => {
+    it('rejects a missing or wrong family code and writes nothing', async () => {
+      const gh = stubNexus(SEED)
+      const entry = { seat: 'cristian', entry: { tick: 35, operator: 'owner', orders: [] } }
+      expect((await post(entry, seatEnv(), {})).status).toBe(401)
+      expect((await post(entry, seatEnv(), { Authorization: 'Bearer wrong-code' })).status).toBe(401)
+      expect((await get('?seat=cristian', seatEnv(), {})).status).toBe(401)
+      expect(gh.puts()).toBe(0)
+    })
+
+    it('answers 503 and calls nothing when the Nexus token secret is absent', async () => {
+      let calls = 0
+      vi.stubGlobal('fetch', vi.fn(async () => { calls++; return new Response('{}', { status: 404 }) }))
+      const e = env({ FAMILY_CODE: CODE })
+      expect((await post({ seat: 'cristian', entry: { tick: 35, operator: 'owner', orders: [] } }, e)).status).toBe(503)
+      expect((await get('?seat=cristian', e)).status).toBe(503)
+      expect(calls).toBe(0)
+    })
+
+    it('records an authorized owner entry: appended last, existing entries preserved, answered "recorded" — never "accepted"', async () => {
+      const gh = stubNexus(SEED)
+      const res = await post({ seat: 'cristian', entry: { tick: 35, operator: 'owner', directive: 'Hold Centro; keep gathering', orders: [] } })
+      expect(res.status).toBe(200)
+      const body = await res.json() as Record<string, unknown>
+      expect(body).toMatchObject({ status: 'recorded', seat: 'cristian', tick: 35 })
+      expect(JSON.stringify(body)).not.toContain('accepted')
+      expect(gh.puts()).toBe(1)
+      expect(gh.putBodies[0]).toMatchObject({ branch: 'live-world', sha: 'sha-0' })
+      const file = parseSeatOrdersFile(JSON.parse(gh.text()!))
+      expect(file.entries).toHaveLength(3)
+      expect(file.entries[0]).toEqual({ tick: 34, operator: 'muse', orders: [{ verb: 'gather', args: {} }, { verb: 'eat', args: {} }] })
+      expect(file.entries[1]).toEqual({ tick: null, standing: true, operator: 'muse', orders: [{ verb: 'gather', args: {} }] })
+      expect(file.entries[2]).toEqual({ tick: 35, operator: 'owner', directive: 'Hold Centro; keep gathering', orders: [] })
+    })
+
+    it.each([
+      ['tick 0', { tick: 0, operator: 'owner', orders: [] }],
+      ['a fractional tick', { tick: 2.5, operator: 'owner', orders: [] }],
+      ['standing with a tick', { tick: 35, standing: true, operator: 'owner', orders: [] }],
+      ['no tick and not standing', { tick: null, operator: 'owner', orders: [] }],
+      ['a non-owner operator (this route is owner-only)', { tick: 35, operator: 'muse', orders: [] }],
+      ['an empty verb', { tick: 35, operator: 'owner', orders: [{ verb: '' }] }],
+      ['args that are not an object', { tick: 35, operator: 'owner', orders: [{ verb: 'gather', args: [] }] }],
+      ['a non-string directive', { tick: 35, operator: 'owner', directive: 42, orders: [] }],
+    ])('rejects a malformed entry (%s) with 400 and writes nothing', async (_name, entry) => {
+      const gh = stubNexus(SEED)
+      expect((await post({ seat: 'cristian', entry })).status).toBe(400)
+      expect(gh.puts()).toBe(0)
+    })
+
+    it('rejects a missing seat, a seat the live file does not name, and a non-JSON body', async () => {
+      const gh = stubNexus(SEED)
+      expect((await post({ entry: { tick: 35, operator: 'owner', orders: [] } })).status).toBe(400)
+      expect((await post({ seat: 'scout', entry: { tick: 35, operator: 'owner', orders: [] } })).status).toBe(400)
+      expect((await post('this is not json')).status).toBe(400)
+      expect(gh.puts()).toBe(0)
+    })
+
+    it('never creates an orders file: a missing file is a 409 and nothing is written', async () => {
+      const gh = stubNexus(null)
+      expect((await post({ seat: 'cristian', entry: { tick: 35, operator: 'owner', orders: [] } })).status).toBe(409)
+      expect(gh.puts()).toBe(0)
+    })
+  })
+
+  describe('deduplication layer (mocked persistence boundary)', () => {
+    const A = { seat: 'cristian', entry: { tick: 36, operator: 'owner', orders: [{ verb: 'gather' }] } }
+    const B = { seat: 'cristian', entry: { tick: 36, operator: 'owner', orders: [{ verb: 'eat' }] } }
+
+    it('an identical resubmission is a duplicate and appends nothing', async () => {
+      const gh = stubNexus(SEED)
+      expect(((await (await post(A)).json()) as { status: string }).status).toBe('recorded')
+      expect(((await (await post(A)).json()) as { status: string }).status).toBe('duplicate')
+      expect(gh.puts()).toBe(1)
+    })
+
+    it('a stale retry after a changed correction appends nothing and the persisted bytes stay identical', async () => {
+      const gh = stubNexus(SEED)
+      expect(((await (await post(A)).json()) as { status: string }).status).toBe('recorded')
+      expect(((await (await post(B)).json()) as { status: string }).status).toBe('recorded')
+      const afterCorrection = gh.text()
+      expect(((await (await post(A)).json()) as { status: string }).status).toBe('duplicate')
+      expect(gh.puts()).toBe(2)
+      expect(gh.text()).toBe(afterCorrection)
+    })
+
+    it('canonical identity is deterministic: key order, in the entry and inside args, does not matter', () => {
+      const one = parseSeatOrderEntry({ tick: 36, operator: 'owner', orders: [{ verb: 'move', args: { to: 'mercado', via: 'bridge' } }] })
+      const two = parseSeatOrderEntry({ orders: [{ args: { via: 'bridge', to: 'mercado' }, verb: 'move' }], operator: 'owner', tick: 36 })
+      expect(canonicalSeatOrderJson(one)).toBe(canonicalSeatOrderJson(two))
+      const file = parseSeatOrdersFile({ seat: 'cristian', entries: [one] })
+      expect(findSeatOrderDuplicate(file, two)).toBe(0)
+    })
+
+    it('duplicate matching is scoped by authorization class: same orders, different operator is not a duplicate', () => {
+      const file = parseSeatOrdersFile({ seat: 'cristian', entries: [{ tick: 36, operator: 'muse', orders: [{ verb: 'gather', args: {} }] }] })
+      const ownerSpelling = parseSeatOrderEntry({ tick: 36, operator: 'owner', orders: [{ verb: 'gather' }] })
+      expect(findSeatOrderDuplicate(file, ownerSpelling)).toBe(-1)
+      const museSpelling = parseSeatOrderEntry({ tick: 36, operator: 'muse', orders: [{ verb: 'gather' }] })
+      expect(findSeatOrderDuplicate(file, museSpelling)).toBe(0)
+    })
+
+    it('standing:false and an absent standing are one identity', () => {
+      const withFalse = parseSeatOrderEntry({ tick: 36, operator: 'owner', orders: [], standing: false })
+      const absent = parseSeatOrderEntry({ tick: 36, operator: 'owner', orders: [] })
+      expect(withFalse).toEqual(absent)
+      expect(canonicalSeatOrderJson(withFalse)).toBe(canonicalSeatOrderJson(absent))
+    })
+  })
+
+  describe('status read', () => {
+    it('returns what is recorded — entries, file sha, latest commit — and nothing about resolution', async () => {
+      stubNexus(SEED)
+      await post({ seat: 'cristian', entry: { tick: 35, operator: 'owner', orders: [{ verb: 'eat' }] } })
+      const res = await get('?seat=cristian')
+      expect(res.status).toBe(200)
+      const body = await res.json() as { seat: string; entries: unknown[]; sha: string; commit: string }
+      expect(body.seat).toBe('cristian')
+      expect(body.entries).toHaveLength(3)
+      expect(body.sha).toBe('sha-1')
+      expect(body.commit).toBe('commit-1')
+      expect(JSON.stringify(body)).not.toContain('resolved')
+      expect((await get('')).status).toBe(400)
+      expect((await get('?seat=scout')).status).toBe(404)
+    })
   })
 })
