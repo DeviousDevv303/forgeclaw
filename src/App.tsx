@@ -132,7 +132,7 @@ import type { ProviderId } from './lib/modelProviders'
 import { RESPONSE_LANGUAGE_INSTRUCTIONS, withResponseLanguage } from './lib/responseLanguage'
 import { fetchDeployedBuild, isNewerBuildAvailable, type DeployedBuild } from './lib/buildFreshness'
 import type { AIMessage } from './lib/ai/types'
-import { sendViaRouter, isQwenProvider, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, metaProvider, openrouterProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
+import { sendViaRouter, isQwenProvider, isResearchRequest, testProviderKey, corpusProvider, moonshotProvider, anthropicProvider, metaProvider, openrouterProvider, localInferenceProvider, providerSupportsTools } from './lib/ai/providerRouter'
 import { resolveAnthropicModel } from './lib/ai/providers/anthropicProvider'
 import { diagKeyFormat } from './lib/diagKeyFormat'
 import { isToolFailureOutput } from './lib/toolOutcome'
@@ -1342,6 +1342,21 @@ function App() {
     // so the first answer was discarded when it arrived and a duplicate workflow run was dispatched.
     // STOP is the way to abandon a running request.
     if (activeRunRef.current) return
+    // Fail closed at the UI boundary too: the Nexus router guard should normally
+    // reject research, but no Nexus tool/workflow may be dispatched for it.
+    if (activeProvider === 'nexus-intelligence' && !imageUrl && isResearchRequest(promptText)) {
+      const explanation = 'Nexus Intelligence Run 25 is a small tool-call specialist, not a reliable research or web-search model. No research workflow was started and no findings are verified. Switch to Qwen or Kimi in Settings for sourced research.'
+      const now = Date.now()
+      setMessages(prev => [...prev,
+        { id: (now - 1).toString(), role: 'user', content: promptText, timestamp: now },
+        { id: now.toString(), role: 'assistant', content: explanation, timestamp: now, provider: 'Nexus Intelligence', model: 'nexus-run25', agentPhase: 'BLOCKED' },
+      ])
+      setRequestStatus('blocked')
+      setLastRequestError(explanation)
+      setLastRequestLatencyMs(0)
+      emitFailure({ source: 'forgemind', severity: 'warning', message: explanation })
+      return
+    }
     hiddenDuringRunRef.current = typeof document !== 'undefined' && document.hidden
     // A run re-sent after the app was left or closed starts here: say it is connected again and working.
     if (options.autoRetried || options.resumedAfterInterrupt) showConnectionNotice('back')

@@ -53,4 +53,16 @@ describe('NEXUS on a tool-less chat turn', () => {
     await waitFor(() => expect(document.body.textContent).toContain('STATUS: BLOCKED'), { timeout: 8000 })
     expect(document.body.textContent).toContain('Repository evidence was not obtained from an actual GitHub tool result')
   })
+
+  it('blocks the live Nexus research prompt before dispatching any model or workflow call', async () => {
+    localStorage.setItem('fm_provider', 'nexus-intelligence')
+    const { default: App } = await import('./App')
+    render(<App />)
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'Lets do some research into that new human like AI from Nuance Labs' } })
+    fireEvent.keyDown(box, { key: 'Enter' })
+    await waitFor(() => expect(document.body.textContent).toContain('No research workflow was started and no findings are verified'))
+    expect(fetchMock.mock.calls.some(([url]) => /actions\/workflows|nexus_intelligence|nexus_reason/i.test(String(url)))).toBe(false)
+    expect(document.body.textContent).not.toContain('Inspect gmail_send failure')
+  })
 })
