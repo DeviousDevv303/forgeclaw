@@ -244,8 +244,6 @@ import { leftPageSince, visibilityMark, waitMs, waitUntilVisible } from './lib/p
 import { QWEN_RUN_EXPIRED_NOTE, isQwenRunResumable } from './lib/qwenRunResume'
 import { ConnectionToast, type ConnectionNotice } from './components/ConnectionToast'
 import { currentDateNote, needsCurrentInfo } from './lib/currentInfo'
-import { imageResearchQuery } from './lib/imageResearch'
-import { photoFollowUpImage } from './lib/photoFollowUp'
 import { baselineToolNames, BROWSER_GUIDANCE, continuesImageTurn, isFollowUp, mergeRequested, nexusDispatchToolNames, toolsForUrls, ERROR_PLAN_GUIDANCE, FUNDS_GUIDANCE, HOSTED_TOOL_PROVIDERS, isRouterIssued, NO_TOOLS_NOTICE, repeatedCallLimit, RESEARCH_GUIDANCE, SELF_SCULPT_GUIDANCE, SHELL_EXEC_GUIDANCE, SITE_DEPLOY_GUIDANCE, toolCallRefusal, truncatedToolCallResult } from './lib/toolExposure'
 import { withForgeClawSignature } from './lib/signature'
 import { attestedUrlsForConversation, isAttestedLink } from './lib/linkAttestation'
@@ -787,8 +785,26 @@ function App() {
   // button beside Send runs the browser's speech recognition and types what it hears into
   // the composer. Web Speech API; iOS Safari supports it as webkitSpeechRecognition.
   const [dictating, setDictating] = useState(false)
+  // Why dictation last failed, in plain words under the composer. Dictation failures used to
+  // be swallowed whole (onerror only reset state), so a blocked or missing mic made the
+  // button look completely dead — legible failure is the rule: every failure path lands here.
+  const [dictationError, setDictationError] = useState('')
   const dictationRef = useRef<{ stop: () => void } | null>(null)
   const dictationBaseRef = useRef('')
+  const dictationErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showDictationError = (message: string) => {
+    if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
+    setDictationError(message)
+    dictationErrorTimerRef.current = setTimeout(() => setDictationError(''), 9000)
+  }
+  useEffect(() => () => {
+    if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
+    // Never leave the mic hot after the composer is gone; invalidate the session first so a
+    // final in-flight result writes nothing.
+    const rec = dictationRef.current
+    dictationRef.current = null
+    rec?.stop()
+  }, [])
   const speechSupported = typeof window !== 'undefined' && !!((window as unknown as { SpeechRecognition?: unknown }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition)
   const toggleDictation = () => {
     if (dictating) { dictationRef.current?.stop(); return }
@@ -796,33 +812,47 @@ function App() {
       SpeechRecognition?: new () => {
         lang: string; interimResults: boolean; continuous: boolean
         onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-        onend: (() => void) | null; onerror: (() => void) | null
+        onend: (() => void) | null; onerror: ((event: { error?: string }) => void) | null
         start: () => void; stop: () => void
       }
       webkitSpeechRecognition?: new () => {
         lang: string; interimResults: boolean; continuous: boolean
         onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-        onend: (() => void) | null; onerror: (() => void) | null
+        onend: (() => void) | null; onerror: ((event: { error?: string }) => void) | null
         start: () => void; stop: () => void
       }
     }
     const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition
-    if (!Ctor) return
+    if (!Ctor) { showDictationError(t('chat.dictateUnsupported')); return }
+    if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
+    setDictationError('')
     const rec = new Ctor()
     rec.lang = navigator.language || 'en-US'
     rec.interimResults = true
     rec.continuous = true
     dictationBaseRef.current = input ? (input.endsWith(' ') ? input : `${input} `) : ''
     rec.onresult = event => {
+      // A session invalidated by a send or an unmount ignores results entirely — a stopping
+      // recognizer may still deliver one final result, and it must not write text back.
+      if (dictationRef.current !== rec) return
       let text = ''
       for (let i = 0; i < event.results.length; i++) text += event.results[i][0].transcript
       setInput(dictationBaseRef.current + text)
     }
     rec.onend = () => { setDictating(false); dictationRef.current = null }
-    rec.onerror = () => { setDictating(false); dictationRef.current = null }
+    rec.onerror = event => {
+      setDictating(false); dictationRef.current = null
+      const code = event?.error || ''
+      if (code === 'aborted') return // the user stopped it themselves — not a failure
+      if (code === 'not-allowed' || code === 'service-not-allowed') showDictationError(t('chat.dictateBlocked'))
+      else if (code === 'audio-capture') showDictationError(t('chat.dictateNoMic'))
+      else if (code === 'network') showDictationError(t('chat.dictateNetwork'))
+      else if (code === 'no-speech') showDictationError(t('chat.dictateNoSpeech'))
+      else showDictationError(t('chat.dictateFailed', { error: code || 'unknown' }))
+    }
     dictationRef.current = rec
     setDictating(true)
-    try { rec.start() } catch { setDictating(false); dictationRef.current = null }
+    try { rec.start() } catch { setDictating(false); dictationRef.current = null; showDictationError(t('chat.dictateStartFailed')) }
   }
   // Shown briefly when Enter is pressed while a request is still running (the send is ignored).
   const [busyNotice, setBusyNotice] = useState(false)
@@ -1474,14 +1504,7 @@ function App() {
       : null
     // Only Claude and Kimi receive the picture itself; any other provider would answer without seeing it.
     // analyze_image reads the picture from here; it never travels in the prompt text.
-    // A question about the picture just analyzed arrives with no attachment of its own. For the providers that have it
-    // analyzed on Actions (Qwen, Nexus), the same picture rides this turn so the vision workflow answers the new
-    // question; without it the text-only model answered from the analysis text alone (photoFollowUp.ts).
-    const photoFollowImage = !imageUrl && (activeProvider === 'nexus-intelligence' || (isQwenProvider(activeProvider) && activeProvider !== 'corpus')) && !isVisitor(ghToken || '')
-      ? photoFollowUpImage(messagesRef.current, promptText)
-      : undefined
-    const attachedImage = imageUrl ?? photoFollowImage
-    rememberAttachedImage(attachedImage)
+    rememberAttachedImage(imageUrl)
     // Claude and Kimi see the picture; Qwen has it analyzed on Actions (owner token). The corpus
     // model and free mode have no way to see it, so they say so instead of answering blind.
     if (imageUrl && !HOSTED_TOOL_PROVIDERS.has(activeProvider) && (activeProvider === 'corpus' || isVisitor(ghToken || ''))) {
@@ -1675,7 +1698,7 @@ function App() {
     // Kimi on any "analyze/review/debug" prompt was told to hand the task to the slow Qwen workflow
     // and was given qwen_reason on every coding task.
     const isHostedReasoner = HOSTED_TOOL_PROVIDERS.has(activeProvider) && !qwenDuoDefault
-    const complexReasoningTask = !attachedImage && !isHostedReasoner && shouldDispatchComplexTaskToQwen(promptText)
+    const complexReasoningTask = !imageUrl && !isHostedReasoner && shouldDispatchComplexTaskToQwen(promptText)
     const coreToolNames = (codingTask
       ? ['github_repo_state', 'coding_task_update', 'shell_exec', 'qwen_reason', 'ask_qwen']
       : qwenDuoDefault || complexReasoningTask || nexusSculptHandoff ? ['qwen_reason'] : [])
@@ -1687,12 +1710,9 @@ function App() {
     }
     if (nexusSculptHandoff) coreToolNames.push('github_read_file', 'sculpt_self')
     // Claude and Kimi see the picture directly; analyze_image is the URL-based workflow for the others.
-    if (attachedImage && !isHostedReasoner) coreToolNames.push('analyze_image')
+    if (imageUrl && !isHostedReasoner) coreToolNames.push('analyze_image')
     // Questions about what is current get gathered sources, whatever the wording (currentInfo.ts).
     if (needsCurrentInfo(promptText)) coreToolNames.push('deep_research')
-    // "Search the web, then make me an image": the router runs web_search before generate_image (providerRouter.ts), so the
-    // search tool is offered for it under every provider. Hosted models already carry it in their baseline.
-    if (imageResearchQuery(promptText || '')) coreToolNames.push('web_search')
     coreToolNames.push(...baselineToolNames(activeProvider))
     // Nexus Intelligence's dispatch tool rides by provider, with the baselines above (toolExposure.ts):
     // without it the router cannot dispatch the Nexus workflow at all (nexus-not-dispatched).
@@ -1718,10 +1738,10 @@ function App() {
     const runtimeToolInstruction = providerSupportsTools(normalizedActiveModel, activeProvider)
       ? 'Native tool calling is available. Use tools when they are needed to complete the objective.'
       : 'This model has no native function calling. ForgeClaw supplies a compact manual protocol and routes every call through its existing dispatcher.'
-    const needsManualTools = codingTask || attachedImage !== undefined || relevantTools.length > 0 || complexReasoningTask || qwenDuoDefault || nexusSculptHandoff
+    const needsManualTools = codingTask || imageUrl !== undefined || relevantTools.length > 0 || complexReasoningTask || qwenDuoDefault || nexusSculptHandoff
     const primaryInstruction = imageUrl && isHostedReasoner
       ? `\n\nPRIMARY REASONING POLICY\n${VISION_POLICY}`
-      : attachedImage
+      : imageUrl
       ? '\n\nPRIMARY REASONING POLICY\nUse analyze_image for the attached image. Do not answer from local model reasoning before the vision workflow result is available.'
       : nexusSculptHandoff
         ? '\n\nPRIMARY REASONING POLICY\nThis Nexus self-sculpt request is handed off to the Qwen/Qwen3-8B read → rewrite → sculpt_self chain. Do not dispatch Nexus reasoning for this request. The final result must be attributed to Qwen and must come from actual tool results.'
@@ -2174,7 +2194,7 @@ function App() {
         taskStatus: codingAgentState.taskStatus,
         requiresRepositoryTool: codingTask,
       })}`
-      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt, ...(attachedImage ? { image_url: attachedImage } : {}) }]
+      const conversationMessages: AIMessage[] = [...historyMessages, { role: 'user', content: effectivePrompt, ...(imageUrl ? { image_url: imageUrl } : {}) }]
       const allToolResults: ToolResult[] = runToolResults
       const toolAttempts: Array<{ name: string; input: string }> = []
       const chainSteps: import('./types/reasoning').ReasoningStep[] = []
@@ -2457,13 +2477,9 @@ function App() {
             generatedImageUrl = takeGeneratedImage(invocationMatch[1])
           }
           directImageCompleted = Boolean(generatedImageUrl)
-          // A picture made after a web search says so beside it: the search's query and what the tool really returned.
-          const searchedFor = conversationMessages
-            .flatMap(m => m.tool_calls ?? [])
-            .find(tc => tc.name === 'web_search' && tc.id.startsWith('deterministic-image-research-'))
           // Keep run URLs, invocation IDs, and enhanced prompts in the
           // execution trace, not in the visible chat bubble beside the image.
-          finalText = directImageCompleted ? (searchedFor ? `Searched the web first ("${String(searchedFor.input.query ?? '').slice(0, 120)}") and used what it found as reference for this picture.` : '') : imageToolOutput
+          finalText = directImageCompleted ? '' : imageToolOutput
           break
         }
 
@@ -2731,6 +2747,11 @@ function App() {
       }
     }
 
+    // Sending ends dictation: a live session would otherwise write its captured base text
+    // back into the cleared composer on the next result, resurrecting the message just sent.
+    // Nulling the ref first makes the session's result handler ignore the final result a
+    // stopping recognizer may still deliver.
+    if (dictationRef.current) { const rec = dictationRef.current; dictationRef.current = null; rec.stop() }
     setInput('')
     setAttachedFile(null)
     await sendPrompt(promptText, imageUrl, { attachmentName: attachedFile?.name })
@@ -4080,7 +4101,7 @@ function App() {
                       onClick={toggleDictation}
                       title={dictating ? 'Stop dictation' : 'Dictate — tap and talk'}
                       aria-label={dictating ? 'Stop dictation' : 'Dictate'}
-                      style={{ background: dictating ? '#7f1d1d' : '#0d0d0f', color: dictating ? '#fecaca' : '#888', minWidth: '48px', height: '36px', padding: '0 6px', borderRadius: '10px', border: `1px solid ${dictating ? '#ef4444' : '#2e2e33'}`, cursor: 'pointer', fontSize: '15px', flexShrink: 0 }}
+                      style={{ background: dictating ? '#7f1d1d' : '#0d0d0f', color: dictating ? '#fecaca' : '#888', minWidth: '48px', height: '36px', padding: '0 6px', borderRadius: '10px', border: `1px solid ${dictating ? '#ef4444' : '#2e2e33'}`, cursor: 'pointer', fontSize: '15px', flexShrink: 0, animation: dictating ? 'micPulse 1.2s ease-in-out infinite' : undefined }}
                     >
                       🎤
                     </button>
@@ -4100,6 +4121,12 @@ function App() {
                 )}
                 {busyNotice && (
                   <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.busyNotice')}</div>
+                )}
+                {dictating && (
+                  <div role="status" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{t('chat.dictateListening')}</div>
+                )}
+                {dictationError && (
+                  <div role="alert" style={{ padding: '4px 12px 0', fontSize: '11px', fontFamily: 'monospace', color: '#fca5a5' }}>{dictationError}</div>
                 )}
                 <ConnectionToast notice={connectionNotice} reconnectingText={t('chat.reconnecting')} backText={t('chat.reconnected')} />
                 {/* Funds panel (PR B item 6): hidden in visitor mode, like the Kalshi
