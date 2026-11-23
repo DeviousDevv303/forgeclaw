@@ -981,6 +981,12 @@ function App() {
   const waConfigured = waCredentialsConfigured(safeGetItem('wa_credentials'))
   const [ghOwner, setGhOwner] = useState(() => safeGetItem('fc_gh_owner') || '')
   const [familyCode, setFamilyCodeState] = useState(() => getFamilyCode())
+  // Draft for the locked-screen family-code entry (the chat surface a family member
+  // actually lands on); applied only on Unlock, never per keystroke. The entry starts
+  // as a labelled button and expands into the field on tap, so the locked chat keeps
+  // exactly one text box (the composer) until the family member asks for the field.
+  const [familyCodeDraft, setFamilyCodeDraft] = useState('')
+  const [familyEntryOpen, setFamilyEntryOpen] = useState(false)
   const [ghRepo, setGhRepo] = useState(() => safeGetItem('fc_gh_repo') || '')
   const [corpus, setCorpus] = useState<CorpusEntry[]>(() => {
     const saved = safeGetItem('forgemind_corpus')
@@ -3103,7 +3109,7 @@ function App() {
   ]
 
   return (
-    <div style={{ position: 'relative', zIndex: 10, height: '100dvh', display: 'flex', flexDirection: 'column', color: '#e5e5e5', overflow: 'hidden' }}>
+    <div style={{ position: 'relative', zIndex: 10, height: '100%', display: 'flex', flexDirection: 'column', color: '#e5e5e5', overflow: 'hidden' }}>
 
       {newerBuild && (
         <button
@@ -3116,7 +3122,7 @@ function App() {
       {/* Header */}
       <header style={{ borderBottom: '1px solid #1a1a1a', padding: '10px clamp(10px, 3vw, 20px)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px 12px', background: '#0a0a0a' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button onClick={() => setActiveTab('settings')} style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: 0 }}>⚙</button>
+          <button onClick={() => setActiveTab('settings')} aria-label="Open settings" style={{ background: 'none', border: 'none', color: '#f97316', fontSize: '18px', cursor: 'pointer', padding: '6px', minWidth: '36px', minHeight: '36px' }}>⚙</button>
           <span style={{ color: '#f97316', fontWeight: 'bold', fontSize: '16px', letterSpacing: '1px' }}>FORGECLAW</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px 12px', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0, flex: '1 1 auto' }}>
@@ -3131,7 +3137,7 @@ function App() {
                 title={t('header.ghTitle', { state: t(safeGetItem('gh_token') ? 'state.set' : 'state.notSet') })}
                 onClick={() => setActiveTab('settings')}
                 style={{
-                  width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
+                  width: '22px', height: '22px', borderRadius: '3px', cursor: 'pointer',
                   background: safeGetItem('gh_token') ? '#22c55e22' : '#1a1a1a',
                   border: `1px solid ${safeGetItem('gh_token') ? '#22c55e' : '#333'}`,
                   color: safeGetItem('gh_token') ? '#22c55e' : '#444',
@@ -3144,7 +3150,7 @@ function App() {
                 title={t('header.waTitle', { state: t(waConfigured ? 'state.configured' : 'state.notSet') })}
                 onClick={() => setActiveTab('settings')}
                 style={{
-                  width: '14px', height: '14px', borderRadius: '3px', cursor: 'pointer',
+                  width: '22px', height: '22px', borderRadius: '3px', cursor: 'pointer',
                   background: waConfigured ? '#22c55e22' : '#1a1a1a',
                   border: `1px solid ${waConfigured ? '#22c55e' : '#333'}`,
                   color: waConfigured ? '#22c55e' : '#444',
@@ -3161,7 +3167,7 @@ function App() {
       </header>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0', overflowX: 'auto', scrollbarWidth: 'none' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid #222', background: '#0a0a0a', padding: '0 8px', gap: '0', overflowX: 'auto', scrollbarWidth: 'none' }}>
         {TABS.map((tab) => {
           const isActive = activeTab === tab.id
           const isAlert = tab.id === 'activity' && unresolvedCount > 0
@@ -3176,10 +3182,15 @@ function App() {
                 borderBottom: isActive ? '2px solid #f97316' : '2px solid transparent',
                 color: isActive ? '#f97316' : (isAlert ? '#eab308' : '#555'),
                 padding: '10px clamp(9px, 2.6vw, 16px)',
-                flexShrink: 0,
+                flex: '0 1 auto',
+                minHeight: '40px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                touchAction: 'manipulation',
                 whiteSpace: 'nowrap',
                 cursor: 'pointer',
-                fontSize: '9px',
+                fontSize: 'clamp(9px, 2.6vw, 11px)',
                 fontWeight: 'bold',
                 letterSpacing: '2px',
                 textTransform: 'uppercase',
@@ -3231,7 +3242,7 @@ function App() {
 
         {/* ── Settings Tab ── */}
         {activeTab === 'settings' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 0' }}>
+          <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 0' }}>
             <div style={{ maxWidth: '480px', margin: '0 auto' }}>
 
               {/* ── Foundational governance: read-only canonical projection ── */}
@@ -3840,6 +3851,72 @@ function App() {
               {isVisitor(ghToken) && (
                 <div role="note" style={{ border: '1px solid #3a2a05', background: '#120d02', color: '#eab308', borderRadius: '6px', padding: '8px 12px', fontSize: '11px', fontFamily: 'monospace', lineHeight: 1.5 }}>{t('public.notice')}</div>
               )}
+              {/* Family-code entry on the locked surface itself: the only other place to enter
+                  the code is Settings → GitHub, which a family member who cannot reach or
+                  find Settings never sees (owner's report from Layla's iPhone, 2026-11-22:
+                  no visible sign-in anywhere). Shown only while locked — no token and no
+                  code yet — and gone the moment a code is entered. The relay still checks
+                  the code on every call; this entry changes no enforcement. */}
+              {isVisitor(ghToken) && (
+                <div
+                  data-testid="family-code-entry"
+                  style={{ border: '1px solid #14532d', background: '#07130b', borderRadius: '6px', padding: '10px 12px', fontFamily: 'monospace' }}
+                >
+                  <div style={{ color: '#22c55e', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                    Family code
+                  </div>
+                  {!familyEntryOpen ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setFamilyEntryOpen(true)}
+                        style={{ width: '100%', background: '#14532d', border: '1px solid #22c55e', color: '#bbf7d0', borderRadius: '4px', padding: '8px 14px', minHeight: '40px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', fontWeight: 'bold', touchAction: 'manipulation' }}
+                      >
+                        Enter the family code
+                      </button>
+                      <div style={{ color: '#5b7a63', fontSize: '10px', marginTop: '6px', lineHeight: 1.5 }}>
+                        Family only: the code the owner shares with you. It unlocks everything on this device — chat, Nexus, tools and images — with no GitHub token.
+                      </div>
+                    </>
+                  ) : (
+                    <form
+                      onSubmit={e => {
+                        e.preventDefault()
+                        const code = familyCodeDraft.trim()
+                        if (!code) return
+                        setFamilyCode(code)
+                        setFamilyCodeState(code)
+                        setFamilyCodeDraft('')
+                        setFamilyEntryOpen(false)
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <input
+                          aria-label="Family code"
+                          type="text"
+                          autoFocus
+                          autoCapitalize="off"
+                          autoCorrect="off"
+                          autoComplete="off"
+                          placeholder="Enter the family code"
+                          value={familyCodeDraft}
+                          onChange={e => setFamilyCodeDraft(e.target.value)}
+                          style={{ flex: 1, minWidth: 0, background: '#0a0a0a', color: '#ccc', border: '1px solid #22c55e44', borderRadius: '4px', padding: '8px', fontSize: '12px', fontFamily: 'monospace', outline: 'none', boxSizing: 'border-box' }}
+                        />
+                        <button
+                          type="submit"
+                          style={{ background: '#14532d', border: '1px solid #22c55e', color: '#bbf7d0', borderRadius: '4px', padding: '8px 14px', minHeight: '40px', cursor: 'pointer', fontSize: '11px', fontFamily: 'monospace', fontWeight: 'bold', whiteSpace: 'nowrap', touchAction: 'manipulation' }}
+                        >
+                          Unlock
+                        </button>
+                      </div>
+                      <div style={{ color: '#5b7a63', fontSize: '10px', marginTop: '6px', lineHeight: 1.5 }}>
+                        Family only: the code the owner shares with you. It unlocks everything on this device — chat, Nexus, tools and images — with no GitHub token.
+                      </div>
+                    </form>
+                  )}
+                </div>
+              )}
               {/* Persisted coding task — visible so a reload reads as a resume. */}
               <CodingAgentStatePanel state={codingAgentState} resumed={Boolean(agentResumedState)} onChange={setCodingAgentState} />
               <LiveExecution
@@ -4234,15 +4311,15 @@ function App() {
         )}
 
         {activeTab === 'activity' && (
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div style={{ flex: 1, overflowY: 'auto', overscrollBehavior: 'contain', padding: '16px 20px', fontFamily: "'Courier New', Courier, monospace", display: 'flex', flexDirection: 'column', gap: '2px' }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', borderBottom: '1px solid #1a1a1a', paddingBottom: '8px' }}>
               <span style={{ color: '#f97316', fontSize: '10px', letterSpacing: '3px', fontWeight: 'bold' }}>{activityView === 'failures' ? t('activity.failures') : t('activity.executionLog')}</span>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                <button onClick={() => setActivityView('log')} style={{ background: activityView === 'log' ? '#1a1a1a' : 'none', border: '1px solid #222', color: activityView === 'log' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>{t('activity.log')}</button>
-                <button onClick={() => setActivityView('failures')} style={{ background: activityView === 'failures' ? '#1a1a1a' : 'none', border: unresolvedCount > 0 ? '1px solid #7f1d1d' : '1px solid #222', color: unresolvedCount > 0 ? '#ef4444' : activityView === 'failures' ? '#f97316' : '#555', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>{t('activity.failures')}{unresolvedCount > 0 ? ` ${unresolvedCount}` : ''}</button>
+                <button onClick={() => setActivityView('log')} style={{ background: activityView === 'log' ? '#1a1a1a' : 'none', border: '1px solid #222', color: activityView === 'log' ? '#f97316' : '#555', fontSize: '9px', padding: '6px 10px', minHeight: '32px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px', touchAction: 'manipulation' }}>{t('activity.log')}</button>
+                <button onClick={() => setActivityView('failures')} style={{ background: activityView === 'failures' ? '#1a1a1a' : 'none', border: unresolvedCount > 0 ? '1px solid #7f1d1d' : '1px solid #222', color: unresolvedCount > 0 ? '#ef4444' : activityView === 'failures' ? '#f97316' : '#555', fontSize: '9px', padding: '6px 10px', minHeight: '32px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px', touchAction: 'manipulation' }}>{t('activity.failures')}{unresolvedCount > 0 ? ` ${unresolvedCount}` : ''}</button>
                 {activityView === 'log' && activityLog.length > 0 && (
-                  <button onClick={() => setActivityLog([])} style={{ background: 'none', border: '1px solid #222', color: '#444', fontSize: '7px', padding: '2px 6px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px' }}>{t('activity.clear')}</button>
+                  <button onClick={() => setActivityLog([])} style={{ background: 'none', border: '1px solid #222', color: '#444', fontSize: '9px', padding: '6px 10px', minHeight: '32px', borderRadius: '3px', cursor: 'pointer', letterSpacing: '1px', touchAction: 'manipulation' }}>{t('activity.clear')}</button>
                 )}
                 <span style={{ color: '#333', fontSize: '8px', letterSpacing: '1px' }}>{t('activity.summary', { responses: messages.filter(m => m.role === 'assistant').length, tools: messages.reduce((n, m) => n + (m.toolResults?.length ?? 0), 0) })}</span>
               </div>
