@@ -224,7 +224,7 @@ import { acknowledgeChannelCalls, CHANNEL_CALL_POLL_MS, fetchNewChannelCalls, me
 /** Shown when the free model, /sculpt or /patch is used with no GitHub token: all three run on GitHub Actions. */
 const GITHUB_TOKEN_REQUIRED_MESSAGE = '⚠️ GitHub token required: the free Qwen model, /sculpt and /patch all run on GitHub Actions and need a GitHub token to dispatch. Add your token in Settings → GitHub, then try again.'
 import { isSendableImage, rememberAttachedImage, VISION_POLICY, visionUnavailableReply } from './lib/imageInput'
-import { blobToDataUrl, isAudioAttachment, MAX_AUDIO_BYTES, pickRecorderMimeType, recorderSupported } from './lib/audioInput'
+import { blobToDataUrl, isAudioAttachment, MAX_AUDIO_BYTES, micErrorKind, pickRecorderMimeType, recognitionServiceDeadEnd, recorderSupported } from './lib/audioInput'
 import { formatVoiceMessageTranscript, runAudioTranscription } from './lib/audioTranscribe'
 import type { GithubRequest } from './lib/githubPublish'
 import { SculptKeyPanel } from './components/SculptKeyPanel'
@@ -834,7 +834,18 @@ function App() {
     if (!Ctor) { void startRecording(); return }
     if (dictationErrorTimerRef.current) clearTimeout(dictationErrorTimerRef.current)
     setDictationError('')
-    const rec = new Ctor()
+    // The record-and-transcribe route can take over only when it can actually finish:
+    // a recorder exists here AND transcription has what it needs (the GitHub token).
+    const canFallBackToRecording = () => recorderSupportedHere && !!resolveGithubToken()
+    let rec: InstanceType<typeof Ctor>
+    try {
+      rec = new Ctor()
+    } catch {
+      // The constructor exists but cannot be built (embedded WebViews do this): the
+      // uncaught throw used to escape the click handler and the button just looked dead.
+      if (canFallBackToRecording()) { void startRecording() } else { showDictationError(t('chat.dictateStartFailed')) }
+      return
+    }
     rec.lang = navigator.language || 'en-US'
     rec.interimResults = true
     rec.continuous = true
@@ -847,12 +858,27 @@ function App() {
       for (let i = 0; i < event.results.length; i++) text += event.results[i][0].transcript
       setInput(dictationBaseRef.current + text)
     }
-    rec.onend = () => { setDictating(false); dictationRef.current = null }
+    rec.onend = () => {
+      // A stale session ending must not clear a newer live session's state: stop session 1,
+      // start session 2, and session 1's late onend would otherwise mark the button idle
+      // while session 2's mic is hot (and its results then die on the identity check below).
+      if (dictationRef.current !== rec) return
+      setDictating(false); dictationRef.current = null
+    }
     rec.onerror = event => {
+      if (dictationRef.current !== rec) return // a dead session's error is not the live one's
       setDictating(false); dictationRef.current = null
       const code = event?.error || ''
       if (code === 'aborted') return // the user stopped it themselves — not a failure
-      if (code === 'not-allowed' || code === 'service-not-allowed') showDictationError(t('chat.dictateBlocked'))
+      if (recognitionServiceDeadEnd(code) && canFallBackToRecording()) {
+        // The speech service itself is unusable in this browser (the Android WebView
+        // shape: webkitSpeechRecognition exists, every session dies this way). Recording
+        // + Actions transcription is the working route — take it instead of stranding
+        // the user on an error line with a button that can never succeed.
+        void startRecording()
+        return
+      }
+      if (code === 'not-allowed') showDictationError(t('chat.dictateBlocked'))
       else if (code === 'audio-capture') showDictationError(t('chat.dictateNoMic'))
       else if (code === 'network') showDictationError(t('chat.dictateNetwork'))
       else if (code === 'no-speech') showDictationError(t('chat.dictateNoSpeech'))
@@ -860,7 +886,12 @@ function App() {
     }
     dictationRef.current = rec
     setDictating(true)
-    try { rec.start() } catch { setDictating(false); dictationRef.current = null; showDictationError(t('chat.dictateStartFailed')) }
+    try { rec.start() } catch {
+      setDictating(false); dictationRef.current = null
+      // A recognizer that exists but cannot start is the same dead end as a dead service.
+      if (!canFallBackToRecording()) showDictationError(t('chat.dictateStartFailed'))
+      else void startRecording()
+    }
   }
   // Record-and-transcribe fallback (owner request 2026-11-22: "able to understand audio…
   // voice to text… whichever or both"): where the Web Speech API does not exist (Firefox,
@@ -898,7 +929,13 @@ function App() {
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    } catch { showDictationError(t('chat.dictateBlocked')); return }
+    } catch (err) {
+      // The rejection's name is the diagnosis — "blocked" for a device with no mic (or a
+      // mic another app holds) sends the user to the wrong settings page.
+      const kind = micErrorKind(err)
+      showDictationError(t(kind === 'blocked' ? 'chat.dictateBlocked' : kind === 'noMic' ? 'chat.dictateNoMic' : kind === 'busy' ? 'chat.dictateMicBusy' : 'chat.audioRecordFailed'))
+      return
+    }
     const mimeType = pickRecorderMimeType(type => window.MediaRecorder.isTypeSupported(type))
     let rec: MediaRecorder
     try {
@@ -910,16 +947,32 @@ function App() {
     const handle = { stop: () => { try { rec.stop() } catch { /* already stopped */ } } }
     rec.onstop = () => {
       stream.getTracks().forEach(track => track.stop())
+      const mine = recorderRef.current === handle
+      if (mine) {
+        recorderRef.current = null
+        setRecording(false)
+      } else if (!recorderRef.current) {
+        // Invalidated by a send or an unmount, with no newer session owning the button:
+        // the recording state is still ours to clear. (It used to stay set forever —
+        // the send path invalidated the ref, this early return skipped the reset, and
+        // every later mic tap died on the stuck "recording" branch: a bricked button.)
+        setRecording(false)
+      }
       // A session invalidated by a send or an unmount transcribes nothing.
-      if (recorderRef.current !== handle) return
-      recorderRef.current = null
-      setRecording(false)
+      if (!mine) return
       const blob = new Blob(chunks, { type: rec.mimeType || mimeType || 'audio/webm' })
       if (blob.size > MAX_AUDIO_BYTES) { showDictationError(t('chat.audioTooBig')); return }
       setTranscribing(true)
       void blobToDataUrl(blob)
         .then(dataUrl => transcribeClip(dataUrl))
-        .then(transcript => setInput(recorderBaseRef.current + transcript))
+        .then(transcript => setInput(prev => {
+          // Land on the CURRENT composer text, not the snapshot from record-start:
+          // transcription can take minutes, and whatever the user typed meanwhile
+          // is theirs — append the transcript after it instead of wiping it.
+          const base = recorderBaseRef.current
+          if (prev === base) return base + transcript
+          return (prev ? (prev.endsWith(' ') ? prev : `${prev} `) : '') + transcript
+        }))
         .catch((err: unknown) => showDictationError(t('chat.audioTranscribeFailed', { error: err instanceof Error ? err.message : String(err) })))
         .finally(() => setTranscribing(false))
     }
@@ -2835,7 +2888,9 @@ function App() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSendMessage = async () => {
-    if (transcribing) return // a voice clip is mid-transcription; the send that started it owns the composer
+    // A voice clip is mid-transcription; the send that started it owns the composer.
+    // Refusing is right — doing it silently is not: the user gets the reason, visibly.
+    if (transcribing) { showDictationError(t('chat.audioTranscribeBusy')); return }
     if (!input.trim() && !attachedFile) return
     // Keep the typed text while a request is still running; sendPrompt would ignore it anyway.
     // Say so, otherwise an ignored Enter looks like the app froze.
@@ -2880,9 +2935,12 @@ function App() {
     // back into the cleared composer on the next result, resurrecting the message just sent.
     // Nulling the ref first makes the session's result handler ignore the final result a
     // stopping recognizer may still deliver.
-    if (dictationRef.current) { const rec = dictationRef.current; dictationRef.current = null; rec.stop() }
+    if (dictationRef.current) { const rec = dictationRef.current; dictationRef.current = null; setDictating(false); rec.stop() }
     // Same for a live recording: sending invalidates the session so its clip is never transcribed.
-    if (recorderRef.current) { const handle = recorderRef.current; recorderRef.current = null; handle.stop() }
+    // The state reset happens HERE, at invalidation: the stopped session's own handlers are
+    // identity-guarded and will not clear it (for the recorder, its onstop reset used to be
+    // skipped entirely on this path, leaving the mic button stuck on "recording" forever).
+    if (recorderRef.current) { const handle = recorderRef.current; recorderRef.current = null; setRecording(false); handle.stop() }
     setInput('')
     setAttachedFile(null)
     await sendPrompt(promptText, imageUrl, { attachmentName: attachedFile?.name })

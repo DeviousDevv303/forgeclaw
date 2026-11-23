@@ -87,6 +87,42 @@ export function pickRecorderMimeType(isTypeSupported: (type: string) => boolean)
   return ''
 }
 
+/**
+ * Recognition error codes that mean the speech SERVICE is unusable in this browser, as
+ * opposed to a problem with the mic or the speech: embedded Android WebViews expose
+ * webkitSpeechRecognition but every session dies with 'service-not-allowed', and a
+ * language the service does not carry never starts. Retrying Web Speech cannot fix
+ * either — the record-and-transcribe path is the working route there.
+ */
+export function recognitionServiceDeadEnd(code: string): boolean {
+  return code === 'service-not-allowed' || code === 'language-not-supported'
+}
+
+/** Which plain-language mic message a getUserMedia failure deserves. */
+export type MicErrorKind = 'blocked' | 'noMic' | 'busy' | 'failed'
+
+/**
+ * getUserMedia rejects with DOMExceptions whose NAME is the diagnosis: a permission
+ * denial is not a missing mic, and neither is a mic another app is holding. Mapping
+ * every failure to "blocked" (the old behavior) sends users to the wrong fix.
+ */
+export function micErrorKind(error: unknown): MicErrorKind {
+  const name = (error as { name?: unknown } | null | undefined)?.name
+  switch (name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'blocked'
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'noMic'
+    case 'NotReadableError':
+    case 'AbortError':
+      return 'busy'
+    default:
+      return 'failed'
+  }
+}
+
 /** Read a recorded Blob as a data URL (what the transcription upload consumes). */
 export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
