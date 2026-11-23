@@ -30,7 +30,7 @@ export const NEXUS_CHECKPOINT_SHA256 = 'c41852fb0ac11f47c3ce2fc7715e816e95ec2e84
 export const NEXUS_MAX_CALLS = 6
 /**
  * App-side prompt budget in characters (~4 chars/token against the 640-token window,
- * leaving room for the transcript prefix and the 160-token generation reserve). The
+ * leaving room for the transcript prefix and up to 256 generated tokens). The
  * workflow enforces the token-exact bound as a backstop and reports prompt_trimmed.
  */
 export const NEXUS_PROMPT_MAX_CHARS = 1_200

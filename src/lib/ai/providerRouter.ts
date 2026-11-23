@@ -373,6 +373,9 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // tool result is injected into the next dispatch's transcript -> the segment that answers
   // ends the turn. Nothing here touches the Qwen path (or vice versa).
   if (isNexusIntelligenceProvider(selected)) {
+    if (isResearchRequest(latestUserTask(request))) {
+      return { success: false, error: classifyError(new Error('Nexus Intelligence Run 25 is a small tool-call specialist, not a reliable research or web-search model. It was not asked to answer this research request, so no findings are verified. Switch to Qwen or Kimi in Settings for sourced research.'), selected) }
+    }
     const failed = failedNexusToolResult(request)
     if (failed) return { success: false, error: classifyError(new Error(failed.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
     const latest = latestCurrentToolResult(request)
