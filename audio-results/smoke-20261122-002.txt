@@ -1,0 +1,1 @@
+The lighthouse keeper checks the journal at midnight and finds every entry in order.
