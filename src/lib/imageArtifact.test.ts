@@ -237,6 +237,32 @@ describe('image result download', () => {
     expect(out.error).toMatch(/timed out|timeout/i)
   })
 
+  it('(e) family mode: the mirror is a raw public URL — no token, no Authorization header, no relay rewrite', async () => {
+    // The family-mode question, pinned: downloadImagePng tries the mirror FIRST, and the mirror
+    // is https://raw.githubusercontent.com/<owner>/<repo>/generated-images/<invocation>.png —
+    // a raw public URL read. It is not an api.github.com call, so familyActionsRewrite never
+    // touches it and no credential rides on it; a family/visitor browser with NO GitHub token
+    // still gets the picture as long as the mirror exists (the artifact fallback behind it is
+    // the token/relay path).
+    vi.useFakeTimers()
+    const pngBytes = new Uint8Array([137,80,78,71,13,10,26,10, 0,0,0,13,73,72,68,82, 0,0,0,1,0,0,0,1,8,2,0,0,0, 144,119,83,222])
+    const fetchMock = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
+      void _init
+      if (isMirror(input)) return Promise.resolve(new Response(pngBytes, { headers: { 'Content-Type': 'image/png' } }))
+      return Promise.reject(new Error('Unexpected fetch: ' + String(input)))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { downloadImagePng } = await import('./imageArtifact')
+    const familyCtx = { ghToken: '', familyCode: 'fam-code', familyRelayUrl: 'https://relay.example', ghOwner: 'DeviousDevv303', ghRepo: 'forgeclaw' } as unknown as import('./forgeTools').ToolContext
+    const out = await settle(downloadImagePng(familyCtx, 'DeviousDevv303', 'forgeclaw', runId, invocationId), 10_000)
+    expect(out.value?.dataUrl.startsWith('data:image/png;base64,')).toBe(true)
+    expect(fetchMock.mock.calls.length).toBe(1)
+    const [calledUrl, calledInit] = fetchMock.mock.calls[0]
+    expect(String(calledUrl)).toBe(`https://raw.githubusercontent.com/DeviousDevv303/forgeclaw/generated-images/generated-images/${invocationId}.png`)
+    const headers = new Headers(calledInit?.headers)
+    expect(headers.get('Authorization')).toBeNull()
+  })
+
   it('(d) happy path: mirror PNG returns data URL, no api.github.com fetch', async () => {
     vi.useFakeTimers()
     // Minimal 1x1 PNG (valid header for dimension parsing)
