@@ -34,7 +34,7 @@ const FAMILY_WORKFLOWS = new Set([
   'qwen3-8b.yml', 'nexus-intelligence.yml', 'generate-image.yml', 'image-analyze.yml',
   'deep-research.yml', 'ddg_search.yml', 'code-review.yml', 'browser-agent.yml',
   'browser-automation.yml', 'shell-exec.yml', 'shell-repair.yml', 'self-sculpt.yml',
-  'site-build.yml', 'search-proxy.yml',
+  'site-build.yml', 'search-proxy.yml', 'audio-transcribe.yml',
 ])
 const ID_RE = /^public-[a-z0-9]{6,12}-[a-z0-9]{6,12}$/
 const MAX_TASK_CHARS = 4000

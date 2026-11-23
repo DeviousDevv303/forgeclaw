@@ -392,6 +392,18 @@ describe('relay worker family tier', () => {
     expect(dispatch.url).toBe(`${API}/actions/workflows/generate-image.yml/dispatches`)
   })
 
+  it('dispatches the audio transcription workflow and proxies its runs (owner decision 2026-11-22)', async () => {
+    const calls = stubGithub(url => url.includes('/workflows/audio-transcribe.yml/runs') ? Response.json({ workflow_runs: [{ id: 11 }] }) : null)
+    const body = JSON.stringify({ ref: 'main', inputs: { audio_ref: 'audio-inputs/audio-x.webm', invocation_id: 'audio-x' } })
+    const res = await worker.fetch(fam(`${FAM}/workflows/audio-transcribe.yml/dispatches`, { method: 'POST', body }), famEnv())
+    expect(res.status).toBe(204)
+    const dispatch = calls.find(c => c.url.endsWith('/dispatches'))!
+    expect(dispatch.url).toBe(`${API}/actions/workflows/audio-transcribe.yml/dispatches`)
+    const runs = await worker.fetch(fam(`${FAM}/workflows/audio-transcribe.yml/runs?event=workflow_dispatch&per_page=50`), famEnv())
+    expect(runs.status).toBe(200)
+    expect(((await runs.json()) as { workflow_runs: unknown[] }).workflow_runs).toHaveLength(1)
+  })
+
   it('never dispatches a trading workflow, whatever the app asks for', async () => {
     const calls = stubGithub(() => null)
     for (const wf of ['trader-agent.yml', 'kalshi-snapshot.yml', 'owner-exit.yml', 'deploy.yml']) {
