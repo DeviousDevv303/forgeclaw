@@ -19,6 +19,10 @@
 //   LEARN            optional KV namespace: visitor conversations (for NEXUS) and error reports
 //   OWNER_KEY        secret; the owner's app sends it to export the stored learning/error reports
 //   FAMILY_CODE      optional secret; a simple shared code that unlocks the family tier below
+//   OWNER_CODE       optional secret; the owner's OWN code, held by the owner alone and
+//                    never shared with family. Powers ONLY the /seat-orders routes: the
+//                    family code is family-tier access, not owner authority, and does
+//                    not authorize them (GPT evidence audit, 2026-11-23).
 //   GITHUB_TOKEN_NEXUS  optional secret; fine-grained token: repository nexus-isles only,
 //                     Contents: Read and write. Powers ONLY the /seat-orders routes (Nexus
 //                     Isles owner orders); separate from GITHUB_TOKEN on purpose, so the
@@ -424,6 +428,19 @@ function familyAuthorized(request, env) {
   return sameSecret(auth, `Bearer ${env.FAMILY_CODE}`)
 }
 
+/**
+ * Owner authorization for the /seat-orders routes only. The family code is a
+ * SHARED family-tier credential — by design it sits on family devices — so it
+ * proves family access, never owner authority (GPT evidence audit, 2026-11-23:
+ * anyone holding it could otherwise submit entries claiming operator "owner").
+ * These routes require the separate OWNER_CODE, which the owner alone holds.
+ * The family tier's own routes are untouched and keep using familyAuthorized.
+ */
+function ownerAuthorized(request, env) {
+  const auth = request.headers.get('Authorization') || ''
+  return sameSecret(auth, `Bearer ${env.OWNER_CODE}`)
+}
+
 function passthrough(res, cors) {
   return new Response(res.body, {
     status: res.status,
@@ -510,25 +527,31 @@ async function familyProxy(request, env, cors, url) {
  * Nexus Isles seat orders (owner directive 2026-11-22, "complete the playable game").
  *
  * The resident view's orders chat box composes owner order entries and POSTs them to
- * /seat-orders here; this route appends them — authenticated with the family code, the
- * same credential as the family tier — to the world's orders file
- * (DeviousDevv303/nexus-isles, branch live-world, world-data/seat-orders.json), which
- * the Nexus Isles runner reads fresh on every proposal. Three layers, separately
- * guaranteed:
+ * /seat-orders here; this route appends them — authenticated with the owner's OWN
+ * code (the OWNER_CODE secret), never the shared family code — to the world's orders
+ * file (DeviousDevv303/nexus-isles, branch live-world, world-data/seat-orders.json),
+ * which the Nexus Isles runner reads fresh on every proposal. Three layers,
+ * separately guaranteed:
  *
- *   1. HTTP authorization: only a request carrying the family code reaches the write
- *      path at all; unauthorized requests write nothing.
- *   2. Deduplication: an entry whose complete canonical identity (seat, tick,
- *      operator class, standing, directive, orders) already exists anywhere in the
- *      seat's file appends nothing — so a stale retry of an order that a correction
- *      superseded can never resurrect it.
+ *   1. HTTP authorization: only a request carrying the owner code reaches the write
+ *      path at all; unauthorized requests write nothing. The family code does NOT
+ *      authorize these routes: it is a shared family-tier credential, and owner
+ *      authority is a different thing (GPT evidence audit, 2026-11-23).
+ *   2. Deduplication: an entry whose complete canonical identity (seat, tick, the
+ *      exact operator identity, standing, directive, orders) already exists anywhere
+ *      in the seat's file appends nothing — so a stale retry of an order that a
+ *      correction superseded can never resurrect it. Identity is the exact operator
+ *      string, deliberately: deduplication detects a retry of the SAME submission
+ *      by the SAME author; precedence classes are the runner's separate concern
+ *      (layer 3), and two different authors' identical orders are two records, not
+ *      a retry.
  *   3. Engine precedence: what governs a tick is decided by the Nexus Isles runner
  *      from the file (owner class beats operator class, last-in-class wins). This
  *      relay only records; it never decides an outcome, and no response from these
  *      routes claims the engine accepted anything — "recorded" means recorded.
  *
  * The GitHub credential is the GITHUB_TOKEN_NEXUS secret (nexus-isles only, Contents:
- * Read and write), held server-side only; the browser authenticates with the family
+ * Read and write), held server-side only; the browser authenticates with the owner
  * code alone and never sees any token.
  */
 const NEXUS_REPO = 'DeviousDevv303/nexus-isles'
@@ -774,8 +797,8 @@ export default {
         return await familyProxy(request, env, cors, url)
       }
       if (url.pathname === '/seat-orders') {
-        if (!env.FAMILY_CODE) return json({ error: 'family mode is not configured' }, 503, cors)
-        if (!familyAuthorized(request, env)) return json({ error: 'family code required' }, 401, cors)
+        if (!env.OWNER_CODE) return json({ error: 'seat orders are not configured' }, 503, cors)
+        if (!ownerAuthorized(request, env)) return json({ error: 'owner code required' }, 401, cors)
         if (request.method === 'POST') return await recordSeatOrder(request, env, cors)
         if (request.method === 'GET') return await readSeatOrders(request, env, cors, url)
         return json({ error: 'method not allowed' }, 405, cors)

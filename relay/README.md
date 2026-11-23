@@ -25,32 +25,40 @@ Cloudflare Worker (`worker.js`, free tier is enough). The model and research rou
   (`FAMILY_MAX_PER_HOUR`) and 6 runs in progress per workflow (`FAMILY_MAX_CONCURRENT`).
   Rotate the code with `npx wrangler secret put FAMILY_CODE`; family browsers then need the
   new code once.
-- **Nexus Isles seat orders** (`/seat-orders`, needs `FAMILY_CODE` and the separate
-  `GITHUB_TOKEN_NEXUS` secret): the Nexus Isles resident view's orders box POSTs owner
-  order entries here, and the relay appends them to the world's orders file
-  (`DeviousDevv303/nexus-isles`, branch `live-world`, `world-data/seat-orders.json`),
+- **Nexus Isles seat orders** (`/seat-orders`, needs the `OWNER_CODE` secret and the
+  separate `GITHUB_TOKEN_NEXUS` secret): the Nexus Isles resident view's orders box
+  POSTs owner order entries here, and the relay appends them to the world's orders
+  file (`DeviousDevv303/nexus-isles`, branch `live-world`, `world-data/seat-orders.json`),
   which the Isles runner reads fresh on every proposal. `GET /seat-orders?seat=<seat>`
   reads back what is recorded. Three separate guarantees, separately tested:
-  - **HTTP authorization:** only a request carrying the family code reaches the write
-    path; this route records `operator: "owner"` entries only. The browser never holds
-    any GitHub token — the token below lives only in the worker.
-  - **Deduplication:** an entry whose complete canonical identity (seat, tick, operator
-    class, standing, directive, orders — compared by deterministic, key-sorted
-    canonical JSON, against *every* entry in the seat's file) is already recorded
-    appends nothing and answers `duplicate`. So: owner submits A → recorded; owner
-    submits correction B → recorded; a network retry of stale A → no append; the
-    engine resolves the tick from B. A different operator class carrying the same
-    orders is *not* a duplicate and appends normally.
+  - **HTTP authorization:** only a request carrying the **owner code** reaches the
+    write path; this route records `operator: "owner"` entries only. The owner code
+    is a distinct secret (`OWNER_CODE`) that the owner alone holds — the shared
+    family code does **not** authorize this route, because family-tier access is not
+    owner authority (GPT evidence audit, 2026-11-23). The browser never holds any
+    GitHub token — the token below lives only in the worker.
+  - **Deduplication:** an entry whose complete canonical identity (seat, tick, the
+    exact operator identity, standing, directive, orders — compared by deterministic,
+    key-sorted canonical JSON, against *every* entry in the seat's file) is already
+    recorded appends nothing and answers `duplicate`. So: owner submits A → recorded;
+    owner submits correction B → recorded; a network retry of stale A → no append; the
+    engine resolves the tick from B. Identity is the exact operator string, on
+    purpose: deduplication detects a retry of the same submission by the same
+    author, while precedence classes are the engine's separate concern — so a
+    different operator carrying the same orders is *not* a duplicate and appends
+    normally, and two different non-owner authors are never merged into one record.
   - **Engine precedence:** the relay only records. What governs a tick is decided by
     the Isles runner from the file (owner class beats operator class regardless of
     append order; last entry wins within a class), and an order's lawfulness is the
     engine validator's verdict at resolution — relay responses say `recorded`, never
     `accepted`. The relay never creates the orders file and never touches world
     state, the journal, or any other repository content.
-  Token for this route only: GitHub → Settings → Developer settings → Fine-grained
-  tokens → **Only select repositories → nexus-isles**, **Contents: Read and write**,
-  nothing else; then `npx wrangler secret put GITHUB_TOKEN_NEXUS` and redeploy. Until
-  that secret is set, both seat-orders routes answer `503`.
+  Setup for this route: `npx wrangler secret put OWNER_CODE` (a code the owner alone
+  knows — not the family code) and `npx wrangler secret put GITHUB_TOKEN_NEXUS`, then
+  redeploy. The token is minted at GitHub → Settings → Developer settings →
+  Fine-grained tokens → **Only select repositories → nexus-isles**, **Contents: Read
+  and write**, nothing else. Until either secret is set, both seat-orders routes
+  answer `503`.
 
 The logging routes:
 

@@ -466,11 +466,12 @@ describe('relay worker — /seat-orders (Nexus Isles owner orders)', () => {
   // relay hands to the GitHub Contents API, not a live write to GitHub. Engine
   // precedence is proven against the real Nexus Isles runner in that repo's suite
   // (runner/ownerOrders.ts resolveOrdersForTick), on files serialized by this relay.
-  const CODE = 'lighthouse7'
+  const CODE = 'lighthouse7' // the shared FAMILY code — family-tier access, NOT owner authority
+  const OWNER = 'owner-code-fixture' // the distinct OWNER_CODE only the owner holds
   const NEXUS = 'https://api.github.com/repos/DeviousDevv303/nexus-isles'
   const FILE_URL = `${NEXUS}/contents/world-data/seat-orders.json`
-  const seatEnv = (extra: Record<string, unknown> = {}) => env({ FAMILY_CODE: CODE, GITHUB_TOKEN_NEXUS: 'nexus-test-token', ...extra })
-  const auth = { Authorization: `Bearer ${CODE}` }
+  const seatEnv = (extra: Record<string, unknown> = {}) => env({ FAMILY_CODE: CODE, OWNER_CODE: OWNER, GITHUB_TOKEN_NEXUS: 'nexus-test-token', ...extra })
+  const auth = { Authorization: `Bearer ${OWNER}` }
   const post = (body: unknown, e = seatEnv(), headers: Record<string, string> = auth) =>
     worker.fetch(req('/seat-orders', { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body), headers }), e)
   const get = (query: string, e = seatEnv(), headers: Record<string, string> = auth) =>
@@ -489,8 +490,10 @@ describe('relay worker — /seat-orders (Nexus Isles owner orders)', () => {
     let text = initial
     let sha = 'sha-0'
     let puts = 0
+    let calls = 0
     const putBodies: Array<Record<string, unknown>> = []
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      calls++
       const u = String(url)
       if (u === `${FILE_URL}?ref=live-world`) {
         if (text === null) return new Response('{}', { status: 404 })
@@ -507,26 +510,45 @@ describe('relay worker — /seat-orders (Nexus Isles owner orders)', () => {
       if (u.startsWith(`${NEXUS}/commits?`)) return Response.json([{ sha: 'commit-1' }])
       return new Response('{}', { status: 404 })
     }))
-    return { puts: () => puts, putBodies, text: () => text }
+    return { puts: () => puts, calls: () => calls, putBodies, text: () => text, bytes: () => Buffer.from(text ?? '', 'utf8') }
   }
 
   describe('HTTP authorization layer', () => {
-    it('rejects a missing or wrong family code and writes nothing', async () => {
+    it('rejects a missing or wrong owner code before any GitHub call, and writes nothing', async () => {
       const gh = stubNexus(SEED)
       const entry = { seat: 'cristian', entry: { tick: 35, operator: 'owner', orders: [] } }
       expect((await post(entry, seatEnv(), {})).status).toBe(401)
       expect((await post(entry, seatEnv(), { Authorization: 'Bearer wrong-code' })).status).toBe(401)
       expect((await get('?seat=cristian', seatEnv(), {})).status).toBe(401)
       expect(gh.puts()).toBe(0)
+      expect(gh.calls()).toBe(0)
+    })
+
+    it('the shared family code is not owner authority: it can neither POST nor GET seat orders', async () => {
+      const gh = stubNexus(SEED)
+      const fam = { Authorization: `Bearer ${CODE}` }
+      const entry = { seat: 'cristian', entry: { tick: 35, operator: 'owner', orders: [] } }
+      expect((await post(entry, seatEnv(), fam)).status).toBe(401)
+      expect((await get('?seat=cristian', seatEnv(), fam)).status).toBe(401)
+      expect(gh.puts()).toBe(0)
+      expect(gh.calls()).toBe(0)
     })
 
     it('answers 503 and calls nothing when the Nexus token secret is absent', async () => {
       let calls = 0
       vi.stubGlobal('fetch', vi.fn(async () => { calls++; return new Response('{}', { status: 404 }) }))
-      const e = env({ FAMILY_CODE: CODE })
+      const e = env({ OWNER_CODE: OWNER })
       expect((await post({ seat: 'cristian', entry: { tick: 35, operator: 'owner', orders: [] } }, e)).status).toBe(503)
       expect((await get('?seat=cristian', e)).status).toBe(503)
       expect(calls).toBe(0)
+    })
+
+    it('answers 503 when OWNER_CODE itself is not configured, even with the token set', async () => {
+      const gh = stubNexus(SEED)
+      const e = env({ FAMILY_CODE: CODE, GITHUB_TOKEN_NEXUS: 'nexus-test-token' })
+      expect((await post({ seat: 'cristian', entry: { tick: 35, operator: 'owner', orders: [] } }, e)).status).toBe(503)
+      expect((await get('?seat=cristian', e)).status).toBe(503)
+      expect(gh.calls()).toBe(0)
     })
 
     it('records an authorized owner entry: appended last, existing entries preserved, answered "recorded" — never "accepted"', async () => {
@@ -586,14 +608,16 @@ describe('relay worker — /seat-orders (Nexus Isles owner orders)', () => {
       expect(gh.puts()).toBe(1)
     })
 
-    it('a stale retry after a changed correction appends nothing and the persisted bytes stay identical', async () => {
+    it('a stale retry after a changed correction appends nothing and the persisted bytes stay byte-identical', async () => {
       const gh = stubNexus(SEED)
       expect(((await (await post(A)).json()) as { status: string }).status).toBe('recorded')
       expect(((await (await post(B)).json()) as { status: string }).status).toBe('recorded')
-      const afterCorrection = gh.text()
+      const afterCorrection = gh.bytes()
       expect(((await (await post(A)).json()) as { status: string }).status).toBe('duplicate')
       expect(gh.puts()).toBe(2)
-      expect(gh.text()).toBe(afterCorrection)
+      // Byte-exact: the persisted content at the mocked Contents API boundary is
+      // compared as raw UTF-8 bytes (Buffer equality), not as decoded text.
+      expect(gh.bytes().equals(afterCorrection)).toBe(true)
     })
 
     it('canonical identity is deterministic: key order, in the entry and inside args, does not matter', () => {
@@ -604,7 +628,7 @@ describe('relay worker — /seat-orders (Nexus Isles owner orders)', () => {
       expect(findSeatOrderDuplicate(file, two)).toBe(0)
     })
 
-    it('duplicate matching is scoped by authorization class: same orders, different operator is not a duplicate', () => {
+    it('duplicate matching uses the exact operator identity: same orders, different operator is not a duplicate', () => {
       const file = parseSeatOrdersFile({ seat: 'cristian', entries: [{ tick: 36, operator: 'muse', orders: [{ verb: 'gather', args: {} }] }] })
       const ownerSpelling = parseSeatOrderEntry({ tick: 36, operator: 'owner', orders: [{ verb: 'gather' }] })
       expect(findSeatOrderDuplicate(file, ownerSpelling)).toBe(-1)
