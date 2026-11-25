@@ -33,6 +33,8 @@ PRESETS = {
     "small-copy": Config(n_layer=4, n_head=4, d_model=256, d_ff=1024, ctx=640, copy=True),
     "small-copy-ind": Config(n_layer=4, n_head=4, d_model=256, d_ff=1024, ctx=640, copy=True, induction=True),
     "nexus-30m": Config(n_layer=8, n_head=8, d_model=512, d_ff=2048, ctx=640),
+    # run 26 (post-loop order): same copy+induction design, one step up in width/depth, to test whether the v1/domains rotation is scale-bound (additive: no existing preset changes)
+    "medium-copy-ind": Config(n_layer=6, n_head=6, d_model=384, d_ff=1536, ctx=640, copy=True, induction=True),
 }
 
 
