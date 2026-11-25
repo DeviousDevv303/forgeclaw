@@ -1,0 +1,18 @@
+# Nexus grading harness — SHA-256 manifest
+# Staged 2026-11-25 by Muse for Claude's grading protocol (forgeclaw #235).
+# Verify before use: a mismatch stops the work (protocol step 2).
+
+# --- Staged in this repo (nexus-llm/harness/) ---
+acff16f8ebebb4bcafe382fe9bab1d5071e4767949b1f389614a716bee0de116  nexus-llm/harness/common.py
+beaf718bd6363ad7f5d77a2feb859da24d47245fc32da407ad3cb4c9a3324245  nexus-llm/harness/constrain.py
+6dc9debd4b8bd6dde6efc198015d7ec711bc010b92db37508d8bb393caaf1589  nexus-llm/harness/loop.py
+4321b821c4ffd3aead9dd22624b1a14af83421fa6980291a933afe80ffd19b15  nexus-llm/harness/model.py
+0da271c1809dded4d6405cb64f483b43454886e515da798fdd68ab333499247f  nexus-llm/harness/predict.py
+
+# --- NOT in this repo (binary; forgeclaw is public and nexus-llm/.gitignore excludes *.pt) ---
+# Hashes recorded so any copy held or received can be verified byte-for-byte.
+c41852fb0ac11f47c3ce2fc7715e816e95ec2e844e25881637eabaaac87f69b6  run25/ckpt/model.pt (seat incumbent)
+5064fe5785670a5697386cf6513d52d8832c17907ae5145134d293afd693095c  run33/ckpt/model.pt
+0818973ba169887e930fcdbe7fd48026f386eee3c9a9e6528291d4bbaa069c8b  run34/ckpt/model.pt
+dfb328918392e38b69003e8aceb9c637203bc221b4e1c6d8b4b55277abedb2ee  run35/ckpt/resume.pt (step-250, stopped)
+323458df24247b695690f7fc25fa78fdbfd65ace44c8867fbf973d5fb8eb935a  tokenizer/nexus.model (SentencePiece v1, vocab 4000)
