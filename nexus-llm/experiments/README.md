@@ -4,6 +4,6 @@ Originally labelled Run 26 / Run 27 while only Runs 1-25 were visible in this re
 
 - `claude-exp-A/` — Run 25 data held + X1-X4; 3-seed study incl. the run-to-run noise finding (about +/-5 points on identical data/recipe).
 - `claude-exp-B/` — A held + X5-X11 domains doors; best of 3 seeds scores v1 83.3 / domains-v1 93.6 on the repo's v1 and domains-v1 suites.
-- `ema/` — variance-reduction experiment (weight averaging), in progress.
+- `ema/` — seed-robustness check: 3 fresh unselected seeds all clear every suite leg of the side-measurement bar; weight averaging adds nothing reliable. See `ema/RESULTS.md`.
 
 Reconciling any of this into the chain (rename, fold in, or leave parallel) is the owner's ruling.
