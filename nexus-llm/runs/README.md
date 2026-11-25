@@ -5,3 +5,5 @@ One directory per graded run of the Nexus training loop. Each holds the run's `D
 - `incumbent-run8-eval/` — run 8's frozen-suite predictions; the gate baseline (`--incumbent`) for every run graded so far.
 - The authoritative loop state (all verdicts, all incidents, completion flag) is `nexus-llm/loop-state.json`.
 - How any lane runs any of this alone: `nexus-llm/SOLO-RUNBOOK.md`.
+
+- **Post-loop (2026-11-25, owner order, single-lane Claude):** `run26/` = multi-seed design study (noise finding); `run27/` = the run that MEETS and SURPASSES (primary checkpoint `run27/ckpt/model.pt`). Not promoted; shell-v1 blocker open. See `run27/verdict.md`.
