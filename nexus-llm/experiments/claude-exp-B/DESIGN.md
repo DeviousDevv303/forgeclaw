@@ -1,6 +1,6 @@
-# Nexus LLM — Run 27: Run 26 held in full + domains-door defense (single-lane, Claude solo)
+# Claude parallel experiment B (originally labelled "Run 27"; NOT a chain run — see ../README.md)
 
-**Single-lane design and grading (owner's 2026-11-08 continuity order; owner's 2026-11-25 order to train Nexus Intelligence up so it passes).** Bars, frozen suites and the promotion rule are unchanged and quoted from SOLO-RUNBOOK §2 in `../run26/DESIGN.md`; they are pre-registered there and are not restated from memory here.
+**Single-lane design and grading (owner's 2026-11-08 continuity order; owner's 2026-11-25 order to train Nexus Intelligence up so it passes).** Bars, frozen suites and the promotion rule are unchanged and quoted from SOLO-RUNBOOK §2 in `../claude-exp-A/DESIGN.md`; they are pre-registered there and are not restated from memory here.
 
 ## Why a Run 27 exists — the Run 26 multi-seed read
 
@@ -38,7 +38,7 @@ Spliced after X1–X4 (RNG stream for all held rows untouched). Defended at full
 
 ## Dataset
 
-54,824 rows, `data.jsonl` sha256 `ffcee10a3d66bb80a7565ff766321117385ffd906c104a74218e445b14d7cc01` (identical on two builds). All 3,225 + 2,900 new rows pass `validateTranscript`, carry canonical evidence labels and re-encode byte-for-byte. Leakage drops 348 = 273 (Run 25) + 75 (X1–X4's bare tool names / run URLs / greetings equal to graded prompts, dropped as designed). Custody gaps are those named in `../run26/DESIGN.md` (three off-repo fixtures stubbed; X rows not checked against them).
+54,824 rows, `data.jsonl` sha256 `ffcee10a3d66bb80a7565ff766321117385ffd906c104a74218e445b14d7cc01` (identical on two builds). All 3,225 + 2,900 new rows pass `validateTranscript`, carry canonical evidence labels and re-encode byte-for-byte. Leakage drops 348 = 273 (Run 25) + 75 (X1–X4's bare tool names / run URLs / greetings equal to graded prompts, dropped as designed). Custody gaps are those named in `../claude-exp-A/DESIGN.md` (three off-repo fixtures stubbed; X rows not checked against them).
 
 ## Recipe and protocol
 

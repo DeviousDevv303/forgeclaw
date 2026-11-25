@@ -1,4 +1,4 @@
-# Nexus LLM — Run 26: first run of the post-loop order (single-lane, Claude solo)
+# Claude parallel experiment A (originally labelled "Run 26"; NOT a chain run — see ../README.md)
 
 **Single-lane design and grading (owner's 2026-11-08 continuity order, SOLO-RUNBOOK §7).** The loop closed at Run 25 (MEETS BAR, DOES NOT SURPASS). This is a *new owner order* (2026-11-25, Cristian Nunez, in session): "take over training for Nexus Intelligence and improve it to where it will pass … train the LLM up first as an LLM", with Nexus Isles as the integration target afterwards. "Pass" is read as the SURPASS bar exactly as frozen (the owner was asked and the question went unanswered before the session restarted; SURPASS is the only reading that does not move a bar). No bar and no frozen suite is changed. Weights are not promoted by this run — promotion stays behind the owner's word (runbook §7, "what neither lane does solo").
 

@@ -1,4 +1,4 @@
-# Run 26 — Verdict (multi-seed design study; not a graded loop run)
+# Claude parallel experiment A (originally "Run 26"; not a chain run) — Verdict (multi-seed design study)
 
 **Single-lane (Claude).** Run 26 was the first mix (Run 25 held byte-identical + X1–X4, `run26/DESIGN.md`). It was trained at three seeds, with Run 25's own data at three seeds as the control, all in this environment with the loop's frozen `train.py`/`predict.py`/scorer. Only v1 and domains-v1 were graded (no closed loop, no unrestriction read); Run 27 superseded it before a full grade was warranted. Nothing here is promoted.
 
