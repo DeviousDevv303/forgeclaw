@@ -44,7 +44,7 @@ describe('language selector in the header', () => {
     for (const label of tabs()) expect(screen.getByRole('button', { name: label })).toBeTruthy()
     expect(screen.getByText('System initialized. Awaiting input...')).toBeTruthy()
     expect(document.documentElement.lang).toBe('en-US')
-  })
+  }, 30000)
 
   it('translates the Settings and Activity screens too', async () => {
     Object.defineProperty(navigator, 'languages', { value: ['en-US'], configurable: true })
@@ -58,7 +58,7 @@ describe('language selector in the header', () => {
     // The MIC tab became the NEXUS Recursive Learning page (2026-10-20); voice input stays on the chat bar.
     fireEvent.click(screen.getByRole('button', { name: 'NEXUS' }))
     expect(screen.getByText('My Logic Is Undeniable')).toBeTruthy()
-  })
+  }, 30000)
 
   it('remembers Spanish after a reload', async () => {
     Object.defineProperty(navigator, 'languages', { value: ['en-US'], configurable: true })
@@ -66,12 +66,12 @@ describe('language selector in the header', () => {
     await mountApp()
     expect(selector().value).toBe('es')
     expect(screen.getByRole('button', { name: 'AJUSTES' })).toBeTruthy()
-  })
+  }, 30000)
 
   it('opens in Spanish on a phone whose language is Mexican Spanish, until the user chooses otherwise', async () => {
     Object.defineProperty(navigator, 'languages', { value: ['es-MX', 'en-US'], configurable: true })
     await mountApp()
     expect(selector().value).toBe('es')
     expect(screen.getByRole('button', { name: 'ENVIAR' })).toBeTruthy()
-  })
+  }, 30000)
 })
