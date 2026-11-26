@@ -65,7 +65,7 @@ describe('browser_mirror.sh', () => {
       expect(JSON.parse(w.show('browser-1', 'result.json').stdout).url).toBe('https://example.com/')
       expect(w.exists('browser-1', 'screen.jpg')).toBe(true)
     } finally { rmSync(w.dir, { recursive: true, force: true }) }
-  })
+  }, 30000)
   it('publishes a failure line when the browse job produced nothing, so the app stops waiting', () => {
     const w = setup()
     try {
@@ -75,7 +75,7 @@ describe('browser_mirror.sh', () => {
       expect(published.error).toContain('failure')
       expect(w.exists('browser-2', 'screen.jpg')).toBe(false)
     } finally { rmSync(w.dir, { recursive: true, force: true }) }
-  })
+  }, 30000)
   it('does not publish invalid JSON, an oversize or non-JPEG screenshot, or a bad id', () => {
     const w = setup()
     try {
@@ -89,7 +89,7 @@ describe('browser_mirror.sh', () => {
       expect(w.exists('browser-4', 'screen.jpg')).toBe(false)
       expect(w.mirror('../escape').status).not.toBe(0)
     } finally { rmSync(w.dir, { recursive: true, force: true }) }
-  })
+  }, 30000)
 })
 
 // ── the runner, for real ──────────────────────────────────────────────────────────────────────

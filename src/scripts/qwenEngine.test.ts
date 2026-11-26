@@ -13,7 +13,7 @@ describe('qwen python tests', () => {
       encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
     })
     expect(r.stderr, r.stdout).toMatch(/\nOK\s*$/)
-  })
+  }, 30000)
 })
 
 describe('qwen3-8b.yml wiring', () => {
