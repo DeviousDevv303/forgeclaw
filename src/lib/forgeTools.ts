@@ -606,6 +606,7 @@ export const FORGE_TOOLS: ToolDef[] = [
       properties: {
         issue_number: { type: 'string', description: 'The issue number (235), "#235", or its github.com URL.' },
         comments: { type: 'string', description: 'How many of the most recent comments to include (default 15, max 50).' },
+        comment_id: { type: 'string', description: 'One comment to show in full: the number after #issuecomment- in a comment link.' },
       },
       required: ['issue_number'],
     },
@@ -1271,7 +1272,7 @@ async function executeToolCore(rawCall: ToolCall, ctx: ToolContext): Promise<str
         const issueNumber = parseIssueNumber(input.issue_number)
         if (!issueNumber) throw new Error('issue_number must be an issue number, "#235" or a github.com/.../issues/N URL.')
         const requestedComments = Number(input.comments)
-        return await readIssue((url, init) => toolFetch(ctx, url, init), { owner, repo, token, issueNumber, maxComments: Number.isFinite(requestedComments) && requestedComments > 0 ? requestedComments : undefined })
+        return await readIssue((url, init) => toolFetch(ctx, url, init), { owner, repo, token, issueNumber, maxComments: Number.isFinite(requestedComments) && requestedComments > 0 ? requestedComments : undefined, commentId: Number.isInteger(Number(input.comment_id)) && Number(input.comment_id) > 0 ? Number(input.comment_id) : undefined })
       }
 
       // ── List open pull requests (read-only) ──

@@ -136,6 +136,16 @@ function shouldBootstrapRepositoryEvidence(request: AIRequest, providerId: Provi
   const text = [...request.messages].reverse().find(m => m.role === 'user')?.content ?? ''
   return /repository evidence comes from github tools|\b(repo|repository|codebase|forgeclaw|source|file|branch|commit|github)\b/i.test(text)
 }
+/**
+ * A request to read or check a GitHub issue of this repository: a github.com/<owner>/<repo>/issues/N URL, or "issue #N".
+ * Read-only intent only ("fix issue 12" is a coding task the model still has to plan). Returns the issue number.
+ */
+export function issueReadRequest(text: string): number | null {
+  const ref = /github\.com\/[^/\s]+\/[^/\s]+\/issues\/(\d+)|\bissue\s*#?\s*(\d+)\b/i.exec(text)
+  const n = ref ? Number(ref[1] ?? ref[2]) : NaN
+  if (!Number.isInteger(n) || n <= 0) return null
+  return /\b(verify|check|confirm|read|show|summari[sz]e|claim|what does|what did|status|latest comment)\b/i.test(text) ? n : null
+}
 /** Questions that need gathered sources, not model memory. */
 const RESEARCH_INTENT_RE = /\b(?:deep research|research|investigate|look into|find (?:me )?sources|literature review|what (?:do|does) (?:the )?(?:studies|evidence|research) say|compare (?:the )?(?:best|top|leading))\b/i
 
@@ -374,6 +384,19 @@ export async function sendViaRouter(request: AIRequest, apiKey: string, provider
   // tool result is injected into the next dispatch's transcript -> the segment that answers
   // ends the turn. Nothing here touches the Qwen path (or vice versa).
   if (isNexusIntelligenceProvider(selected)) {
+    // Reading an issue is a fixed step, not a decision for a 640-token checkpoint: left to Nexus, it never called a
+    // GitHub tool, so the completion gate blocked the turn ("Repository evidence was not obtained", 2026-11-28). The router
+    // issues the read itself (through executeTool and Guardian), then shows the tool's text, since Nexus cannot judge a claim.
+    const issueNumber = lastUser ? issueReadRequest(lastUser.content) : null
+    const commentId = lastUser ? Number(/issuecomment-(\d+)/i.exec(lastUser.content)?.[1]) || 0 : 0
+    if (issueNumber !== null) {
+      const issueResult = latestCurrentToolResult(request)
+      if (issueResult?.name === 'github_read_issue') {
+        if (/^\s*\[(?:TOOL ERROR|GUARDIAN)/i.test(issueResult.content)) return { success: false, error: classifyError(new Error(issueResult.content.replace(/^\s*\[TOOL ERROR\]\s*/i, '').trim().slice(0, 500)), selected) }
+        return success({ text: `${issueResult.content}\n\nThis is the issue as GitHub returned it, read by ForgeClaw's router. Nexus Intelligence did not judge any claim in it; for that, switch to Qwen or Kimi in Settings.`, provider: selected, model: NEXUS_MODEL_ID, stopReason: 'deterministic-nexus-issue-evidence' })
+      }
+      if (issueResult === undefined) return success({ text: '', provider: selected, model: NEXUS_MODEL_ID, toolCalls: [{ id: `bootstrap-issue-${Date.now()}`, name: 'github_read_issue', input: { issue_number: issueNumber, comments: 50, ...(commentId ? { comment_id: commentId } : {}) } }], stopReason: 'deterministic-repository-evidence' })
+    }
     if (isResearchRequest(latestUserTask(request))) {
       return { success: false, error: classifyError(new Error('Nexus Intelligence Run 25 is a small tool-call specialist, not a reliable research or web-search model. It was not asked to answer this research request, so no findings are verified. Switch to Qwen or Kimi in Settings for sourced research.'), selected) }
     }

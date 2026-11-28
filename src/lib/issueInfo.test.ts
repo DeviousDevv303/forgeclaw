@@ -45,6 +45,26 @@ describe('parseIssueNumber', () => {
   })
 })
 
+describe('readIssue deep link', () => {
+  it('shows the named comment in full, fetched directly', async () => {
+    const long = `Owner naming ${'x'.repeat(2000)} END`
+    const fetchFn = async (url: string) => {
+      if (/\/issues\/comments\/7231015464$/.test(url)) return json({ user: { login: 'DeviousDevv303' }, created_at: '2026-11-28T00:34:01Z', body: long })
+      if (/\/issues\/\d+\/comments/.test(url)) return json(COMMENTS)
+      if (/\/issues\/\d+$/.test(url)) return json(ISSUE)
+      return json({}, 404)
+    }
+    const out = await readIssue(fetchFn, { owner: 'o', repo: 'r', token: 't', issueNumber: 235, commentId: 7231015464 })
+    expect(out).toContain('REQUESTED COMMENT 7231015464')
+    expect(out).toContain('END')
+  })
+  it('says so when the comment cannot be read', async () => {
+    const fetchFn = async (url: string) => /\/issues\/\d+$/.test(url) ? json({ ...ISSUE, comments: 0 }) : json({}, 404)
+    const out = await readIssue(fetchFn, { owner: 'o', repo: 'r', token: 't', issueNumber: 235, commentId: 1 })
+    expect(out).toContain('could not be read')
+  })
+})
+
 describe('readIssue', () => {
   it('summarises state, labels, body and comments, marking every text as data', async () => {
     const { fetchFn } = github()

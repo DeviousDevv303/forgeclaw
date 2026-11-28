@@ -388,3 +388,40 @@ describe('Nexus Intelligence router loop', () => {
     }
   })
 })
+
+describe('Nexus issue-read evidence', () => {
+  const ASK = 'can you verify this claim: https://github.com/DeviousDevv303/forgeclaw/issues/235#issuecomment-7231015464'
+  const ISSUE_TEXT = '✓ Issue #235: Coordination\nState: open · 1 comment(s)\n— DeviousDevv303, 2026-11-28 00:34:\nOwner naming'
+
+  it('reads the issue itself instead of leaving the call to the checkpoint', async () => {
+    const result = await sendViaRouter({ model: 'nexus-run25', systemPrompt: '', tools: TOOLS, messages: [{ role: 'user', content: ASK }] }, '', 'nexus-intelligence')
+    expect(result).toMatchObject({ success: true, response: { stopReason: 'deterministic-repository-evidence' } })
+    if (result.success) expect(result.response.toolCalls?.[0]).toMatchObject({ name: 'github_read_issue', input: { issue_number: 235 } })
+  })
+
+  it('ends the turn with the tool text, not a Nexus answer, once the issue is read', async () => {
+    const request: AIRequest = { model: 'nexus-run25', systemPrompt: '', tools: TOOLS, messages: [
+      { role: 'user', content: ASK },
+      { role: 'assistant', content: '', tool_calls: [{ id: 'bootstrap-issue-1', name: 'github_read_issue', input: { issue_number: 235 } }] },
+      { role: 'tool', content: ISSUE_TEXT, tool_call_id: 'bootstrap-issue-1' },
+    ] }
+    const result = await sendViaRouter(request, '', 'nexus-intelligence')
+    expect(result).toMatchObject({ success: true, response: { stopReason: 'deterministic-nexus-issue-evidence' } })
+    if (result.success) { expect(result.response.text).toContain('Owner naming'); expect(result.response.toolCalls).toBeUndefined() }
+  })
+
+  it('fails with the tool error when the read fails', async () => {
+    const request: AIRequest = { model: 'nexus-run25', systemPrompt: '', tools: TOOLS, messages: [
+      { role: 'user', content: ASK },
+      { role: 'assistant', content: '', tool_calls: [{ id: 'bootstrap-issue-1', name: 'github_read_issue', input: { issue_number: 235 } }] },
+      { role: 'tool', content: '[TOOL ERROR] Could not read issue #235: GitHub 404.', tool_call_id: 'bootstrap-issue-1' },
+    ] }
+    const result = await sendViaRouter(request, '', 'nexus-intelligence')
+    expect(result.success).toBe(false)
+  })
+
+  it('leaves "fix issue 12" to the model', async () => {
+    const result = await sendViaRouter({ model: 'nexus-run25', systemPrompt: '', tools: TOOLS, messages: [{ role: 'user', content: 'fix issue #12 in the router' }] }, '', 'nexus-intelligence')
+    expect(result).toMatchObject({ success: true, response: { stopReason: 'deterministic-nexus-reasoning' } })
+  })
+})
