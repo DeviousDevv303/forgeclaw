@@ -51,6 +51,14 @@ export function FileUploadButton({ onFileSelect, disabled }: FileUploadButtonPro
         })
         // Phone photos are scaled to the size the vision models actually use.
         content = await downscaleImageDataUrl(content)
+      } else if (file.type.startsWith('video/')) {
+        // Video travels as a data URL too — but it is NOT a voice clip: the send path
+        // must never route it into transcription just because .mp4 is an audio extension.
+        content = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onloadend = () => resolve(reader.result as string)
+          reader.readAsDataURL(file)
+        })
       } else if (file.type.startsWith('audio/') || AUDIO_NAME.test(file.name)) {
         // Audio travels as a data URL; on send it is transcribed on GitHub Actions and the
         // transcript is what the (text-only) providers receive.

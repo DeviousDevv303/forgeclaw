@@ -2917,6 +2917,13 @@ function App() {
         imageUrl = attachedFile.content
         // The picture travels as image_url, never as base64 text in the prompt.
         promptText = input.trim() || t('chat.describeImage')
+      } else if (attachedFile.content.startsWith('data:video/')) {
+        // A video clip is not a voice message: it must not be transcribed (its .mp4
+        // extension used to route it there, the transcription rejected the video data
+        // URL, and the whole send died). Video inspection is not supported yet, so the
+        // clip travels as a labeled note — never as base64 in the prompt — and the
+        // user's words still reach the model.
+        promptText = `[File: ${attachedFile.name} — a video clip is attached. Video inspection is not supported yet, so no frames were read.]\n\n${input || 'Analyze this file.'}`
       } else if (isAudioAttachment(attachedFile, attachedFile.content)) {
         // Voice message: every provider is a text model, so the clip is transcribed on
         // GitHub Actions first and the transcript — labeled as a voice-message transcript —

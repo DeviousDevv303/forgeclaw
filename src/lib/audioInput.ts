@@ -59,6 +59,10 @@ export function audioDataUrlBytes(dataUrl: string): number {
  */
 export function isAudioAttachment(file: { name: string }, content: string): boolean {
   if (content.startsWith('data:audio/')) return parseAudioDataUrl(content) !== null
+  // A video declares itself: an .mp4 VIDEO shares its extension with audio .mp4, and the
+  // name fallback below used to claim it as a voice clip — the send then died inside
+  // transcription, which rejects the video data URL, and the user's message never sent.
+  if (content.startsWith('data:video/')) return false
   if (content.startsWith('data:image')) return false
   return audioExtensionForName(file.name) !== null
 }
