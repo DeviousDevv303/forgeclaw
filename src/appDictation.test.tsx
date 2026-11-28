@@ -112,8 +112,29 @@ describe('dictation button', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toMatch(/Microphone is blocked/)
+    // The guidance names the layer that is actually blocked — the SITE permission
+    // inside Chrome (address-bar icon → Permissions) — not the Android app
+    // permission, which is a different screen and was already allowed in the field.
+    expect(alert.textContent).toMatch(/address bar/)
+    expect(alert.textContent).toMatch(/Permissions/)
     expect(screen.queryByText(/Listening… speak now/)).toBeNull()
   })
+
+  it('falls back to RECORDING when the speech service reports not-allowed but the recorder route can run', async () => {
+    // Field shape (owner, Chrome Dev on Android, 2026-11-27): the recognizer dies
+    // with not-allowed while the site's MediaRecorder mic permission is separate.
+    // The button must try the working route instead of stranding the user on the
+    // blocked message; only a recorder refusal earns that message.
+    FakeRecognition.behavior = 'error-not-allowed'
+    localStorage.setItem('gh_token', 'test-token')
+    stubRecorder()
+    const { default: App } = await import('./App')
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Dictate' }))
+    expect(await screen.findByText(/Recording… speak now/)).toBeTruthy()
+    expect(FakeMediaRecorder.instances).toHaveLength(1)
+    expect(screen.queryByRole('alert')).toBeNull()
+  }, 20000)
 
   it('surfaces a VISIBLE message when there is no microphone', async () => {
     FakeRecognition.behavior = 'error-audio-capture'

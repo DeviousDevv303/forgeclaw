@@ -878,7 +878,16 @@ function App() {
         void startRecording()
         return
       }
-      if (code === 'not-allowed') showDictationError(t('chat.dictateBlocked'))
+      if (code === 'not-allowed') {
+        // The speech service refused the mic — but that refusal is the SERVICE's
+        // permission path, not necessarily the device's: on Chrome/Android shapes
+        // the recognizer reports not-allowed while MediaRecorder's own mic
+        // permission is still grantable. Try the recording route before declaring
+        // the mic blocked; if recording is refused too, ITS blocked message (with
+        // the exact unblock steps) is the one the user sees.
+        if (canFallBackToRecording()) { void startRecording(); return }
+        showDictationError(t('chat.dictateBlocked'))
+      }
       else if (code === 'audio-capture') showDictationError(t('chat.dictateNoMic'))
       else if (code === 'network') showDictationError(t('chat.dictateNetwork'))
       else if (code === 'no-speech') showDictationError(t('chat.dictateNoSpeech'))
