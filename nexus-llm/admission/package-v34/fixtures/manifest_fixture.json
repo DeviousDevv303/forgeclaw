@@ -1,0 +1,82 @@
+{
+  "schema": "run36-pilot-manifest/1",
+  "tokenizer": {
+    "name": "nexus.model v1",
+    "package": "sentencepiece",
+    "version": "0.2.3",
+    "model_file": {
+      "path": "nexus.model",
+      "sha256": "323458df24247b695690f7fc25fa78fdbfd65ace44c8867fbf973d5fb8eb935a"
+    },
+    "kat": {
+      "text": "ForgeClaw Run 36 admission checker: token counts are recomputed, never trusted.",
+      "expected_ids": [
+        575,
+        2090,
+        1820,
+        3901,
+        3951,
+        3938,
+        1136,
+        3913,
+        702,
+        1220,
+        544,
+        331,
+        3917,
+        2077,
+        2633,
+        576,
+        483,
+        2438,
+        484,
+        345,
+        3922,
+        542,
+        333,
+        869,
+        3919
+      ]
+    },
+    "kat_counts": {
+      "source": "Muse lane golden set — forgeclaw #235 comment 7230606565 (KNOWN-ANSWER-TOKENS.md sha256 55136a0d10a153c11a46498107385f3e357570d8eb98dcafabde8c6e62545419; instrument: train/common.py SP, len(SP.encode(text)))",
+      "cases": [
+        {"id": "KAT-1", "text": "", "tokens": 0},
+        {"id": "KAT-2", "text": "Government", "tokens": 4},
+        {"id": "KAT-3", "text": "Find where checkUnifiedDiff is called in forgeTools.ts.", "tokens": 20},
+        {"id": "KAT-4", "text": "Run the unifiedDiffCheck tests and tell me if they pass.", "tokens": 16},
+        {"id": "KAT-5", "text": "Keep an eye on PR #423 and let me know if its checks turn red.", "tokens": 27},
+        {"id": "KAT-6", "text": "{\"name\": \"spawn_agent\", \"arguments\": {\"task\": \"Search the repo for every caller of unifiedDiffCheck and report file and line for each hit.\", \"tools\": [\"github_search_code\"]}}", "tokens": 45},
+        {"id": "KAT-7", "text": "Search the repository for every place the desk checks its balance before proposing a trade, and report each file, the function name, and whether the read is the market-shard balance or the account-wide balance.", "tokens": 54}
+      ]
+    },
+    "note": "Canonical training tokenizer (nexus-llm/loop-tree/tokenizer/nexus.model @dcfcadd5). File sha256 attested on #235 comments 7230139327 and 7174989158."
+  },
+  "allowlist": {
+    "path": "allowlist_fixture.txt",
+    "sha256": "83dd310a9bfee4a109225e4a988f10fb384c6437450985b56e7f107ac7d35345"
+  },
+  "rows": {
+    "path": "rows_fixture.jsonl",
+    "sha256": "35fed1b1239609bf4872e39acfaa0c9d906cb644439b2c0ecb566eb58555049e"
+  },
+  "token_ceiling": 630,
+  "ceiling_source": "forgeclaw#235 record \u2014 640 = model context, 630 = admission row limit (GPT Run-36 audit item 1, conceded v3)",
+  "tiers": {
+    "r36-001": "positive",
+    "r36-002": "positive",
+    "r36-003": "positive",
+    "r36-004": "positive",
+    "r36-005": "positive",
+    "r36-006": "positive",
+    "r36-007": "positive",
+    "r36-008": "positive",
+    "r36-009": "restraint",
+    "r36-010": "restraint",
+    "r36-011": "restraint",
+    "r36-012": "restraint",
+    "r36-013": "restraint",
+    "r36-014": "near_miss",
+    "r36-015": "near_miss"
+  }
+}

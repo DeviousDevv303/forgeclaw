@@ -1,0 +1,4 @@
+# Run 36 pilot allowlist — permitted row sources (fixture)
+nexus-trader shadow journal (book_polls.jsonl, frozen-20 coverage)
+swarm exam banked cells (pass-7 anchor, carry-over verified)
+synthetic-intuition/gate-b-pairs.jsonl (sha 8fe50c7c...14d1)

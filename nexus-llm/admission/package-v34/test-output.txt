@@ -1,0 +1,31 @@
+[PASS] T1 valid fixture: exit 2, C1-C6+C9 PASS, C7/C8/C10 BLOCKED
+[PASS] T2 corrupt rows file -> C2 FAIL — rows still well-formed; only integrity fails
+[PASS] T3 allowlist absent -> C2 BLOCKED
+[PASS] T4 tokenizer version lie -> C1 FAIL
+[PASS] T5 string-1 spawn unflagged -> C9 FAIL — row schema valid; only spawn rule trips
+[PASS] T6 duplicate id -> C4 FAIL
+[PASS] T7 malformed manifest -> C1 FAIL, C2-C9 BLOCKED
+[PASS] T8 700-token row -> C3 FAIL
+[PASS] T9a 630-token row (boundary) -> C3 PASS, exit 2
+[PASS] T9b 631-token row -> C3 FAIL
+[PASS] T10 declared ceiling 640 -> C3 FAIL (conflict with enforced 630)
+[PASS] T11 unsupported tokenizer package -> C1 FAIL
+[PASS] T17 tiktoken/cl100k loader path -> C1 PASS, exit 2
+[PASS] T18 corrupted tokenizer model file -> C1 FAIL
+[PASS] T13 restraint row spawning -> C9 FAIL
+[PASS] T14 restraint {0,0} range -> C9 PASS, exit 2
+[PASS] T15 restraint {1,2} range -> C9 FAIL
+[PASS] T16 determinism: identical report bytes across runs
+[PASS] T19 restraint {0,1} -> C9 FAIL
+[PASS] T20 multi-spawn row at 0 -> C9 FAIL
+[PASS] T21 negative counts (both classes) -> C9 FAIL
+[PASS] T22 self-mislabeled tier -> C4 FAIL, C9 BLOCKED
+[PASS] T23 unclassified row -> C4 FAIL closed
+[PASS] T24 stale classification -> C4 FAIL closed
+[PASS] T25 rows with no tier field -> all PASS, exit 2 (manifest-only authority)
+[PASS] T26 manifest kat_counts == Muse's posted goldens (7/7)
+[PASS] T27 fixture run declares manifest UNSEALED
+[PASS] T28 manifest seal: pinned bytes PASS+SEALED; wrong pin FAILs C1 — sealed_run rc=2, bad_pin rc=1
+[PASS] T29 justified single spawn -> C4 PASS, C9 PASS, exit 2
+
+29/29 harness tests passed
