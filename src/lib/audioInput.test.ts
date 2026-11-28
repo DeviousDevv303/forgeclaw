@@ -52,6 +52,15 @@ describe('audio attachment detection', () => {
     expect(isAudioAttachment({ name: 'note.MP3' }, 'raw bytes read as text')).toBe(true)
   })
 
+  it('never claims a VIDEO as a voice clip, even when the name ends in an audio extension', () => {
+    // Field failure (owner, 2026-11-27): a gallery video named .mp4 was classified as a
+    // voice message by name, the send routed into transcription, transcription rejected
+    // the video data URL, and the whole send died. A declared video type is positive
+    // evidence against audio — the name fallback must not override it.
+    expect(isAudioAttachment({ name: 'kids.mp4' }, 'data:video/mp4;base64,AAAA')).toBe(false)
+    expect(isAudioAttachment({ name: 'clip.webm' }, 'data:video/webm;base64,AAAA')).toBe(false)
+  })
+
   it('does not steal images or ordinary files', () => {
     expect(isAudioAttachment({ name: 'photo.jpg' }, 'data:image/jpeg;base64,/9j/AAAA')).toBe(false)
     expect(isAudioAttachment({ name: 'notes.txt' }, 'hello')).toBe(false)

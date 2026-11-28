@@ -202,6 +202,28 @@ describe('attached voice message (Path B)', () => {
   }, 30000)
 })
 
+describe('attached VIDEO file (not a voice message)', () => {
+  it('sends the user text with a labeled video note — never routes into transcription', async () => {
+    // Field failure (owner, 2026-11-27): a gallery video of the kids, attached with the
+    // words "Add to nexus taste", was classified as a voice clip by its .mp4 name; the
+    // send died on "Transcription failed (transcription needs an attached audio clip…)".
+    localStorage.setItem('gh_token', 'test-token')
+    const { default: App } = await import('./App')
+    const { container } = render(<App />)
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(fileInput, { target: { files: [new File(['fake-video'], 'kids-at-the-park.mp4', { type: 'video/mp4' })] } })
+    expect(await screen.findByText(/kids-at-the-park\.mp4/)).toBeTruthy()
+    const composer = screen.getByPlaceholderText(/Ask anything/) as HTMLTextAreaElement
+    fireEvent.change(composer, { target: { value: 'Add to nexus taste' } })
+    fireEvent.click(screen.getByRole('button', { name: /^SEND$/i }))
+    // The message went out: the labeled note and the user's own words, no error.
+    expect(await screen.findByText(/a video clip is attached/)).toBeTruthy()
+    expect(await screen.findByText(/Add to nexus taste/)).toBeTruthy()
+    expect(screen.queryByText(/Transcription failed/)).toBeNull()
+    expect(screen.queryByText(/\[Voice message:/)).toBeNull()
+  }, 30000)
+})
+
 describe('family mode (relay tier)', () => {
   it('attempts transcription through the relay family tier with a family code and no token', async () => {
     vi.stubEnv('VITE_PUBLIC_RELAY_URL', 'https://relay.example')
