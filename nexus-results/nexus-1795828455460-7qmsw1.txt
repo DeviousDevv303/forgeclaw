@@ -1,0 +1,1 @@
+<|route:tool|><|call|>{"name":"github_read_file","arguments":{"path":":","owner":":","repo":" is not fresh: CONFIRMED. A proposal can lift it with /fundsED.4040404,-c"}}<|/call|>
